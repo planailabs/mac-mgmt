@@ -13,3 +13,4 @@ anyhow = "1"
 sentry = { version = "0.35", default-features = false, features = ["rustls", "panic", "backtrace"] }
 rust-embed = "8"
 tempfile = "3"
+self-replace = "1"

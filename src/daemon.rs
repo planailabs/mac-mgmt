@@ -155,10 +155,7 @@ pub fn do_update() -> Result<()> {
     }
 
     // Replace the running binary
-    let current_bin = std::env::current_exe().context("cannot determine current exe")?;
-    self_update::Move::from_source(&new_bin)
-        .replace_using_temp(&current_bin)
-        .to_dest(&current_bin)?;
+    self_replace::self_replace(&new_bin).context("failed to replace binary")?;
 
     tracing::info!("binary updated successfully");
     Ok(())
