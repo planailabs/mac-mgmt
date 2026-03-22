@@ -31,7 +31,7 @@
           pname = "mac-mgmt";
           version = "0.1.0";
           src = ./.;
-          cargoHash = "";
+          cargoLock.lockFile = ./Cargo.lock;
           buildInputs = darwinDeps;
         };
       in
