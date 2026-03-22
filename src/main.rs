@@ -37,7 +37,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Setup => scripts::run("setup.sh")?,
+        Commands::Setup => {
+            scripts::run("setup.sh")?;
+            service::install()?;
+        },
         Commands::Run { name } => scripts::run(&name)?,
         Commands::Scripts => {
             for name in scripts::list() {

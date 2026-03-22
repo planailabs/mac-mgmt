@@ -1,3 +1,3 @@
 #!/bin/sh
 
-echo stub
+curl -fsSL https://openclaw.ai/install.sh | bash
