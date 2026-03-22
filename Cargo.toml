@@ -14,3 +14,4 @@ sentry = { version = "0.35", default-features = false, features = ["rustls", "pa
 rust-embed = "8"
 tempfile = "3"
 self-replace = "1"
+libc = "0.2"

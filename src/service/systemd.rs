@@ -6,17 +6,40 @@ use std::process::Command;
 const SERVICE_NAME: &str = "mac-mgmt";
 const SYSTEMD_UNIT: &str = "mac-mgmt.service";
 
+fn is_root() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+
+/// Run a command, prefixing with sudo if not root.
+fn privileged(program: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
+    let status = if is_root() {
+        Command::new(program)
+            .args(args)
+            .status()
+            .with_context(|| format!("failed to run {program}"))?
+    } else {
+        Command::new("sudo")
+            .arg(program)
+            .args(args)
+            .status()
+            .with_context(|| format!("failed to run sudo {program}"))?
+    };
+    Ok(status)
+}
+
 fn unit_path() -> PathBuf {
     PathBuf::from("/etc/systemd/system").join(SYSTEMD_UNIT)
 }
 
-fn service_user() -> Result<String> {
-    std::env::var("SUDO_USER").context("SUDO_USER not set — run with sudo")
+fn service_user() -> String {
+    std::env::var("SUDO_USER")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "root".to_string())
 }
 
 fn unit_contents() -> Result<String> {
     let bin = std::env::current_exe().context("cannot determine binary path")?;
-    let user = service_user()?;
+    let user = service_user();
     Ok(format!(
         r#"[Unit]
 Description={SERVICE_NAME} daemon
@@ -40,23 +63,36 @@ WantedBy=multi-user.target
 pub fn install() -> Result<()> {
     let path = unit_path();
     let contents = unit_contents()?;
-    fs::write(&path, &contents).context("failed to write systemd unit")?;
+
+    // Write unit file via tee to handle permissions
+    if is_root() {
+        fs::write(&path, &contents).context("failed to write systemd unit")?;
+    } else {
+        use std::io::Write;
+        let mut child = Command::new("sudo")
+            .args(["tee", &path.to_string_lossy()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .context("failed to run sudo tee")?;
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(contents.as_bytes())?;
+        let status = child.wait()?;
+        if !status.success() {
+            anyhow::bail!("sudo tee failed");
+        }
+    }
     tracing::info!("wrote {}", path.display());
 
-    let status = Command::new("systemctl")
-        .arg("daemon-reload")
-        .status()
-        .context("failed to run systemctl daemon-reload")?;
-
+    let status = privileged("systemctl", &["daemon-reload"])?;
     if !status.success() {
         anyhow::bail!("systemctl daemon-reload failed");
     }
 
-    let status = Command::new("systemctl")
-        .args(["enable", "--now", SERVICE_NAME])
-        .status()
-        .context("failed to run systemctl enable")?;
-
+    let status = privileged("systemctl", &["enable", "--now", SERVICE_NAME])?;
     if !status.success() {
         anyhow::bail!("systemctl enable --now failed");
     }
@@ -70,15 +106,18 @@ pub fn uninstall() -> Result<()> {
     let path = unit_path();
 
     if path.exists() {
-        let _ = Command::new("systemctl")
-            .args(["disable", "--now", SERVICE_NAME])
-            .status();
+        let _ = privileged("systemctl", &["disable", "--now", SERVICE_NAME]);
 
-        fs::remove_file(&path).context("failed to remove systemd unit")?;
+        if is_root() {
+            fs::remove_file(&path).context("failed to remove systemd unit")?;
+        } else {
+            let status = privileged("rm", &[&path.to_string_lossy()])?;
+            if !status.success() {
+                anyhow::bail!("failed to remove systemd unit");
+            }
+        }
 
-        let _ = Command::new("systemctl")
-            .arg("daemon-reload")
-            .status();
+        let _ = privileged("systemctl", &["daemon-reload"]);
 
         tracing::info!("service uninstalled");
         println!("Service uninstalled");
