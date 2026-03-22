@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::io::Write;
+use std::process::Command;
 use std::time::Duration;
 use tokio::time;
 
@@ -17,6 +18,13 @@ pub async fn run() -> Result<()> {
         HEALTH_INTERVAL
     );
 
+    // Start openclaw gateway as a child process
+    let mut gateway = Command::new("openclaw")
+        .arg("gateway")
+        .spawn()
+        .context("failed to start openclaw gateway")?;
+    tracing::info!("openclaw gateway started (pid: {})", gateway.id());
+
     let mut update_interval = time::interval(UPDATE_INTERVAL);
     let mut health_interval = time::interval(HEALTH_INTERVAL);
 
@@ -27,7 +35,22 @@ pub async fn run() -> Result<()> {
     loop {
         tokio::select! {
             _ = update_interval.tick() => check_and_update(),
-            _ = health_interval.tick() => check_health(),
+            _ = health_interval.tick() => {
+                // Restart gateway if it exited
+                match gateway.try_wait() {
+                    Ok(Some(status)) => {
+                        tracing::warn!("openclaw gateway exited with {status}, restarting");
+                        gateway = Command::new("openclaw")
+                            .arg("gateway")
+                            .spawn()
+                            .context("failed to restart openclaw gateway")?;
+                        tracing::info!("openclaw gateway restarted (pid: {})", gateway.id());
+                    }
+                    Ok(None) => {} // still running
+                    Err(e) => tracing::error!("failed to check gateway status: {e}"),
+                }
+                check_health();
+            }
         }
     }
 }
