@@ -4,8 +4,9 @@ use std::time::Duration;
 use tokio::time;
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
-const UPDATE_URL: &str = "https://update.plan.ai/mac-mgmt.tar.gz";
+const UPDATE_BASE: &str = "https://update.plan.ai";
 const BIN_NAME: &str = "mac-mgmt";
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub async fn run() -> Result<()> {
     tracing::info!("daemon started, checking for updates every {:?}", UPDATE_INTERVAL);
@@ -22,22 +23,45 @@ pub async fn run() -> Result<()> {
 }
 
 fn check_and_update() {
-    tracing::info!("checking for updates from {UPDATE_URL}");
+    tracing::info!("checking for updates (current: {CURRENT_VERSION})");
 
     if let Err(e) = do_update() {
         tracing::warn!("update failed: {e}");
     }
 }
 
+fn fetch_remote_version() -> Result<String> {
+    let url = format!("{UPDATE_BASE}/mac-mgmt.version");
+    let mut body = Vec::new();
+    let mut download = self_update::Download::from_url(&url);
+    download.show_progress(false);
+    download.download_to(&mut body)?;
+    let version = String::from_utf8(body)
+        .context("invalid UTF-8 in version file")?
+        .trim()
+        .to_string();
+    Ok(version)
+}
+
 fn do_update() -> Result<()> {
+    let remote_version = fetch_remote_version()?;
+
+    if remote_version == CURRENT_VERSION {
+        tracing::info!("already up to date ({CURRENT_VERSION})");
+        return Ok(());
+    }
+
+    tracing::info!("update available: {CURRENT_VERSION} -> {remote_version}");
+
+    let url = format!("{UPDATE_BASE}/mac-mgmt.tar.gz");
     let mut tmp_archive = tempfile::Builder::new()
         .suffix(".tar.gz")
         .tempfile()
         .context("failed to create temp file")?;
 
     // Download the tarball
-    tracing::info!("downloading {UPDATE_URL}");
-    let mut download = self_update::Download::from_url(UPDATE_URL);
+    tracing::info!("downloading {url}");
+    let mut download = self_update::Download::from_url(&url);
     download.show_progress(false);
     let mut body = Vec::new();
     download.download_to(&mut body)?;
