@@ -86,3 +86,30 @@ pub fn uninstall() -> Result<()> {
 
     Ok(())
 }
+
+pub fn restart() -> Result<()> {
+    let path = plist_path()?;
+
+    if !path.exists() {
+        anyhow::bail!("service not installed");
+    }
+
+    let _ = Command::new("launchctl")
+        .arg("unload")
+        .arg(&path)
+        .status();
+
+    let status = Command::new("launchctl")
+        .args(["load", "-w"])
+        .arg(&path)
+        .status()
+        .context("failed to run launchctl load")?;
+
+    if !status.success() {
+        anyhow::bail!("launchctl load failed");
+    }
+
+    tracing::info!("service restarted");
+    println!("Service restarted");
+    Ok(())
+}

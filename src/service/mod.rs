@@ -18,3 +18,11 @@ pub fn uninstall() -> Result<()> {
         systemd::uninstall()
     }
 }
+
+pub fn restart() -> Result<()> {
+    if cfg!(target_os = "macos") {
+        launchd::restart()
+    } else {
+        systemd::restart()
+    }
+}

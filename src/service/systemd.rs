@@ -127,3 +127,14 @@ pub fn uninstall() -> Result<()> {
 
     Ok(())
 }
+
+pub fn restart() -> Result<()> {
+    let status = privileged("systemctl", &["restart", SERVICE_NAME])?;
+    if !status.success() {
+        anyhow::bail!("systemctl restart failed");
+    }
+
+    tracing::info!("service restarted");
+    println!("Service restarted");
+    Ok(())
+}

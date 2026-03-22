@@ -27,8 +27,10 @@ enum Commands {
     Scripts,
     /// Install the launchd service
     Install,
-    /// Uninstall the launchd service
+    /// Uninstall the service
     Uninstall,
+    /// Restart the service
+    Restart,
     /// Run the daemon (called by launchd)
     Daemon,
 }
@@ -52,6 +54,7 @@ async fn main() -> Result<()> {
         }
         Commands::Install => service::install()?,
         Commands::Uninstall => service::uninstall()?,
+        Commands::Restart => service::restart()?,
         Commands::Daemon => daemon::run().await?,
     }
 
