@@ -4,22 +4,46 @@ use std::time::Duration;
 use tokio::time;
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
+const HEALTH_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 const UPDATE_BASE: &str = "https://update.plan.ai";
 const BIN_NAME: &str = "mac-mgmt";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ENVIRONMENT: &str = env!("ENVIRONMENT");
 
 pub async fn run() -> Result<()> {
-    tracing::info!("daemon started, checking for updates every {:?}", UPDATE_INTERVAL);
+    tracing::info!(
+        "daemon started, update interval: {:?}, health interval: {:?}",
+        UPDATE_INTERVAL,
+        HEALTH_INTERVAL
+    );
 
-    let mut interval = time::interval(UPDATE_INTERVAL);
+    let mut update_interval = time::interval(UPDATE_INTERVAL);
+    let mut health_interval = time::interval(HEALTH_INTERVAL);
 
-    // Run an immediate update check on startup
+    // Run immediate checks on startup
     check_and_update();
+    check_health();
 
     loop {
-        interval.tick().await;
-        check_and_update();
+        tokio::select! {
+            _ = update_interval.tick() => check_and_update(),
+            _ = health_interval.tick() => check_health(),
+        }
+    }
+}
+
+fn check_health() {
+    tracing::info!("running openclaw health check");
+
+    match crate::health::check() {
+        Ok(true) => tracing::info!("openclaw is healthy"),
+        Ok(false) => {
+            tracing::warn!("openclaw is unhealthy, running doctor --fix");
+            if let Err(e) = crate::health::doctor_fix() {
+                tracing::error!("doctor --fix failed: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("health check failed: {e}"),
     }
 }
 

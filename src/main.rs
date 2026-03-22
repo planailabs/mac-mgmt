@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 
 mod crash;
 mod daemon;
+mod health;
 mod scripts;
 mod service;
 
