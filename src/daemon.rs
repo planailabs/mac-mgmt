@@ -18,6 +18,9 @@ pub async fn run() -> Result<()> {
         HEALTH_INTERVAL
     );
 
+    // Ensure openclaw is configured
+    ensure_openclaw_setup()?;
+
     // Start openclaw gateway as a child process
     let mut gateway = Command::new("openclaw")
         .arg("gateway")
@@ -68,6 +71,28 @@ fn check_health() {
         }
         Err(e) => tracing::warn!("health check failed: {e}"),
     }
+}
+
+fn ensure_openclaw_setup() -> Result<()> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    let config = std::path::PathBuf::from(home).join(".openclaw/openclaw.json");
+
+    if config.exists() {
+        tracing::info!("openclaw config found at {}", config.display());
+        return Ok(());
+    }
+
+    tracing::info!("openclaw config not found, running openclaw setup");
+    let status = Command::new("openclaw")
+        .arg("setup")
+        .status()
+        .context("failed to run openclaw setup")?;
+
+    if !status.success() {
+        anyhow::bail!("openclaw setup exited with status {status}");
+    }
+
+    Ok(())
 }
 
 fn check_and_update() {
