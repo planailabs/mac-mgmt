@@ -20,32 +20,38 @@
             "x86_64-apple-darwin"
           ];
         };
+
+        darwinDeps = pkgs.lib.optionals pkgs.stdenv.isDarwin [
+          pkgs.darwin.apple_sdk.frameworks.Security
+          pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+          pkgs.libiconv
+        ];
+
+        mac-mgmt = pkgs.rustPlatform.buildRustPackage {
+          pname = "mac-mgmt";
+          version = "0.1.0";
+          src = ./.;
+          cargoHash = "";
+          buildInputs = darwinDeps;
+        };
       in
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
             toolchain
             pkgs.cargo-edit
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-            pkgs.libiconv
-          ];
+          ] ++ darwinDeps;
 
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
         };
 
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "mac-mgmt";
-          version = "0.1.0";
-          src = ./.;
-          cargoHash = "";
-
-          buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-            pkgs.libiconv
-          ];
-        };
+        packages.default = mac-mgmt;
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+        packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
+          mkdir -p $out pack
+          cp ${mac-mgmt}/bin/mac-mgmt pack/mac-mgmt
+          cd pack
+          tar czf $out/mac-mgmt.tar.gz mac-mgmt
+        '';
       });
 }
