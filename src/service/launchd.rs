@@ -5,11 +5,11 @@ use std::process::Command;
 
 const PLIST_LABEL: &str = "com.plan-ai.mac-mgmt";
 
-fn plist_path() -> PathBuf {
-    let home = std::env::var("HOME").expect("HOME not set");
-    PathBuf::from(home)
+fn plist_path() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    Ok(PathBuf::from(home)
         .join("Library/LaunchAgents")
-        .join(format!("{PLIST_LABEL}.plist"))
+        .join(format!("{PLIST_LABEL}.plist")))
 }
 
 fn plist_contents() -> Result<String> {
@@ -43,9 +43,8 @@ fn plist_contents() -> Result<String> {
 }
 
 pub fn install() -> Result<()> {
-    let path = plist_path();
+    let path = plist_path()?;
 
-    // Ensure LaunchAgents directory exists
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("failed to create LaunchAgents directory")?;
     }
@@ -70,7 +69,7 @@ pub fn install() -> Result<()> {
 }
 
 pub fn uninstall() -> Result<()> {
-    let path = plist_path();
+    let path = plist_path()?;
 
     if path.exists() {
         let _ = Command::new("launchctl")
