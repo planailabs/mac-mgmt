@@ -12,3 +12,7 @@ target/
 
 # MSVC Windows builds
 *.pdb
+
+# Nix
+result
+result-*
