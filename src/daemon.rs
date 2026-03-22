@@ -7,6 +7,7 @@ const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
 const UPDATE_BASE: &str = "https://update.plan.ai";
 const BIN_NAME: &str = "mac-mgmt";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ENVIRONMENT: &str = env!("ENVIRONMENT");
 
 pub async fn run() -> Result<()> {
     tracing::info!("daemon started, checking for updates every {:?}", UPDATE_INTERVAL);
@@ -31,7 +32,7 @@ fn check_and_update() {
 }
 
 fn fetch_remote_version() -> Result<String> {
-    let url = format!("{UPDATE_BASE}/mac-mgmt.version");
+    let url = format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.version");
     let mut body = Vec::new();
     let mut download = self_update::Download::from_url(&url);
     download.show_progress(false);
@@ -53,7 +54,7 @@ pub fn do_update() -> Result<()> {
 
     tracing::info!("update available: {CURRENT_VERSION} -> {remote_version}");
 
-    let url = format!("{UPDATE_BASE}/mac-mgmt.tar.gz");
+    let url = format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.tar.gz");
     let mut tmp_archive = tempfile::Builder::new()
         .suffix(".tar.gz")
         .tempfile()
