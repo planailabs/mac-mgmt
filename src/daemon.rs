@@ -43,7 +43,7 @@ fn fetch_remote_version() -> Result<String> {
     Ok(version)
 }
 
-fn do_update() -> Result<()> {
+pub fn do_update() -> Result<()> {
     let remote_version = fetch_remote_version()?;
 
     if remote_version == CURRENT_VERSION {

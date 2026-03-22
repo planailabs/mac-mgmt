@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod crash;
 mod daemon;
 mod scripts;
 mod service;
@@ -34,6 +35,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
+    let _sentry = crash::init();
     let cli = Cli::parse();
 
     match cli.command {
