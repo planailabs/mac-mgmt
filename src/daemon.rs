@@ -27,13 +27,13 @@ pub async fn run() -> Result<()> {
     // Start openclaw gateway as a child process
     let mut gateway = spawn_gateway()?;
     let mut openclaw_upgrade_pending = false;
+    let mut skip_health_check = true;
 
     let mut update_interval = time::interval(UPDATE_INTERVAL);
     let mut health_interval = time::interval(HEALTH_INTERVAL);
 
-    // Run immediate checks on startup
+    // Run immediate update check on startup
     check_and_update();
-    check_health();
 
     loop {
         tokio::select! {
@@ -53,6 +53,7 @@ pub async fn run() -> Result<()> {
                         tracing::warn!("openclaw gateway exited with {status}, restarting");
                         gateway = spawn_gateway()?;
                         openclaw_upgrade_pending = false;
+                        skip_health_check = true;
                     }
                     Ok(None) => {} // still running
                     Err(e) => tracing::error!("failed to check gateway status: {e}"),
@@ -64,10 +65,16 @@ pub async fn run() -> Result<()> {
                         tracing::warn!("failed to apply openclaw upgrade: {e}");
                     } else {
                         openclaw_upgrade_pending = false;
+                        skip_health_check = true;
                     }
                 }
 
-                check_health();
+                if skip_health_check {
+                    tracing::info!("skipping health check, openclaw gateway recently started");
+                    skip_health_check = false;
+                } else {
+                    check_health();
+                }
             }
         }
     }
