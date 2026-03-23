@@ -24,7 +24,7 @@ pub fn run(name: &str) -> Result<()> {
 
     tracing::info!("running embedded script '{}' via {}", name, tmp.path().display());
 
-    let status = Command::new("sh")
+    let status = Command::new("bash")
         .arg(tmp.path())
         .status()
         .with_context(|| format!("failed to execute {name}"))?;
