@@ -18,6 +18,7 @@ struct ServiceState {
     child: std::process::Child,
     upgrade_pending: bool,
     skip_health_check: bool,
+    post_start_done: bool,
 }
 
 pub async fn run() -> Result<()> {
@@ -44,6 +45,7 @@ pub async fn run() -> Result<()> {
             child,
             upgrade_pending: false,
             skip_health_check: true,
+            post_start_done: false,
         });
     }
 
@@ -105,7 +107,15 @@ pub async fn run() -> Result<()> {
                         state.skip_health_check = false;
                     } else {
                         match state.service.check_health() {
-                            Ok(true) => tracing::info!("{name} is healthy"),
+                            Ok(true) => {
+                                tracing::info!("{name} is healthy");
+                                if !state.post_start_done {
+                                    if let Err(e) = state.service.post_start() {
+                                        tracing::error!("{name} post_start failed: {e}");
+                                    }
+                                    state.post_start_done = true;
+                                }
+                            }
                             Ok(false) => {
                                 tracing::warn!("{name} is unhealthy, attempting repair");
                                 if let Err(e) = state.service.repair() {

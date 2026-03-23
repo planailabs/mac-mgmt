@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use crate::managed_service::ManagedService;
 
+const MODELS: &[&str] = &["qwen", "glm", "kimi", "minimax"];
+
 pub struct Ollama {
     pub host: String,
     pub port: u16,
@@ -106,6 +108,23 @@ impl ManagedService for Ollama {
     }
 
     fn repair(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn post_start(&self) -> Result<()> {
+        for model in MODELS {
+            tracing::info!("pulling ollama model: {model}");
+            let status = Command::new("ollama")
+                .args(["pull", model])
+                .status()
+                .with_context(|| format!("failed to run ollama pull {model}"))?;
+
+            if status.success() {
+                tracing::info!("ollama model {model} pulled successfully");
+            } else {
+                tracing::warn!("ollama pull {model} exited with {status}");
+            }
+        }
         Ok(())
     }
 

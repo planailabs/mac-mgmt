@@ -24,6 +24,12 @@ pub trait ManagedService {
     /// Returns true if an upgrade was installed and a restart is pending.
     fn check_and_upgrade(&self) -> Result<bool>;
 
+    /// Called once after the service has been spawned and is healthy.
+    /// Use for one-time setup that requires the service to be running.
+    fn post_start(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Check if the service is currently busy (serving requests, running jobs).
     /// Used to defer restarts.
     fn is_busy(&self) -> Result<bool> {
