@@ -1,0 +1,10 @@
+build:
+  tags:
+  - nix
+  script:
+    - nix develop -c bash build.sh
+  stage: build
+  artifacts:
+    paths:
+      - mac-mgmt.tar.gz
+
