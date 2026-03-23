@@ -1,35 +1,34 @@
+#[cfg(target_os = "macos")]
 mod launchd;
+#[cfg(not(target_os = "macos"))]
 mod systemd;
 
 use anyhow::Result;
 
 pub fn install() -> Result<()> {
-    if cfg!(target_os = "macos") {
-        launchd::install()
-    } else {
-        systemd::install()
-    }
+    #[cfg(target_os = "macos")]
+    return launchd::install();
+    #[cfg(not(target_os = "macos"))]
+    return systemd::install();
 }
 
 pub fn uninstall() -> Result<()> {
-    if cfg!(target_os = "macos") {
-        launchd::uninstall()
-    } else {
-        systemd::uninstall()
-    }
+    #[cfg(target_os = "macos")]
+    return launchd::uninstall();
+    #[cfg(not(target_os = "macos"))]
+    return systemd::uninstall();
 }
 
 pub fn restart() -> Result<()> {
-    if cfg!(target_os = "macos") {
-        launchd::restart()
-    } else {
-        systemd::restart()
-    }
+    #[cfg(target_os = "macos")]
+    return launchd::restart();
+    #[cfg(not(target_os = "macos"))]
+    return systemd::restart();
 }
 
 /// Look up a user's home directory from /etc/passwd via `getent passwd`.
 /// Falls back to `/home/{username}` if getent is unavailable.
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "macos"))]
 fn home_dir_for_user(username: &str) -> std::path::PathBuf {
     // Try getent passwd which works with NSS (LDAP, NIS, etc.)
     if let Ok(output) = std::process::Command::new("getent")

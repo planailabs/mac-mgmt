@@ -41,6 +41,8 @@
           buildInputs = [
             toolchain
             pkgs.cargo-edit
+            pkgs.cargo-zigbuild
+            pkgs.zig
           ] ++ darwinDeps;
 
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
