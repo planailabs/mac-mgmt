@@ -16,3 +16,6 @@ target/
 # Nix
 result
 result-*
+
+# Build artifacts
+mac-mgmt.tar.gz
