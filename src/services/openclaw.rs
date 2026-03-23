@@ -1,9 +1,18 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
+use crate::config::OpenClawConfig;
 use crate::managed_service::ManagedService;
 
-pub struct OpenClaw;
+pub struct OpenClaw {
+    config: OpenClawConfig,
+}
+
+impl OpenClaw {
+    pub fn new(config: OpenClawConfig) -> Self {
+        Self { config }
+    }
+}
 
 impl ManagedService for OpenClaw {
     fn name(&self) -> &str {
@@ -23,21 +32,37 @@ impl ManagedService for OpenClaw {
 
     fn ensure_setup(&self) -> Result<()> {
         let home = std::env::var("HOME").context("HOME not set")?;
-        let config = std::path::PathBuf::from(home).join(".openclaw/openclaw.json");
+        let config_path = std::path::PathBuf::from(&home).join(".openclaw/openclaw.json");
 
-        if config.exists() {
-            tracing::info!("openclaw config found at {}", config.display());
-            return Ok(());
+        if !config_path.exists() {
+            tracing::info!("openclaw config not found, running openclaw setup");
+            let status = Command::new("openclaw")
+                .arg("setup")
+                .status()
+                .context("failed to run openclaw setup")?;
+
+            if !status.success() {
+                anyhow::bail!("openclaw setup exited with status {status}");
+            }
+        } else {
+            tracing::info!("openclaw config found at {}", config_path.display());
         }
 
-        tracing::info!("openclaw config not found, running openclaw setup");
-        let status = Command::new("openclaw")
-            .arg("setup")
-            .status()
-            .context("failed to run openclaw setup")?;
+        // Merge extra_config into openclaw.json if configured
+        if let Some(extra) = &self.config.extra_config {
+            tracing::info!("merging extra_config into {}", config_path.display());
+            let contents = std::fs::read_to_string(&config_path)
+                .with_context(|| format!("failed to read {}", config_path.display()))?;
+            let mut existing: serde_json::Value =
+                serde_json::from_str(&contents).context("failed to parse openclaw.json")?;
 
-        if !status.success() {
-            anyhow::bail!("openclaw setup exited with status {status}");
+            merge_json(&mut existing, extra);
+
+            let merged = serde_json::to_string_pretty(&existing)
+                .context("failed to serialize merged config")?;
+            std::fs::write(&config_path, merged)
+                .with_context(|| format!("failed to write {}", config_path.display()))?;
+            tracing::info!("extra_config merged into openclaw.json");
         }
 
         Ok(())
@@ -145,5 +170,20 @@ impl ManagedService for OpenClaw {
         }
 
         Ok(busy)
+    }
+}
+
+/// Recursively merge `source` into `target`. For objects, keys from source
+/// are merged into target. For all other types, source overwrites target.
+fn merge_json(target: &mut serde_json::Value, source: &serde_json::Value) {
+    match (target, source) {
+        (serde_json::Value::Object(target), serde_json::Value::Object(source)) => {
+            for (key, value) in source {
+                merge_json(target.entry(key.clone()).or_insert(serde_json::Value::Null), value);
+            }
+        }
+        (target, source) => {
+            *target = source.clone();
+        }
     }
 }

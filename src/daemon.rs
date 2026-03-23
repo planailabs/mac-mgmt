@@ -3,6 +3,7 @@ use std::io::Write;
 use std::time::Duration;
 use tokio::time;
 
+use crate::config;
 use crate::managed_service::ManagedService;
 use crate::services::{ollama::Ollama, openclaw::OpenClaw};
 
@@ -28,9 +29,11 @@ pub async fn run() -> Result<()> {
         HEALTH_INTERVAL
     );
 
+    let cfg = config::load()?;
+
     let services: Vec<Box<dyn ManagedService>> = vec![
-        Box::new(OpenClaw),
-        Box::new(Ollama::default()),
+        Box::new(OpenClaw::new(cfg.openclaw)),
+        Box::new(Ollama::new(cfg.ollama)),
     ];
 
     let mut states: Vec<ServiceState> = Vec::new();

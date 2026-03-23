@@ -5,33 +5,26 @@ use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::Duration;
 
+use crate::config::OllamaConfig;
 use crate::managed_service::ManagedService;
 
-const MODELS: &[&str] = &["qwen3-coder-next", "glm-5", "kimi-k2.5", "minimax-m2.7"];
-
 pub struct Ollama {
-    pub host: String,
-    pub port: u16,
-}
-
-impl Default for Ollama {
-    fn default() -> Self {
-        Self {
-            host: "127.0.0.1".to_string(),
-            port: 11434,
-        }
-    }
+    config: OllamaConfig,
 }
 
 impl Ollama {
+    pub fn new(config: OllamaConfig) -> Self {
+        Self { config }
+    }
+
     fn base_url(&self) -> String {
-        format!("http://{}:{}", self.host, self.port)
+        format!("http://{}:{}", self.config.host, self.config.port)
     }
 
     /// Send a simple HTTP GET request and return the response body.
     /// Uses raw TCP to avoid adding an HTTP client dependency.
     fn http_get(&self, path: &str) -> Result<String> {
-        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
+        let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
             .parse()
             .context("invalid ollama address")?;
 
@@ -41,7 +34,7 @@ impl Ollama {
 
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
-            self.host, self.port
+            self.config.host, self.config.port
         );
         stream.write_all(request.as_bytes())?;
 
@@ -81,8 +74,11 @@ impl ManagedService for Ollama {
         let mut cmd = Command::new("ollama");
         cmd.arg("serve");
 
-        if self.host != "127.0.0.1" || self.port != 11434 {
-            cmd.env("OLLAMA_HOST", format!("{}:{}", self.host, self.port));
+        if self.config.host != "127.0.0.1" || self.config.port != 11434 {
+            cmd.env(
+                "OLLAMA_HOST",
+                format!("{}:{}", self.config.host, self.config.port),
+            );
         }
 
         let child = cmd.spawn().context("failed to start ollama serve")?;
@@ -112,7 +108,7 @@ impl ManagedService for Ollama {
     }
 
     fn post_start(&self) -> Result<()> {
-        for model in MODELS {
+        for model in &self.config.models {
             tracing::info!("pulling ollama model: {model}");
             let status = Command::new("ollama")
                 .args(["pull", model])
