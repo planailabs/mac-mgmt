@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use std::io::Write;
-use std::process::Command;
 use std::time::Duration;
 use tokio::time;
+
+use crate::managed_service::ManagedService;
+use crate::services::{ollama::Ollama, openclaw::OpenClaw};
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
 const HEALTH_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
@@ -11,6 +13,13 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ENVIRONMENT: &str = env!("ENVIRONMENT");
 const TARGET: &str = env!("TARGET");
 
+struct ServiceState {
+    service: Box<dyn ManagedService>,
+    child: std::process::Child,
+    upgrade_pending: bool,
+    skip_health_check: bool,
+}
+
 pub async fn run() -> Result<()> {
     tracing::info!(
         "daemon started, update interval: {:?}, health interval: {:?}",
@@ -18,16 +27,25 @@ pub async fn run() -> Result<()> {
         HEALTH_INTERVAL
     );
 
-    // Ensure openclaw is installed via nix
-    ensure_openclaw_installed()?;
+    let services: Vec<Box<dyn ManagedService>> = vec![
+        Box::new(OpenClaw),
+        Box::new(Ollama::default()),
+    ];
 
-    // Ensure openclaw is configured
-    ensure_openclaw_setup()?;
-
-    // Start openclaw gateway as a child process
-    let mut gateway = spawn_gateway()?;
-    let mut openclaw_upgrade_pending = false;
-    let mut skip_health_check = true;
+    let mut states: Vec<ServiceState> = Vec::new();
+    for service in services {
+        let name = service.name().to_string();
+        service.ensure_installed()?;
+        service.ensure_setup()?;
+        let child = service.spawn()?;
+        tracing::info!("{name} initialized");
+        states.push(ServiceState {
+            service,
+            child,
+            upgrade_pending: false,
+            skip_health_check: true,
+        });
+    }
 
     let mut update_interval = time::interval(UPDATE_INTERVAL);
     let mut health_interval = time::interval(HEALTH_INTERVAL);
@@ -39,139 +57,68 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             _ = update_interval.tick() => {
                 check_and_update();
-                if !openclaw_upgrade_pending {
-                    match check_and_upgrade_openclaw() {
-                        Ok(upgraded) => openclaw_upgrade_pending = upgraded,
-                        Err(e) => tracing::warn!("openclaw upgrade check failed: {e}"),
+                for state in &mut states {
+                    if !state.upgrade_pending {
+                        let name = state.service.name();
+                        match state.service.check_and_upgrade() {
+                            Ok(upgraded) => state.upgrade_pending = upgraded,
+                            Err(e) => tracing::warn!("{name} upgrade check failed: {e}"),
+                        }
                     }
                 }
             },
             _ = health_interval.tick() => {
-                // Restart gateway if it exited
-                match gateway.try_wait() {
-                    Ok(Some(status)) => {
-                        tracing::warn!("openclaw gateway exited with {status}, restarting");
-                        gateway = spawn_gateway()?;
-                        openclaw_upgrade_pending = false;
-                        skip_health_check = true;
-                    }
-                    Ok(None) => {} // still running
-                    Err(e) => tracing::error!("failed to check gateway status: {e}"),
-                }
+                for state in &mut states {
+                    let name = state.service.name();
 
-                // Apply pending upgrade when openclaw is idle
-                if openclaw_upgrade_pending {
-                    if let Err(e) = apply_openclaw_upgrade(&mut gateway) {
-                        tracing::warn!("failed to apply openclaw upgrade: {e}");
+                    // Restart if exited
+                    match state.child.try_wait() {
+                        Ok(Some(status)) => {
+                            tracing::warn!("{name} exited with {status}, restarting");
+                            state.child = state.service.spawn()?;
+                            state.upgrade_pending = false;
+                            state.skip_health_check = true;
+                        }
+                        Ok(None) => {}
+                        Err(e) => tracing::error!("failed to check {name} status: {e}"),
+                    }
+
+                    // Apply pending upgrade when idle
+                    if state.upgrade_pending {
+                        match state.service.is_busy() {
+                            Ok(false) => {
+                                tracing::info!("{name} is idle, restarting to apply upgrade");
+                                let _ = state.child.kill();
+                                let _ = state.child.wait();
+                                state.child = state.service.spawn()?;
+                                state.upgrade_pending = false;
+                                state.skip_health_check = true;
+                            }
+                            Ok(true) => tracing::info!("{name} is busy, deferring upgrade restart"),
+                            Err(e) => tracing::warn!("{name} busy check failed: {e}"),
+                        }
+                    }
+
+                    // Health check
+                    if state.skip_health_check {
+                        tracing::info!("skipping health check, {name} recently started");
+                        state.skip_health_check = false;
                     } else {
-                        openclaw_upgrade_pending = false;
-                        skip_health_check = true;
+                        match state.service.check_health() {
+                            Ok(true) => tracing::info!("{name} is healthy"),
+                            Ok(false) => {
+                                tracing::warn!("{name} is unhealthy, attempting repair");
+                                if let Err(e) = state.service.repair() {
+                                    tracing::error!("{name} repair failed: {e}");
+                                }
+                            }
+                            Err(e) => tracing::warn!("{name} health check failed: {e}"),
+                        }
                     }
                 }
-
-                if skip_health_check {
-                    tracing::info!("skipping health check, openclaw gateway recently started");
-                    skip_health_check = false;
-                } else {
-                    check_health();
-                }
             }
         }
     }
-}
-
-fn spawn_gateway() -> Result<std::process::Child> {
-    let child = Command::new("openclaw")
-        .arg("gateway")
-        .spawn()
-        .context("failed to start openclaw gateway")?;
-    tracing::info!("openclaw gateway started (pid: {})", child.id());
-    Ok(child)
-}
-
-fn check_health() {
-    tracing::info!("running openclaw health check");
-
-    match crate::health::check() {
-        Ok(true) => tracing::info!("openclaw is healthy"),
-        Ok(false) => {
-            tracing::warn!("openclaw is unhealthy, running doctor --fix");
-            if let Err(e) = crate::health::doctor_fix() {
-                tracing::error!("doctor --fix failed: {e}");
-            }
-        }
-        Err(e) => tracing::warn!("health check failed: {e}"),
-    }
-}
-
-fn ensure_openclaw_installed() -> Result<()> {
-    if crate::nix::is_installed("openclaw")? {
-        tracing::info!("openclaw is already installed");
-        return Ok(());
-    }
-
-    tracing::info!("openclaw not found, installing via nix");
-    crate::nix::profile_install("nixpkgs#openclaw", false)?;
-    Ok(())
-}
-
-fn ensure_openclaw_setup() -> Result<()> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let config = std::path::PathBuf::from(home).join(".openclaw/openclaw.json");
-
-    if config.exists() {
-        tracing::info!("openclaw config found at {}", config.display());
-        return Ok(());
-    }
-
-    tracing::info!("openclaw config not found, running openclaw setup");
-    let status = Command::new("openclaw")
-        .arg("setup")
-        .status()
-        .context("failed to run openclaw setup")?;
-
-    if !status.success() {
-        anyhow::bail!("openclaw setup exited with status {status}");
-    }
-
-    Ok(())
-}
-
-/// Check for and perform nix upgrade. Returns true if an upgrade was installed
-/// and a restart is pending.
-fn check_and_upgrade_openclaw() -> Result<bool> {
-    let upgradable = crate::nix::packages_with_upgrades()?;
-
-    if !upgradable.iter().any(|name| name == "openclaw") {
-        return Ok(false);
-    }
-
-    tracing::info!("upgrading openclaw via nix");
-    crate::nix::profile_install("nixpkgs#openclaw", true)?;
-    tracing::info!("openclaw upgraded, restart pending until idle");
-    Ok(true)
-}
-
-/// Restart the gateway to apply a pending upgrade, but only if openclaw is idle.
-fn apply_openclaw_upgrade(gateway: &mut std::process::Child) -> Result<()> {
-    match crate::health::is_busy() {
-        Ok(true) => {
-            tracing::info!("openclaw is busy, deferring restart for pending upgrade");
-            anyhow::bail!("openclaw is busy");
-        }
-        Err(e) => {
-            tracing::warn!("failed to check if openclaw is busy, deferring restart: {e}");
-            anyhow::bail!("busy check failed");
-        }
-        Ok(false) => {}
-    }
-
-    tracing::info!("openclaw is idle, restarting gateway to apply upgrade");
-    let _ = gateway.kill();
-    let _ = gateway.wait();
-
-    *gateway = spawn_gateway()?;
-    Ok(())
 }
 
 fn check_and_update() {

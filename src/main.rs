@@ -3,10 +3,11 @@ use clap::{Parser, Subcommand};
 
 mod crash;
 mod daemon;
-mod health;
+mod managed_service;
 mod nix;
 mod scripts;
 mod service;
+mod services;
 
 #[derive(Parser)]
 #[command(name = "mac-mgmt", version, about = "Mac management daemon")]
