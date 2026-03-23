@@ -1,12 +1,49 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::io::Read;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::config::OllamaConfig;
 use crate::managed_service::ManagedService;
+
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_port() -> u16 {
+    11434
+}
+
+fn default_models() -> Vec<String> {
+    vec![
+        "qwen3-coder-next".to_string(),
+        "glm-5".to_string(),
+        "kimi-k2.5".to_string(),
+        "minimax-m2.7".to_string(),
+    ]
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OllamaConfig {
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default = "default_models")]
+    pub models: Vec<String>,
+}
+
+impl Default for OllamaConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_port(),
+            models: default_models(),
+        }
+    }
+}
 
 pub struct Ollama {
     config: OllamaConfig,

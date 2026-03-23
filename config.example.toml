@@ -1,0 +1,8 @@
+[openclaw]
+# Extra configuration merged into ~/.openclaw/openclaw.json
+# extra_config = { "key" = "value" }
+
+[ollama]
+host = "127.0.0.1"
+port = 11434
+models = ["qwen3-coder-next", "glm-5", "kimi-k2.5", "minimax-m2.7"]

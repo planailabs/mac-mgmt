@@ -1,8 +1,14 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::process::Command;
 
-use crate::config::OpenClawConfig;
 use crate::managed_service::ManagedService;
+
+#[derive(Debug, Deserialize, Default)]
+pub struct OpenClawConfig {
+    #[serde(default)]
+    pub extra_config: Option<serde_json::Value>,
+}
 
 pub struct OpenClaw {
     config: OpenClawConfig,
