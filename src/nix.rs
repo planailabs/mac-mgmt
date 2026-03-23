@@ -37,31 +37,37 @@ pub fn is_installed(pkg: &str) -> Result<bool> {
     Ok(false)
 }
 
-/// Check if an upgrade is available for a package by dry-running `nix profile upgrade`.
-pub fn has_upgrade(pkg: &str) -> Result<bool> {
-    let name = pkg.rsplit_once('#').map_or(pkg, |(_, name)| name);
-
+/// Check which packages have upgrades available by dry-running `nix profile upgrade`.
+/// Upgrades all installed packages in a single dry-run and returns the names of those
+/// that would be upgraded.
+pub fn packages_with_upgrades() -> Result<Vec<String>> {
     let output = Command::new("nix")
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
-        .args(["profile", "upgrade", "--dry-run", "--impure", name])
+        .args(["profile", "upgrade", "--dry-run", "--impure", "--all"])
         .output()
         .context("failed to run nix profile upgrade --dry-run")?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut upgradable = Vec::new();
 
-    // If the dry-run mentions a new version or any store path changes, an upgrade is available.
-    // A no-op dry-run produces no output.
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let has_changes = !stdout.trim().is_empty() || stderr.contains("upgrading");
-
-    if has_changes {
-        tracing::info!("upgrade available for {name}");
-    } else {
-        tracing::info!("no upgrade available for {name}");
+    // nix profile upgrade --dry-run prints lines like:
+    //   upgrading 'flake:nixpkgs#openclaw' from '...' to '...'
+    for line in stderr.lines() {
+        if let Some(rest) = line.strip_prefix("upgrading '") {
+            if let Some(flake_ref) = rest.split('\'').next() {
+                let name = flake_ref.rsplit_once('#').map_or(flake_ref, |(_, n)| n);
+                tracing::info!("upgrade available for {name}");
+                upgradable.push(name.to_string());
+            }
+        }
     }
 
-    Ok(has_changes)
+    if upgradable.is_empty() {
+        tracing::info!("no upgrades available");
+    }
+
+    Ok(upgradable)
 }
 
 /// Install or upgrade a package via `nix profile`.

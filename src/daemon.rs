@@ -140,7 +140,9 @@ fn ensure_openclaw_setup() -> Result<()> {
 /// Check for and perform nix upgrade. Returns true if an upgrade was installed
 /// and a restart is pending.
 fn check_and_upgrade_openclaw() -> Result<bool> {
-    if !crate::nix::has_upgrade("nixpkgs#openclaw")? {
+    let upgradable = crate::nix::packages_with_upgrades()?;
+
+    if !upgradable.iter().any(|name| name == "openclaw") {
         return Ok(false);
     }
 
