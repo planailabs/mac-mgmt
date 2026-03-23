@@ -40,6 +40,7 @@ fn service_user() -> String {
 fn unit_contents() -> Result<String> {
     let bin = std::env::current_exe().context("cannot determine binary path")?;
     let user = service_user();
+    let home = super::home_dir_for_user(&user);
     Ok(format!(
         r#"[Unit]
 Description={SERVICE_NAME} daemon
@@ -49,6 +50,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User={user}
+Environment=HOME={home}
 ExecStart={bin} daemon
 Restart=always
 RestartSec=5
@@ -56,7 +58,8 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 "#,
-        bin = bin.display()
+        bin = bin.display(),
+        home = home.display()
     ))
 }
 
