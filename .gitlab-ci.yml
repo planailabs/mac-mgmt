@@ -1,10 +1,26 @@
+stages:
+  - build
+  - upload
+
 build:
+  stage: build
   tags:
-  - nix
+    - nix
+  only:
+    - trunk
   script:
     - nix develop -c bash build.sh
-  stage: build
   artifacts:
     paths:
       - mac-mgmt.tar.gz
 
+upload:
+  stage: upload
+  tags:
+    - nix
+  only:
+    - trunk
+  needs:
+    - build
+  script:
+    - nix develop -c bash upload.sh dev
