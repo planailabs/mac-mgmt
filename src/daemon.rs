@@ -26,6 +26,7 @@ pub async fn run() -> Result<()> {
 
     // Start openclaw gateway as a child process
     let mut gateway = spawn_gateway()?;
+    let mut openclaw_upgrade_pending = false;
 
     let mut update_interval = time::interval(UPDATE_INTERVAL);
     let mut health_interval = time::interval(HEALTH_INTERVAL);
@@ -38,8 +39,11 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             _ = update_interval.tick() => {
                 check_and_update();
-                if let Err(e) = upgrade_openclaw(&mut gateway) {
-                    tracing::warn!("openclaw upgrade check failed: {e}");
+                if !openclaw_upgrade_pending {
+                    match check_and_upgrade_openclaw() {
+                        Ok(upgraded) => openclaw_upgrade_pending = upgraded,
+                        Err(e) => tracing::warn!("openclaw upgrade check failed: {e}"),
+                    }
                 }
             },
             _ = health_interval.tick() => {
@@ -48,10 +52,21 @@ pub async fn run() -> Result<()> {
                     Ok(Some(status)) => {
                         tracing::warn!("openclaw gateway exited with {status}, restarting");
                         gateway = spawn_gateway()?;
+                        openclaw_upgrade_pending = false;
                     }
                     Ok(None) => {} // still running
                     Err(e) => tracing::error!("failed to check gateway status: {e}"),
                 }
+
+                // Apply pending upgrade when openclaw is idle
+                if openclaw_upgrade_pending {
+                    if let Err(e) = apply_openclaw_upgrade(&mut gateway) {
+                        tracing::warn!("failed to apply openclaw upgrade: {e}");
+                    } else {
+                        openclaw_upgrade_pending = false;
+                    }
+                }
+
                 check_health();
             }
         }
@@ -115,21 +130,38 @@ fn ensure_openclaw_setup() -> Result<()> {
     Ok(())
 }
 
-fn upgrade_openclaw(gateway: &mut std::process::Child) -> Result<()> {
+/// Check for and perform nix upgrade. Returns true if an upgrade was installed
+/// and a restart is pending.
+fn check_and_upgrade_openclaw() -> Result<bool> {
     if !crate::nix::has_upgrade("nixpkgs#openclaw")? {
-        return Ok(());
+        return Ok(false);
     }
 
-    tracing::info!("upgrading openclaw");
+    tracing::info!("upgrading openclaw via nix");
     crate::nix::profile_install("nixpkgs#openclaw", true)?;
+    tracing::info!("openclaw upgraded, restart pending until idle");
+    Ok(true)
+}
 
-    // Restart the gateway with the new version
-    tracing::info!("stopping openclaw gateway for restart after upgrade");
+/// Restart the gateway to apply a pending upgrade, but only if openclaw is idle.
+fn apply_openclaw_upgrade(gateway: &mut std::process::Child) -> Result<()> {
+    match crate::health::is_busy() {
+        Ok(true) => {
+            tracing::info!("openclaw is busy, deferring restart for pending upgrade");
+            anyhow::bail!("openclaw is busy");
+        }
+        Err(e) => {
+            tracing::warn!("failed to check if openclaw is busy, deferring restart: {e}");
+            anyhow::bail!("busy check failed");
+        }
+        Ok(false) => {}
+    }
+
+    tracing::info!("openclaw is idle, restarting gateway to apply upgrade");
     let _ = gateway.kill();
     let _ = gateway.wait();
 
     *gateway = spawn_gateway()?;
-
     Ok(())
 }
 

@@ -21,7 +21,44 @@ pub fn check() -> Result<bool> {
     tracing::debug!("openclaw health output: {stdout}");
 
     // Any non-zero exit or presence of issues in JSON indicates unhealthy
-        Ok(true)
+    Ok(true)
+}
+
+/// Check if openclaw has active sessions (is currently busy).
+pub fn is_busy() -> Result<bool> {
+    let output = Command::new("openclaw")
+        .args(["sessions", "--active", "1", "--json"])
+        .output()
+        .context("failed to run openclaw sessions")?;
+
+    if !output.status.success() {
+        tracing::warn!(
+            "openclaw sessions exited with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        // Assume busy if we can't check, to be safe
+        return Ok(true);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).context("failed to parse sessions json")?;
+
+    // If the JSON array/object has entries, openclaw is busy
+    let busy = match &json {
+        serde_json::Value::Array(arr) => !arr.is_empty(),
+        serde_json::Value::Object(obj) => !obj.is_empty(),
+        _ => false,
+    };
+
+    if busy {
+        tracing::info!("openclaw is currently busy");
+    } else {
+        tracing::debug!("openclaw is idle");
+    }
+
+    Ok(busy)
 }
 
 /// Run `openclaw doctor --fix` to attempt auto-repair.
