@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::managed_service::ManagedService;
 
-const MODELS: &[&str] = &["qwen", "glm", "kimi", "minimax"];
+const MODELS: &[&str] = &["qwen3-coder-next", "glm-5", "kimi-k2.5", "minimax-m2.7"];
 
 pub struct Ollama {
     pub host: String,

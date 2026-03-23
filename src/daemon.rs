@@ -7,7 +7,7 @@ use crate::managed_service::ManagedService;
 use crate::services::{ollama::Ollama, openclaw::OpenClaw};
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
-const HEALTH_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
+const HEALTH_INTERVAL: Duration = Duration::from_secs(60); // 1 minute
 const UPDATE_BASE: &str = "https://update.plan.ai";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ENVIRONMENT: &str = env!("ENVIRONMENT");
@@ -80,6 +80,7 @@ pub async fn run() -> Result<()> {
                             state.child = state.service.spawn()?;
                             state.upgrade_pending = false;
                             state.skip_health_check = true;
+                            state.post_start_done = false;
                         }
                         Ok(None) => {}
                         Err(e) => tracing::error!("failed to check {name} status: {e}"),
@@ -95,6 +96,7 @@ pub async fn run() -> Result<()> {
                                 state.child = state.service.spawn()?;
                                 state.upgrade_pending = false;
                                 state.skip_health_check = true;
+                                state.post_start_done = false;
                             }
                             Ok(true) => tracing::info!("{name} is busy, deferring upgrade restart"),
                             Err(e) => tracing::warn!("{name} busy check failed: {e}"),
