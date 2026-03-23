@@ -34,6 +34,12 @@ enum Commands {
     Restart,
     /// Run the daemon (called by launchd)
     Daemon,
+    /// Check for updates and apply if available
+    Update {
+        /// Force update even if already on the latest version
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[tokio::main]
@@ -57,6 +63,7 @@ async fn main() -> Result<()> {
         Commands::Uninstall => service::uninstall()?,
         Commands::Restart => service::restart()?,
         Commands::Daemon => daemon::run().await?,
+        Commands::Update { force } => daemon::do_update(force)?,
     }
 
     Ok(())

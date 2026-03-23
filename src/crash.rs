@@ -23,7 +23,7 @@ pub fn init() -> sentry::ClientInitGuard {
         tracing::error!("daemon panicked, attempting self-update before exit");
 
         // Try to self-update so the next launch gets a (hopefully fixed) binary
-        if let Err(e) = crate::daemon::do_update() {
+        if let Err(e) = crate::daemon::do_update(false) {
             tracing::error!("self-update after panic failed: {e}");
         } else {
             tracing::info!("self-update after panic succeeded");

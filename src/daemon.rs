@@ -168,7 +168,7 @@ fn apply_openclaw_upgrade(gateway: &mut std::process::Child) -> Result<()> {
 fn check_and_update() {
     tracing::info!("checking for updates (current: {CURRENT_VERSION})");
 
-    if let Err(e) = do_update() {
+    if let Err(e) = do_update(false) {
         tracing::warn!("update failed: {e}");
     }
 }
@@ -186,10 +186,10 @@ fn fetch_remote_version() -> Result<String> {
     Ok(version)
 }
 
-pub fn do_update() -> Result<()> {
+pub fn do_update(force: bool) -> Result<()> {
     let remote_version = fetch_remote_version()?;
 
-    if remote_version == CURRENT_VERSION {
+    if !force && remote_version == CURRENT_VERSION {
         tracing::info!("already up to date ({CURRENT_VERSION})");
         return Ok(());
     }

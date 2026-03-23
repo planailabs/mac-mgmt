@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+
+set -euo pipefail
 
 DEST="${1:?Usage: upload.sh <remote-folder>}"
 

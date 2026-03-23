@@ -43,6 +43,7 @@
             pkgs.cargo-edit
             pkgs.cargo-zigbuild
             pkgs.zig
+            pkgs.rsync
           ] ++ darwinDeps;
 
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
