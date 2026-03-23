@@ -48,7 +48,9 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
         .arg("profile");
 
     if upgrade {
-        cmd.args(["upgrade", pkg]);
+        // nix profile upgrade uses the installed element name (part after #)
+        let name = pkg.rsplit_once('#').map_or(pkg, |(_, name)| name);
+        cmd.args(["upgrade", name]);
     } else {
         cmd.args(["install", pkg]);
     }
