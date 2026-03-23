@@ -51,7 +51,7 @@ Wants=network-online.target
 Type=simple
 User={user}
 Environment=HOME={home}
-ExecStart={bin} daemon
+ExecStart=/bin/bash -lc '{bin} daemon'
 Restart=always
 RestartSec=5
 
