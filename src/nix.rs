@@ -85,7 +85,7 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
         let name = pkg.rsplit_once('#').map_or(pkg, |(_, name)| name);
         cmd.args(["upgrade", name]);
     } else {
-        cmd.args(["install", pkg]);
+        cmd.args(["add", pkg]);
     }
 
     // --impure is needed when NIXPKGS_ALLOW_UNFREE is set
