@@ -944,6 +944,7 @@ dependencies = [
  "self-replace",
  "self_update",
  "sentry",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

@@ -18,6 +18,9 @@ pub async fn run() -> Result<()> {
         HEALTH_INTERVAL
     );
 
+    // Ensure openclaw is installed via nix
+    ensure_openclaw_installed()?;
+
     // Ensure openclaw is configured
     ensure_openclaw_setup()?;
 
@@ -71,6 +74,17 @@ fn check_health() {
         }
         Err(e) => tracing::warn!("health check failed: {e}"),
     }
+}
+
+fn ensure_openclaw_installed() -> Result<()> {
+    if crate::nix::is_installed("openclaw")? {
+        tracing::info!("openclaw is already installed");
+        return Ok(());
+    }
+
+    tracing::info!("openclaw not found, installing via nix");
+    crate::nix::profile_install("nixpkgs#openclaw", false)?;
+    Ok(())
 }
 
 fn ensure_openclaw_setup() -> Result<()> {

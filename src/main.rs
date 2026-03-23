@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 mod crash;
 mod daemon;
 mod health;
+mod nix;
 mod scripts;
 mod service;
 
