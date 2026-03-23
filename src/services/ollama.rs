@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use std::io::Read;
+use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::Duration;
@@ -15,6 +17,40 @@ impl Default for Ollama {
         Self {
             host: "127.0.0.1".to_string(),
             port: 11434,
+        }
+    }
+}
+
+impl Ollama {
+    fn base_url(&self) -> String {
+        format!("http://{}:{}", self.host, self.port)
+    }
+
+    /// Send a simple HTTP GET request and return the response body.
+    /// Uses raw TCP to avoid adding an HTTP client dependency.
+    fn http_get(&self, path: &str) -> Result<String> {
+        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
+            .parse()
+            .context("invalid ollama address")?;
+
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+            .context("failed to connect to ollama")?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
+            self.host, self.port
+        );
+        stream.write_all(request.as_bytes())?;
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+
+        // Split headers from body
+        if let Some(body) = response.split_once("\r\n\r\n").map(|(_, b)| b) {
+            Ok(body.to_string())
+        } else {
+            Ok(response)
         }
     }
 }
@@ -53,17 +89,17 @@ impl ManagedService for Ollama {
     }
 
     fn check_health(&self) -> Result<bool> {
-        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
-            .parse()
-            .context("invalid ollama address")?;
-
-        match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
-            Ok(_) => {
-                tracing::debug!("ollama is reachable at {addr}");
+        match self.http_get("/") {
+            Ok(body) if body.contains("Ollama is running") => {
+                tracing::debug!("ollama is healthy at {}", self.base_url());
                 Ok(true)
             }
+            Ok(body) => {
+                tracing::warn!("ollama unexpected response: {body}");
+                Ok(false)
+            }
             Err(e) => {
-                tracing::warn!("ollama is not reachable at {addr}: {e}");
+                tracing::warn!("ollama health check failed at {}: {e}", self.base_url());
                 Ok(false)
             }
         }
@@ -84,5 +120,24 @@ impl ManagedService for Ollama {
         crate::nix::profile_install("nixpkgs#ollama", true)?;
         tracing::info!("ollama upgraded, restart pending");
         Ok(true)
+    }
+
+    fn is_busy(&self) -> Result<bool> {
+        let body = self.http_get("/api/ps")?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).context("failed to parse ollama /api/ps")?;
+
+        let busy = json
+            .get("models")
+            .and_then(|m| m.as_array())
+            .is_some_and(|models| !models.is_empty());
+
+        if busy {
+            tracing::info!("ollama has models loaded");
+        } else {
+            tracing::debug!("ollama is idle");
+        }
+
+        Ok(busy)
     }
 }
