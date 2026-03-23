@@ -25,11 +25,7 @@ pub async fn run() -> Result<()> {
     ensure_openclaw_setup()?;
 
     // Start openclaw gateway as a child process
-    let mut gateway = Command::new("openclaw")
-        .arg("gateway")
-        .spawn()
-        .context("failed to start openclaw gateway")?;
-    tracing::info!("openclaw gateway started (pid: {})", gateway.id());
+    let mut gateway = spawn_gateway()?;
 
     let mut update_interval = time::interval(UPDATE_INTERVAL);
     let mut health_interval = time::interval(HEALTH_INTERVAL);
@@ -40,17 +36,18 @@ pub async fn run() -> Result<()> {
 
     loop {
         tokio::select! {
-            _ = update_interval.tick() => check_and_update(),
+            _ = update_interval.tick() => {
+                check_and_update();
+                if let Err(e) = upgrade_openclaw(&mut gateway) {
+                    tracing::warn!("openclaw upgrade check failed: {e}");
+                }
+            },
             _ = health_interval.tick() => {
                 // Restart gateway if it exited
                 match gateway.try_wait() {
                     Ok(Some(status)) => {
                         tracing::warn!("openclaw gateway exited with {status}, restarting");
-                        gateway = Command::new("openclaw")
-                            .arg("gateway")
-                            .spawn()
-                            .context("failed to restart openclaw gateway")?;
-                        tracing::info!("openclaw gateway restarted (pid: {})", gateway.id());
+                        gateway = spawn_gateway()?;
                     }
                     Ok(None) => {} // still running
                     Err(e) => tracing::error!("failed to check gateway status: {e}"),
@@ -59,6 +56,15 @@ pub async fn run() -> Result<()> {
             }
         }
     }
+}
+
+fn spawn_gateway() -> Result<std::process::Child> {
+    let child = Command::new("openclaw")
+        .arg("gateway")
+        .spawn()
+        .context("failed to start openclaw gateway")?;
+    tracing::info!("openclaw gateway started (pid: {})", child.id());
+    Ok(child)
 }
 
 fn check_health() {
@@ -105,6 +111,24 @@ fn ensure_openclaw_setup() -> Result<()> {
     if !status.success() {
         anyhow::bail!("openclaw setup exited with status {status}");
     }
+
+    Ok(())
+}
+
+fn upgrade_openclaw(gateway: &mut std::process::Child) -> Result<()> {
+    if !crate::nix::has_upgrade("nixpkgs#openclaw")? {
+        return Ok(());
+    }
+
+    tracing::info!("upgrading openclaw");
+    crate::nix::profile_install("nixpkgs#openclaw", true)?;
+
+    // Restart the gateway with the new version
+    tracing::info!("stopping openclaw gateway for restart after upgrade");
+    let _ = gateway.kill();
+    let _ = gateway.wait();
+
+    *gateway = spawn_gateway()?;
 
     Ok(())
 }
