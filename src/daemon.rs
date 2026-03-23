@@ -7,9 +7,9 @@ use tokio::time;
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
 const HEALTH_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 const UPDATE_BASE: &str = "https://update.plan.ai";
-const BIN_NAME: &str = "mac-mgmt";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ENVIRONMENT: &str = env!("ENVIRONMENT");
+const TARGET: &str = env!("TARGET");
 
 pub async fn run() -> Result<()> {
     tracing::info!(
@@ -219,9 +219,10 @@ pub fn do_update() -> Result<()> {
         )))
         .extract_into(tmp_dir.path())?;
 
-    let new_bin = tmp_dir.path().join(BIN_NAME);
+    let bin_name = format!("mac-mgmt-{TARGET}");
+    let new_bin = tmp_dir.path().join(&bin_name);
     if !new_bin.exists() {
-        anyhow::bail!("binary '{BIN_NAME}' not found in archive");
+        anyhow::bail!("binary '{bin_name}' not found in archive");
     }
 
     // Replace the running binary
