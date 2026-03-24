@@ -168,16 +168,16 @@ impl ManagedService for Ollama {
         }
 
         let model = &self.config.default_model;
-        tracing::info!("launching openclaw with model {model}");
-        let status = Command::new("openclaw")
-            .args(["launch", "--yes", "--config", "--model", model])
+        tracing::info!("configuring ollama launch with model {model}");
+        let status = Command::new("ollama")
+            .args(["launch", "--yes", "--config", "--model", model, "openclaw"])
             .status()
-            .with_context(|| format!("failed to run openclaw launch --model {model}"))?;
+            .with_context(|| format!("failed to run ollama launch --model {model}"))?;
 
         if status.success() {
-            tracing::info!("openclaw launch completed successfully");
+            tracing::info!("ollama launch config completed successfully");
         } else {
-            tracing::warn!("openclaw launch exited with {status}");
+            tracing::warn!("ollama launch exited with {status}");
         }
 
         Ok(())
