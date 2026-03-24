@@ -14,7 +14,7 @@ build:
     paths:
       - mac-mgmt.tar.gz
 
-upload:
+upload_dev:
   stage: upload
   tags:
     - nix
@@ -24,3 +24,14 @@ upload:
     - build
   script:
     - nix develop -c bash upload.sh dev
+
+upload_prod:
+  stage: upload
+  tags:
+    - nix
+  only:
+    - prod
+  needs:
+    - build
+  script:
+    - nix develop -c bash upload.sh prod

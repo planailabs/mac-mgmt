@@ -96,19 +96,7 @@ Upgrades are checked by building a temporary nix profile copy and comparing stor
 
 Config file: `~/.config/mac-mgmt/config.toml`
 
-If the file doesn't exist, all defaults are used. See [`config.example.toml`](config.example.toml):
-
-```toml
-[openclaw]
-provider = "ollama"
-# extra_config = { "key" = "value" }
-
-[ollama]
-host = "127.0.0.1"
-port = 11434
-models = ["qwen3.5", "qwen3-coder-next", "glm-5", "kimi-k2.5", "minimax-m2.7"]
-default_model = "qwen3.5"
-```
+If the file doesn't exist, all defaults are used. See [`config.example.toml`](config.example.toml)
 
 ### OpenClaw options
 
@@ -181,10 +169,6 @@ bash build.sh
 ### Deployment
 
 ```bash
-# Build and upload to update server (dev channel)
-bash build.sh
-bash upload.sh dev
-
 # Quick test on remote server
 bash test.sh [args]
 ```
