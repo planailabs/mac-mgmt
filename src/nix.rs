@@ -39,26 +39,25 @@ pub fn is_installed(pkg: &str) -> Result<bool> {
     Ok(false)
 }
 
-/// Check which packages have upgrades available via `nix profile upgrade --option dry-run true`.
-/// Returns the names of packages that would be upgraded.
-pub fn packages_with_upgrades() -> Result<Vec<String>> {
+/// Check which packages have upgrades available via `nix profile upgrade --dry-run`.
+/// TODO: use this once nix implements --dry-run (https://github.com/NixOS/nix/issues/7227)
+#[allow(dead_code)]
+fn packages_with_upgrades_dry_run() -> Result<Vec<String>> {
     let output = Command::new("nix")
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
-        .args(["profile", "upgrade", "--option", "dry-run", "true", "--impure", "--all"])
+        .args(["profile", "upgrade", "--dry-run", "--impure", "--all"])
         .output()
-        .context("failed to run nix profile upgrade (dry-run)")?;
+        .context("failed to run nix profile upgrade --dry-run")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("nix profile upgrade (dry-run) failed: {}", stderr.trim());
+        anyhow::bail!("nix profile upgrade --dry-run failed: {}", stderr.trim());
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut upgradable = Vec::new();
 
-    // nix profile upgrade --dry-run prints lines like:
-    //   upgrading 'flake:nixpkgs#openclaw' from '...' to '...'
     for line in stderr.lines() {
         if let Some(rest) = line.strip_prefix("upgrading '") {
             if let Some(flake_ref) = rest.split('\'').next() {
@@ -73,6 +72,103 @@ pub fn packages_with_upgrades() -> Result<Vec<String>> {
         tracing::info!("no upgrades available");
     }
 
+    Ok(upgradable)
+}
+
+/// Get store paths for each element in a profile.
+fn profile_store_paths(profile: Option<&str>) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    let mut cmd = Command::new("nix");
+    cmd.args(["profile", "list", "--json"]);
+    if let Some(p) = profile {
+        cmd.args(["--profile", p]);
+    }
+    let output = cmd.output().context("failed to run nix profile list")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "nix profile list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
+
+    let mut result = std::collections::HashMap::new();
+    if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
+        for (name, element) in elements {
+            let paths: Vec<String> = element
+                .get("storePaths")
+                .and_then(|p| p.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            result.insert(name.clone(), paths);
+        }
+    }
+
+    Ok(result)
+}
+
+/// Check which packages have upgrades available by upgrading a temporary
+/// profile copy and comparing store paths against the current profile.
+pub fn packages_with_upgrades() -> Result<Vec<String>> {
+    let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
+    let tmp_profile = tmp_dir.path().join("profile");
+
+    // Get current profile path
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let current_profile = format!("{home}/.nix-profile");
+
+    // Copy current profile to temp
+    let status = Command::new("nix")
+        .args(["profile", "list", "--profile", &current_profile])
+        .status()
+        .context("failed to verify current profile")?;
+    if !status.success() {
+        anyhow::bail!("current profile not accessible");
+    }
+
+    // Copy profile by creating a symlink to the same generation
+    let real_profile = std::fs::read_link(&current_profile)
+        .with_context(|| format!("failed to read profile link {current_profile}"))?;
+    std::os::unix::fs::symlink(&real_profile, &tmp_profile)
+        .context("failed to symlink temp profile")?;
+
+    let before = profile_store_paths(Some(tmp_profile.to_str().unwrap()))?;
+
+    // Upgrade the temp profile
+    let output = Command::new("nix")
+        .env("NIXPKGS_ALLOW_UNFREE", "1")
+        .env("NIXPKGS_ALLOW_INSECURE", "1")
+        .args([
+            "profile", "upgrade", "--all", "--impure",
+            "--profile", tmp_profile.to_str().unwrap(),
+        ])
+        .output()
+        .context("failed to run nix profile upgrade on temp profile")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("nix profile upgrade (temp) failed: {}", stderr.trim());
+    }
+
+    let after = profile_store_paths(Some(tmp_profile.to_str().unwrap()))?;
+
+    // Compare store paths to find what changed
+    let mut upgradable = Vec::new();
+    for (name, after_paths) in &after {
+        if let Some(before_paths) = before.get(name) {
+            if before_paths != after_paths {
+                tracing::info!("upgrade available for {name}");
+                upgradable.push(name.clone());
+            }
+        }
+    }
+
+    if upgradable.is_empty() {
+        tracing::info!("no upgrades available");
+    }
+
+    // tmp_dir cleanup is automatic via Drop
     Ok(upgradable)
 }
 
