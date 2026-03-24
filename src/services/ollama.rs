@@ -25,6 +25,10 @@ fn default_models() -> Vec<String> {
     ]
 }
 
+fn default_model() -> String {
+    "qwen3.5".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct OllamaConfig {
     #[serde(default = "default_host")]
@@ -33,6 +37,8 @@ pub struct OllamaConfig {
     pub port: u16,
     #[serde(default = "default_models")]
     pub models: Vec<String>,
+    #[serde(default = "default_model")]
+    pub default_model: String,
 }
 
 impl Default for OllamaConfig {
@@ -41,6 +47,7 @@ impl Default for OllamaConfig {
             host: default_host(),
             port: default_port(),
             models: default_models(),
+            default_model: default_model(),
         }
     }
 }
@@ -158,6 +165,20 @@ impl ManagedService for Ollama {
                 tracing::warn!("ollama pull {model} exited with {status}");
             }
         }
+
+        let model = &self.config.default_model;
+        tracing::info!("launching openclaw with model {model}");
+        let status = Command::new("openclaw")
+            .args(["launch", "--yes", "--config", "--model", model])
+            .status()
+            .with_context(|| format!("failed to run openclaw launch --model {model}"))?;
+
+        if status.success() {
+            tracing::info!("openclaw launch completed successfully");
+        } else {
+            tracing::warn!("openclaw launch exited with {status}");
+        }
+
         Ok(())
     }
 

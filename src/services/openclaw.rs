@@ -4,10 +4,25 @@ use std::process::Command;
 
 use crate::managed_service::ManagedService;
 
-#[derive(Debug, Deserialize, Default)]
+fn default_provider() -> String {
+    "ollama".to_string()
+}
+
+#[derive(Debug, Deserialize)]
 pub struct OpenClawConfig {
+    #[serde(default = "default_provider")]
+    pub provider: String,
     #[serde(default)]
     pub extra_config: Option<serde_json::Value>,
+}
+
+impl Default for OpenClawConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_provider(),
+            extra_config: None,
+        }
+    }
 }
 
 pub struct OpenClaw {
