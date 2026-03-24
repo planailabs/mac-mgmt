@@ -229,6 +229,52 @@ pub fn packages_with_upgrades() -> Result<Vec<String>> {
     }
 }
 
+/// Remove a package from the nix profile by element name.
+pub fn profile_remove(pkg: &str) -> Result<()> {
+    tracing::info!("removing nix profile element {pkg}");
+
+    let status = Command::new("nix")
+        .args(["profile", "remove", pkg])
+        .status()
+        .with_context(|| format!("failed to run nix profile remove {pkg}"))?;
+
+    if !status.success() {
+        sentry_ext::capture_cmd_failure(&format!("nix profile remove {pkg}"), status.code(), "");
+        anyhow::bail!("nix profile remove {pkg} failed");
+    }
+
+    tracing::info!("nix profile remove {pkg} succeeded");
+    sentry_ext::breadcrumb("nix", &format!("nix profile remove {pkg} succeeded"), &[("package", pkg)]);
+    Ok(())
+}
+
+/// List installed element names from `nix profile list --json`.
+pub fn installed_elements() -> Result<Vec<String>> {
+    let output = Command::new("nix")
+        .args(["profile", "list", "--json"])
+        .output()
+        .context("failed to run nix profile list")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "nix profile list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
+
+    let mut names = Vec::new();
+    if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
+        for (name, _) in elements {
+            names.push(name.clone());
+        }
+    }
+
+    Ok(names)
+}
+
 /// Install or upgrade a package via `nix profile`.
 pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
     let flake_ref = format!("{NIX_SOURCE}#{pkg}");

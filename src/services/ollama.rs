@@ -31,6 +31,12 @@ fn default_model() -> String {
     "qwen3.5".to_string()
 }
 
+fn default_flavour() -> String {
+    "cpu".to_string()
+}
+
+const ALL_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
+
 #[derive(Debug, Deserialize)]
 pub struct OllamaConfig {
     #[serde(default = "default_host")]
@@ -41,6 +47,8 @@ pub struct OllamaConfig {
     pub models: Vec<String>,
     #[serde(default = "default_model")]
     pub default_model: String,
+    #[serde(default = "default_flavour")]
+    pub flavour: String,
 }
 
 impl Default for OllamaConfig {
@@ -50,8 +58,28 @@ impl Default for OllamaConfig {
             port: default_port(),
             models: default_models(),
             default_model: default_model(),
+            flavour: default_flavour(),
         }
     }
+}
+
+/// Returns the nix package name for a given flavour.
+/// "cpu" maps to "ollama", others map to "ollama-{flavour}".
+fn pkg_for_flavour(flavour: &str) -> String {
+    if flavour == "cpu" {
+        "ollama".to_string()
+    } else {
+        format!("ollama-{flavour}")
+    }
+}
+
+/// Returns all ollama package names for flavours other than the given one.
+fn other_flavour_pkgs(flavour: &str) -> Vec<String> {
+    ALL_FLAVOURS
+        .iter()
+        .filter(|&&f| f != flavour)
+        .map(|f| pkg_for_flavour(f))
+        .collect()
 }
 
 pub struct Ollama {
@@ -102,14 +130,32 @@ impl ManagedService for Ollama {
     }
 
     fn ensure_installed(&self) -> Result<()> {
-        if crate::nix::is_installed("ollama")? {
-            tracing::info!("ollama is already installed");
+        let pkg = pkg_for_flavour(&self.config.flavour);
+
+        // Remove other ollama flavours if installed
+        let installed = crate::nix::installed_elements()?;
+        for wrong_pkg in other_flavour_pkgs(&self.config.flavour) {
+            if installed.iter().any(|name| name == &wrong_pkg) {
+                tracing::info!("removing wrong ollama flavour: {wrong_pkg}");
+                sentry_ext::breadcrumb("install", &format!("removing wrong flavour {wrong_pkg}"), &[
+                    ("service", "ollama"),
+                    ("package", &wrong_pkg),
+                ]);
+                crate::nix::profile_remove(&wrong_pkg)?;
+            }
+        }
+
+        if crate::nix::is_installed(&pkg)? {
+            tracing::info!("{pkg} is already installed");
             return Ok(());
         }
 
-        tracing::info!("ollama not found, installing via nix");
-        sentry_ext::breadcrumb("install", "installing ollama via nix", &[("service", "ollama")]);
-        crate::nix::profile_install("ollama", false)?;
+        tracing::info!("{pkg} not found, installing via nix");
+        sentry_ext::breadcrumb("install", &format!("installing {pkg} via nix"), &[
+            ("service", "ollama"),
+            ("package", &pkg),
+        ]);
+        crate::nix::profile_install(&pkg, false)?;
         Ok(())
     }
 
@@ -210,16 +256,20 @@ impl ManagedService for Ollama {
     }
 
     fn check_and_upgrade(&self) -> Result<bool> {
+        let pkg = pkg_for_flavour(&self.config.flavour);
         let upgradable = crate::nix::packages_with_upgrades()?;
 
-        if !upgradable.iter().any(|name| name == "ollama") {
+        if !upgradable.iter().any(|name| name == &pkg) {
             return Ok(false);
         }
 
-        tracing::info!("upgrading ollama via nix");
-        sentry_ext::breadcrumb("upgrade", "upgrading ollama via nix", &[("service", "ollama")]);
-        crate::nix::profile_install("ollama", true)?;
-        tracing::info!("ollama upgraded, restart pending");
+        tracing::info!("upgrading {pkg} via nix");
+        sentry_ext::breadcrumb("upgrade", &format!("upgrading {pkg} via nix"), &[
+            ("service", "ollama"),
+            ("package", &pkg),
+        ]);
+        crate::nix::profile_install(&pkg, true)?;
+        tracing::info!("{pkg} upgraded, restart pending");
         Ok(true)
     }
 
