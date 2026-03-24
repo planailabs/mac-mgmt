@@ -1,9 +1,13 @@
 use anyhow::{Context, Result};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use crate::sentry_ext;
 
 const NIX_SOURCE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
+
+/// Cached result of whether `nix profile upgrade --dry-run` is supported.
+static DRY_RUN_SUPPORTED: OnceLock<bool> = OnceLock::new();
 
 /// Check if a package is installed via `nix profile list --json`.
 pub fn is_installed(pkg: &str) -> Result<bool> {
@@ -41,9 +45,42 @@ pub fn is_installed(pkg: &str) -> Result<bool> {
     Ok(false)
 }
 
+/// Detect if `nix profile upgrade --dry-run` is supported by running it with
+/// a non-existent element. If the error is about the unknown flag, dry-run is
+/// not supported. Any other error (e.g. element not found) means the flag was
+/// accepted.
+/// See: https://github.com/NixOS/nix/pull/15545
+fn has_dry_run_support() -> bool {
+    *DRY_RUN_SUPPORTED.get_or_init(|| {
+        let output = Command::new("nix")
+            .args(["profile", "upgrade", "--dry-run", "__nonexistent_probe__"])
+            .output();
+
+        match output {
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                // If nix doesn't recognize --dry-run, the error message will mention
+                // the unrecognized flag. Otherwise the error will be about the element.
+                let unsupported = stderr.contains("unrecognised flag")
+                    || stderr.contains("unrecognized flag")
+                    || stderr.contains("unknown flag");
+                if unsupported {
+                    tracing::info!("nix profile upgrade --dry-run is NOT supported");
+                } else {
+                    tracing::info!("nix profile upgrade --dry-run is supported");
+                }
+                !unsupported
+            }
+            Err(_) => {
+                tracing::warn!("failed to probe for --dry-run support, assuming unsupported");
+                false
+            }
+        }
+    })
+}
+
 /// Check which packages have upgrades available via `nix profile upgrade --dry-run`.
-/// TODO: use this once nix implements --dry-run (https://github.com/NixOS/nix/issues/7227)
-#[allow(dead_code)]
+/// Requires nix with https://github.com/NixOS/nix/pull/15545
 fn packages_with_upgrades_dry_run() -> Result<Vec<String>> {
     let output = Command::new("nix")
         .env("NIXPKGS_ALLOW_UNFREE", "1")
@@ -112,7 +149,8 @@ fn profile_store_paths(profile: Option<&str>) -> Result<std::collections::HashMa
 
 /// Check which packages have upgrades available by upgrading a temporary
 /// profile copy and comparing store paths against the current profile.
-pub fn packages_with_upgrades() -> Result<Vec<String>> {
+/// Fallback for nix versions without --dry-run support.
+fn packages_with_upgrades_temp_profile() -> Result<Vec<String>> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let tmp_profile = tmp_dir.path().join("profile");
 
@@ -177,6 +215,18 @@ pub fn packages_with_upgrades() -> Result<Vec<String>> {
 
     // tmp_dir cleanup is automatic via Drop
     Ok(upgradable)
+}
+
+/// Check which packages have upgrades available.
+/// Uses --dry-run if supported, otherwise falls back to temp profile comparison.
+pub fn packages_with_upgrades() -> Result<Vec<String>> {
+    if has_dry_run_support() {
+        tracing::debug!("using --dry-run for upgrade check");
+        packages_with_upgrades_dry_run()
+    } else {
+        tracing::debug!("using temp profile for upgrade check");
+        packages_with_upgrades_temp_profile()
+    }
 }
 
 /// Install or upgrade a package via `nix profile`.
