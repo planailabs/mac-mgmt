@@ -5,6 +5,7 @@ use tokio::time;
 
 use crate::config;
 use crate::managed_service::ManagedService;
+use crate::sentry_ext;
 use crate::services::{ollama::Ollama, openclaw::OpenClaw};
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
@@ -29,6 +30,14 @@ pub async fn run() -> Result<()> {
         HEALTH_INTERVAL
     );
 
+    sentry_ext::set_tag("environment", ENVIRONMENT);
+    sentry_ext::set_tag("target", TARGET);
+    sentry_ext::breadcrumb("daemon", "daemon started", &[
+        ("version", CURRENT_VERSION),
+        ("environment", ENVIRONMENT),
+        ("target", TARGET),
+    ]);
+
     let cfg = config::load()?;
 
     let services: Vec<Box<dyn ManagedService>> = vec![
@@ -42,7 +51,10 @@ pub async fn run() -> Result<()> {
         service.ensure_installed()?;
         service.ensure_setup()?;
         let child = service.spawn()?;
-        tracing::info!("{name} initialized");
+        sentry_ext::breadcrumb("service", &format!("{name} initialized"), &[
+            ("service", &name),
+            ("pid", &child.id().to_string()),
+        ]);
         states.push(ServiceState {
             service,
             child,
@@ -65,9 +77,20 @@ pub async fn run() -> Result<()> {
                 for state in &mut states {
                     if !state.upgrade_pending {
                         let name = state.service.name();
+                        sentry_ext::set_tag("service", name);
                         match state.service.check_and_upgrade() {
-                            Ok(upgraded) => state.upgrade_pending = upgraded,
-                            Err(e) => tracing::warn!("{name} upgrade check failed: {e}"),
+                            Ok(true) => {
+                                state.upgrade_pending = true;
+                                sentry_ext::breadcrumb("upgrade", &format!("{name} upgrade pending"), &[("service", name)]);
+                            }
+                            Ok(false) => {}
+                            Err(e) => {
+                                tracing::warn!("{name} upgrade check failed: {e}");
+                                sentry_ext::capture_error(
+                                    &format!("{name} upgrade check failed: {e}"),
+                                    &[("service", name)],
+                                );
+                            }
                         }
                     }
                 }
@@ -75,11 +98,17 @@ pub async fn run() -> Result<()> {
             _ = health_interval.tick() => {
                 for state in &mut states {
                     let name = state.service.name();
+                    sentry_ext::set_tag("service", name);
 
                     // Restart if exited
                     match state.child.try_wait() {
                         Ok(Some(status)) => {
                             tracing::warn!("{name} exited with {status}, restarting");
+                            let code = status.code().map(|c| c.to_string()).unwrap_or("signal".to_string());
+                            sentry_ext::capture_error(
+                                &format!("{name} process exited unexpectedly"),
+                                &[("service", name), ("exit_code", &code)],
+                            );
                             state.child = state.service.spawn()?;
                             state.upgrade_pending = false;
                             state.skip_health_check = true;
@@ -100,6 +129,7 @@ pub async fn run() -> Result<()> {
                                 state.upgrade_pending = false;
                                 state.skip_health_check = true;
                                 state.post_start_done = false;
+                                sentry_ext::breadcrumb("upgrade", &format!("{name} restarted for upgrade"), &[("service", name)]);
                             }
                             Ok(true) => tracing::info!("{name} is busy, deferring upgrade restart"),
                             Err(e) => tracing::warn!("{name} busy check failed: {e}"),
@@ -117,14 +147,23 @@ pub async fn run() -> Result<()> {
                                 if !state.post_start_done {
                                     if let Err(e) = state.service.post_start() {
                                         tracing::error!("{name} post_start failed: {e}");
+                                        sentry_ext::capture_error(
+                                            &format!("{name} post_start failed: {e}"),
+                                            &[("service", name)],
+                                        );
                                     }
                                     state.post_start_done = true;
                                 }
                             }
                             Ok(false) => {
                                 tracing::warn!("{name} is unhealthy, attempting repair");
+                                sentry_ext::breadcrumb("health", &format!("{name} unhealthy, repairing"), &[("service", name)]);
                                 if let Err(e) = state.service.repair() {
                                     tracing::error!("{name} repair failed: {e}");
+                                    sentry_ext::capture_error(
+                                        &format!("{name} repair failed: {e}"),
+                                        &[("service", name)],
+                                    );
                                 }
                             }
                             Err(e) => tracing::warn!("{name} health check failed: {e}"),
@@ -138,9 +177,14 @@ pub async fn run() -> Result<()> {
 
 fn check_and_update() {
     tracing::info!("checking for updates (current: {CURRENT_VERSION})");
+    sentry_ext::breadcrumb("self-update", "checking for updates", &[("version", CURRENT_VERSION)]);
 
     if let Err(e) = do_update(false) {
         tracing::warn!("update failed: {e}");
+        sentry_ext::capture_error(
+            &format!("self-update failed: {e}"),
+            &[("version", CURRENT_VERSION)],
+        );
     }
 }
 
@@ -166,6 +210,10 @@ pub fn do_update(force: bool) -> Result<()> {
     }
 
     tracing::info!("update available: {CURRENT_VERSION} -> {remote_version}");
+    sentry_ext::breadcrumb("self-update", "downloading update", &[
+        ("from", CURRENT_VERSION),
+        ("to", &remote_version),
+    ]);
 
     let url = format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.tar.gz");
     let mut tmp_archive = tempfile::Builder::new()
@@ -200,5 +248,9 @@ pub fn do_update(force: bool) -> Result<()> {
     self_replace::self_replace(&new_bin).context("failed to replace binary")?;
 
     tracing::info!("binary updated successfully");
+    sentry_ext::breadcrumb("self-update", "binary updated", &[
+        ("from", CURRENT_VERSION),
+        ("to", &remote_version),
+    ]);
     Ok(())
 }

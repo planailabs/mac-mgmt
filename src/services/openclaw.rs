@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::process::Command;
 
 use crate::managed_service::ManagedService;
+use crate::sentry_ext;
 
 fn default_provider() -> String {
     "ollama".to_string()
@@ -47,6 +48,7 @@ impl ManagedService for OpenClaw {
         }
 
         tracing::info!("openclaw not found, installing via nix");
+        sentry_ext::breadcrumb("install", "installing openclaw via nix", &[("service", "openclaw")]);
         crate::nix::profile_install("openclaw", false)?;
         Ok(())
     }
@@ -57,13 +59,20 @@ impl ManagedService for OpenClaw {
 
         if !config_path.exists() {
             tracing::info!("openclaw config not found, running openclaw setup");
-            let status = Command::new("openclaw")
+            sentry_ext::breadcrumb("setup", "running openclaw setup", &[("service", "openclaw")]);
+            let output = Command::new("openclaw")
                 .arg("setup")
-                .status()
+                .output()
                 .context("failed to run openclaw setup")?;
 
-            if !status.success() {
-                anyhow::bail!("openclaw setup exited with status {status}");
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                sentry_ext::capture_cmd_failure(
+                    "openclaw setup",
+                    output.status.code(),
+                    stderr.trim(),
+                );
+                anyhow::bail!("openclaw setup exited with status {}", output.status);
             }
         } else {
             tracing::info!("openclaw config found at {}", config_path.display());
@@ -95,6 +104,10 @@ impl ManagedService for OpenClaw {
             .spawn()
             .context("failed to start openclaw gateway")?;
         tracing::info!("openclaw gateway started (pid: {})", child.id());
+        sentry_ext::breadcrumb("spawn", "openclaw gateway started", &[
+            ("service", "openclaw"),
+            ("pid", &child.id().to_string()),
+        ]);
         Ok(child)
     }
 
@@ -105,10 +118,16 @@ impl ManagedService for OpenClaw {
             .context("failed to run openclaw health")?;
 
         if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!(
                 "openclaw health exited with status {}: {}",
                 output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
+                stderr.trim()
+            );
+            sentry_ext::capture_cmd_failure(
+                "openclaw health --json",
+                output.status.code(),
+                stderr.trim(),
             );
             return Ok(false);
         }
@@ -120,6 +139,7 @@ impl ManagedService for OpenClaw {
 
     fn repair(&self) -> Result<()> {
         tracing::info!("running openclaw doctor --fix");
+        sentry_ext::breadcrumb("repair", "running openclaw doctor --fix", &[("service", "openclaw")]);
 
         let output = Command::new("openclaw")
             .args(["doctor", "--fix"])
@@ -136,6 +156,11 @@ impl ManagedService for OpenClaw {
                 "openclaw doctor --fix exited with status {}: {}",
                 output.status,
                 stderr.trim()
+            );
+            sentry_ext::capture_cmd_failure(
+                "openclaw doctor --fix",
+                output.status.code(),
+                stderr.trim(),
             );
         }
 
@@ -154,6 +179,7 @@ impl ManagedService for OpenClaw {
         }
 
         tracing::info!("upgrading openclaw via nix");
+        sentry_ext::breadcrumb("upgrade", "upgrading openclaw via nix", &[("service", "openclaw")]);
         crate::nix::profile_install("openclaw", true)?;
         tracing::info!("openclaw upgraded, restart pending until idle");
         Ok(true)

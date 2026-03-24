@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
+use crate::sentry_ext;
+
 const NIX_SOURCE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
 
 /// Check if a package is installed via `nix profile list --json`.
@@ -148,6 +150,11 @@ pub fn packages_with_upgrades() -> Result<Vec<String>> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        sentry_ext::capture_cmd_failure(
+            "nix profile upgrade --all (temp profile)",
+            output.status.code(),
+            stderr.trim(),
+        );
         anyhow::bail!("nix profile upgrade (temp) failed: {}", stderr.trim());
     }
 
@@ -196,9 +203,15 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
     let status = cmd.status().with_context(|| format!("failed to run nix profile {action}"))?;
 
     if !status.success() {
+        sentry_ext::capture_cmd_failure(
+            &format!("nix profile {action} {pkg}"),
+            status.code(),
+            "",
+        );
         anyhow::bail!("nix profile {action} {pkg} failed");
     }
 
     tracing::info!("nix profile {action} {pkg} succeeded");
+    sentry_ext::breadcrumb("nix", &format!("nix profile {action} {pkg} succeeded"), &[("package", pkg)]);
     Ok(())
 }

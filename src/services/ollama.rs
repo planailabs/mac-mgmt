@@ -7,6 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::managed_service::ManagedService;
+use crate::sentry_ext;
 
 fn default_host() -> String {
     "127.0.0.1".to_string()
@@ -107,6 +108,7 @@ impl ManagedService for Ollama {
         }
 
         tracing::info!("ollama not found, installing via nix");
+        sentry_ext::breadcrumb("install", "installing ollama via nix", &[("service", "ollama")]);
         crate::nix::profile_install("ollama", false)?;
         Ok(())
     }
@@ -128,6 +130,10 @@ impl ManagedService for Ollama {
 
         let child = cmd.spawn().context("failed to start ollama serve")?;
         tracing::info!("ollama serve started (pid: {})", child.id());
+        sentry_ext::breadcrumb("spawn", "ollama serve started", &[
+            ("service", "ollama"),
+            ("pid", &child.id().to_string()),
+        ]);
         Ok(child)
     }
 
@@ -155,29 +161,49 @@ impl ManagedService for Ollama {
     fn post_start(&self) -> Result<()> {
         for model in &self.config.models {
             tracing::info!("pulling ollama model: {model}");
-            let status = Command::new("ollama")
+            sentry_ext::breadcrumb("post_start", &format!("pulling model {model}"), &[
+                ("service", "ollama"),
+                ("model", model),
+            ]);
+            let output = Command::new("ollama")
                 .args(["pull", model])
-                .status()
+                .output()
                 .with_context(|| format!("failed to run ollama pull {model}"))?;
 
-            if status.success() {
+            if output.status.success() {
                 tracing::info!("ollama model {model} pulled successfully");
             } else {
-                tracing::warn!("ollama pull {model} exited with {status}");
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::warn!("ollama pull {model} exited with {}", output.status);
+                sentry_ext::capture_cmd_failure(
+                    &format!("ollama pull {model}"),
+                    output.status.code(),
+                    stderr.trim(),
+                );
             }
         }
 
         let model = &self.config.default_model;
         tracing::info!("configuring ollama launch with model {model}");
-        let status = Command::new("ollama")
+        sentry_ext::breadcrumb("post_start", &format!("ollama launch --model {model}"), &[
+            ("service", "ollama"),
+            ("model", model),
+        ]);
+        let output = Command::new("ollama")
             .args(["launch", "--yes", "--config", "--model", model, "openclaw"])
-            .status()
+            .output()
             .with_context(|| format!("failed to run ollama launch --model {model}"))?;
 
-        if status.success() {
+        if output.status.success() {
             tracing::info!("ollama launch config completed successfully");
         } else {
-            tracing::warn!("ollama launch exited with {status}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("ollama launch exited with {}", output.status);
+            sentry_ext::capture_cmd_failure(
+                &format!("ollama launch --model {model} openclaw"),
+                output.status.code(),
+                stderr.trim(),
+            );
         }
 
         Ok(())
@@ -191,6 +217,7 @@ impl ManagedService for Ollama {
         }
 
         tracing::info!("upgrading ollama via nix");
+        sentry_ext::breadcrumb("upgrade", "upgrading ollama via nix", &[("service", "ollama")]);
         crate::nix::profile_install("ollama", true)?;
         tracing::info!("ollama upgraded, restart pending");
         Ok(true)
