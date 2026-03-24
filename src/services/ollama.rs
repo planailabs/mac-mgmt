@@ -107,7 +107,7 @@ impl ManagedService for Ollama {
         }
 
         tracing::info!("ollama not found, installing via nix");
-        crate::nix::profile_install("nixpkgs#ollama", false)?;
+        crate::nix::profile_install("ollama", false)?;
         Ok(())
     }
 
@@ -191,7 +191,7 @@ impl ManagedService for Ollama {
         }
 
         tracing::info!("upgrading ollama via nix");
-        crate::nix::profile_install("nixpkgs#ollama", true)?;
+        crate::nix::profile_install("ollama", true)?;
         tracing::info!("ollama upgraded, restart pending");
         Ok(true)
     }

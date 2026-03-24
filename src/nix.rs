@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
+const NIX_SOURCE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
+
 /// Check if a package is installed via `nix profile list --json`.
 pub fn is_installed(pkg: &str) -> Result<bool> {
     let output = Command::new("nix")
@@ -72,6 +74,7 @@ pub fn packages_with_upgrades() -> Result<Vec<String>> {
 
 /// Install or upgrade a package via `nix profile`.
 pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
+    let flake_ref = format!("{NIX_SOURCE}#{pkg}");
     let action = if upgrade { "upgrade" } else { "install" };
     tracing::info!("running nix profile {action} {pkg}");
 
@@ -82,10 +85,9 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
 
     if upgrade {
         // nix profile upgrade uses the installed element name (part after #)
-        let name = pkg.rsplit_once('#').map_or(pkg, |(_, name)| name);
-        cmd.args(["upgrade", name]);
+        cmd.args(["upgrade", pkg]);
     } else {
-        cmd.args(["add", pkg]);
+        cmd.args(["add", &flake_ref]);
     }
 
     // --impure is needed when NIXPKGS_ALLOW_UNFREE is set

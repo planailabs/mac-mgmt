@@ -47,7 +47,7 @@ impl ManagedService for OpenClaw {
         }
 
         tracing::info!("openclaw not found, installing via nix");
-        crate::nix::profile_install("nixpkgs#openclaw", false)?;
+        crate::nix::profile_install("openclaw", false)?;
         Ok(())
     }
 
@@ -154,7 +154,7 @@ impl ManagedService for OpenClaw {
         }
 
         tracing::info!("upgrading openclaw via nix");
-        crate::nix::profile_install("nixpkgs#openclaw", true)?;
+        crate::nix::profile_install("openclaw", true)?;
         tracing::info!("openclaw upgraded, restart pending until idle");
         Ok(true)
     }
