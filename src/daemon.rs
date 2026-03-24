@@ -74,6 +74,7 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             _ = update_interval.tick() => {
                 check_and_update();
+                upgrade_nix();
                 for state in &mut states {
                     if !state.upgrade_pending {
                         let name = state.service.name();
@@ -172,6 +173,17 @@ pub async fn run() -> Result<()> {
                 }
             }
         }
+    }
+}
+
+fn upgrade_nix() {
+    tracing::info!("checking for nix upgrade");
+    if let Err(e) = crate::nix::upgrade_nix() {
+        tracing::warn!("nix upgrade failed: {e}");
+        sentry_ext::capture_error(
+            &format!("nix upgrade failed: {e}"),
+            &[],
+        );
     }
 }
 

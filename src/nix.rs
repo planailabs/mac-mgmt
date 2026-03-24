@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -277,11 +278,16 @@ pub fn installed_elements() -> Result<Vec<String>> {
 
 /// Install or upgrade a package via `nix profile`.
 pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
+    profile_install_with_nix("nix", pkg, upgrade)
+}
+
+/// Install or upgrade a package via `nix profile`, using the given nix binary path.
+fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<()> {
     let flake_ref = format!("{NIX_SOURCE}#{pkg}");
     let action = if upgrade { "upgrade" } else { "install" };
     tracing::info!("running nix profile {action} {pkg}");
 
-    let mut cmd = Command::new("nix");
+    let mut cmd = Command::new(nix_bin);
     cmd.env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .arg("profile");
@@ -309,5 +315,111 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
 
     tracing::info!("nix profile {action} {pkg} succeeded");
     sentry_ext::breadcrumb("nix", &format!("nix profile {action} {pkg} succeeded"), &[("package", pkg)]);
+    Ok(())
+}
+
+/// Resolve the absolute path to the nix binary.
+/// Must be called before any operation that might remove nix from the profile.
+fn resolve_nix_binary() -> Result<PathBuf> {
+    let output = Command::new("which")
+        .arg("nix")
+        .output()
+        .context("failed to run which nix")?;
+
+    if !output.status.success() {
+        anyhow::bail!("nix binary not found in PATH");
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let resolved = PathBuf::from(&path);
+
+    // Resolve symlinks to get the actual store path binary
+    let canonical = std::fs::canonicalize(&resolved)
+        .with_context(|| format!("failed to canonicalize nix path: {path}"))?;
+
+    tracing::info!("resolved nix binary: {}", canonical.display());
+    Ok(canonical)
+}
+
+/// Upgrade nix itself using a three-stage fallback:
+/// 1. `nix upgrade-nix` (preferred, works for non-profile installs)
+/// 2. `nix profile upgrade nix` (for profile-managed installs)
+/// 3. Remove + reinstall from profile (if nix wasn't added from a flake)
+pub fn upgrade_nix() -> Result<()> {
+    // Resolve nix binary path upfront, before any removal
+    let nix_bin = resolve_nix_binary()?;
+    let nix_bin_str = nix_bin.to_str().context("nix binary path is not valid UTF-8")?;
+
+    sentry_ext::breadcrumb("nix", "attempting nix self-upgrade", &[
+        ("nix_bin", nix_bin_str),
+    ]);
+
+    // Stage 1: try nix upgrade-nix
+    tracing::info!("trying nix upgrade-nix");
+    let output = Command::new(nix_bin_str)
+        .args(["upgrade-nix"])
+        .output()
+        .context("failed to run nix upgrade-nix")?;
+
+    if output.status.success() {
+        tracing::info!("nix upgrade-nix succeeded");
+        sentry_ext::breadcrumb("nix", "nix upgrade-nix succeeded", &[]);
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    tracing::info!("nix upgrade-nix failed: {}", stderr.trim());
+
+    // Check if the error is about profile-managed nix
+    if !stderr.contains("managed by") {
+        sentry_ext::capture_cmd_failure("nix upgrade-nix", output.status.code(), stderr.trim());
+        anyhow::bail!("nix upgrade-nix failed: {}", stderr.trim());
+    }
+
+    // Stage 2: try nix profile upgrade nix
+    tracing::info!("nix is profile-managed, trying nix profile upgrade nix");
+    sentry_ext::breadcrumb("nix", "nix is profile-managed, trying profile upgrade", &[]);
+
+    let output = Command::new(nix_bin_str)
+        .env("NIXPKGS_ALLOW_UNFREE", "1")
+        .env("NIXPKGS_ALLOW_INSECURE", "1")
+        .args(["profile", "upgrade", "nix", "--impure"])
+        .output()
+        .context("failed to run nix profile upgrade nix")?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Check if nix wasn't added from a flake (can't be upgraded in place)
+    if stderr.contains("not added from a flake") {
+        tracing::info!("nix was not added from a flake, will remove and reinstall");
+        sentry_ext::breadcrumb("nix", "nix not from flake, removing and reinstalling", &[]);
+
+        // Stage 3: remove nix from profile and reinstall
+        // Use the resolved absolute path for all subsequent nix commands
+        let status = Command::new(nix_bin_str)
+            .args(["profile", "remove", "nix"])
+            .status()
+            .context("failed to run nix profile remove nix")?;
+
+        if !status.success() {
+            sentry_ext::capture_cmd_failure("nix profile remove nix", status.code(), "");
+            anyhow::bail!("nix profile remove nix failed");
+        }
+
+        tracing::info!("nix removed from profile, reinstalling via absolute path");
+        profile_install_with_nix(nix_bin_str, "nix", false)?;
+
+        tracing::info!("nix reinstalled successfully");
+        sentry_ext::breadcrumb("nix", "nix reinstalled from flake", &[]);
+        return Ok(());
+    }
+
+    if !output.status.success() {
+        sentry_ext::capture_cmd_failure("nix profile upgrade nix", output.status.code(), stderr.trim());
+        anyhow::bail!("nix profile upgrade nix failed: {}", stderr.trim());
+    }
+
+    tracing::info!("nix profile upgrade nix succeeded");
+    sentry_ext::breadcrumb("nix", "nix profile upgrade succeeded", &[]);
     Ok(())
 }
