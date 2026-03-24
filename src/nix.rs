@@ -394,8 +394,25 @@ pub fn upgrade_nix() -> Result<()> {
         tracing::info!("nix was not added from a flake, will remove and reinstall");
         sentry_ext::breadcrumb("nix", "nix not from flake, removing and reinstalling", &[]);
 
-        // Stage 3: remove nix from profile and reinstall
+        // Stage 3: remove nix (and nix-manual if present) from profile, then reinstall
         // Use the resolved absolute path for all subsequent nix commands
+
+        // Remove nix-manual first if installed, as it clashes with the nix flake package
+        let installed = installed_elements()?;
+        if installed.iter().any(|name| name == "nix-manual") {
+            tracing::info!("removing nix-manual before reinstalling nix");
+            let status = Command::new(nix_bin_str)
+                .args(["profile", "remove", "nix-manual"])
+                .status()
+                .context("failed to run nix profile remove nix-manual")?;
+
+            if !status.success() {
+                sentry_ext::capture_cmd_failure("nix profile remove nix-manual", status.code(), "");
+                anyhow::bail!("nix profile remove nix-manual failed");
+            }
+            tracing::info!("nix-manual removed from profile");
+        }
+
         let status = Command::new(nix_bin_str)
             .args(["profile", "remove", "nix"])
             .status()
