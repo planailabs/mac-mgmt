@@ -39,16 +39,20 @@ pub fn is_installed(pkg: &str) -> Result<bool> {
     Ok(false)
 }
 
-/// Check which packages have upgrades available by dry-running `nix profile upgrade`.
-/// Upgrades all installed packages in a single dry-run and returns the names of those
-/// that would be upgraded.
+/// Check which packages have upgrades available via `nix profile upgrade --option dry-run true`.
+/// Returns the names of packages that would be upgraded.
 pub fn packages_with_upgrades() -> Result<Vec<String>> {
     let output = Command::new("nix")
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
-        .args(["profile", "upgrade", "--dry-run", "--impure", "--all"])
+        .args(["profile", "upgrade", "--option", "dry-run", "true", "--impure", "--all"])
         .output()
-        .context("failed to run nix profile upgrade --dry-run")?;
+        .context("failed to run nix profile upgrade (dry-run)")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("nix profile upgrade (dry-run) failed: {}", stderr.trim());
+    }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut upgradable = Vec::new();
