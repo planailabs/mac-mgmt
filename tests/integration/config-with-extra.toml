@@ -1,0 +1,14 @@
+[metrics]
+port = 9396
+
+[openclaw]
+provider = "ollama"
+
+[openclaw.extra_config]
+llm_provider = "ollama"
+llm_base_url = "http://127.0.0.1:11434"
+
+[ollama]
+flavour = "cpu"
+models = []
+default_model = ""

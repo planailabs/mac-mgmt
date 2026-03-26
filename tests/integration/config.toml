@@ -1,0 +1,10 @@
+[metrics]
+port = 9396
+
+[openclaw]
+provider = "ollama"
+
+[ollama]
+flavour = "cpu"
+models = []
+default_model = ""
