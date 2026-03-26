@@ -1,3 +1,6 @@
+[metrics]
+port = 9396
+
 [openclaw]
 provider = "ollama"
 # Extra configuration merged into ~/.openclaw/openclaw.json

@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
 use crate::config;
 use crate::managed_service::ManagedService;
+use crate::metrics::Metrics;
 use crate::sentry_ext;
 use crate::services::{ollama::Ollama, openclaw::OpenClaw};
 
@@ -39,6 +41,7 @@ pub async fn run() -> Result<()> {
     ]);
 
     let cfg = config::load()?;
+    let metrics_port = cfg.metrics.port;
 
     let services: Vec<Box<dyn ManagedService>> = vec![
         Box::new(OpenClaw::new(cfg.openclaw)),
@@ -63,6 +66,18 @@ pub async fn run() -> Result<()> {
             post_start_done: false,
         });
     }
+
+    let metrics = Arc::new(Metrics::new());
+
+    // Spawn the metrics server
+    let metrics_clone = Arc::clone(&metrics);
+    tokio::spawn(async move {
+        if let Err(e) = crate::metrics_server::build_rocket(metrics_clone, metrics_port).launch().await {
+            tracing::error!("metrics server failed: {e}");
+            sentry_ext::capture_error(&format!("metrics server failed: {e}"), &[]);
+        }
+    });
+    tracing::info!("metrics server started on port {metrics_port}");
 
     let mut update_interval = time::interval(UPDATE_INTERVAL);
     let mut health_interval = time::interval(HEALTH_INTERVAL);
@@ -120,7 +135,7 @@ pub async fn run() -> Result<()> {
                     }
 
                     // Apply pending upgrade when idle
-                    if state.upgrade_pending {
+                    let busy = if state.upgrade_pending {
                         match state.service.is_busy() {
                             Ok(false) => {
                                 tracing::info!("{name} is idle, restarting to apply upgrade");
@@ -131,16 +146,26 @@ pub async fn run() -> Result<()> {
                                 state.skip_health_check = true;
                                 state.post_start_done = false;
                                 sentry_ext::breadcrumb("upgrade", &format!("{name} restarted for upgrade"), &[("service", name)]);
+                                false
                             }
-                            Ok(true) => tracing::info!("{name} is busy, deferring upgrade restart"),
-                            Err(e) => tracing::warn!("{name} busy check failed: {e}"),
+                            Ok(true) => {
+                                tracing::info!("{name} is busy, deferring upgrade restart");
+                                true
+                            }
+                            Err(e) => {
+                                tracing::warn!("{name} busy check failed: {e}");
+                                false
+                            }
                         }
-                    }
+                    } else {
+                        false
+                    };
 
                     // Health check
-                    if state.skip_health_check {
+                    let healthy = if state.skip_health_check {
                         tracing::info!("skipping health check, {name} recently started");
                         state.skip_health_check = false;
+                        true // assume healthy right after start
                     } else {
                         match state.service.check_health() {
                             Ok(true) => {
@@ -155,6 +180,7 @@ pub async fn run() -> Result<()> {
                                     }
                                     state.post_start_done = true;
                                 }
+                                true
                             }
                             Ok(false) => {
                                 tracing::warn!("{name} is unhealthy, attempting repair");
@@ -166,10 +192,19 @@ pub async fn run() -> Result<()> {
                                         &[("service", name)],
                                     );
                                 }
+                                false
                             }
-                            Err(e) => tracing::warn!("{name} health check failed: {e}"),
+                            Err(e) => {
+                                tracing::warn!("{name} health check failed: {e}");
+                                false
+                            }
                         }
-                    }
+                    };
+
+                    // Update prometheus metrics
+                    metrics.service_healthy.with_label_values(&[name]).set(if healthy { 1 } else { 0 });
+                    metrics.service_upgrade_pending.with_label_values(&[name]).set(if state.upgrade_pending { 1 } else { 0 });
+                    metrics.service_busy.with_label_values(&[name]).set(if busy { 1 } else { 0 });
                 }
             }
         }

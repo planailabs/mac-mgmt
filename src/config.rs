@@ -5,12 +5,24 @@ use std::path::PathBuf;
 use crate::services::ollama::OllamaConfig;
 use crate::services::openclaw::OpenClawConfig;
 
+fn default_metrics_port() -> u16 {
+    9396
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct MetricsConfig {
+    #[serde(default = "default_metrics_port")]
+    pub port: u16,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub openclaw: OpenClawConfig,
     #[serde(default)]
     pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 fn config_path() -> PathBuf {

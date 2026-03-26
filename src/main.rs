@@ -5,6 +5,8 @@ mod config;
 mod crash;
 mod daemon;
 mod managed_service;
+mod metrics;
+mod metrics_server;
 mod sentry_ext;
 mod nix;
 mod scripts;
