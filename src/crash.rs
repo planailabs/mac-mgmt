@@ -1,6 +1,6 @@
 use std::panic;
 
-const SENTRY_DSN: &str = ""; // TODO: set your Sentry DSN
+const SENTRY_DSN: &str = "https://5e5956eb9a8c1904c961efadc1e72444@o4511110586761216.ingest.de.sentry.io/4511110623133776"; // TODO: set your Sentry DSN
 
 /// Initialize Sentry and install a panic hook that reports to Sentry
 /// and attempts a self-update before aborting.
