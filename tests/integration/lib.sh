@@ -19,8 +19,7 @@ NC='\033[0m'
 # Create an ephemeral test container from the base image
 create_container() {
     local name="${CONTAINER_PREFIX}-$$-${RANDOM}"
-    echo "$name"
-    incus launch "$BASE_IMAGE" "$name" --ephemeral -c limits.memory=4GiB 2>&1 | sed 's/^/  [incus] /'
+    incus launch "$BASE_IMAGE" "$name" --ephemeral -c limits.memory=4GiB 2>&1 | sed 's/^/  [incus] /' >&2
     # Wait for container to be ready
     local retries=30
     while [ $retries -gt 0 ]; do
@@ -31,7 +30,7 @@ create_container() {
         retries=$((retries - 1))
     done
     if [ $retries -eq 0 ]; then
-        echo -e "${RED}FAIL: container $name did not become ready${NC}"
+        echo -e "${RED}FAIL: container $name did not become ready${NC}" >&2
         return 1
     fi
     # Wait for networking
@@ -43,6 +42,7 @@ create_container() {
         sleep 1
         retries=$((retries - 1))
     done
+    echo "$name"
 }
 
 # Destroy a test container
@@ -64,11 +64,8 @@ cleanup_all() {
 # Execute a command inside the container with nix environment
 exec_in() {
     local container="$1"; shift
-    incus exec "$container" -- bash -lc "
-        source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null
-        export PATH=\"\$HOME/.nix-profile/bin:\$PATH\"
-        $*
-    "
+    local cmd="$*"
+    incus exec "$container" -- bash -lc "source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null; export PATH=\"\$HOME/.nix-profile/bin:\$PATH\"; $cmd"
 }
 
 # Push the mac-mgmt binary into the container
@@ -92,10 +89,14 @@ run_setup() {
     exec_in "$container" "/root/mac-mgmt setup"
 }
 
-# Start the daemon in the background, return PID
+# Start the daemon in the background
 start_daemon() {
     local container="$1"
-    exec_in "$container" "nohup /root/mac-mgmt daemon > /tmp/mac-mgmt.log 2>&1 &"
+    incus exec "$container" -- bash -c '
+        source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null
+        export PATH="$HOME/.nix-profile/bin:$PATH"
+        nohup /root/mac-mgmt daemon > /tmp/mac-mgmt.log 2>&1 &
+    '
 }
 
 # Get daemon logs
