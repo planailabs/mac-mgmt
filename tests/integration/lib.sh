@@ -65,7 +65,7 @@ cleanup_all() {
 exec_in() {
     local container="$1"; shift
     local cmd="$*"
-    incus exec "$container" -- bash -lc "source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null; export PATH=\"\$HOME/.nix-profile/bin:\$PATH\"; $cmd"
+    incus exec "$container" -- bash -lc "export PATH=\"/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin:\$PATH\"; source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null; $cmd"
 }
 
 # Push the mac-mgmt binary into the container
