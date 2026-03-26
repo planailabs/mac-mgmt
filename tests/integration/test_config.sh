@@ -33,11 +33,21 @@ if ! wait_for "$CONTAINER" "openclaw health" "openclaw health --json" 300; then
     exit 1
 fi
 
-# Verify extra_config was merged into openclaw.json
-echo "  Checking config merge..."
-openclaw_config=$(incus exec "$CONTAINER" -- cat /root/.openclaw/openclaw.json 2>/dev/null || true)
-
 failed=0
+
+# Check daemon logs for config merge
+echo "  Checking daemon logs for config merge..."
+daemon_logs=$(get_logs "$CONTAINER")
+
+if ! assert_contains "$daemon_logs" "extra_config merged" "daemon should log config merge"; then
+    echo "  Daemon logs (last 30 lines):"
+    echo "$daemon_logs" | tail -30 | sed 's/^/    /'
+    failed=1
+fi
+
+# Verify extra_config was merged into openclaw.json
+echo "  Checking openclaw.json content..."
+openclaw_config=$(incus exec "$CONTAINER" -- cat /root/.openclaw/openclaw.json 2>/dev/null || true)
 
 if ! assert_contains "$openclaw_config" "ollama" "openclaw.json should reference ollama"; then
     failed=1
