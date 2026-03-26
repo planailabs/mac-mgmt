@@ -101,7 +101,9 @@ fn packages_with_upgrades_dry_run() -> Result<Vec<String>> {
     for line in stderr.lines() {
         if let Some(rest) = line.strip_prefix("upgrading '") {
             if let Some(flake_ref) = rest.split('\'').next() {
-                let name = flake_ref.rsplit_once('#').map_or(flake_ref, |(_, n)| n);
+                // After '#' we get e.g. "legacyPackages.x86_64-linux.nix" — strip the first two dot-separated segments
+                let after_hash = flake_ref.rsplit_once('#').map_or(flake_ref, |(_, n)| n);
+                let name = after_hash.splitn(3, '.').last().unwrap_or(after_hash);
                 tracing::info!("upgrade available for {name}");
                 upgradable.push(name.to_string());
             }
