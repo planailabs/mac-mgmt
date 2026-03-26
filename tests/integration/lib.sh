@@ -92,11 +92,7 @@ run_setup() {
 # Start the daemon in the background
 start_daemon() {
     local container="$1"
-    incus exec "$container" -- bash -c '
-        source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null
-        export PATH="$HOME/.nix-profile/bin:$PATH"
-        nohup /root/mac-mgmt daemon > /tmp/mac-mgmt.log 2>&1 &
-    '
+    exec_in "$container" "nohup /root/mac-mgmt daemon > /tmp/mac-mgmt.log 2>&1 &"
 }
 
 # Get daemon logs
