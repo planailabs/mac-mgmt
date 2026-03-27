@@ -34,12 +34,17 @@ fn main() {
     #[cfg(feature = "server")]
     {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
+        use std::sync::OnceLock;
 
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
+        // Shared state initialized once inside the first serve callback invocation.
+        // serve() may call the callback multiple times (hot-reload), so we use OnceLock
+        // to ensure one-time init.
+        static INIT: OnceLock<axum_oidc_client::auth::AuthLayer> = OnceLock::new();
+
+        dioxus::serve(move || async move {
+            let auth_layer = if let Some(layer) = INIT.get() {
+                layer.clone()
+            } else {
                 tracing_subscriber::fmt::init();
 
                 let cfg = config::load();
@@ -65,19 +70,17 @@ fn main() {
                     }
                 });
 
-                // Dioxus fullstack with OIDC auth on configured port
-                dioxus::serve(|| {
-                    let auth_layer = auth_layer.clone();
-                    async move {
-                        let router = axum::Router::new()
-                            .serve_dioxus_application(ServeConfig::new(), web::app::App)
-                            .layer(axum::middleware::from_fn(web::auth::require_auth))
-                            .layer(auth_layer);
+                let _ = INIT.set(auth_layer.clone());
+                auth_layer
+            };
 
-                        Ok(router)
-                    }
-                });
-            });
+            let router = axum::Router::new()
+                .serve_dioxus_application(ServeConfig::new(), web::app::App)
+                .layer(axum::middleware::from_fn(web::auth::require_auth))
+                .layer(auth_layer);
+
+            Ok(router)
+        });
     }
 
     #[cfg(not(feature = "server"))]
