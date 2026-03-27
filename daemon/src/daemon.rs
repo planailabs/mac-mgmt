@@ -89,11 +89,26 @@ pub async fn run() -> Result<()> {
     let mut update_interval = time::interval(UPDATE_INTERVAL);
     let mut health_interval = time::interval(HEALTH_INTERVAL);
 
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("failed to register SIGTERM handler")?;
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .context("failed to register SIGINT handler")?;
+
     // Run immediate update check on startup
     check_and_update();
 
     loop {
         tokio::select! {
+            _ = sigterm.recv() => {
+                tracing::info!("received SIGTERM, shutting down");
+                sentry_ext::breadcrumb("daemon", "SIGTERM received, shutting down", &[]);
+                break;
+            }
+            _ = sigint.recv() => {
+                tracing::info!("received SIGINT, shutting down");
+                sentry_ext::breadcrumb("daemon", "SIGINT received, shutting down", &[]);
+                break;
+            }
             _ = update_interval.tick() => {
                 check_and_update();
                 upgrade_nix();
@@ -223,6 +238,42 @@ pub async fn run() -> Result<()> {
             }
         }
     }
+
+    // Shutdown: send SIGTERM to all services, then wait up to 10s before SIGKILL
+    for state in &mut states {
+        let name = state.service.name();
+        let pid = state.child.id();
+        tracing::info!("sending SIGTERM to {name} (pid {pid})");
+        unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+    }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    for state in &mut states {
+        let name = state.service.name();
+        loop {
+            match state.child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if tokio::time::Instant::now() >= deadline => {
+                    tracing::warn!("{name} did not exit in time, sending SIGKILL");
+                    let _ = state.child.kill();
+                    let _ = state.child.wait();
+                    break;
+                }
+                Ok(None) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) => {
+                    tracing::error!("failed to check {name} exit status: {e}");
+                    break;
+                }
+            }
+        }
+        tracing::info!("{name} stopped");
+    }
+    sentry_ext::breadcrumb("daemon", "daemon shutdown complete", &[]);
+    tracing::info!("daemon shutdown complete");
+
+    Ok(())
 }
 
 fn upgrade_nix() {
