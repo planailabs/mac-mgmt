@@ -94,8 +94,13 @@ pub async fn run() -> Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("failed to register SIGINT handler")?;
 
-    // Run immediate update check on startup
+    // Run immediate update check and skills sync on startup
     check_and_update();
+    if let (Some(url), Some(token)) = (&server_url, &server_token) {
+        if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
+            tracing::warn!("initial skills sync failed: {e}");
+        }
+    }
 
     loop {
         tokio::select! {
