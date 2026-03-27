@@ -8,7 +8,7 @@ CONTAINER_PREFIX="mac-mgmt-test"
 BASE_IMAGE="mac-mgmt-base"
 BINARY="target/x86_64-unknown-linux-musl/release/mac-mgmt"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Colors
 RED='\033[0;31m'

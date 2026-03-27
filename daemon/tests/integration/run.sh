@@ -14,7 +14,7 @@ trap cleanup_all EXIT
 
 # Build the binary
 echo "Building mac-mgmt (musl release)..."
-cargo build --release --target x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl -p mac-mgmt
 
 if [ ! -f "$PROJECT_DIR/$BINARY" ]; then
     echo "ERROR: binary not found at $PROJECT_DIR/$BINARY"
