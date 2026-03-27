@@ -18,6 +18,8 @@ async fn list_skills() -> Result<Vec<Skill>, ServerFnError> {
 pub struct SyncResult {
     pub created_skills: u32,
     pub created_channels: u32,
+    pub removed_channels: u32,
+    pub removed_skills: u32,
 }
 
 /// Fetch all pins from xzar, parse `skill/{slug}/{channel}` pins, and upsert
@@ -88,7 +90,57 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
         }
     }
 
-    Ok(SyncResult { created_skills, created_channels })
+    // Collect the set of valid (slug, channel) pairs from xzar
+    let mut valid_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    for pin in &pins {
+        if pin.abandoned || pin.roots.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = pin.name.splitn(3, '/').collect();
+        if parts.len() == 3 && parts[0] == "skill" {
+            valid_pairs.insert((parts[1].to_string(), parts[2].to_string()));
+        }
+    }
+
+    // Remove channels that no longer exist in xzar
+    let removed_channels = sqlx::query_scalar::<_, i64>(
+        "WITH deleted AS ( \
+             DELETE FROM skill_channels sc \
+             USING skills s \
+             WHERE sc.skill_id = s.id \
+             AND NOT EXISTS ( \
+                 SELECT 1 FROM unnest($1::text[], $2::text[]) AS v(slug, channel) \
+                 WHERE v.slug = s.slug AND v.channel = sc.channel \
+             ) \
+             RETURNING sc.id \
+         ) SELECT count(*) FROM deleted",
+    )
+    .bind(&valid_pairs.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>())
+    .bind(&valid_pairs.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>())
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Remove skills that have no channels left
+    let removed_skills = sqlx::query_scalar::<_, i64>(
+        "WITH deleted AS ( \
+             DELETE FROM skills s \
+             WHERE NOT EXISTS ( \
+                 SELECT 1 FROM skill_channels sc WHERE sc.skill_id = s.id \
+             ) \
+             RETURNING s.id \
+         ) SELECT count(*) FROM deleted",
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(SyncResult {
+        created_skills,
+        created_channels,
+        removed_channels: removed_channels as u32,
+        removed_skills: removed_skills as u32,
+    })
 }
 
 #[component]
@@ -112,8 +164,9 @@ pub fn SkillList() -> Element {
                         match sync_from_xzar().await {
                             Ok(result) => {
                                 sync_msg.set(Some(format!(
-                                    "Synced: {} new skills, {} new channels",
-                                    result.created_skills, result.created_channels
+                                    "Synced: +{} skills, +{} channels, -{} channels, -{} skills",
+                                    result.created_skills, result.created_channels,
+                                    result.removed_channels, result.removed_skills,
                                 )));
                                 skills.restart();
                             }

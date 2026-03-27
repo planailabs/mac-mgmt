@@ -124,6 +124,31 @@ async fn add_customer_bundle(customer_id: String, bundle_id: String) -> Result<(
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    // Check for overlap: does the new bundle share any skill_channel_id with
+    // any bundle already assigned to this customer?
+    let overlap = sqlx::query_scalar::<_, String>(
+        "SELECT s.slug || '/' || sc.channel \
+         FROM bundle_items new_bi \
+         JOIN bundle_items existing_bi ON existing_bi.skill_channel_id = new_bi.skill_channel_id \
+         JOIN customer_bundles cb ON cb.bundle_id = existing_bi.bundle_id AND cb.customer_id = $1 \
+         JOIN skill_channels sc ON sc.id = new_bi.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE new_bi.bundle_id = $2 \
+         LIMIT 1",
+    )
+    .bind(cid)
+    .bind(bid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if let Some(conflicting) = overlap {
+        return Err(ServerFnError::new(format!(
+            "bundle conflicts with an already-assigned bundle on skill channel: {conflicting}"
+        )));
+    }
+
     sqlx::query("INSERT INTO customer_bundles (customer_id, bundle_id) VALUES ($1, $2)")
         .bind(cid)
         .bind(bid)
@@ -164,6 +189,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
 
     let mut selected_sc = use_signal(String::new);
     let mut selected_bundle = use_signal(String::new);
+    let mut bundle_error = use_signal(|| None::<String>);
 
     let cid_add_skill = customer_id.clone();
     let cid_add_bundle = customer_id.clone();
@@ -250,6 +276,9 @@ pub fn CustomerSkills(customer_id: String) -> Element {
         // Bundle assignments
         div {
             h4 { class: "text-sm font-semibold text-gray-700 mb-2", "Bundles" }
+            if let Some(err) = &*bundle_error.read() {
+                p { class: "text-red-600 text-xs mb-2", "{err}" }
+            }
             form {
                 class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
@@ -258,9 +287,15 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                     let bid = selected_bundle.read().clone();
                     spawn(async move {
                         if !bid.is_empty() {
-                            if add_customer_bundle(cid, bid).await.is_ok() {
-                                selected_bundle.set(String::new());
-                                bundles.restart();
+                            match add_customer_bundle(cid, bid).await {
+                                Ok(()) => {
+                                    bundle_error.set(None);
+                                    selected_bundle.set(String::new());
+                                    bundles.restart();
+                                }
+                                Err(e) => {
+                                    bundle_error.set(Some(e.to_string()));
+                                }
                             }
                         }
                     });

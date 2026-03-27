@@ -33,6 +33,7 @@ pub async fn get_config(
 struct SkillSlugChannel {
     slug: String,
     channel: String,
+    is_direct: bool,
 }
 
 #[rocket::get("/skills")]
@@ -40,17 +41,21 @@ pub async fn get_skills(
     auth: AuthenticatedCustomer,
     pool: &State<PgPool>,
 ) -> Result<Json<HashMap<String, String>>, Status> {
+    // Fetch all skill+channel pairs with a flag indicating direct vs bundle.
+    // Direct assignments win: for each slug we pick the direct row if present.
     let rows = sqlx::query_as::<_, SkillSlugChannel>(
-        "SELECT DISTINCT s.slug, sc.channel \
-         FROM skill_channels sc \
+        "SELECT s.slug, sc.channel, true AS is_direct \
+         FROM customer_skills cs \
+         JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE sc.id IN ( \
-             SELECT skill_channel_id FROM customer_skills WHERE customer_id = $1 \
-             UNION \
-             SELECT bi.skill_channel_id FROM customer_bundles cb \
-             JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
-             WHERE cb.customer_id = $1 \
-         )",
+         WHERE cs.customer_id = $1 \
+         UNION ALL \
+         SELECT s.slug, sc.channel, false AS is_direct \
+         FROM customer_bundles cb \
+         JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
+         JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE cb.customer_id = $1",
     )
     .bind(auth.customer_id)
     .fetch_all(pool.inner())
@@ -61,6 +66,20 @@ pub async fn get_skills(
         return Ok(Json(HashMap::new()));
     }
 
+    // For each slug, prefer the direct assignment's channel over bundle's.
+    let mut slug_channel: HashMap<String, (String, bool)> = HashMap::new();
+    for row in &rows {
+        match slug_channel.get(&row.slug) {
+            Some((_, true)) => {} // already have a direct assignment, keep it
+            _ => {
+                slug_channel.insert(
+                    row.slug.clone(),
+                    (row.channel.clone(), row.is_direct),
+                );
+            }
+        }
+    }
+
     let cfg = crate::config::config();
     let pins = crate::xzar::fetch_pins(&cfg.xzar.url, &cfg.xzar.token)
         .await
@@ -69,7 +88,10 @@ pub async fn get_skills(
             Status::InternalServerError
         })?;
 
-    let skills: Vec<(String, String)> = rows.into_iter().map(|r| (r.slug, r.channel)).collect();
+    let skills: Vec<(String, String)> = slug_channel
+        .into_iter()
+        .map(|(slug, (channel, _))| (slug, channel))
+        .collect();
     let result = crate::xzar::resolve_store_paths(&pins, &skills);
 
     Ok(Json(result))
