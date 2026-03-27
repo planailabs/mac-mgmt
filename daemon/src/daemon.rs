@@ -40,7 +40,7 @@ pub async fn run() -> Result<()> {
         ("target", TARGET),
     ]);
 
-    let cfg = config::load()?;
+    let cfg = config::load().await?;
     let metrics_port = cfg.metrics.port;
 
     let services: Vec<Box<dyn ManagedService>> = vec![

@@ -14,3 +14,7 @@ default_model = "qwen3.5"
 # Package flavour: cpu, rocm, cuda, vulkan
 # "cpu" installs "ollama", others install "ollama-{flavour}"
 flavour = "cpu"
+
+# [server]
+# url = "https://mgmt.example.com:8080"
+# token = "customer-token-here"
