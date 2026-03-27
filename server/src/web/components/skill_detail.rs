@@ -46,7 +46,7 @@ async fn list_channels(skill_id: String) -> Result<Vec<SkillChannel>, ServerFnEr
 
 /// Resolve store paths for all channels of a skill from xzar.
 #[server]
-async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, String>, ServerFnError> {
+async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Vec<(String, String)>>, ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
@@ -73,17 +73,25 @@ async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Strin
         .await
         .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
 
+    // Map channel → [(arch, store_path), ...]
     let mut result = HashMap::new();
-    for channel in &channels {
-        let pin_name = format!("skill/{slug}/{channel}");
-        if let Some(pin) = pins.iter().find(|p| p.name == pin_name && !p.abandoned) {
-            if let Some(root) = pin.roots.first() {
-                let path = if root.drv_full.starts_with("/nix/store/") {
-                    root.drv_full.clone()
-                } else {
-                    format!("/nix/store/{}", root.drv_full)
-                };
-                result.insert(channel.clone(), path);
+    let prefix = format!("skill/{slug}/");
+    for pin in &pins {
+        if pin.abandoned || pin.roots.is_empty() {
+            continue;
+        }
+        if let Some(rest) = pin.name.strip_prefix(&prefix) {
+            // rest = "{channel}/{arch}"
+            if let Some((channel, arch)) = rest.split_once('/') {
+                if channels.contains(&channel.to_string()) {
+                    let path = crate::xzar::store_path_for_pin(&pins, &pin.name);
+                    if let Some(path) = path {
+                        let entry: &mut Vec<(String, String)> = result
+                            .entry(channel.to_string())
+                            .or_insert_with(Vec::new);
+                        entry.push((arch.to_string(), path));
+                    }
+                }
             }
         }
     }
@@ -201,15 +209,18 @@ pub fn SkillDetail(id: String) -> Element {
                                         {
                                             let ch_name = ch.channel.clone();
                                             let ch_created = ch.created_at.format("%Y-%m-%d").to_string();
-                                            let store_path = path_map.get(&ch.channel).cloned();
+                                            let arch_paths = path_map.get(&ch.channel).cloned().unwrap_or_default();
                                             rsx! {
                                                 li { class: "py-2",
                                                     div {
                                                         span { class: "text-sm font-mono font-medium", "{ch_name}" }
                                                         span { class: "text-xs text-gray-400 ml-2", "{ch_created}" }
                                                     }
-                                                    if let Some(sp) = &store_path {
-                                                        p { class: "text-xs text-gray-400 font-mono mt-0.5 truncate", "{sp}" }
+                                                    for (arch, path) in &arch_paths {
+                                                        p { class: "text-xs text-gray-400 font-mono mt-0.5 truncate",
+                                                            span { class: "text-gray-500", "{arch}" }
+                                                            " {path}"
+                                                        }
                                                     }
                                                 }
                                             }

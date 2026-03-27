@@ -41,13 +41,14 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
             continue;
         }
 
-        // Parse pins matching "skill/{slug}/{channel}"
-        let parts: Vec<&str> = pin.name.splitn(3, '/').collect();
-        if parts.len() != 3 || parts[0] != "skill" {
+        // Parse pins matching "skill/{slug}/{channel}/{arch}"
+        let parts: Vec<&str> = pin.name.splitn(4, '/').collect();
+        if parts.len() != 4 || parts[0] != "skill" {
             continue;
         }
         let slug = parts[1];
         let channel = parts[2];
+        // parts[3] is architecture — we don't store it, just deduplicate (slug, channel)
 
         // Upsert skill
         let inserted = sqlx::query_scalar::<_, bool>(
@@ -96,8 +97,8 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
         if pin.abandoned || pin.roots.is_empty() {
             continue;
         }
-        let parts: Vec<&str> = pin.name.splitn(3, '/').collect();
-        if parts.len() == 3 && parts[0] == "skill" {
+        let parts: Vec<&str> = pin.name.splitn(4, '/').collect();
+        if parts.len() == 4 && parts[0] == "skill" {
             valid_pairs.insert((parts[1].to_string(), parts[2].to_string()));
         }
     }

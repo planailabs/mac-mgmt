@@ -36,10 +36,11 @@ struct SkillSlugChannel {
     is_direct: bool,
 }
 
-#[rocket::get("/skills")]
+#[rocket::get("/skills?<arch>")]
 pub async fn get_skills(
     auth: AuthenticatedCustomer,
     pool: &State<PgPool>,
+    arch: String,
 ) -> Result<Json<HashMap<String, String>>, Status> {
     // Fetch all skill+channel pairs with a flag indicating direct vs bundle.
     // Direct assignments win: for each slug we pick the direct row if present.
@@ -92,7 +93,7 @@ pub async fn get_skills(
         .into_iter()
         .map(|(slug, (channel, _))| (slug, channel))
         .collect();
-    let result = crate::xzar::resolve_store_paths(&pins, &skills);
+    let result = crate::xzar::resolve_store_paths(&pins, &skills, &arch);
 
     Ok(Json(result))
 }

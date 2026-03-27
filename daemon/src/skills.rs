@@ -2,11 +2,32 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
 
+fn nix_system() -> String {
+    let arch = std::env::consts::ARCH;
+    let os = std::env::consts::OS;
+    // Map Rust target triples to Nix system strings
+    let nix_arch = match arch {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        "x86" => "i686",
+        other => other,
+    };
+    let nix_os = match os {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{nix_arch}-{nix_os}")
+}
+
 pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Result<()> {
+    let arch = nix_system();
+    tracing::info!("syncing skills for architecture: {arch}");
+
     // Fetch skill→store_path mappings from server
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{server_url}/api/skills"))
+        .query(&[("arch", &arch)])
         .bearer_auth(token)
         .send()
         .await
