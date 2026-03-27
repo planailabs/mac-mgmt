@@ -9,7 +9,7 @@ build:
   only:
     - trunk
   script:
-    - nix develop -c bash build.sh
+    - nix develop -c bash daemon/build.sh
   artifacts:
     paths:
       - mac-mgmt.tar.gz
@@ -23,7 +23,7 @@ upload_dev:
   needs:
     - build
   script:
-    - nix develop -c bash upload.sh dev
+    - nix develop -c bash daemon/upload.sh dev
 
 upload_prod:
   stage: upload
@@ -34,4 +34,4 @@ upload_prod:
   needs:
     - build
   script:
-    - nix develop -c bash upload.sh prod
+    - nix develop -c bash daemon/upload.sh prod
