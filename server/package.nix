@@ -7,7 +7,8 @@
   nodejs,
   wasm-bindgen-cli_0_2_114,
   binaryen,
-  tailwindcss,
+  tailwindcss_3,
+  lld,
 }:
 
 rustPlatform.buildRustPackage {
@@ -24,23 +25,26 @@ rustPlatform.buildRustPackage {
     nodejs
     wasm-bindgen-cli_0_2_114
     binaryen
-    tailwindcss
+    tailwindcss_3
+    lld
   ];
 
   buildInputs = [
     openssl
   ];
 
+  doCheck = false;
+
   # Build with dx instead of cargo so assets and WASM are bundled
   buildPhase = ''
     runHook preBuild
 
     # Tailwind CSS
-    cd server
-    npx tailwindcss -i input.css -o public/tailwind.css --minify
-    cd ..
+    pushd server
+    npm run tailwind:build
+    popd
 
-    dx build --release --platform fullstack
+    dx build --release --fullstack --package mac-mgmt-server
 
     runHook postBuild
   '';
@@ -48,9 +52,9 @@ rustPlatform.buildRustPackage {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out/bin
+    mkdir -p $out/bin $out/share
     cp -r target/dx/mac-mgmt-server/release/web $out/share/mac-mgmt-server
-    cp target/dx/mac-mgmt-server/release/server $out/bin/mac-mgmt-server
+    ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server
 
     runHook postInstall
   '';

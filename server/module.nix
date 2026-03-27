@@ -57,7 +57,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    systemd.services.mac-mgmt-server = {
+    systemd.services.mac-mgmt = {
       description = "mac-mgmt server";
       after = [ "network.target" "postgresql.service" ];
       wants = [ "network.target" ];
@@ -95,6 +95,22 @@ in
       } // lib.optionalAttrs (cfg.environmentFile != null) {
         EnvironmentFile = cfg.environmentFile;
       };
+    };
+
+    services.mac-mgmt-server.settings = {
+      database.url = "postgres:///mac-mgmt?host=/run/postgresql";
+    };
+
+    services.postgresql = {
+      enable = true;
+
+      ensureUsers = [{
+        name = "mac-mgmt";
+        ensureClauses.superuser = true;
+        # ensurePermissions = { "DATABASE xzar" = "ALL PRIVILEGES"; };
+      }];
+
+      ensureDatabases = [ "xzar" ];
     };
 
     networking.firewall = lib.mkIf cfg.openFirewall {
