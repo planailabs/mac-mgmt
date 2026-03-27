@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 static CONFIG: OnceLock<ServerConfig> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
@@ -14,11 +15,13 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     pub url: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApiConfig {
     #[serde(default = "default_api_port")]
     pub port: u16,
@@ -35,6 +38,7 @@ fn default_api_port() -> u16 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WebConfig {
     #[serde(default = "default_web_port")]
     pub port: u16,
@@ -51,6 +55,7 @@ fn default_web_port() -> u16 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OidcConfig {
     pub client_id: String,
     pub client_secret: String,
