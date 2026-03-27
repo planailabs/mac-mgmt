@@ -43,6 +43,13 @@ pub async fn run() -> Result<()> {
     let cfg = config::load().await?;
     let metrics_port = cfg.metrics.port;
 
+    let server_url = cfg.server.url.clone();
+    let server_token = cfg.server.token.clone();
+    let skills_dir = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        std::path::PathBuf::from(home).join(".plan-ai-skills")
+    };
+
     let services: Vec<Box<dyn ManagedService>> = vec![
         Box::new(OpenClaw::new(cfg.openclaw)),
         Box::new(Ollama::new(cfg.ollama)),
@@ -90,6 +97,13 @@ pub async fn run() -> Result<()> {
             _ = update_interval.tick() => {
                 check_and_update();
                 upgrade_nix();
+
+                if let (Some(url), Some(token)) = (&server_url, &server_token) {
+                    if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
+                        tracing::warn!("skills sync failed: {e}");
+                    }
+                }
+
                 for state in &mut states {
                     if !state.upgrade_pending {
                         let name = state.service.name();

@@ -1,0 +1,75 @@
+use anyhow::{Context, Result};
+use std::collections::HashMap;
+use std::path::Path;
+
+pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Result<()> {
+    // Fetch skill→store_path mappings from server
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{server_url}/api/skills"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to reach skills API")?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        anyhow::bail!("skills API returned {status}");
+    }
+
+    let skills: HashMap<String, String> = resp
+        .json()
+        .await
+        .context("failed to parse skills response")?;
+
+    // Ensure skills directory exists
+    std::fs::create_dir_all(skills_dir)
+        .with_context(|| format!("failed to create {}", skills_dir.display()))?;
+
+    // Realise and symlink each skill
+    for (slug, store_path) in &skills {
+        tracing::info!("realising skill {slug}: {store_path}");
+        let output = tokio::process::Command::new("nix-store")
+            .args(["--realise", store_path])
+            .output()
+            .await
+            .with_context(|| format!("failed to run nix-store --realise for {slug}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("nix-store --realise failed for {slug}: {stderr}");
+            continue;
+        }
+
+        let link = skills_dir.join(slug);
+
+        // Remove existing symlink/file if it points elsewhere
+        if link.exists() || link.symlink_metadata().is_ok() {
+            if let Ok(target) = std::fs::read_link(&link) {
+                if target.to_string_lossy() == *store_path {
+                    continue; // already correct
+                }
+            }
+            std::fs::remove_file(&link)
+                .with_context(|| format!("failed to remove old link {}", link.display()))?;
+        }
+
+        std::os::unix::fs::symlink(store_path, &link)
+            .with_context(|| format!("failed to symlink {} -> {}", link.display(), store_path))?;
+        tracing::info!("linked {slug} -> {store_path}");
+    }
+
+    // Clean up skills not in the response
+    if let Ok(entries) = std::fs::read_dir(skills_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !skills.contains_key(name_str.as_ref()) {
+                tracing::info!("removing old skill: {name_str}");
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    Ok(())
+}

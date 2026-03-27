@@ -13,5 +13,5 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
 
     rocket::custom(config)
         .manage(pool)
-        .mount("/api", rocket::routes![routes::get_config])
+        .mount("/api", rocket::routes![routes::get_config, routes::get_skills])
 }

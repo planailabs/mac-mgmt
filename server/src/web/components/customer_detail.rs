@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use crate::models::Customer;
 
 use super::config_editor::ConfigEditor;
+use super::customer_skills::CustomerSkills;
 use super::token_list::TokenList;
 
 #[server]
@@ -96,7 +97,7 @@ pub fn CustomerDetail(id: String) -> Element {
                 }
                 p { class: "text-gray-500 mb-6", "Created: {created}" }
 
-                div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
+                div { class: "grid grid-cols-1 lg:grid-cols-3 gap-6",
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Tokens" }
                         TokenList { customer_id: cid2.clone() }
@@ -104,6 +105,10 @@ pub fn CustomerDetail(id: String) -> Element {
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Config" }
                         ConfigEditor { customer_id: cid2.clone() }
+                    }
+                    div {
+                        h3 { class: "text-lg font-semibold mb-3", "Skills" }
+                        CustomerSkills { customer_id: cid2.clone() }
                     }
                 }
             }

@@ -4,7 +4,6 @@ use std::sync::OnceLock;
 static CONFIG: OnceLock<ServerConfig> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
@@ -12,6 +11,13 @@ pub struct ServerConfig {
     #[serde(default)]
     pub web: WebConfig,
     pub oidc: OidcConfig,
+    pub xzar: XzarConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct XzarConfig {
+    pub url: String,
+    pub token: String,
 }
 
 #[derive(Debug, Deserialize)]

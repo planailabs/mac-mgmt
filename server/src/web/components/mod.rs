@@ -1,6 +1,13 @@
+pub mod bundle_detail;
+pub mod bundle_form;
+pub mod bundle_list;
 pub mod config_editor;
 pub mod customer_detail;
 pub mod customer_form;
 pub mod customer_list;
+pub mod customer_skills;
 pub mod layout;
+pub mod skill_detail;
+pub mod skill_form;
+pub mod skill_list;
 pub mod token_list;

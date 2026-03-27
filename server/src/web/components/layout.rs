@@ -15,6 +15,8 @@ pub fn Layout() -> Element {
                         div { class: "flex space-x-4",
                             Link { to: Route::CustomerList {}, class: "text-gray-600 hover:text-gray-900", "Customers" }
                             Link { to: Route::CustomerForm {}, class: "text-gray-600 hover:text-gray-900", "New Customer" }
+                            Link { to: Route::SkillList {}, class: "text-gray-600 hover:text-gray-900", "Skills" }
+                            Link { to: Route::BundleList {}, class: "text-gray-600 hover:text-gray-900", "Bundles" }
                         }
                     }
                 }

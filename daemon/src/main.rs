@@ -10,6 +10,7 @@ mod metrics_server;
 mod sentry_ext;
 mod nix;
 mod scripts;
+mod skills;
 mod service;
 mod services;
 

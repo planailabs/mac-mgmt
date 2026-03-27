@@ -6,6 +6,8 @@ mod config;
 mod db;
 mod models;
 mod web;
+#[cfg(feature = "server")]
+mod xzar;
 
 #[cfg(feature = "server")]
 mod server_state {

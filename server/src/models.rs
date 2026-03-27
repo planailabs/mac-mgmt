@@ -29,3 +29,61 @@ pub struct CustomerConfig {
     pub config_toml: String,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct Skill {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct SkillChannel {
+    pub id: Uuid,
+    pub skill_id: Uuid,
+    pub channel: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct Bundle {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct BundleItem {
+    pub id: Uuid,
+    pub bundle_id: Uuid,
+    pub skill_channel_id: Uuid,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct CustomerSkill {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub skill_channel_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct CustomerBundle {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub bundle_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
