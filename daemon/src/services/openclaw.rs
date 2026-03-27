@@ -57,21 +57,55 @@ impl ManagedService for OpenClaw {
             tracing::info!("openclaw config found at {}", config_path.display());
         }
 
-        // Merge extra_config into openclaw.json if configured
+        // Merge managed config into openclaw.json
+        let contents = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("failed to read {}", config_path.display()))?;
+        let mut existing: serde_json::Value =
+            serde_json::from_str(&contents).context("failed to parse openclaw.json")?;
+        let mut changed = false;
+
+        // Merge extra_config if configured
         if let Some(extra) = &self.config.extra_config {
-            tracing::info!("merging extra_config into {}", config_path.display());
-            let contents = std::fs::read_to_string(&config_path)
-                .with_context(|| format!("failed to read {}", config_path.display()))?;
-            let mut existing: serde_json::Value =
-                serde_json::from_str(&contents).context("failed to parse openclaw.json")?;
-
+            tracing::info!("merging extra_config into openclaw.json");
             merge_json(&mut existing, extra);
+            changed = true;
+        }
 
+        // Add skills directory to skills.load.extraDirs
+        let skills_dir = std::path::PathBuf::from(&home).join(".plan-ai-skills");
+        if skills_dir.exists() {
+            let skills_dir_str = skills_dir.to_string_lossy().to_string();
+            let extra_dirs = existing
+                .pointer_mut("/skills/load/extraDirs")
+                .and_then(|v| v.as_array_mut());
+
+            match extra_dirs {
+                Some(arr) => {
+                    if !arr.iter().any(|v| v.as_str() == Some(&skills_dir_str)) {
+                        arr.push(serde_json::Value::String(skills_dir_str));
+                        changed = true;
+                    }
+                }
+                None => {
+                    let patch: serde_json::Value = serde_json::json!({
+                        "skills": {
+                            "load": {
+                                "extraDirs": [skills_dir_str]
+                            }
+                        }
+                    });
+                    merge_json(&mut existing, &patch);
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
             let merged = serde_json::to_string_pretty(&existing)
                 .context("failed to serialize merged config")?;
             std::fs::write(&config_path, merged)
                 .with_context(|| format!("failed to write {}", config_path.display()))?;
-            tracing::info!("extra_config merged into openclaw.json");
+            tracing::info!("openclaw.json updated");
         }
 
         Ok(())
