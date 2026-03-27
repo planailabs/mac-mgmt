@@ -55,6 +55,9 @@ pub struct OidcConfig {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+    #[serde(default)]
     pub allowed_emails: Vec<String>,
     pub cookie_secret: String,
     /// Optional Redis URL for session cache. If absent, PostgreSQL is used.

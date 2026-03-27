@@ -131,11 +131,13 @@ pub async fn require_auth(
             let session_id = session_cookie.value().to_string();
             if let Ok(Some(session)) = AuthCache::get_auth_session(cache.as_ref(), &session_id).await {
                 if let Some(email) = email_from_id_token(&session.id_token) {
-                    let allowed = &config::config().oidc.allowed_emails;
-                    if allowed.contains(&email) {
+                    let oidc = &config::config().oidc;
+                    let domain_ok = oidc.allowed_domains.iter().any(|d| email.ends_with(&format!("@{d}")));
+                    let email_ok = oidc.allowed_emails.contains(&email);
+                    if domain_ok || email_ok {
                         return next.run(request).await;
                     }
-                    tracing::warn!("access denied for {email} (not in allowed_emails)");
+                    tracing::warn!("access denied for {email}");
                 }
             }
         }

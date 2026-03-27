@@ -11,7 +11,8 @@ port = 7377
 client_id = "xxx.apps.googleusercontent.com"
 client_secret = "GOCSPX-xxx"
 redirect_uri = "http://localhost:7377/auth/callback"
-allowed_emails = ["admin@example.com"] 
+allowed_domains = ["example.com"]
+# allowed_emails = ["admin@other.com"]  # optional, individual email allowlist
 cookie_secret = "generate-with-openssl-rand-hex-32"
 # redis_url = "redis://localhost:6379"  # optional, uses PostgreSQL if absent
 
