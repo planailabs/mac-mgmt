@@ -1,37 +1,7 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use std::path::PathBuf;
 
-use crate::services::ollama::OllamaConfig;
-use crate::services::openclaw::OpenClawConfig;
-
-fn default_metrics_port() -> u16 {
-    9396
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct MetricsConfig {
-    #[serde(default = "default_metrics_port")]
-    pub port: u16,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct ServerConfig {
-    pub url: Option<String>,
-    pub token: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct Config {
-    #[serde(default)]
-    pub openclaw: OpenClawConfig,
-    #[serde(default)]
-    pub ollama: OllamaConfig,
-    #[serde(default)]
-    pub metrics: MetricsConfig,
-    #[serde(default)]
-    pub server: ServerConfig,
-}
+pub use mac_mgmt_common::DaemonConfig as Config;
 
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());

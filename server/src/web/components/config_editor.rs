@@ -20,9 +20,8 @@ async fn get_current_config(customer_id: String) -> Result<Option<CustomerConfig
 
 #[server]
 async fn save_config(customer_id: String, config_toml: String) -> Result<(), ServerFnError> {
-    config_toml
-        .parse::<toml::Value>()
-        .map_err(|e| ServerFnError::new(format!("invalid TOML: {e}")))?;
+    mac_mgmt_common::CustomerConfig::from_toml(&config_toml)
+        .map_err(|e| ServerFnError::new(format!("invalid config: {e}")))?;
 
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = customer_id

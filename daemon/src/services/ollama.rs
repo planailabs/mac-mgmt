@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use std::io::Read;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
@@ -8,60 +7,9 @@ use std::time::Duration;
 
 use crate::managed_service::ManagedService;
 use crate::sentry_ext;
-
-fn default_host() -> String {
-    "127.0.0.1".to_string()
-}
-
-fn default_port() -> u16 {
-    11434
-}
-
-fn default_models() -> Vec<String> {
-    vec![
-        "qwen3.5".to_string(),
-        "qwen3-coder-next".to_string(),
-        "glm-5".to_string(),
-        "kimi-k2.5".to_string(),
-        "minimax-m2.7".to_string(),
-    ]
-}
-
-fn default_model() -> String {
-    "qwen3.5".to_string()
-}
-
-fn default_flavour() -> String {
-    "cpu".to_string()
-}
+pub use mac_mgmt_common::OllamaConfig;
 
 const ALL_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
-
-#[derive(Debug, Deserialize)]
-pub struct OllamaConfig {
-    #[serde(default = "default_host")]
-    pub host: String,
-    #[serde(default = "default_port")]
-    pub port: u16,
-    #[serde(default = "default_models")]
-    pub models: Vec<String>,
-    #[serde(default = "default_model")]
-    pub default_model: String,
-    #[serde(default = "default_flavour")]
-    pub flavour: String,
-}
-
-impl Default for OllamaConfig {
-    fn default() -> Self {
-        Self {
-            host: default_host(),
-            port: default_port(),
-            models: default_models(),
-            default_model: default_model(),
-            flavour: default_flavour(),
-        }
-    }
-}
 
 /// Returns the nix package name for a given flavour.
 /// "cpu" maps to "ollama", others map to "ollama-{flavour}".
