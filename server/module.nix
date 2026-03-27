@@ -110,7 +110,7 @@ in
         # ensurePermissions = { "DATABASE xzar" = "ALL PRIVILEGES"; };
       }];
 
-      ensureDatabases = [ "xzar" ];
+      ensureDatabases = [ "mac-mgmt" ];
     };
 
     networking.firewall = lib.mkIf cfg.openFirewall {
