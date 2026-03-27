@@ -2,25 +2,23 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
 
-fn nix_system() -> String {
-    let arch = std::env::consts::ARCH;
-    let os = std::env::consts::OS;
-    // Map Rust target triples to Nix system strings
-    let nix_arch = match arch {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        "x86" => "i686",
-        other => other,
-    };
-    let nix_os = match os {
-        "macos" => "darwin",
-        other => other,
-    };
-    format!("{nix_arch}-{nix_os}")
+async fn nix_system() -> Result<String> {
+    let output = tokio::process::Command::new("nix")
+        .args(["eval", "--raw", "--expr", "builtins.currentSystem"])
+        .output()
+        .await
+        .context("failed to run nix eval builtins.currentSystem")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("nix eval failed: {stderr}");
+    }
+
+    String::from_utf8(output.stdout).context("invalid UTF-8 from nix eval")
 }
 
 pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Result<()> {
-    let arch = nix_system();
+    let arch = nix_system().await?;
     tracing::info!("syncing skills for architecture: {arch}");
 
     // Fetch skill→store_path mappings from server
