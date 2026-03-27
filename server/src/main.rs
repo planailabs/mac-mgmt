@@ -45,8 +45,6 @@ fn main() {
             let auth_layer = if let Some(layer) = INIT.get() {
                 layer.clone()
             } else {
-                tracing_subscriber::fmt::init();
-
                 let cfg = config::load();
                 let pool = db::connect(&cfg.database.url).await;
 
