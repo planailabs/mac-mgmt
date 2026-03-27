@@ -42,6 +42,13 @@ fn main() {
         static INIT: OnceLock<Option<axum_oidc_client::auth::AuthLayer>> = OnceLock::new();
         let no_auth = std::env::var("DEV_ONLY_NO_AUTH").is_ok();
 
+        // Set PORT env var for dioxus if not already set.
+        // SAFETY: called before any threads are spawned.
+        if std::env::var("PORT").is_err() {
+            let cfg = config::load();
+            unsafe { std::env::set_var("PORT", cfg.web.port.to_string()) };
+        }
+
         dioxus::serve(move || async move {
             let auth_layer = if let Some(layer) = INIT.get() {
                 layer.clone()
