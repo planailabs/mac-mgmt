@@ -3,8 +3,14 @@ name = "mac-mgmt-server"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["web", "server"]
+web = ["dioxus/web"]
+server = ["dioxus/server"]
+
 [dependencies]
-dioxus = { version = "0.6", features = ["fullstack", "router"] }
+dioxus = { version = "0.7", features = ["fullstack", "router"] }
+wasm-bindgen = "=0.2.114"
 rocket = { version = "0.5", default-features = false }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
 tokio = { version = "1", features = ["full"] }

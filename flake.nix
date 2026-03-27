@@ -19,6 +19,7 @@
             "aarch64-apple-darwin"
             "x86_64-apple-darwin"
             "x86_64-unknown-linux-musl"
+            "wasm32-unknown-unknown"
           ];
         };
 
