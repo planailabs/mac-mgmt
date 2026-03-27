@@ -20,3 +20,6 @@ result-*
 # Build artifacts
 mac-mgmt.tar.gz
 mac-mgmt.version
+
+# Server config (contains secrets)
+server/config.toml
