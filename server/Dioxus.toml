@@ -6,3 +6,6 @@ title = "mac-mgmt"
 
 [web.resource.dev]
 style = ["/tailwind.css"]
+
+[web.resource.prod]
+style = ["/tailwind.css"]
