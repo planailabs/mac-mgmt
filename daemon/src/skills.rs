@@ -3,18 +3,20 @@ use std::collections::HashMap;
 use std::path::Path;
 
 async fn nix_system() -> Result<String> {
-    let output = tokio::process::Command::new("nix")
-        .args(["eval", "--raw", "--expr", "builtins.currentSystem"])
+    let output = tokio::process::Command::new("nix-instantiate")
+        .args(["--eval", "--expr", "builtins.currentSystem"])
         .output()
         .await
-        .context("failed to run nix eval builtins.currentSystem")?;
+        .context("failed to run nix-instantiate --eval")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("nix eval failed: {stderr}");
+        anyhow::bail!("nix-instantiate --eval failed: {stderr}");
     }
 
-    String::from_utf8(output.stdout).context("invalid UTF-8 from nix eval")
+    let raw = String::from_utf8(output.stdout).context("invalid UTF-8 from nix-instantiate")?;
+    // nix-instantiate returns a quoted string, e.g. "x86_64-linux"
+    Ok(raw.trim().trim_matches('"').to_string())
 }
 
 pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Result<()> {
