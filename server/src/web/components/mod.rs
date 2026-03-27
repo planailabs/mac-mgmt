@@ -8,6 +8,5 @@ pub mod customer_list;
 pub mod customer_skills;
 pub mod layout;
 pub mod skill_detail;
-pub mod skill_form;
 pub mod skill_list;
 pub mod token_list;

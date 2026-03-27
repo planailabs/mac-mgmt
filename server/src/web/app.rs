@@ -8,7 +8,6 @@ use super::components::customer_form::CustomerForm;
 use super::components::customer_list::CustomerList;
 use super::components::layout::Layout;
 use super::components::skill_detail::SkillDetail;
-use super::components::skill_form::SkillForm;
 use super::components::skill_list::SkillList;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -22,8 +21,6 @@ pub enum Route {
     CustomerDetail { id: String },
     #[route("/skills")]
     SkillList {},
-    #[route("/skills/new")]
-    SkillForm {},
     #[route("/skills/:id")]
     SkillDetail { id: String },
     #[route("/bundles")]
