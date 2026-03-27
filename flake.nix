@@ -9,6 +9,9 @@
   };
 
   outputs = { nixpkgs, rust-overlay, flake-utils, ... }:
+    {
+      nixosModules.default = import ./server/module.nix;
+    } //
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -36,6 +39,8 @@
           cargoLock.lockFile = ./Cargo.lock;
           buildInputs = darwinDeps;
         };
+
+        mac-mgmt-server = pkgs.callPackage ./server/package.nix { };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -65,6 +70,7 @@
         };
 
         packages.default = mac-mgmt;
+        packages.server = mac-mgmt-server;
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
           mkdir -p $out pack
