@@ -118,26 +118,35 @@ impl<R: Row + GetRowData<CustomerCreatedAt>> TableColumn<R> for CreatedAtColumn 
 pub fn CustomerList() -> Element {
     let customers = use_server_future(list_customers)?;
 
-    match &*customers.read() {
-        Some(Ok(list)) => {
-            let rows = use_signal(|| list.clone());
-            let data = use_tabular((NameColumn, CreatedAtColumn), rows.into());
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h2 { class: "text-2xl font-bold", "Customers" }
+            Link {
+                to: Route::CustomerForm {},
+                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                "New Customer"
+            }
+        }
+        {match &*customers.read() {
+            Some(Ok(list)) => {
+                let rows = use_signal(|| list.clone());
+                let data = use_tabular((NameColumn, CreatedAtColumn), rows.into());
 
-            rsx! {
-                h2 { class: "text-2xl font-bold mb-4", "Customers" }
-                table { class: "min-w-full divide-y divide-gray-200",
-                    thead { class: "bg-gray-50",
-                        tr { TableHeaders { data } }
-                    }
-                    tbody { class: "bg-white divide-y divide-gray-200",
-                        for row in data.rows() {
-                            tr { key: "{row.key()}", TableCells { row } }
+                rsx! {
+                    table { class: "min-w-full divide-y divide-gray-200",
+                        thead { class: "bg-gray-50",
+                            tr { TableHeaders { data } }
+                        }
+                        tbody { class: "bg-white divide-y divide-gray-200",
+                            for row in data.rows() {
+                                tr { key: "{row.key()}", TableCells { row } }
+                            }
                         }
                     }
                 }
             }
-        }
-        Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+            None => rsx! { p { "Loading..." } },
+        }}
     }
 }
