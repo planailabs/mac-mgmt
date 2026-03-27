@@ -4,6 +4,5 @@ name = "mac-mgmt-server"
 [web.app]
 title = "mac-mgmt"
 
-[web.resource.style]
-# TailwindCSS output
-files = ["public/tailwind.css"]
+[web.resource.dev]
+style = ["public/tailwind.css"]
