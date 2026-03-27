@@ -39,9 +39,10 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
             let _ = std::fs::remove_file(&link);
         }
 
+        let link_str = link.to_string_lossy().to_string();
         tracing::info!("realising skill {slug}: {store_path}");
         let output = tokio::process::Command::new("nix-store")
-            .args(["--realise", store_path, "--add-root", &link.to_string_lossy()])
+            .args(["--add-root", &link_str, "--realise", store_path])
             .output()
             .await
             .with_context(|| format!("failed to run nix-store --realise for {slug}"))?;
