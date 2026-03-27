@@ -18,5 +18,8 @@ pub enum Route {
 
 #[component]
 pub fn App() -> Element {
-    rsx! { Router::<Route> {} }
+    rsx! {
+        document::Link { rel: "stylesheet", href: "/tailwind.css" }
+        Router::<Route> {}
+    }
 }
