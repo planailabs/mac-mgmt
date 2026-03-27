@@ -16,3 +16,6 @@ allowed_domains = ["example.com"]
 cookie_secret = "generate-with-openssl-rand-hex-32"
 # redis_url = "redis://localhost:6379"  # optional, uses PostgreSQL if absent
 
+[xzar]
+url = "https://xzar.example.com"
+token = "xzar-api-token-here"

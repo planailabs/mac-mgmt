@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
 
 use crate::models::{Skill, SkillChannel};
@@ -46,6 +48,29 @@ async fn list_channels(skill_id: String) -> Result<Vec<SkillChannel>, ServerFnEr
 async fn add_channel(skill_id: String, channel: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    // Look up the skill slug to check xzar
+    let slug = sqlx::query_scalar::<_, String>("SELECT slug FROM skills WHERE id = $1")
+        .bind(uuid)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let cfg = crate::config::config();
+    let pins = crate::xzar::fetch_pins(&cfg.xzar.url, &cfg.xzar.token)
+        .await
+        .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
+
+    let pin_name = format!("skill/{slug}/{channel}");
+    let pin = pins.iter().find(|p| p.name == pin_name && !p.abandoned);
+    match pin {
+        None => return Err(ServerFnError::new(format!("no xzar pin found for {pin_name}"))),
+        Some(p) if p.roots.is_empty() => {
+            return Err(ServerFnError::new(format!("xzar pin {pin_name} has no roots")))
+        }
+        _ => {}
+    }
+
     sqlx::query("INSERT INTO skill_channels (skill_id, channel) VALUES ($1, $2)")
         .bind(uuid)
         .bind(&channel)
@@ -53,6 +78,51 @@ async fn add_channel(skill_id: String, channel: String) -> Result<(), ServerFnEr
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
+}
+
+/// Resolve store paths for all channels of a skill from xzar.
+#[server]
+async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, String>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    let slug = sqlx::query_scalar::<_, String>("SELECT slug FROM skills WHERE id = $1")
+        .bind(uuid)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let channels = sqlx::query_scalar::<_, String>(
+        "SELECT channel FROM skill_channels WHERE skill_id = $1",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if channels.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let cfg = crate::config::config();
+    let pins = crate::xzar::fetch_pins(&cfg.xzar.url, &cfg.xzar.token)
+        .await
+        .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
+
+    let skills: Vec<(String, String)> = channels.into_iter().map(|ch| (slug.clone(), ch)).collect();
+    // resolve_store_paths returns slug→path, but we need channel→path
+    // so we call it per-channel
+    let mut result = HashMap::new();
+    for (_, channel) in &skills {
+        let pin_name = format!("skill/{slug}/{channel}");
+        if let Some(pin) = pins.iter().find(|p| p.name == pin_name && !p.abandoned) {
+            if let Some(root) = pin.roots.first() {
+                result.insert(channel.clone(), root.drv_full.clone());
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[server]
@@ -81,10 +151,17 @@ pub fn SkillDetail(id: String) -> Element {
         async move { list_channels(id).await }
     })?;
 
+    let id_paths = id.clone();
+    let mut paths = use_server_future(move || {
+        let id = id_paths.clone();
+        async move { resolve_channel_paths(id).await }
+    })?;
+
     let mut editing = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
     let mut draft_desc = use_signal(String::new);
     let mut new_channel = use_signal(String::new);
+    let mut channel_error = use_signal(|| None::<String>);
 
     match &*skill.read() {
         Some(Ok(s)) => {
@@ -157,6 +234,9 @@ pub fn SkillDetail(id: String) -> Element {
                 // Channels section
                 div {
                     h3 { class: "text-lg font-semibold mb-3", "Channels" }
+                    if let Some(err) = &*channel_error.read() {
+                        p { class: "text-red-600 text-sm mb-2", "{err}" }
+                    }
                     form {
                         class: "flex gap-2 mb-4",
                         onsubmit: move |evt: FormEvent| {
@@ -165,9 +245,16 @@ pub fn SkillDetail(id: String) -> Element {
                             let ch = new_channel.read().clone();
                             spawn(async move {
                                 if !ch.trim().is_empty() {
-                                    if add_channel(sid, ch).await.is_ok() {
-                                        new_channel.set(String::new());
-                                        channels.restart();
+                                    match add_channel(sid, ch).await {
+                                        Ok(()) => {
+                                            channel_error.set(None);
+                                            new_channel.set(String::new());
+                                            channels.restart();
+                                            paths.restart();
+                                        }
+                                        Err(e) => {
+                                            channel_error.set(Some(e.to_string()));
+                                        }
                                     }
                                 }
                             });
@@ -186,30 +273,43 @@ pub fn SkillDetail(id: String) -> Element {
                         }
                     }
                     {match &*channels.read() {
-                        Some(Ok(list)) => rsx! {
-                            ul { class: "divide-y divide-gray-200",
-                                for ch in list {
-                                    {
-                                        let chid = ch.id.to_string();
-                                        let ch_name = ch.channel.clone();
-                                        let ch_created = ch.created_at.format("%Y-%m-%d").to_string();
-                                        rsx! {
-                                            li { class: "py-2 flex justify-between items-center",
-                                                div {
-                                                    span { class: "text-sm font-mono font-medium", "{ch_name}" }
-                                                    span { class: "text-xs text-gray-400 ml-2", "{ch_created}" }
-                                                }
-                                                button {
-                                                    class: "text-xs text-red-600 hover:underline",
-                                                    onclick: move |_| {
-                                                        let chid = chid.clone();
-                                                        spawn(async move {
-                                                            if remove_channel(chid).await.is_ok() {
-                                                                channels.restart();
-                                                            }
-                                                        });
-                                                    },
-                                                    "Remove"
+                        Some(Ok(list)) => {
+                            let path_map = match &*paths.read() {
+                                Some(Ok(m)) => m.clone(),
+                                _ => HashMap::new(),
+                            };
+                            rsx! {
+                                ul { class: "divide-y divide-gray-200",
+                                    for ch in list {
+                                        {
+                                            let chid = ch.id.to_string();
+                                            let ch_name = ch.channel.clone();
+                                            let ch_created = ch.created_at.format("%Y-%m-%d").to_string();
+                                            let store_path = path_map.get(&ch.channel).cloned();
+                                            rsx! {
+                                                li { class: "py-2",
+                                                    div { class: "flex justify-between items-center",
+                                                        div {
+                                                            span { class: "text-sm font-mono font-medium", "{ch_name}" }
+                                                            span { class: "text-xs text-gray-400 ml-2", "{ch_created}" }
+                                                        }
+                                                        button {
+                                                            class: "text-xs text-red-600 hover:underline",
+                                                            onclick: move |_| {
+                                                                let chid = chid.clone();
+                                                                spawn(async move {
+                                                                    if remove_channel(chid).await.is_ok() {
+                                                                        channels.restart();
+                                                                        paths.restart();
+                                                                    }
+                                                                });
+                                                            },
+                                                            "Remove"
+                                                        }
+                                                    }
+                                                    if let Some(sp) = &store_path {
+                                                        p { class: "text-xs text-gray-400 font-mono mt-0.5 truncate", "{sp}" }
+                                                    }
                                                 }
                                             }
                                         }
