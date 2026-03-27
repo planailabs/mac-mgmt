@@ -6,7 +6,7 @@ edition = "2024"
 [features]
 default = ["web", "server"]
 web = ["dioxus/web"]
-server = ["dioxus/server", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml"]
+server = ["dioxus/server", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:axum-oidc-client", "dep:serde_json", "dep:base64", "dep:axum-extra"]
 
 [dependencies]
 dioxus = { version = "0.7", features = ["fullstack", "router"] }
@@ -24,3 +24,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", optional = true }
 anyhow = { version = "1", optional = true }
 toml = { version = "0.8", optional = true }
+axum-oidc-client = { version = "0.3", features = ["sql-cache-postgres", "redis"], optional = true }
+serde_json = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
+axum-extra = { version = "0.10", features = ["cookie-private"], optional = true }

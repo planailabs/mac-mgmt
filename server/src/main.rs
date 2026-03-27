@@ -1,6 +1,8 @@
 #[cfg(feature = "server")]
 mod api;
 #[cfg(feature = "server")]
+mod config;
+#[cfg(feature = "server")]
 mod db;
 mod models;
 mod web;
@@ -31,6 +33,8 @@ pub fn server_pool() -> Result<sqlx::PgPool, dioxus::prelude::ServerFnError> {
 fn main() {
     #[cfg(feature = "server")]
     {
+        use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
+
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -38,7 +42,8 @@ fn main() {
             .block_on(async {
                 tracing_subscriber::fmt::init();
 
-                let pool = db::connect().await;
+                let cfg = config::load();
+                let pool = db::connect(&cfg.database.url).await;
 
                 sqlx::migrate!()
                     .run(&pool)
@@ -47,16 +52,31 @@ fn main() {
 
                 server_state::set_pool(pool.clone());
 
-                // Rocket API on port 8080 (background task)
+                // Build OIDC auth layer and session cache
+                let (auth_layer, _cache) =
+                    web::auth::build_auth_layer(&cfg.database.url).await;
+
+                // Rocket API on configured port (background task)
+                let api_port = cfg.api.port;
                 let api_pool = pool.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = api::build_rocket(api_pool, 8080).launch().await {
+                    if let Err(e) = api::build_rocket(api_pool, api_port).launch().await {
                         tracing::error!("API server failed: {e}");
                     }
                 });
 
-                // Dioxus fullstack on port 3000
-                dioxus::launch(web::app::App);
+                // Dioxus fullstack with OIDC auth on configured port
+                dioxus::serve(|| {
+                    let auth_layer = auth_layer.clone();
+                    async move {
+                        let router = axum::Router::new()
+                            .serve_dioxus_application(ServeConfig::new(), web::app::App)
+                            .layer(axum::middleware::from_fn(web::auth::require_auth))
+                            .layer(auth_layer);
+
+                        Ok(router)
+                    }
+                });
             });
     }
 
