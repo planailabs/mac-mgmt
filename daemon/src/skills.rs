@@ -26,11 +26,22 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
     std::fs::create_dir_all(skills_dir)
         .with_context(|| format!("failed to create {}", skills_dir.display()))?;
 
-    // Realise and symlink each skill
+    // Realise each skill with --add-root to create a GC root link in skills_dir
     for (slug, store_path) in &skills {
+        let link = skills_dir.join(slug);
+
+        // Skip if already pointing to the right store path
+        if let Ok(target) = std::fs::read_link(&link) {
+            if target.to_string_lossy() == *store_path {
+                continue;
+            }
+            // Remove stale link so --add-root can recreate it
+            let _ = std::fs::remove_file(&link);
+        }
+
         tracing::info!("realising skill {slug}: {store_path}");
         let output = tokio::process::Command::new("nix-store")
-            .args(["--realise", store_path])
+            .args(["--realise", store_path, "--add-root", &link.to_string_lossy()])
             .output()
             .await
             .with_context(|| format!("failed to run nix-store --realise for {slug}"))?;
@@ -41,21 +52,6 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
             continue;
         }
 
-        let link = skills_dir.join(slug);
-
-        // Remove existing symlink/file if it points elsewhere
-        if link.exists() || link.symlink_metadata().is_ok() {
-            if let Ok(target) = std::fs::read_link(&link) {
-                if target.to_string_lossy() == *store_path {
-                    continue; // already correct
-                }
-            }
-            std::fs::remove_file(&link)
-                .with_context(|| format!("failed to remove old link {}", link.display()))?;
-        }
-
-        std::os::unix::fs::symlink(store_path, &link)
-            .with_context(|| format!("failed to symlink {} -> {}", link.display(), store_path))?;
         tracing::info!("linked {slug} -> {store_path}");
     }
 
