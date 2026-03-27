@@ -38,12 +38,26 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = [
+          buildInputs = with pkgs; [
             toolchain
-            pkgs.cargo-edit
-            pkgs.cargo-zigbuild
-            pkgs.zig
-            pkgs.rsync
+            cargo-edit
+            cargo-zigbuild
+            zig
+            rsync
+
+            # Dioxus CLI
+            dioxus-cli
+
+            # Build dependencies
+            pkg-config
+            openssl
+            nodejs
+
+            # For WASM
+            wasm-pack
+            wasm-bindgen-cli_0_2_114
+            binaryen  # wasm-opt
+
           ] ++ darwinDeps;
 
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
