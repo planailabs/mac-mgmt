@@ -5,4 +5,4 @@ name = "mac-mgmt-server"
 title = "mac-mgmt"
 
 [web.resource.dev]
-style = ["public/tailwind.css"]
+style = ["/tailwind.css"]

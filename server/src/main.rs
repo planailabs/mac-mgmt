@@ -39,7 +39,8 @@ fn main() {
         // Shared state initialized once inside the first serve callback invocation.
         // serve() may call the callback multiple times (hot-reload), so we use OnceLock
         // to ensure one-time init.
-        static INIT: OnceLock<axum_oidc_client::auth::AuthLayer> = OnceLock::new();
+        static INIT: OnceLock<Option<axum_oidc_client::auth::AuthLayer>> = OnceLock::new();
+        let no_auth = std::env::var("DEV_ONLY_NO_AUTH").is_ok();
 
         dioxus::serve(move || async move {
             let auth_layer = if let Some(layer) = INIT.get() {
@@ -55,9 +56,14 @@ fn main() {
 
                 server_state::set_pool(pool.clone());
 
-                // Build OIDC auth layer and session cache
-                let (auth_layer, _cache) =
-                    web::auth::build_auth_layer(&cfg.database.url).await;
+                let auth_layer = if no_auth {
+                    tracing::warn!("DEV_ONLY_NO_AUTH is set — authentication disabled");
+                    None
+                } else {
+                    let (layer, _cache) =
+                        web::auth::build_auth_layer(&cfg.database.url).await;
+                    Some(layer)
+                };
 
                 // Rocket API on configured port (background task)
                 let api_port = cfg.api.port;
@@ -72,10 +78,14 @@ fn main() {
                 auth_layer
             };
 
-            let router = axum::Router::new()
-                .serve_dioxus_application(ServeConfig::new(), web::app::App)
-                .layer(axum::middleware::from_fn(web::auth::require_auth))
-                .layer(auth_layer);
+            let mut router = axum::Router::new()
+                .serve_dioxus_application(ServeConfig::new(), web::app::App);
+
+            if let Some(auth_layer) = auth_layer {
+                router = router
+                    .layer(axum::middleware::from_fn(web::auth::require_auth))
+                    .layer(auth_layer);
+            }
 
             Ok(router)
         });
