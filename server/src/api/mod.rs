@@ -11,6 +11,7 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
         address: std::net::Ipv4Addr::UNSPECIFIED.into(),
         shutdown: Shutdown {
             grace: 2,
+            mercy: 2,
             ..Shutdown::default()
         },
         ..Config::default()
