@@ -28,3 +28,4 @@ axum-oidc-client = { version = "0.3", features = ["sql-cache-postgres", "redis"]
 serde_json = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
 axum-extra = { version = "0.10", features = ["cookie-private"], optional = true }
+dioxus-tabular = "0.3"
