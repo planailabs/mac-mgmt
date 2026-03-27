@@ -31,7 +31,7 @@ impl Default for ApiConfig {
 }
 
 fn default_api_port() -> u16 {
-    8080
+    7378
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,7 +47,7 @@ impl Default for WebConfig {
 }
 
 fn default_web_port() -> u16 {
-    3000
+    7377
 }
 
 #[derive(Debug, Deserialize)]

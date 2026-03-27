@@ -2,15 +2,15 @@
 url = "postgres:///planai?host=/run/postgresql" 
 
 [api]
-port = 8080
+port = 7378
 
 [web]
-port = 3000 
+port = 7377
 
 [oidc]
 client_id = "xxx.apps.googleusercontent.com"
 client_secret = "GOCSPX-xxx"
-redirect_uri = "http://localhost:3000/auth/callback"
+redirect_uri = "http://localhost:7377/auth/callback"
 allowed_emails = ["admin@example.com"] 
 cookie_secret = "generate-with-openssl-rand-hex-32"
 # redis_url = "redis://localhost:6379"  # optional, uses PostgreSQL if absent
