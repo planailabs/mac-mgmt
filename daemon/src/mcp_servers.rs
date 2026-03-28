@@ -1,7 +1,50 @@
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use crate::sentry_ext;
 
 const NAMESPACE: &str = "plan-ai/";
+
+#[derive(serde::Deserialize)]
+struct McpServerEntry {
+    config: serde_json::Value,
+    #[serde(default)]
+    nix_packages: Vec<String>,
+}
+
+/// Path to the state file that tracks which nix packages were installed by MCP sync.
+fn mcp_nix_state_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    std::path::PathBuf::from(home).join(".config/mac-mgmt/mcp-nix-packages.json")
+}
+
+fn read_nix_state() -> HashSet<String> {
+    let path = mcp_nix_state_path();
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        if let Ok(pkgs) = serde_json::from_str::<Vec<String>>(&contents) {
+            return pkgs.into_iter().collect();
+        }
+    }
+    HashSet::new()
+}
+
+fn write_nix_state(pkgs: &HashSet<String>) -> Result<()> {
+    let path = mcp_nix_state_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let sorted: Vec<&String> = {
+        let mut v: Vec<_> = pkgs.iter().collect();
+        v.sort();
+        v
+    };
+    let json = serde_json::to_string_pretty(&sorted)
+        .context("failed to serialize MCP nix state")?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
 
 pub async fn sync_mcp_servers(server_url: &str, token: &str) -> Result<()> {
     tracing::info!("syncing MCP server configs");
@@ -19,11 +62,19 @@ pub async fn sync_mcp_servers(server_url: &str, token: &str) -> Result<()> {
         anyhow::bail!("MCP servers API returned {status}");
     }
 
-    let servers: HashMap<String, serde_json::Value> = resp
+    let servers: HashMap<String, McpServerEntry> = resp
         .json()
         .await
         .context("failed to parse MCP servers response")?;
 
+    sync_mcporter_config(&servers)?;
+    sync_nix_packages(&servers);
+
+    tracing::info!("MCP server sync complete ({} servers)", servers.len());
+    Ok(())
+}
+
+fn sync_mcporter_config(servers: &HashMap<String, McpServerEntry>) -> Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let config_dir = std::path::PathBuf::from(&home).join(".mcporter");
     let config_path = config_dir.join("mcporter.json");
@@ -69,10 +120,10 @@ pub async fn sync_mcp_servers(server_url: &str, token: &str) -> Result<()> {
     }
 
     // Upsert plan-ai/{slug} entries
-    for (slug, config_json) in &servers {
+    for (slug, entry) in servers {
         let key = format!("{NAMESPACE}{slug}");
         tracing::info!("setting MCP server: {key}");
-        mcp_obj.insert(key, config_json.clone());
+        mcp_obj.insert(key, entry.config.clone());
     }
 
     // Write back pretty-printed
@@ -81,6 +132,57 @@ pub async fn sync_mcp_servers(server_url: &str, token: &str) -> Result<()> {
     std::fs::write(&config_path, &output)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
 
-    tracing::info!("MCP server config synced ({} servers)", servers.len());
     Ok(())
+}
+
+fn sync_nix_packages(servers: &HashMap<String, McpServerEntry>) {
+    // Collect desired set of nix packages across all servers
+    let desired: HashSet<String> = servers
+        .values()
+        .flat_map(|entry| entry.nix_packages.iter().cloned())
+        .collect();
+
+    let current = read_nix_state();
+
+    // Install new packages
+    let to_install: Vec<&String> = desired.difference(&current).collect();
+    for pkg in &to_install {
+        tracing::info!("installing MCP nix dependency: {pkg}");
+        sentry_ext::breadcrumb("mcp-nix", &format!("installing {pkg}"), &[("package", pkg)]);
+        if let Err(e) = crate::nix::profile_install(pkg, false) {
+            tracing::warn!("failed to install MCP nix dependency {pkg}: {e}");
+            sentry_ext::capture_error(
+                &format!("MCP nix install failed: {pkg}: {e}"),
+                &[("package", pkg)],
+            );
+        }
+    }
+
+    // Remove packages no longer needed
+    let to_remove: Vec<&String> = current.difference(&desired).collect();
+    for pkg in &to_remove {
+        tracing::info!("removing MCP nix dependency: {pkg}");
+        sentry_ext::breadcrumb("mcp-nix", &format!("removing {pkg}"), &[("package", pkg)]);
+        if let Err(e) = crate::nix::profile_remove(pkg) {
+            tracing::warn!("failed to remove MCP nix dependency {pkg}: {e}");
+            sentry_ext::capture_error(
+                &format!("MCP nix remove failed: {pkg}: {e}"),
+                &[("package", pkg)],
+            );
+        }
+    }
+
+    // Persist the new desired set
+    if let Err(e) = write_nix_state(&desired) {
+        tracing::warn!("failed to write MCP nix state: {e}");
+    }
+
+    if !to_install.is_empty() || !to_remove.is_empty() {
+        tracing::info!(
+            "MCP nix packages synced: +{} -{} (total {})",
+            to_install.len(),
+            to_remove.len(),
+            desired.len(),
+        );
+    }
 }

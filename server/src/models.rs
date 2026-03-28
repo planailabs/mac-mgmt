@@ -98,6 +98,7 @@ pub struct McpServer {
     pub name: String,
     pub description: String,
     pub config_json: serde_json::Value,
+    pub nix_packages: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 

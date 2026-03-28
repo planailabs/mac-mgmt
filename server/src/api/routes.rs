@@ -8,24 +8,31 @@ use sqlx::PgPool;
 use super::auth::AuthenticatedCustomer;
 
 #[derive(sqlx::FromRow)]
-struct McpServerSlugConfig {
+struct McpServerRow {
     slug: String,
     config_json: serde_json::Value,
+    nix_packages: Vec<String>,
     is_direct: bool,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct McpServerEntry {
+    config: serde_json::Value,
+    nix_packages: Vec<String>,
 }
 
 #[rocket::get("/mcp-servers")]
 pub async fn get_mcp_servers(
     auth: AuthenticatedCustomer,
     pool: &State<PgPool>,
-) -> Result<Json<HashMap<String, serde_json::Value>>, Status> {
-    let rows = sqlx::query_as::<_, McpServerSlugConfig>(
-        "SELECT ms.slug, ms.config_json, true AS is_direct \
+) -> Result<Json<HashMap<String, McpServerEntry>>, Status> {
+    let rows = sqlx::query_as::<_, McpServerRow>(
+        "SELECT ms.slug, ms.config_json, ms.nix_packages, true AS is_direct \
          FROM customer_mcp_servers cms \
          JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
          WHERE cms.customer_id = $1 \
          UNION ALL \
-         SELECT ms.slug, ms.config_json, false AS is_direct \
+         SELECT ms.slug, ms.config_json, ms.nix_packages, false AS is_direct \
          FROM customer_mcp_bundles cmb \
          JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
          JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
@@ -37,22 +44,25 @@ pub async fn get_mcp_servers(
     .map_err(|_| Status::InternalServerError)?;
 
     // For each slug, direct assignment wins over bundle.
-    let mut result: HashMap<String, (serde_json::Value, bool)> = HashMap::new();
+    let mut result: HashMap<String, (McpServerEntry, bool)> = HashMap::new();
     for row in &rows {
         match result.get(&row.slug) {
             Some((_, true)) => {} // already have a direct assignment
             _ => {
                 result.insert(
                     row.slug.clone(),
-                    (row.config_json.clone(), row.is_direct),
+                    (McpServerEntry {
+                        config: row.config_json.clone(),
+                        nix_packages: row.nix_packages.clone(),
+                    }, row.is_direct),
                 );
             }
         }
     }
 
-    let servers: HashMap<String, serde_json::Value> = result
+    let servers: HashMap<String, McpServerEntry> = result
         .into_iter()
-        .map(|(slug, (config, _))| (slug, config))
+        .map(|(slug, (entry, _))| (slug, entry))
         .collect();
 
     Ok(Json(servers))

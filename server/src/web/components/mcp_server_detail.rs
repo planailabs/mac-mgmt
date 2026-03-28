@@ -65,6 +65,41 @@ async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
     Ok(())
 }
 
+#[server]
+async fn add_nix_package(id: String, package: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let pkg = package.trim().to_string();
+    if pkg.is_empty() {
+        return Err(ServerFnError::new("package name cannot be empty"));
+    }
+    sqlx::query(
+        "UPDATE mcp_servers SET nix_packages = array_append(nix_packages, $1) \
+         WHERE id = $2 AND NOT ($1 = ANY(nix_packages))",
+    )
+    .bind(&pkg)
+    .bind(uuid)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
+#[server]
+async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "UPDATE mcp_servers SET nix_packages = array_remove(nix_packages, $1) WHERE id = $2",
+    )
+    .bind(&package)
+    .bind(uuid)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
 #[component]
 pub fn McpServerDetail(id: String) -> Element {
     let id_clone = id.clone();
@@ -78,16 +113,19 @@ pub fn McpServerDetail(id: String) -> Element {
     let mut draft_desc = use_signal(String::new);
     let mut draft_config = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
+    let mut new_pkg = use_signal(String::new);
 
     match &*server.read() {
         Some(Ok(s)) => {
             let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
             let sid = s.id.to_string();
+            let sid_pkg = sid.clone();
             let name = s.name.clone();
             let desc = s.description.clone();
             let slug = s.slug.clone();
             let config_str_display = serde_json::to_string_pretty(&s.config_json).unwrap_or_default();
             let config_str_edit = config_str_display.clone();
+            let packages = s.nix_packages.clone();
 
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
@@ -169,10 +207,74 @@ pub fn McpServerDetail(id: String) -> Element {
                 p { class: "text-gray-500 text-sm mb-6", "Created: {created}" }
 
                 if !*editing.read() {
-                    div {
+                    div { class: "mb-6",
                         h3 { class: "text-lg font-semibold mb-3", "Config JSON" }
                         pre { class: "bg-gray-100 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap",
                             "{config_str_display}"
+                        }
+                    }
+
+                    // Nix packages section
+                    div {
+                        h3 { class: "text-lg font-semibold mb-3", "Nix Dependencies" }
+                        form {
+                            class: "flex gap-2 mb-4",
+                            onsubmit: move |evt: FormEvent| {
+                                evt.prevent_default();
+                                let id = sid_pkg.clone();
+                                let pkg = new_pkg.read().clone();
+                                spawn(async move {
+                                    if !pkg.trim().is_empty() {
+                                        if add_nix_package(id, pkg).await.is_ok() {
+                                            new_pkg.set(String::new());
+                                            server.restart();
+                                        }
+                                    }
+                                });
+                            },
+                            input {
+                                class: "flex-1 border border-gray-300 rounded px-3 py-1 text-sm font-mono",
+                                r#type: "text",
+                                placeholder: "package-name",
+                                value: "{new_pkg}",
+                                oninput: move |e| new_pkg.set(e.value()),
+                            }
+                            button {
+                                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
+                                r#type: "submit",
+                                "Add"
+                            }
+                        }
+                        if packages.is_empty() {
+                            p { class: "text-sm text-gray-400", "No nix dependencies." }
+                        } else {
+                            ul { class: "divide-y divide-gray-200",
+                                for pkg in &packages {
+                                    {
+                                        let pkg_display = pkg.clone();
+                                        let pkg_remove = pkg.clone();
+                                        let id_rm = id.clone();
+                                        rsx! {
+                                            li { class: "py-2 flex justify-between items-center",
+                                                span { class: "text-sm font-mono", "{pkg_display}" }
+                                                button {
+                                                    class: "text-xs text-red-600 hover:underline",
+                                                    onclick: move |_| {
+                                                        let id = id_rm.clone();
+                                                        let pkg = pkg_remove.clone();
+                                                        spawn(async move {
+                                                            if remove_nix_package(id, pkg).await.is_ok() {
+                                                                server.restart();
+                                                            }
+                                                        });
+                                                    },
+                                                    "Remove"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
