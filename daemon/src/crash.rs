@@ -22,11 +22,14 @@ pub fn init() -> sentry::ClientInitGuard {
 
         tracing::error!("daemon panicked, attempting self-update before exit");
 
-        // Try to self-update so the next launch gets a (hopefully fixed) binary
-        if let Err(e) = crate::daemon::do_update(false) {
-            tracing::error!("self-update after panic failed: {e}");
-        } else {
-            tracing::info!("self-update after panic succeeded");
+        // Run self-update on a separate thread to avoid creating a nested Tokio
+        // runtime (reqwest::blocking internally creates one, which panics if
+        // dropped inside an existing async context).
+        let handle = std::thread::spawn(|| crate::daemon::do_update(false));
+        match handle.join() {
+            Ok(Ok(())) => tracing::info!("self-update after panic succeeded"),
+            Ok(Err(e)) => tracing::error!("self-update after panic failed: {e}"),
+            Err(_) => tracing::error!("self-update thread panicked"),
         }
 
         // Run the default hook (prints backtrace etc.)

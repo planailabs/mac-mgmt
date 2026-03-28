@@ -95,7 +95,7 @@ pub async fn run() -> Result<()> {
         .context("failed to register SIGINT handler")?;
 
     // Run immediate update check and skills sync on startup
-    check_and_update();
+    let _ = tokio::task::spawn_blocking(check_and_update).await;
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
             tracing::warn!("initial skills sync failed: {e}");
@@ -115,8 +115,8 @@ pub async fn run() -> Result<()> {
                 break;
             }
             _ = update_interval.tick() => {
-                check_and_update();
-                upgrade_nix();
+                let _ = tokio::task::spawn_blocking(check_and_update).await;
+                let _ = tokio::task::spawn_blocking(upgrade_nix).await;
 
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
                     if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
