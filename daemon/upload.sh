@@ -8,9 +8,9 @@ SSH_KEY=$(mktemp)
 echo "$ID_UPDATE" > "$SSH_KEY"
 chmod 600 "$SSH_KEY"
 
-grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/' > ../mac-mgmt.version
+grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/' > mac-mgmt.version
 
 rsync -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
-  ../mac-mgmt.tar.gz ../mac-mgmt.version "deploy@logos.plan.ai:${DEST}/"
+  mac-mgmt.tar.gz mac-mgmt.version "deploy@logos.plan.ai:${DEST}/"
 
 rm -f "$SSH_KEY"

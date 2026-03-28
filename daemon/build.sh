@@ -11,7 +11,7 @@ cargo zigbuild --release --target "${TARGETS[1]}" -p mac-mgmt
 
 TMP=$(mktemp -d)
 for target in "${TARGETS[@]}"; do
-  cp "../target/${target}/release/mac-mgmt" "$TMP/mac-mgmt-${target}"
+  cp "target/${target}/release/mac-mgmt" "$TMP/mac-mgmt-${target}"
 done
 tar czf mac-mgmt.tar.gz -C "$TMP" "${TARGETS[@]/#/mac-mgmt-}"
 rm -rf "$TMP"
