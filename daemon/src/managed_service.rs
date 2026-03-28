@@ -1,9 +1,24 @@
 use anyhow::Result;
 
+/// Whether the daemon should spawn and manage a long-running process,
+/// or only install the package (no child process).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceMode {
+    /// Full lifecycle: install → setup → spawn → health-check → upgrade/restart.
+    Managed,
+    /// Install and upgrade only; no process to spawn or monitor.
+    InstallOnly,
+}
+
 /// A service that the daemon manages: installs, spawns, monitors, and upgrades.
 pub trait ManagedService {
     /// Human-readable name for logging.
     fn name(&self) -> &str;
+
+    /// Whether this service is fully managed (spawned) or install-only.
+    fn service_mode(&self) -> ServiceMode {
+        ServiceMode::Managed
+    }
 
     /// Ensure the service binary/package is installed.
     fn ensure_installed(&self) -> Result<()>;

@@ -131,6 +131,28 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
+pub fn start() -> Result<()> {
+    let status = privileged("systemctl", &["start", SERVICE_NAME])?;
+    if !status.success() {
+        anyhow::bail!("systemctl start failed");
+    }
+
+    tracing::info!("service started");
+    println!("Service started");
+    Ok(())
+}
+
+pub fn stop() -> Result<()> {
+    let status = privileged("systemctl", &["stop", SERVICE_NAME])?;
+    if !status.success() {
+        anyhow::bail!("systemctl stop failed");
+    }
+
+    tracing::info!("service stopped");
+    println!("Service stopped");
+    Ok(())
+}
+
 pub fn restart() -> Result<()> {
     let status = privileged("systemctl", &["restart", SERVICE_NAME])?;
     if !status.success() {

@@ -5,10 +5,10 @@ use std::time::Duration;
 use tokio::time;
 
 use crate::config;
-use crate::managed_service::ManagedService;
+use crate::managed_service::{ManagedService, ServiceMode};
 use crate::metrics::Metrics;
 use crate::sentry_ext;
-use crate::services::{ollama::Ollama, openclaw::OpenClaw};
+use crate::services::{mcporter::McPorter, ollama::Ollama, openclaw::OpenClaw};
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
 const HEALTH_INTERVAL: Duration = Duration::from_secs(60); // 1 minute
@@ -53,13 +53,25 @@ pub async fn run() -> Result<()> {
     let services: Vec<Box<dyn ManagedService>> = vec![
         Box::new(OpenClaw::new(cfg.openclaw)),
         Box::new(Ollama::new(cfg.ollama)),
+        Box::new(McPorter),
     ];
 
     let mut states: Vec<ServiceState> = Vec::new();
+    let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
     for service in services {
         let name = service.name().to_string();
         service.ensure_installed()?;
         service.ensure_setup()?;
+
+        if service.service_mode() == ServiceMode::InstallOnly {
+            tracing::info!("{name} is install-only, skipping spawn");
+            sentry_ext::breadcrumb("service", &format!("{name} installed (install-only)"), &[
+                ("service", &name),
+            ]);
+            install_only.push(service);
+            continue;
+        }
+
         let child = service.spawn()?;
         sentry_ext::breadcrumb("service", &format!("{name} initialized"), &[
             ("service", &name),
@@ -94,11 +106,14 @@ pub async fn run() -> Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("failed to register SIGINT handler")?;
 
-    // Run immediate update check and skills sync on startup
+    // Run immediate update check and skills/MCP sync on startup
     let _ = tokio::task::spawn_blocking(check_and_update).await;
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
             tracing::warn!("initial skills sync failed: {e}");
+        }
+        if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
+            tracing::warn!("initial MCP servers sync failed: {e}");
         }
     }
 
@@ -121,6 +136,29 @@ pub async fn run() -> Result<()> {
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
                     if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
                         tracing::warn!("skills sync failed: {e}");
+                    }
+                    if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
+                        tracing::warn!("MCP servers sync failed: {e}");
+                    }
+                }
+
+                // Upgrade install-only services (no restart needed)
+                for svc in &install_only {
+                    let name = svc.name();
+                    sentry_ext::set_tag("service", name);
+                    match svc.check_and_upgrade() {
+                        Ok(true) => {
+                            tracing::info!("{name} upgraded (install-only)");
+                            sentry_ext::breadcrumb("upgrade", &format!("{name} upgraded (install-only)"), &[("service", name)]);
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!("{name} upgrade check failed: {e}");
+                            sentry_ext::capture_error(
+                                &format!("{name} upgrade check failed: {e}"),
+                                &[("service", name)],
+                            );
+                        }
                     }
                 }
 

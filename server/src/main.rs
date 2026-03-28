@@ -4,6 +4,8 @@ mod api;
 mod config;
 #[cfg(feature = "server")]
 mod db;
+#[cfg(feature = "server")]
+mod mcp_schema;
 mod models;
 mod web;
 #[cfg(feature = "server")]
