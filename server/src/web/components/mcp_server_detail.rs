@@ -91,6 +91,18 @@ async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnE
     Ok(())
 }
 
+#[server]
+async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM mcp_servers WHERE id = $1")
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
 // ── Shared form fields component ─────────────────────────────────────
 
 #[component]
@@ -151,6 +163,7 @@ fn McpServerFormFields(
 
 #[component]
 pub fn McpServerDetail(id: String) -> Element {
+    let navigator = navigator();
     let id_clone = id.clone();
     let mut server = use_server_future(move || {
         let id = id_clone.clone();
@@ -163,6 +176,7 @@ pub fn McpServerDetail(id: String) -> Element {
         Some(Ok(s)) => {
             let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
             let sid = s.id.to_string();
+            let sid_del = sid.clone();
             let sid_pkg = sid.clone();
             let name = s.name.clone();
             let slug = s.slug.clone();
@@ -177,6 +191,19 @@ pub fn McpServerDetail(id: String) -> Element {
                         to: Route::McpServerEdit { id: sid },
                         class: "text-gray-400 hover:text-gray-600",
                         "Edit"
+                    }
+                    button {
+                        class: "text-red-400 hover:text-red-600",
+                        onclick: move |_| {
+                            let id = sid_del.clone();
+                            let nav = navigator.clone();
+                            spawn(async move {
+                                if delete_mcp_server(id).await.is_ok() {
+                                    nav.push(Route::McpServerList {});
+                                }
+                            });
+                        },
+                        "Delete"
                     }
                 }
                 if !s.description.is_empty() {

@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::models::Bundle;
+use crate::web::app::Route;
 
 /// A skill channel with its skill slug for display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -30,6 +31,18 @@ async fn get_bundle(id: String) -> Result<Bundle, ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(bundle)
+}
+
+#[server]
+async fn delete_bundle(id: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM bundles WHERE id = $1")
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
 }
 
 #[server]
@@ -108,6 +121,7 @@ async fn remove_bundle_item(bundle_item_id: String) -> Result<(), ServerFnError>
 
 #[component]
 pub fn BundleDetail(id: String) -> Element {
+    let navigator = navigator();
     let id_clone = id.clone();
     let mut bundle = use_server_future(move || {
         let id = id_clone.clone();
@@ -131,6 +145,7 @@ pub fn BundleDetail(id: String) -> Element {
         Some(Ok(b)) => {
             let created = b.created_at.format("%Y-%m-%d %H:%M").to_string();
             let bid = b.id.to_string();
+            let bid_del = bid.clone();
             let bid2 = bid.clone();
             let name = b.name.clone();
             let desc = b.description.clone();
@@ -187,6 +202,19 @@ pub fn BundleDetail(id: String) -> Element {
                                 editing.set(true);
                             },
                             "Edit"
+                        }
+                        button {
+                            class: "text-red-400 hover:text-red-600",
+                            onclick: move |_| {
+                                let id = bid_del.clone();
+                                let nav = navigator.clone();
+                                spawn(async move {
+                                    if delete_bundle(id).await.is_ok() {
+                                        nav.push(Route::BundleList {});
+                                    }
+                                });
+                            },
+                            "Delete"
                         }
                     }
                 }
