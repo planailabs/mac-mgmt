@@ -172,6 +172,37 @@ fn sync_nix_packages(servers: &HashMap<String, McpServerEntry>) {
         }
     }
 
+    // Check for updates on existing packages
+    let existing: Vec<&String> = desired.intersection(&current).collect();
+    if !existing.is_empty() {
+        let upgradable: HashSet<String> = match crate::nix::packages_with_upgrades() {
+            Ok(pkgs) => pkgs.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!("failed to check MCP nix upgrades: {e}");
+                HashSet::new()
+            }
+        };
+        let mut upgraded = 0usize;
+        for pkg in &existing {
+            if upgradable.contains(*pkg) {
+                tracing::info!("upgrading MCP nix dependency: {pkg}");
+                sentry_ext::breadcrumb("mcp-nix", &format!("upgrading {pkg}"), &[("package", pkg)]);
+                if let Err(e) = crate::nix::profile_install(pkg, true) {
+                    tracing::warn!("failed to upgrade MCP nix dependency {pkg}: {e}");
+                    sentry_ext::capture_error(
+                        &format!("MCP nix upgrade failed: {pkg}: {e}"),
+                        &[("package", pkg)],
+                    );
+                } else {
+                    upgraded += 1;
+                }
+            }
+        }
+        if upgraded > 0 {
+            tracing::info!("upgraded {upgraded} MCP nix packages");
+        }
+    }
+
     // Persist the new desired set
     if let Err(e) = write_nix_state(&desired) {
         tracing::warn!("failed to write MCP nix state: {e}");
