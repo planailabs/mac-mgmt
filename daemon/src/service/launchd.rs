@@ -4,25 +4,30 @@ use std::path::PathBuf;
 use std::process::Command;
 
 const PLIST_LABEL: &str = "com.plan-ai.mac-mgmt";
-
-fn domain_target() -> String {
-    let uid = unsafe { libc::getuid() };
-    format!("gui/{uid}")
-}
+const DOMAIN_TARGET: &str = "system";
 
 fn service_target() -> String {
-    format!("{}/{PLIST_LABEL}", domain_target())
+    format!("{DOMAIN_TARGET}/{PLIST_LABEL}")
 }
 
-fn plist_path() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home)
-        .join("Library/LaunchAgents")
-        .join(format!("{PLIST_LABEL}.plist")))
+fn plist_path() -> PathBuf {
+    PathBuf::from("/Library/LaunchDaemons").join(format!("{PLIST_LABEL}.plist"))
+}
+
+fn current_username() -> Result<String> {
+    let uid = unsafe { libc::getuid() };
+    // getpwuid is safe to call with any uid
+    let pw = unsafe { libc::getpwuid(uid) };
+    if pw.is_null() {
+        anyhow::bail!("could not resolve uid {uid} to a username");
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
+    Ok(name.to_string_lossy().into_owned())
 }
 
 fn plist_contents() -> Result<String> {
     let bin = std::env::current_exe().context("cannot determine binary path")?;
+    let username = current_username()?;
     Ok(format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -31,6 +36,8 @@ fn plist_contents() -> Result<String> {
 <dict>
     <key>Label</key>
     <string>{PLIST_LABEL}</string>
+    <key>UserName</key>
+    <string>{username}</string>
     <key>ProgramArguments</key>
     <array>
         <string>{bin}</string>
@@ -52,73 +59,62 @@ fn plist_contents() -> Result<String> {
 }
 
 pub fn install() -> Result<()> {
-    let path = plist_path()?;
+    let path = plist_path();
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).context("failed to create LaunchAgents directory")?;
-    }
+    // Remove old user-level LaunchAgent if present
+    remove_legacy_agent();
 
     // Bootout any existing service first (ignore errors if not loaded)
-    let _ = Command::new("launchctl")
-        .args(["bootout", &service_target()])
-        .output();
+    let _ = sudo(&["launchctl", "bootout", &service_target()]);
 
     let contents = plist_contents()?;
-    fs::write(&path, &contents).context("failed to write plist")?;
+
+    // Write plist via sudo since /Library/LaunchDaemons requires root
+    let status = Command::new("sudo")
+        .args(["tee", &path.display().to_string()])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(contents.as_bytes())?;
+            }
+            child.wait()
+        })
+        .context("failed to write plist")?;
+
+    if !status.success() {
+        anyhow::bail!("failed to write plist (sudo tee failed)");
+    }
     tracing::info!("wrote {}", path.display());
 
-    if let Err(e) = load_service(&path) {
-        tracing::warn!("could not load service immediately: {e:#}");
-        println!(
-            "Service installed: {}\n\
-             Note: could not load immediately (will start on next login)",
-            path.display()
-        );
-    } else {
-        tracing::info!("service installed and loaded");
-        println!("Service installed: {}", path.display());
+    let output = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()])
+        .context("failed to run launchctl bootstrap")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("launchctl bootstrap failed: {stderr}");
     }
 
+    tracing::info!("service installed and loaded");
+    println!("Service installed: {}", path.display());
     Ok(())
 }
 
-/// Try to load the service using bootstrap (modern) then load (legacy).
-fn load_service(path: &PathBuf) -> Result<()> {
-    // Try modern API first
-    let output = Command::new("launchctl")
-        .args(["bootstrap", &domain_target()])
-        .arg(path)
-        .output()
-        .context("failed to run launchctl")?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    // Fall back to legacy API
-    let output = Command::new("launchctl")
-        .args(["load", "-w"])
-        .arg(path)
-        .output()
-        .context("failed to run launchctl")?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    anyhow::bail!("launchctl load failed: {stderr}");
-}
-
 pub fn uninstall() -> Result<()> {
-    let path = plist_path()?;
+    let path = plist_path();
+
+    // Also clean up legacy user agent
+    remove_legacy_agent();
 
     if path.exists() {
-        let _ = Command::new("launchctl")
-            .args(["bootout", &service_target()])
-            .output();
-
-        fs::remove_file(&path).context("failed to remove plist")?;
+        let _ = sudo(&["launchctl", "bootout", &service_target()]);
+        let rm = sudo(&["rm", &path.display().to_string()])
+            .context("failed to remove plist")?;
+        if !rm.status.success() {
+            anyhow::bail!("failed to remove plist (sudo rm failed)");
+        }
         tracing::info!("service uninstalled");
         println!("Service uninstalled");
     } else {
@@ -129,23 +125,49 @@ pub fn uninstall() -> Result<()> {
 }
 
 pub fn restart() -> Result<()> {
-    let path = plist_path()?;
+    let path = plist_path();
 
     if !path.exists() {
         anyhow::bail!("service not installed");
     }
 
-    let _ = Command::new("launchctl")
-        .args(["bootout", &service_target()])
-        .output();
+    let _ = sudo(&["launchctl", "bootout", &service_target()]);
 
-    if let Err(e) = load_service(&path) {
-        tracing::warn!("could not reload service: {e:#}");
-        println!("Service stopped but could not reload (will start on next login)");
-    } else {
-        tracing::info!("service restarted");
-        println!("Service restarted");
+    let output = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()])
+        .context("failed to run launchctl bootstrap")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("launchctl bootstrap failed: {stderr}");
     }
 
+    tracing::info!("service restarted");
+    println!("Service restarted");
     Ok(())
+}
+
+fn sudo(args: &[&str]) -> Result<std::process::Output> {
+    Command::new("sudo")
+        .args(args)
+        .output()
+        .context("failed to run sudo")
+}
+
+/// Remove the old user-level LaunchAgent if it exists.
+fn remove_legacy_agent() {
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
+    let path = PathBuf::from(home)
+        .join("Library/LaunchAgents")
+        .join(format!("{PLIST_LABEL}.plist"));
+    if path.exists() {
+        // Try to unload from user domain
+        let uid = unsafe { libc::getuid() };
+        let _ = Command::new("launchctl")
+            .args(["bootout", &format!("gui/{uid}/{PLIST_LABEL}")])
+            .output();
+        let _ = fs::remove_file(&path);
+        tracing::info!("removed legacy user agent: {}", path.display());
+    }
 }
