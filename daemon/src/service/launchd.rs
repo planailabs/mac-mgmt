@@ -5,6 +5,15 @@ use std::process::Command;
 
 const PLIST_LABEL: &str = "com.plan-ai.mac-mgmt";
 
+fn domain_target() -> String {
+    let uid = unsafe { libc::getuid() };
+    format!("gui/{uid}")
+}
+
+fn service_target() -> String {
+    format!("{}/{PLIST_LABEL}", domain_target())
+}
+
 fn plist_path() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME not set")?;
     Ok(PathBuf::from(home)
@@ -49,23 +58,56 @@ pub fn install() -> Result<()> {
         fs::create_dir_all(parent).context("failed to create LaunchAgents directory")?;
     }
 
+    // Bootout any existing service first (ignore errors if not loaded)
+    let _ = Command::new("launchctl")
+        .args(["bootout", &service_target()])
+        .output();
+
     let contents = plist_contents()?;
     fs::write(&path, &contents).context("failed to write plist")?;
     tracing::info!("wrote {}", path.display());
 
-    let status = Command::new("launchctl")
-        .args(["load", "-w"])
-        .arg(&path)
-        .status()
-        .context("failed to run launchctl load")?;
-
-    if !status.success() {
-        anyhow::bail!("launchctl load failed");
+    if let Err(e) = load_service(&path) {
+        tracing::warn!("could not load service immediately: {e:#}");
+        println!(
+            "Service installed: {}\n\
+             Note: could not load immediately (will start on next login)",
+            path.display()
+        );
+    } else {
+        tracing::info!("service installed and loaded");
+        println!("Service installed: {}", path.display());
     }
 
-    tracing::info!("service installed and loaded");
-    println!("Service installed: {}", path.display());
     Ok(())
+}
+
+/// Try to load the service using bootstrap (modern) then load (legacy).
+fn load_service(path: &PathBuf) -> Result<()> {
+    // Try modern API first
+    let output = Command::new("launchctl")
+        .args(["bootstrap", &domain_target()])
+        .arg(path)
+        .output()
+        .context("failed to run launchctl")?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    // Fall back to legacy API
+    let output = Command::new("launchctl")
+        .args(["load", "-w"])
+        .arg(path)
+        .output()
+        .context("failed to run launchctl")?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!("launchctl load failed: {stderr}");
 }
 
 pub fn uninstall() -> Result<()> {
@@ -73,9 +115,8 @@ pub fn uninstall() -> Result<()> {
 
     if path.exists() {
         let _ = Command::new("launchctl")
-            .args(["unload"])
-            .arg(&path)
-            .status();
+            .args(["bootout", &service_target()])
+            .output();
 
         fs::remove_file(&path).context("failed to remove plist")?;
         tracing::info!("service uninstalled");
@@ -95,21 +136,16 @@ pub fn restart() -> Result<()> {
     }
 
     let _ = Command::new("launchctl")
-        .arg("unload")
-        .arg(&path)
-        .status();
+        .args(["bootout", &service_target()])
+        .output();
 
-    let status = Command::new("launchctl")
-        .args(["load", "-w"])
-        .arg(&path)
-        .status()
-        .context("failed to run launchctl load")?;
-
-    if !status.success() {
-        anyhow::bail!("launchctl load failed");
+    if let Err(e) = load_service(&path) {
+        tracing::warn!("could not reload service: {e:#}");
+        println!("Service stopped but could not reload (will start on next login)");
+    } else {
+        tracing::info!("service restarted");
+        println!("Service restarted");
     }
 
-    tracing::info!("service restarted");
-    println!("Service restarted");
     Ok(())
 }
