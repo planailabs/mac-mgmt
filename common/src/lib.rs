@@ -27,12 +27,13 @@ fn default_port() -> u16 {
 
 fn default_models() -> Vec<String> {
     vec![
+        "phi4-mini-reasoning".to_string(),
         "qwen3.5".to_string(),
     ]
 }
 
 fn default_model() -> String {
-    "qwen3.5".to_string()
+    "phi4-mini-reasoning".to_string()
 }
 
 fn default_flavour() -> String {
