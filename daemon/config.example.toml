@@ -9,7 +9,7 @@ provider = "ollama"
 [ollama]
 host = "127.0.0.1"
 port = 11434
-models = ["qwen3.5", "qwen3-coder-next", "glm-5", "kimi-k2.5", "minimax-m2.7"]
+models = ["qwen3.5", "qwen3-coder-next"]
 default_model = "qwen3.5"
 # Package flavour: cpu, rocm, cuda, vulkan
 # "cpu" installs "ollama", others install "ollama-{flavour}"
