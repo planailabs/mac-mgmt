@@ -10,7 +10,7 @@ use super::components::layout::Layout;
 use super::components::mcp_bundle_detail::McpBundleDetail;
 use super::components::mcp_bundle_form::McpBundleForm;
 use super::components::mcp_bundle_list::McpBundleList;
-use super::components::mcp_server_detail::{McpServerDetail, McpServerForm};
+use super::components::mcp_server_detail::{McpServerDetail, McpServerEdit, McpServerForm};
 use super::components::mcp_server_list::McpServerList;
 use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
@@ -40,6 +40,8 @@ pub enum Route {
     McpServerForm {},
     #[route("/mcp-servers/:id")]
     McpServerDetail { id: String },
+    #[route("/mcp-servers/:id/edit")]
+    McpServerEdit { id: String },
     #[route("/mcp-bundles")]
     McpBundleList {},
     #[route("/mcp-bundles/new")]
