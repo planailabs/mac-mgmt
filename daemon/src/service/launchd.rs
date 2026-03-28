@@ -118,6 +118,46 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
+pub fn start() -> Result<()> {
+    let path = plist_path();
+
+    if !path.exists() {
+        anyhow::bail!("service not installed");
+    }
+
+    let output = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()])
+        .context("failed to run launchctl bootstrap")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("launchctl bootstrap failed: {stderr}");
+    }
+
+    tracing::info!("service started");
+    println!("Service started");
+    Ok(())
+}
+
+pub fn stop() -> Result<()> {
+    let path = plist_path();
+
+    if !path.exists() {
+        anyhow::bail!("service not installed");
+    }
+
+    let output = sudo(&["launchctl", "bootout", &service_target()])
+        .context("failed to run launchctl bootout")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("launchctl bootout failed: {stderr}");
+    }
+
+    tracing::info!("service stopped");
+    println!("Service stopped");
+    Ok(())
+}
+
 pub fn restart() -> Result<()> {
     let path = plist_path();
 

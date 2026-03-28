@@ -77,8 +77,12 @@ fn main() {
                 // Rocket API on configured port (background task)
                 let api_port = cfg.api.port;
                 let api_pool = pool.clone();
+                let api_rocket = api::build_rocket(api_pool, api_port)
+                    .ignite()
+                    .await
+                    .expect("failed to ignite API rocket");
                 tokio::spawn(async move {
-                    if let Err(e) = api::build_rocket(api_pool, api_port).launch().await {
+                    if let Err(e) = api_rocket.launch().await {
                         tracing::error!("API server failed: {e}");
                     }
                 });

@@ -19,6 +19,20 @@ pub fn uninstall() -> Result<()> {
     return systemd::uninstall();
 }
 
+pub fn start() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return launchd::start();
+    #[cfg(not(target_os = "macos"))]
+    return systemd::start();
+}
+
+pub fn stop() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return launchd::stop();
+    #[cfg(not(target_os = "macos"))]
+    return systemd::stop();
+}
+
 pub fn restart() -> Result<()> {
     #[cfg(target_os = "macos")]
     return launchd::restart();
