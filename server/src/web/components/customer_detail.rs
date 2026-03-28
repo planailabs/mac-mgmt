@@ -98,7 +98,7 @@ pub fn CustomerDetail(id: String) -> Element {
                 }
                 p { class: "text-gray-500 mb-6", "Created: {created}" }
 
-                div { class: "grid grid-cols-1 lg:grid-cols-4 gap-6",
+                div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Tokens" }
                         TokenList { customer_id: cid2.clone() }

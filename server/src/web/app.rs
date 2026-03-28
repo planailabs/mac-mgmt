@@ -38,10 +38,10 @@ pub enum Route {
     McpServerList {},
     #[route("/mcp-servers/new")]
     McpServerForm {},
-    #[route("/mcp-servers/:id")]
-    McpServerDetail { id: String },
     #[route("/mcp-servers/:id/edit")]
     McpServerEdit { id: String },
+    #[route("/mcp-servers/:id")]
+    McpServerDetail { id: String },
     #[route("/mcp-bundles")]
     McpBundleList {},
     #[route("/mcp-bundles/new")]
