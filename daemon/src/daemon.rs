@@ -197,10 +197,21 @@ pub async fn run() -> Result<()> {
                                 &format!("{name} process exited unexpectedly"),
                                 &[("service", name), ("exit_code", &code)],
                             );
-                            state.child = state.service.spawn()?;
-                            state.upgrade_pending = false;
-                            state.skip_health_check = true;
-                            state.post_start_done = false;
+                            match state.service.spawn() {
+                                Ok(child) => {
+                                    state.child = child;
+                                    state.upgrade_pending = false;
+                                    state.skip_health_check = true;
+                                    state.post_start_done = false;
+                                }
+                                Err(e) => {
+                                    tracing::error!("{name} respawn failed: {e}");
+                                    sentry_ext::capture_error(
+                                        &format!("{name} respawn failed: {e}"),
+                                        &[("service", name)],
+                                    );
+                                }
+                            }
                         }
                         Ok(None) => {}
                         Err(e) => tracing::error!("failed to check {name} status: {e}"),
@@ -213,11 +224,22 @@ pub async fn run() -> Result<()> {
                                 tracing::info!("{name} is idle, restarting to apply upgrade");
                                 let _ = state.child.kill();
                                 let _ = state.child.wait();
-                                state.child = state.service.spawn()?;
-                                state.upgrade_pending = false;
-                                state.skip_health_check = true;
-                                state.post_start_done = false;
-                                sentry_ext::breadcrumb("upgrade", &format!("{name} restarted for upgrade"), &[("service", name)]);
+                                match state.service.spawn() {
+                                    Ok(child) => {
+                                        state.child = child;
+                                        state.upgrade_pending = false;
+                                        state.skip_health_check = true;
+                                        state.post_start_done = false;
+                                        sentry_ext::breadcrumb("upgrade", &format!("{name} restarted for upgrade"), &[("service", name)]);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("{name} upgrade respawn failed: {e}");
+                                        sentry_ext::capture_error(
+                                            &format!("{name} upgrade respawn failed: {e}"),
+                                            &[("service", name)],
+                                        );
+                                    }
+                                }
                                 false
                             }
                             Ok(true) => {
