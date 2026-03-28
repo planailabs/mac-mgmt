@@ -27,13 +27,14 @@ fn default_port() -> u16 {
 
 fn default_models() -> Vec<String> {
     vec![
-        "gemma3n".to_string(),
+        "phi4-mini".to_string(),
         "qwen3.5".to_string(),
+        "Flux_AI/Flux_AI".to_string(),
     ]
 }
 
 fn default_model() -> String {
-    "gemma3n".to_string()
+    "phi4-mini".to_string()
 }
 
 fn default_flavour() -> String {

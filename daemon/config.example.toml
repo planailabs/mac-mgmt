@@ -9,8 +9,8 @@ provider = "ollama"
 [ollama]
 host = "127.0.0.1"
 port = 11434
-models = ["gemma3n", "qwen3.5"]
-default_model = "gemma3n"
+models = ["phi4-mini", "qwen3.5", "Flux_AI/Flux_AI"]
+default_model = "phi4-mini"
 # Package flavour: cpu, rocm, cuda, vulkan
 # "cpu" installs "ollama", others install "ollama-{flavour}"
 flavour = "cpu"
