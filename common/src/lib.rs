@@ -28,7 +28,6 @@ fn default_port() -> u16 {
 fn default_models() -> Vec<String> {
     vec![
         "qwen3.5".to_string(),
-        "qwen3-coder-next".to_string(),
     ]
 }
 
