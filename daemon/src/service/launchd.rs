@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -16,7 +15,6 @@ fn plist_path() -> PathBuf {
 
 fn current_username() -> Result<String> {
     let uid = unsafe { libc::getuid() };
-    // getpwuid is safe to call with any uid
     let pw = unsafe { libc::getpwuid(uid) };
     if pw.is_null() {
         anyhow::bail!("could not resolve uid {uid} to a username");
@@ -40,8 +38,10 @@ fn plist_contents() -> Result<String> {
     <string>{username}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{bin}</string>
-        <string>daemon</string>
+        <string>/bin/bash</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>exec {bin} daemon</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -60,9 +60,6 @@ fn plist_contents() -> Result<String> {
 
 pub fn install() -> Result<()> {
     let path = plist_path();
-
-    // Remove old user-level LaunchAgent if present
-    remove_legacy_agent();
 
     // Bootout any existing service first (ignore errors if not loaded)
     let _ = sudo(&["launchctl", "bootout", &service_target()]);
@@ -104,9 +101,6 @@ pub fn install() -> Result<()> {
 
 pub fn uninstall() -> Result<()> {
     let path = plist_path();
-
-    // Also clean up legacy user agent
-    remove_legacy_agent();
 
     if path.exists() {
         let _ = sudo(&["launchctl", "bootout", &service_target()]);
@@ -151,23 +145,4 @@ fn sudo(args: &[&str]) -> Result<std::process::Output> {
         .args(args)
         .output()
         .context("failed to run sudo")
-}
-
-/// Remove the old user-level LaunchAgent if it exists.
-fn remove_legacy_agent() {
-    let Ok(home) = std::env::var("HOME") else {
-        return;
-    };
-    let path = PathBuf::from(home)
-        .join("Library/LaunchAgents")
-        .join(format!("{PLIST_LABEL}.plist"));
-    if path.exists() {
-        // Try to unload from user domain
-        let uid = unsafe { libc::getuid() };
-        let _ = Command::new("launchctl")
-            .args(["bootout", &format!("gui/{uid}/{PLIST_LABEL}")])
-            .output();
-        let _ = fs::remove_file(&path);
-        tracing::info!("removed legacy user agent: {}", path.display());
-    }
 }
