@@ -11,7 +11,7 @@ use utoipa_swagger_ui::SwaggerUi;
 #[openapi(
     info(
         title = "mac-mgmt API",
-        description = "API for daemon sync (sync tokens) and resource management (setting tokens).",
+        description = "API for daemon sync (sync tokens), resource management (setting tokens), and administration (admin tokens).",
     ),
     paths(
         routes::get_self,
@@ -82,7 +82,7 @@ impl utoipa::Modify for SecurityAddon {
                         .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
                         .bearer_format("token")
                         .description(Some(
-                            "Sync token or setting token. Token kind determines which endpoints are accessible.",
+                            "Sync, setting, or admin token. Token kind determines which endpoints are accessible.",
                         ))
                         .build(),
                 ),
