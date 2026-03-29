@@ -53,6 +53,33 @@ fn main() {
             unsafe { std::env::set_var("PORT", cfg.web.port.to_string()) };
         }
 
+        // Dioxus's release-mode server doesn't handle SIGTERM. We register
+        // the handler before any tokio runtime is created so it's available
+        // on a dedicated thread.  On SIGTERM we:
+        //   1. Tell Rocket to shut down gracefully (drains in-flight requests)
+        //   2. Exit the process so Dioxus/axum stops too
+        static ROCKET_SHUTDOWN: std::sync::OnceLock<rocket::Shutdown> = std::sync::OnceLock::new();
+
+        std::thread::spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .expect("failed to register SIGTERM handler")
+                        .recv()
+                        .await;
+                    tracing::info!("received SIGTERM, shutting down");
+                    if let Some(handle) = ROCKET_SHUTDOWN.get() {
+                        handle.clone().notify();
+                        // Give Rocket's grace + mercy period (2+2s) to drain
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                    std::process::exit(0);
+                });
+        });
+
         dioxus::serve(move || async move {
             let auth_layer = if let Some(layer) = INIT.get() {
                 layer.clone()
@@ -83,6 +110,7 @@ fn main() {
                     .ignite()
                     .await
                     .expect("failed to ignite API rocket");
+                let _ = ROCKET_SHUTDOWN.set(api_rocket.shutdown());
                 tokio::spawn(async move {
                     if let Err(e) = api_rocket.launch().await {
                         tracing::error!("API server failed: {e}");
