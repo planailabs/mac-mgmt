@@ -5,19 +5,32 @@ use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::auth::{AuthenticatedCustomer, SettingAuth, SyncAuth};
 
 // ── Common routes (any valid token) ────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct SelfInfo {
     customer_id: Uuid,
     customer_name: String,
     token_kind: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/self",
+    tag = "Common",
+    summary = "Get current token identity",
+    description = "Returns customer info and token kind for the authenticated token.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Token identity", body = SelfInfo),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
 #[rocket::get("/self")]
 pub async fn get_self(
     auth: AuthenticatedCustomer,
@@ -48,12 +61,24 @@ struct McpServerRow {
     is_direct: bool,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct McpServerEntry {
     config: serde_json::Value,
     nix_packages: Vec<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/mcp-servers",
+    tag = "Sync",
+    summary = "List MCP servers for daemon sync",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Map of slug to MCP server entry", body = HashMap<String, McpServerEntry>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
 #[rocket::get("/mcp-servers")]
 pub async fn get_mcp_servers(
     auth: SyncAuth,
@@ -101,6 +126,19 @@ pub async fn get_mcp_servers(
     Ok(Json(servers))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config",
+    tag = "Sync",
+    summary = "Get customer config TOML for daemon sync",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Config TOML string", body = String),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+        (status = 404, description = "No config saved"),
+    ),
+)]
 #[rocket::get("/config")]
 pub async fn get_config(
     auth: SyncAuth,
@@ -130,14 +168,27 @@ struct SkillSlugChannel {
     is_direct: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/skills",
+    tag = "Sync",
+    summary = "Get resolved skill store paths for daemon sync",
+    security(("bearer" = [])),
+    params(
+        ("arch" = String, Query, description = "Target architecture (e.g. x86_64-linux)"),
+    ),
+    responses(
+        (status = 200, description = "Map of slug to Nix store path", body = HashMap<String, String>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
 #[rocket::get("/skills?<arch>")]
 pub async fn get_skills(
     auth: SyncAuth,
     pool: &State<PgPool>,
     arch: String,
 ) -> Result<Json<HashMap<String, String>>, Status> {
-    // Fetch all skill+channel pairs with a flag indicating direct vs bundle.
-    // Direct assignments win: for each slug we pick the direct row if present.
     let rows = sqlx::query_as::<_, SkillSlugChannel>(
         "SELECT s.slug, sc.channel, true AS is_direct \
          FROM customer_skills cs \
@@ -161,11 +212,10 @@ pub async fn get_skills(
         return Ok(Json(HashMap::new()));
     }
 
-    // For each slug, prefer the direct assignment's channel over bundle's.
     let mut slug_channel: HashMap<String, (String, bool)> = HashMap::new();
     for row in &rows {
         match slug_channel.get(&row.slug) {
-            Some((_, true)) => {} // already have a direct assignment, keep it
+            Some((_, true)) => {}
             _ => {
                 slug_channel.insert(
                     row.slug.clone(),
@@ -196,6 +246,19 @@ pub async fn get_skills(
 
 // -- Config --
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/config",
+    tag = "Setting — Config",
+    summary = "Get customer config TOML",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Config TOML string", body = String),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+        (status = 404, description = "No config saved"),
+    ),
+)]
 #[rocket::get("/setting/config")]
 pub async fn setting_get_config(
     auth: SettingAuth,
@@ -218,11 +281,25 @@ pub async fn setting_get_config(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct SetConfigBody {
     config_toml: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/setting/config",
+    tag = "Setting — Config",
+    summary = "Set customer config TOML",
+    security(("bearer" = [])),
+    request_body = SetConfigBody,
+    responses(
+        (status = 201, description = "Config saved"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+        (status = 422, description = "Invalid TOML config"),
+    ),
+)]
 #[rocket::put("/setting/config", data = "<body>")]
 pub async fn setting_set_config(
     auth: SettingAuth,
@@ -243,13 +320,25 @@ pub async fn setting_set_config(
 
 // -- Skills --
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct CustomerSkillRow {
     customer_skill_id: Uuid,
     skill_slug: String,
     channel: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/skills",
+    tag = "Setting — Skills",
+    summary = "List customer skill assignments",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Customer skills", body = Vec<CustomerSkillRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/skills")]
 pub async fn setting_list_skills(
     auth: SettingAuth,
@@ -270,11 +359,24 @@ pub async fn setting_list_skills(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct AddSkillBody {
     skill_channel_id: Uuid,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/setting/skills",
+    tag = "Setting — Skills",
+    summary = "Add a direct skill assignment",
+    security(("bearer" = [])),
+    request_body = AddSkillBody,
+    responses(
+        (status = 201, description = "Skill added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::post("/setting/skills", data = "<body>")]
 pub async fn setting_add_skill(
     auth: SettingAuth,
@@ -290,6 +392,20 @@ pub async fn setting_add_skill(
     Ok(Status::Created)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/setting/skills/{id}",
+    tag = "Setting — Skills",
+    summary = "Remove a direct skill assignment",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Customer skill assignment ID")),
+    responses(
+        (status = 204, description = "Skill removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::delete("/setting/skills/<id>")]
 pub async fn setting_remove_skill(
     _auth: SettingAuth,
@@ -307,13 +423,25 @@ pub async fn setting_remove_skill(
 
 // -- Bundles --
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct CustomerBundleRow {
     customer_bundle_id: Uuid,
     bundle_slug: String,
     bundle_name: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/bundles",
+    tag = "Setting — Bundles",
+    summary = "List customer bundle assignments",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Customer bundles", body = Vec<CustomerBundleRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/bundles")]
 pub async fn setting_list_bundles(
     auth: SettingAuth,
@@ -333,11 +461,24 @@ pub async fn setting_list_bundles(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct AddBundleBody {
     bundle_id: Uuid,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/setting/bundles",
+    tag = "Setting — Bundles",
+    summary = "Add a bundle assignment",
+    security(("bearer" = [])),
+    request_body = AddBundleBody,
+    responses(
+        (status = 201, description = "Bundle added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::post("/setting/bundles", data = "<body>")]
 pub async fn setting_add_bundle(
     auth: SettingAuth,
@@ -353,6 +494,20 @@ pub async fn setting_add_bundle(
     Ok(Status::Created)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/setting/bundles/{id}",
+    tag = "Setting — Bundles",
+    summary = "Remove a bundle assignment",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Customer bundle assignment ID")),
+    responses(
+        (status = 204, description = "Bundle removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::delete("/setting/bundles/<id>")]
 pub async fn setting_remove_bundle(
     _auth: SettingAuth,
@@ -370,13 +525,25 @@ pub async fn setting_remove_bundle(
 
 // -- MCP Servers --
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct CustomerMcpServerRow {
     customer_mcp_server_id: Uuid,
     server_slug: String,
     server_name: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/mcp-servers",
+    tag = "Setting — MCP Servers",
+    summary = "List customer MCP server assignments",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Customer MCP servers", body = Vec<CustomerMcpServerRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/mcp-servers")]
 pub async fn setting_list_mcp_servers(
     auth: SettingAuth,
@@ -396,11 +563,24 @@ pub async fn setting_list_mcp_servers(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct AddMcpServerBody {
     mcp_server_id: Uuid,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/setting/mcp-servers",
+    tag = "Setting — MCP Servers",
+    summary = "Add a direct MCP server assignment",
+    security(("bearer" = [])),
+    request_body = AddMcpServerBody,
+    responses(
+        (status = 201, description = "MCP server added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::post("/setting/mcp-servers", data = "<body>")]
 pub async fn setting_add_mcp_server(
     auth: SettingAuth,
@@ -416,6 +596,20 @@ pub async fn setting_add_mcp_server(
     Ok(Status::Created)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/setting/mcp-servers/{id}",
+    tag = "Setting — MCP Servers",
+    summary = "Remove a direct MCP server assignment",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Customer MCP server assignment ID")),
+    responses(
+        (status = 204, description = "MCP server removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::delete("/setting/mcp-servers/<id>")]
 pub async fn setting_remove_mcp_server(
     _auth: SettingAuth,
@@ -433,13 +627,25 @@ pub async fn setting_remove_mcp_server(
 
 // -- MCP Bundles --
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct CustomerMcpBundleRow {
     customer_mcp_bundle_id: Uuid,
     bundle_slug: String,
     bundle_name: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/mcp-bundles",
+    tag = "Setting — MCP Bundles",
+    summary = "List customer MCP bundle assignments",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Customer MCP bundles", body = Vec<CustomerMcpBundleRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/mcp-bundles")]
 pub async fn setting_list_mcp_bundles(
     auth: SettingAuth,
@@ -459,11 +665,24 @@ pub async fn setting_list_mcp_bundles(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct AddMcpBundleBody {
     bundle_id: Uuid,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/setting/mcp-bundles",
+    tag = "Setting — MCP Bundles",
+    summary = "Add an MCP bundle assignment",
+    security(("bearer" = [])),
+    request_body = AddMcpBundleBody,
+    responses(
+        (status = 201, description = "MCP bundle added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::post("/setting/mcp-bundles", data = "<body>")]
 pub async fn setting_add_mcp_bundle(
     auth: SettingAuth,
@@ -479,6 +698,20 @@ pub async fn setting_add_mcp_bundle(
     Ok(Status::Created)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/setting/mcp-bundles/{id}",
+    tag = "Setting — MCP Bundles",
+    summary = "Remove an MCP bundle assignment",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Customer MCP bundle assignment ID")),
+    responses(
+        (status = 204, description = "MCP bundle removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::delete("/setting/mcp-bundles/<id>")]
 pub async fn setting_remove_mcp_bundle(
     _auth: SettingAuth,
@@ -496,13 +729,25 @@ pub async fn setting_remove_mcp_bundle(
 
 // -- Available resources (for dropdowns) --
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct SkillChannelRow {
     id: Uuid,
     skill_slug: String,
     channel: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/available/skill-channels",
+    tag = "Setting — Available",
+    summary = "List all skill channels",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "All skill channels", body = Vec<SkillChannelRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/available/skill-channels")]
 pub async fn setting_available_skill_channels(
     _auth: SettingAuth,
@@ -520,13 +765,25 @@ pub async fn setting_available_skill_channels(
     Ok(Json(rows))
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct OptionRow {
     id: Uuid,
     slug: String,
     name: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/available/bundles",
+    tag = "Setting — Available",
+    summary = "List all skill bundles",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "All bundles", body = Vec<OptionRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/available/bundles")]
 pub async fn setting_available_bundles(
     _auth: SettingAuth,
@@ -541,6 +798,18 @@ pub async fn setting_available_bundles(
     Ok(Json(rows))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/available/mcp-servers",
+    tag = "Setting — Available",
+    summary = "List all MCP servers",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "All MCP servers", body = Vec<OptionRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/available/mcp-servers")]
 pub async fn setting_available_mcp_servers(
     _auth: SettingAuth,
@@ -555,6 +824,18 @@ pub async fn setting_available_mcp_servers(
     Ok(Json(rows))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/setting/available/mcp-bundles",
+    tag = "Setting — Available",
+    summary = "List all MCP bundles",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "All MCP bundles", body = Vec<OptionRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
 #[rocket::get("/setting/available/mcp-bundles")]
 pub async fn setting_available_mcp_bundles(
     _auth: SettingAuth,
