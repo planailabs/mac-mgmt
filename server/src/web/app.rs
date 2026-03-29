@@ -10,6 +10,7 @@ use super::components::layout::Layout;
 use super::components::mcp_bundle_detail::McpBundleDetail;
 use super::components::mcp_bundle_form::McpBundleForm;
 use super::components::mcp_bundle_list::McpBundleList;
+use super::components::admin_tokens_page::AdminTokens;
 use super::components::mcp_server_detail::{McpServerDetail, McpServerEdit, McpServerForm};
 use super::components::mcp_server_list::McpServerList;
 use super::components::skill_detail::SkillDetail;
@@ -48,6 +49,8 @@ pub enum Route {
     McpBundleForm {},
     #[route("/mcp-bundles/:id")]
     McpBundleDetail { id: String },
+    #[route("/admin-tokens")]
+    AdminTokens {},
 }
 
 #[component]

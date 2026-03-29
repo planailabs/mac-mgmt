@@ -14,7 +14,7 @@ pub struct Customer {
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct Token {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub customer_id: Option<Uuid>,
     pub token_hash: String,
     pub label: String,
     pub kind: String,

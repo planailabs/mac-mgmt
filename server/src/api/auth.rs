@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub struct AuthenticatedCustomer {
-    pub customer_id: Uuid,
+    pub customer_id: Option<Uuid>,
     pub token_kind: String,
 }
 
@@ -31,7 +31,7 @@ impl<'r> FromRequest<'r> for AuthenticatedCustomer {
 
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
-        let result = sqlx::query_as::<_, (Uuid, String)>(
+        let result = sqlx::query_as::<_, (Option<Uuid>, String)>(
             "SELECT customer_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",
         )
         .bind(&hash)
@@ -61,9 +61,10 @@ impl<'r> FromRequest<'r> for SyncAuth {
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         match AuthenticatedCustomer::from_request(req).await {
             Outcome::Success(auth) if auth.token_kind == "sync" => {
-                Outcome::Success(SyncAuth {
-                    customer_id: auth.customer_id,
-                })
+                match auth.customer_id {
+                    Some(cid) => Outcome::Success(SyncAuth { customer_id: cid }),
+                    None => Outcome::Error((Status::Forbidden, "sync token requires a customer")),
+                }
             }
             Outcome::Success(_) => Outcome::Error((Status::Forbidden, "sync token required")),
             Outcome::Error(e) => Outcome::Error(e),
@@ -84,11 +85,31 @@ impl<'r> FromRequest<'r> for SettingAuth {
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         match AuthenticatedCustomer::from_request(req).await {
             Outcome::Success(auth) if auth.token_kind == "setting" => {
-                Outcome::Success(SettingAuth {
-                    customer_id: auth.customer_id,
-                })
+                match auth.customer_id {
+                    Some(cid) => Outcome::Success(SettingAuth { customer_id: cid }),
+                    None => Outcome::Error((Status::Forbidden, "setting token requires a customer")),
+                }
             }
             Outcome::Success(_) => Outcome::Error((Status::Forbidden, "setting token required")),
+            Outcome::Error(e) => Outcome::Error(e),
+            Outcome::Forward(f) => Outcome::Forward(f),
+        }
+    }
+}
+
+/// Guard that only allows admin tokens.
+pub struct AdminAuth;
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for AdminAuth {
+    type Error = &'static str;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        match AuthenticatedCustomer::from_request(req).await {
+            Outcome::Success(auth) if auth.token_kind == "admin" => {
+                Outcome::Success(AdminAuth)
+            }
+            Outcome::Success(_) => Outcome::Error((Status::Forbidden, "admin token required")),
             Outcome::Error(e) => Outcome::Error(e),
             Outcome::Forward(f) => Outcome::Forward(f),
         }

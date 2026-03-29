@@ -1,0 +1,1 @@
+ALTER TABLE tokens ALTER COLUMN customer_id DROP NOT NULL;

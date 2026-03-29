@@ -3,19 +3,20 @@ use std::collections::HashMap;
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::auth::{AuthenticatedCustomer, SettingAuth, SyncAuth};
+use super::auth::{AdminAuth, AuthenticatedCustomer, SettingAuth, SyncAuth};
 
 // ── Common routes (any valid token) ────────────────────────────────────
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SelfInfo {
-    customer_id: Uuid,
-    customer_name: String,
+    customer_id: Option<Uuid>,
+    customer_name: Option<String>,
     token_kind: String,
 }
 
@@ -36,13 +37,19 @@ pub async fn get_self(
     auth: AuthenticatedCustomer,
     pool: &State<PgPool>,
 ) -> Result<Json<SelfInfo>, Status> {
-    let name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM customers WHERE id = $1",
-    )
-    .bind(auth.customer_id)
-    .fetch_one(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let name = match auth.customer_id {
+        Some(cid) => {
+            let n = sqlx::query_scalar::<_, String>(
+                "SELECT name FROM customers WHERE id = $1",
+            )
+            .bind(cid)
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+            Some(n)
+        }
+        None => None,
+    };
 
     Ok(Json(SelfInfo {
         customer_id: auth.customer_id,
@@ -848,4 +855,96 @@ pub async fn setting_available_mcp_bundles(
     .await
     .map_err(|_| Status::InternalServerError)?;
     Ok(Json(rows))
+}
+
+// ── Admin routes ────────────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub(crate) struct AdminCustomerRow {
+    id: Uuid,
+    name: String,
+    created_at: DateTime<Utc>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/customers",
+    tag = "Admin",
+    summary = "List all customers",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "All customers", body = Vec<AdminCustomerRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::get("/admin/customers")]
+pub async fn admin_list_customers(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<AdminCustomerRow>>, Status> {
+    let rows = sqlx::query_as::<_, AdminCustomerRow>(
+        "SELECT id, name, created_at FROM customers ORDER BY name",
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct CreateTokenForCustomerBody {
+    label: String,
+    kind: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CreatedToken {
+    token: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/customers/{customer_id}/tokens",
+    tag = "Admin",
+    summary = "Create a sync or setting token for a customer",
+    security(("bearer" = [])),
+    params(("customer_id" = Uuid, Path, description = "Customer ID")),
+    request_body = CreateTokenForCustomerBody,
+    responses(
+        (status = 201, description = "Token created", body = CreatedToken),
+        (status = 400, description = "Invalid kind (must be sync or setting)"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::post("/admin/customers/<customer_id>/tokens", data = "<body>")]
+pub async fn admin_create_token(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    customer_id: &str,
+    body: Json<CreateTokenForCustomerBody>,
+) -> Result<(Status, Json<CreatedToken>), Status> {
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    let cid: Uuid = customer_id.parse().map_err(|_| Status::BadRequest)?;
+
+    if body.kind != "sync" && body.kind != "setting" {
+        return Err(Status::BadRequest);
+    }
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+
+    sqlx::query("INSERT INTO tokens (customer_id, token_hash, label, kind) VALUES ($1, $2, $3, $4)")
+        .bind(cid)
+        .bind(&hash)
+        .bind(&body.label)
+        .bind(&body.kind)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    Ok((Status::Created, Json(CreatedToken { token: raw_token })))
 }

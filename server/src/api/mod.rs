@@ -43,6 +43,9 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_available_bundles,
         routes::setting_available_mcp_servers,
         routes::setting_available_mcp_bundles,
+        // Admin
+        routes::admin_list_customers,
+        routes::admin_create_token,
     ),
     components(schemas(
         routes::SelfInfo,
@@ -58,6 +61,9 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::AddMcpBundleBody,
         routes::SkillChannelRow,
         routes::OptionRow,
+        routes::AdminCustomerRow,
+        routes::CreateTokenForCustomerBody,
+        routes::CreatedToken,
     )),
     security(("bearer" = [])),
     modifiers(&SecurityAddon),
@@ -132,6 +138,9 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
                 routes::setting_available_bundles,
                 routes::setting_available_mcp_servers,
                 routes::setting_available_mcp_bundles,
+                // Admin token routes
+                routes::admin_list_customers,
+                routes::admin_create_token,
             ],
         )
         .mount(
