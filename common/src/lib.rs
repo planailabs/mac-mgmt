@@ -114,11 +114,24 @@ pub struct DaemonServerConfig {
     pub token: Option<String>,
 }
 
+// ── Global ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalConfig {
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    #[serde(default)]
+    pub user_name: Option<String>,
+}
+
 // ── Customer Config (what the server manages per-customer) ──────────────
 
 #[derive(Debug, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CustomerConfig {
+    #[serde(default)]
+    pub global: GlobalConfig,
     #[serde(default)]
     pub openclaw: OpenClawConfig,
     #[serde(default)]
