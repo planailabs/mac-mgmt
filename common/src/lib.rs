@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::fmt;
 
@@ -41,7 +42,7 @@ fn default_flavour() -> String {
     "cpu".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
     #[serde(default = "default_host")]
@@ -74,7 +75,7 @@ fn default_provider() -> String {
     "ollama".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
     #[serde(default = "default_provider")]
@@ -98,7 +99,7 @@ fn default_metrics_port() -> u16 {
     9396
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     #[serde(default = "default_metrics_port")]
@@ -115,7 +116,7 @@ pub struct DaemonServerConfig {
 
 // ── Customer Config (what the server manages per-customer) ──────────────
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CustomerConfig {
     #[serde(default)]

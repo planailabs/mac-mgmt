@@ -20,6 +20,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::get_skills,
         routes::get_mcp_servers,
         // Setting — config
+        routes::setting_config_schema,
         routes::setting_get_config,
         routes::setting_set_config,
         // Setting — skills
@@ -116,6 +117,7 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
                 routes::get_skills,
                 routes::get_mcp_servers,
                 // Setting token routes — config
+                routes::setting_config_schema,
                 routes::setting_get_config,
                 routes::setting_set_config,
                 // Setting token routes — skills

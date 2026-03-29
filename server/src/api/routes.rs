@@ -255,6 +255,29 @@ pub async fn get_skills(
 
 #[utoipa::path(
     get,
+    path = "/api/setting/config/schema",
+    tag = "Setting — Config",
+    summary = "Get JSON Schema for customer config",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "JSON Schema", content_type = "application/json"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::get("/setting/config/schema")]
+pub async fn setting_config_schema(
+    _auth: SettingAuth,
+) -> (rocket::http::ContentType, String) {
+    let schema = schemars::schema_for!(mac_mgmt_common::CustomerConfig);
+    (
+        rocket::http::ContentType::JSON,
+        serde_json::to_string_pretty(&schema).unwrap(),
+    )
+}
+
+#[utoipa::path(
+    get,
     path = "/api/setting/config",
     tag = "Setting — Config",
     summary = "Get customer config TOML",
