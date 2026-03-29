@@ -96,6 +96,7 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
         port,
         address: std::net::Ipv4Addr::UNSPECIFIED.into(),
         shutdown: Shutdown {
+            ctrlc: false, // Dioxus owns signal handling; don't let Rocket intercept
             grace: 2,
             mercy: 2,
             ..Shutdown::default()
