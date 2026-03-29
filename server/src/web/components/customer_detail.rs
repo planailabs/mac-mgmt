@@ -5,7 +5,8 @@ use crate::models::Customer;
 use super::config_editor::ConfigEditor;
 use super::customer_mcp_servers::CustomerMcpServers;
 use super::customer_skills::CustomerSkills;
-use super::token_list::TokenList;
+use super::setting_token_list::SettingTokenList;
+use super::token_list::SyncTokenList;
 
 #[server]
 async fn get_customer(id: String) -> Result<Customer, ServerFnError> {
@@ -100,8 +101,12 @@ pub fn CustomerDetail(id: String) -> Element {
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Tokens" }
-                        TokenList { customer_id: cid2.clone() }
+                        h3 { class: "text-lg font-semibold mb-3", "Sync Tokens" }
+                        SyncTokenList { customer_id: cid2.clone() }
+                    }
+                    div {
+                        h3 { class: "text-lg font-semibold mb-3", "Setting Tokens" }
+                        SettingTokenList { customer_id: cid2.clone() }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Config" }

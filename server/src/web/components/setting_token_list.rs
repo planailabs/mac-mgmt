@@ -3,13 +3,13 @@ use dioxus::prelude::*;
 use crate::models::Token;
 
 #[server]
-async fn list_tokens(customer_id: String) -> Result<Vec<Token>, ServerFnError> {
+async fn list_setting_tokens(customer_id: String) -> Result<Vec<Token>, ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = customer_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let tokens = sqlx::query_as::<_, Token>(
-        "SELECT * FROM tokens WHERE customer_id = $1 AND kind = 'sync' ORDER BY created_at DESC",
+        "SELECT * FROM tokens WHERE customer_id = $1 AND kind = 'setting' ORDER BY created_at DESC",
     )
     .bind(uuid)
     .fetch_all(&pool)
@@ -19,7 +19,7 @@ async fn list_tokens(customer_id: String) -> Result<Vec<Token>, ServerFnError> {
 }
 
 #[server]
-async fn create_token(customer_id: String, label: String) -> Result<String, ServerFnError> {
+async fn create_setting_token(customer_id: String, label: String) -> Result<String, ServerFnError> {
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
@@ -31,7 +31,7 @@ async fn create_token(customer_id: String, label: String) -> Result<String, Serv
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
-    sqlx::query("INSERT INTO tokens (customer_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')")
+    sqlx::query("INSERT INTO tokens (customer_id, token_hash, label, kind) VALUES ($1, $2, $3, 'setting')")
         .bind(uuid)
         .bind(&hash)
         .bind(&label)
@@ -43,7 +43,7 @@ async fn create_token(customer_id: String, label: String) -> Result<String, Serv
 }
 
 #[server]
-async fn revoke_token(token_id: String) -> Result<(), ServerFnError> {
+async fn revoke_setting_token(token_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = token_id
         .parse()
@@ -57,11 +57,11 @@ async fn revoke_token(token_id: String) -> Result<(), ServerFnError> {
 }
 
 #[component]
-pub fn SyncTokenList(customer_id: String) -> Element {
+pub fn SettingTokenList(customer_id: String) -> Element {
     let cid = customer_id.clone();
     let mut tokens = use_server_future(move || {
         let cid = cid.clone();
-        async move { list_tokens(cid).await }
+        async move { list_setting_tokens(cid).await }
     })?;
 
     let mut label = use_signal(String::new);
@@ -73,13 +73,13 @@ pub fn SyncTokenList(customer_id: String) -> Element {
         let cid = cid_create.clone();
         let label_val = label.read().clone();
         spawn(async move {
-            match create_token(cid, label_val).await {
+            match create_setting_token(cid, label_val).await {
                 Ok(raw) => {
                     new_token.set(Some(raw));
                     label.set(String::new());
                     tokens.restart();
                 }
-                Err(e) => tracing::error!("failed to create token: {e}"),
+                Err(e) => tracing::error!("failed to create setting token: {e}"),
             }
         });
     };
@@ -96,14 +96,14 @@ pub fn SyncTokenList(customer_id: String) -> Element {
             input {
                 class: "flex-1 border border-gray-300 rounded px-3 py-1 text-sm",
                 r#type: "text",
-                placeholder: "Sync token label",
+                placeholder: "Setting token label",
                 value: "{label}",
                 oninput: move |evt| label.set(evt.value()),
             }
             button {
                 class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                 r#type: "submit",
-                "Create Sync Token"
+                "Create Setting Token"
             }
         }
 
@@ -135,7 +135,7 @@ pub fn SyncTokenList(customer_id: String) -> Element {
                                             onclick: move |_| {
                                                 let tid = tid.clone();
                                                 spawn(async move {
-                                                    if revoke_token(tid).await.is_ok() {
+                                                    if revoke_setting_token(tid).await.is_ok() {
                                                         tokens.restart();
                                                     }
                                                 });

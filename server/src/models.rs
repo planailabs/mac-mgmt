@@ -17,6 +17,7 @@ pub struct Token {
     pub customer_id: Uuid,
     pub token_hash: String,
     pub label: String,
+    pub kind: String,
     pub revoked: bool,
     pub created_at: DateTime<Utc>,
 }

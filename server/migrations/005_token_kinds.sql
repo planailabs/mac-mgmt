@@ -1,0 +1,1 @@
+ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'sync';

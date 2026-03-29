@@ -13,6 +13,7 @@ pub mod mcp_bundle_form;
 pub mod mcp_bundle_list;
 pub mod mcp_server_detail;
 pub mod mcp_server_list;
+pub mod setting_token_list;
 pub mod skill_detail;
 pub mod skill_list;
 pub mod token_list;

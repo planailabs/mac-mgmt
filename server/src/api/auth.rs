@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 pub struct AuthenticatedCustomer {
     pub customer_id: Uuid,
+    pub token_kind: String,
 }
 
 #[rocket::async_trait]
@@ -30,17 +31,66 @@ impl<'r> FromRequest<'r> for AuthenticatedCustomer {
 
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
-        let result = sqlx::query_scalar::<_, Uuid>(
-            "SELECT customer_id FROM tokens WHERE token_hash = $1 AND NOT revoked",
+        let result = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT customer_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",
         )
         .bind(&hash)
         .fetch_optional(pool)
         .await;
 
         match result {
-            Ok(Some(customer_id)) => Outcome::Success(AuthenticatedCustomer { customer_id }),
+            Ok(Some((customer_id, kind))) => Outcome::Success(AuthenticatedCustomer {
+                customer_id,
+                token_kind: kind,
+            }),
             Ok(None) => Outcome::Error((Status::Unauthorized, "invalid or revoked token")),
             Err(_) => Outcome::Error((Status::InternalServerError, "database error")),
+        }
+    }
+}
+
+/// Guard that only allows sync tokens.
+pub struct SyncAuth {
+    pub customer_id: Uuid,
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for SyncAuth {
+    type Error = &'static str;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        match AuthenticatedCustomer::from_request(req).await {
+            Outcome::Success(auth) if auth.token_kind == "sync" => {
+                Outcome::Success(SyncAuth {
+                    customer_id: auth.customer_id,
+                })
+            }
+            Outcome::Success(_) => Outcome::Error((Status::Forbidden, "sync token required")),
+            Outcome::Error(e) => Outcome::Error(e),
+            Outcome::Forward(f) => Outcome::Forward(f),
+        }
+    }
+}
+
+/// Guard that only allows setting tokens.
+pub struct SettingAuth {
+    pub customer_id: Uuid,
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for SettingAuth {
+    type Error = &'static str;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        match AuthenticatedCustomer::from_request(req).await {
+            Outcome::Success(auth) if auth.token_kind == "setting" => {
+                Outcome::Success(SettingAuth {
+                    customer_id: auth.customer_id,
+                })
+            }
+            Outcome::Success(_) => Outcome::Error((Status::Forbidden, "setting token required")),
+            Outcome::Error(e) => Outcome::Error(e),
+            Outcome::Forward(f) => Outcome::Forward(f),
         }
     }
 }
