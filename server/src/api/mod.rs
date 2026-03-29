@@ -22,10 +22,15 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
         .mount(
             "/api",
             rocket::routes![
+                // Common routes (any token kind)
+                routes::get_self,
                 // Sync token routes
                 routes::get_config,
                 routes::get_skills,
                 routes::get_mcp_servers,
+                // Setting token routes — config
+                routes::setting_get_config,
+                routes::setting_set_config,
                 // Setting token routes — skills
                 routes::setting_list_skills,
                 routes::setting_add_skill,

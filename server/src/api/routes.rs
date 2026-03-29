@@ -7,7 +7,36 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::auth::{SettingAuth, SyncAuth};
+use super::auth::{AuthenticatedCustomer, SettingAuth, SyncAuth};
+
+// ── Common routes (any valid token) ────────────────────────────────────
+
+#[derive(Serialize)]
+pub(crate) struct SelfInfo {
+    customer_id: Uuid,
+    customer_name: String,
+    token_kind: String,
+}
+
+#[rocket::get("/self")]
+pub async fn get_self(
+    auth: AuthenticatedCustomer,
+    pool: &State<PgPool>,
+) -> Result<Json<SelfInfo>, Status> {
+    let name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM customers WHERE id = $1",
+    )
+    .bind(auth.customer_id)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(SelfInfo {
+        customer_id: auth.customer_id,
+        customer_name: name,
+        token_kind: auth.token_kind,
+    }))
+}
 
 // ── Existing sync routes ───────────────────────────────────────────────
 
@@ -164,6 +193,53 @@ pub async fn get_skills(
 }
 
 // ── Setting token routes ───────────────────────────────────────────────
+
+// -- Config --
+
+#[rocket::get("/setting/config")]
+pub async fn setting_get_config(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<String, Status> {
+    let config = sqlx::query_scalar::<_, String>(
+        "SELECT config_toml FROM customer_configs \
+         WHERE customer_id = $1 \
+         ORDER BY created_at DESC \
+         LIMIT 1",
+    )
+    .bind(auth.customer_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    match config {
+        Some(toml) => Ok(toml),
+        None => Err(Status::NotFound),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SetConfigBody {
+    config_toml: String,
+}
+
+#[rocket::put("/setting/config", data = "<body>")]
+pub async fn setting_set_config(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    body: Json<SetConfigBody>,
+) -> Result<Status, Status> {
+    mac_mgmt_common::CustomerConfig::from_toml(&body.config_toml)
+        .map_err(|_| Status::UnprocessableEntity)?;
+
+    sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
+        .bind(auth.customer_id)
+        .bind(&body.config_toml)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Created)
+}
 
 // -- Skills --
 
