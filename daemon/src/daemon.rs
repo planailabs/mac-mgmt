@@ -8,7 +8,7 @@ use crate::config;
 use crate::managed_service::{ManagedService, ServiceMode};
 use crate::metrics::Metrics;
 use crate::sentry_ext;
-use crate::services::{mcporter::McPorter, ollama::Ollama, openclaw::OpenClaw};
+use crate::services::{mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
 const HEALTH_INTERVAL: Duration = Duration::from_secs(60); // 1 minute
@@ -50,9 +50,14 @@ pub async fn run() -> Result<()> {
         std::path::PathBuf::from(home).join(".plan-ai-skills")
     };
 
+    let llm_service: Box<dyn ManagedService> = match cfg.openclaw.provider.as_str() {
+        "nexa" => Box::new(Nexa::new(cfg.nexa)),
+        _ => Box::new(Ollama::new(cfg.ollama)),
+    };
+
     let services: Vec<Box<dyn ManagedService>> = vec![
         Box::new(OpenClaw::new(cfg.openclaw)),
-        Box::new(Ollama::new(cfg.ollama)),
+        llm_service,
         Box::new(McPorter),
     ];
 

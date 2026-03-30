@@ -1,0 +1,180 @@
+use anyhow::{Context, Result};
+use std::io::Read;
+use std::io::Write;
+use std::net::{SocketAddr, TcpStream};
+use std::process::Command;
+use std::time::Duration;
+
+use crate::managed_service::ManagedService;
+use crate::sentry_ext;
+pub use mac_mgmt_common::NexaConfig;
+
+pub struct Nexa {
+    config: NexaConfig,
+}
+
+impl Nexa {
+    pub fn new(config: NexaConfig) -> Self {
+        Self { config }
+    }
+
+    fn base_url(&self) -> String {
+        format!("http://{}:{}", self.config.host, self.config.port)
+    }
+
+    /// Send a simple HTTP GET request and return the response body.
+    /// Uses raw TCP to avoid adding an HTTP client dependency.
+    fn http_get(&self, path: &str) -> Result<String> {
+        let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
+            .parse()
+            .context("invalid nexa address")?;
+
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+            .context("failed to connect to nexa")?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
+            self.config.host, self.config.port
+        );
+        stream.write_all(request.as_bytes())?;
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+
+        // Split headers from body
+        if let Some(body) = response.split_once("\r\n\r\n").map(|(_, b)| b) {
+            Ok(body.to_string())
+        } else {
+            Ok(response)
+        }
+    }
+}
+
+impl ManagedService for Nexa {
+    fn name(&self) -> &str {
+        "nexa"
+    }
+
+    fn ensure_installed(&self) -> Result<()> {
+        if crate::nix::is_installed("nexa")? {
+            tracing::info!("nexa is already installed");
+            return Ok(());
+        }
+
+        tracing::info!("nexa not found, installing via nix");
+        sentry_ext::breadcrumb("install", "installing nexa via nix", &[
+            ("service", "nexa"),
+            ("package", "nexa"),
+        ]);
+        crate::nix::profile_install("nexa", false)?;
+        Ok(())
+    }
+
+    fn ensure_setup(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn spawn(&self) -> Result<std::process::Child> {
+        let mut cmd = Command::new("nexa");
+        cmd.args([
+            "serve",
+            "--host",
+            &format!("{}:{}", self.config.host, self.config.port),
+            "--skip-update",
+        ]);
+
+        let child = cmd.spawn().context("failed to start nexa serve")?;
+        tracing::info!("nexa serve started (pid: {})", child.id());
+        sentry_ext::breadcrumb("spawn", "nexa serve started", &[
+            ("service", "nexa"),
+            ("pid", &child.id().to_string()),
+        ]);
+        Ok(child)
+    }
+
+    fn check_health(&self) -> Result<bool> {
+        match self.http_get("/") {
+            Ok(body) if body.contains("Nexa SDK is running") => {
+                tracing::debug!("nexa is healthy at {}", self.base_url());
+                Ok(true)
+            }
+            Ok(body) => {
+                tracing::warn!("nexa unexpected response: {body}");
+                Ok(false)
+            }
+            Err(e) => {
+                tracing::warn!("nexa health check failed at {}: {e}", self.base_url());
+                Ok(false)
+            }
+        }
+    }
+
+    fn repair(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn post_start(&self) -> Result<()> {
+        for model in &self.config.models {
+            tracing::info!("pulling nexa model: {model}");
+            sentry_ext::breadcrumb("post_start", &format!("pulling model {model}"), &[
+                ("service", "nexa"),
+                ("model", model),
+            ]);
+            let output = Command::new("nexa")
+                .args(["pull", model, "--model-type", "llm", "--skip-update"])
+                .output()
+                .with_context(|| format!("failed to run nexa pull {model}"))?;
+
+            if output.status.success() {
+                tracing::info!("nexa model {model} pulled successfully");
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::warn!("nexa pull {model} exited with {}", output.status);
+                sentry_ext::capture_cmd_failure(
+                    &format!("nexa pull {model}"),
+                    output.status.code(),
+                    stderr.trim(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_and_upgrade(&self) -> Result<bool> {
+        let upgradable = crate::nix::packages_with_upgrades()?;
+
+        if !upgradable.iter().any(|name| name == "nexa") {
+            return Ok(false);
+        }
+
+        tracing::info!("upgrading nexa via nix");
+        sentry_ext::breadcrumb("upgrade", "upgrading nexa via nix", &[
+            ("service", "nexa"),
+            ("package", "nexa"),
+        ]);
+        crate::nix::profile_install("nexa", true)?;
+        tracing::info!("nexa upgraded, restart pending");
+        Ok(true)
+    }
+
+    fn is_busy(&self) -> Result<bool> {
+        let body = self.http_get("/v1/models")?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).context("failed to parse nexa /v1/models")?;
+
+        let busy = json
+            .get("data")
+            .and_then(|d| d.as_array())
+            .is_some_and(|models| !models.is_empty());
+
+        if busy {
+            tracing::info!("nexa has models loaded");
+        } else {
+            tracing::debug!("nexa is idle");
+        }
+
+        Ok(busy)
+    }
+}

@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::fmt;
 
 const VALID_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
-const VALID_PROVIDERS: &[&str] = &["ollama"];
+const VALID_PROVIDERS: &[&str] = &["ollama", "nexa"];
 
 #[derive(Debug)]
 pub struct ValidationError(String);
@@ -66,6 +66,53 @@ impl Default for OllamaConfig {
             default_model: default_model(),
             flavour: default_flavour(),
         }
+    }
+}
+
+// ── Nexa ───────────────────────────────────────────────────────────────
+
+fn default_nexa_port() -> u16 {
+    18181
+}
+
+fn default_nexa_models() -> Vec<String> {
+    vec!["ggml-org/Qwen3-1.7B-GGUF".to_string()]
+}
+
+fn default_nexa_model() -> String {
+    "ggml-org/Qwen3-1.7B-GGUF".to_string()
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NexaConfig {
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[serde(default = "default_nexa_port")]
+    pub port: u16,
+    #[serde(default = "default_nexa_models")]
+    pub models: Vec<String>,
+    #[serde(default = "default_nexa_model")]
+    pub default_model: String,
+}
+
+impl Default for NexaConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_nexa_port(),
+            models: default_nexa_models(),
+            default_model: default_nexa_model(),
+        }
+    }
+}
+
+impl NexaConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.models.is_empty() {
+            return Err(ValidationError("nexa models list cannot be empty".into()));
+        }
+        Ok(())
     }
 }
 
@@ -137,6 +184,8 @@ pub struct CustomerConfig {
     #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]
+    pub nexa: NexaConfig,
+    #[serde(default)]
     pub metrics: MetricsConfig,
 }
 
@@ -179,6 +228,7 @@ impl CustomerConfig {
 
     pub fn validate(&self) -> Result<(), String> {
         self.ollama.validate().map_err(|e| e.to_string())?;
+        self.nexa.validate().map_err(|e| e.to_string())?;
         self.openclaw.validate().map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -192,6 +242,8 @@ pub struct DaemonConfig {
     pub openclaw: OpenClawConfig,
     #[serde(default)]
     pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub nexa: NexaConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
     #[serde(default)]
@@ -280,6 +332,39 @@ provider = "chatgpt"
 "#;
         let err = CustomerConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("invalid openclaw provider"), "got: {err}");
+    }
+
+    #[test]
+    fn valid_nexa_config() {
+        let toml = r#"
+[nexa]
+host = "10.0.0.1"
+port = 18181
+models = ["ggml-org/Qwen3-1.7B-GGUF"]
+default_model = "ggml-org/Qwen3-1.7B-GGUF"
+"#;
+        let config = CustomerConfig::from_toml(toml).unwrap();
+        assert_eq!(config.nexa.host, "10.0.0.1");
+        assert_eq!(config.nexa.port, 18181);
+    }
+
+    #[test]
+    fn rejects_empty_nexa_models() {
+        let toml = r#"
+[nexa]
+models = []
+"#;
+        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        assert!(err.contains("nexa models list cannot be empty"), "got: {err}");
+    }
+
+    #[test]
+    fn accepts_nexa_provider() {
+        let toml = r#"
+[openclaw]
+provider = "nexa"
+"#;
+        CustomerConfig::from_toml(toml).unwrap();
     }
 
     #[test]
