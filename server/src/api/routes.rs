@@ -764,6 +764,7 @@ pub(crate) struct SkillChannelRow {
     id: Uuid,
     skill_slug: String,
     channel: String,
+    installed: bool,
 }
 
 #[utoipa::path(
@@ -771,6 +772,7 @@ pub(crate) struct SkillChannelRow {
     path = "/api/setting/available/skill-channels",
     tag = "Setting — Available",
     summary = "List all skill channels",
+    description = "Returns all skill channels with an `installed` flag indicating whether the customer has this skill channel assigned (directly or via a bundle).",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "All skill channels", body = Vec<SkillChannelRow>),
@@ -780,15 +782,20 @@ pub(crate) struct SkillChannelRow {
 )]
 #[rocket::get("/setting/available/skill-channels")]
 pub async fn setting_available_skill_channels(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<SkillChannelRow>>, Status> {
     let rows = sqlx::query_as::<_, SkillChannelRow>(
-        "SELECT sc.id, s.slug as skill_slug, sc.channel \
+        "SELECT sc.id, s.slug as skill_slug, sc.channel, \
+                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as \"installed!\" \
          FROM skill_channels sc \
          JOIN skills s ON s.id = sc.skill_id \
+         LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
+         LEFT JOIN bundle_items bi ON bi.skill_channel_id = sc.id \
+              AND bi.bundle_id IN (SELECT bundle_id FROM customer_bundles WHERE customer_id = $1) \
          ORDER BY s.slug, sc.channel",
     )
+    .bind(auth.customer_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -800,6 +807,7 @@ pub(crate) struct OptionRow {
     id: Uuid,
     slug: String,
     name: String,
+    installed: bool,
 }
 
 #[utoipa::path(
@@ -807,6 +815,7 @@ pub(crate) struct OptionRow {
     path = "/api/setting/available/bundles",
     tag = "Setting — Available",
     summary = "List all skill bundles",
+    description = "Returns all skill bundles with an `installed` flag indicating whether the customer has this bundle assigned.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "All bundles", body = Vec<OptionRow>),
@@ -816,12 +825,17 @@ pub(crate) struct OptionRow {
 )]
 #[rocket::get("/setting/available/bundles")]
 pub async fn setting_available_bundles(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
     let rows = sqlx::query_as::<_, OptionRow>(
-        "SELECT id, slug, name FROM bundles ORDER BY slug",
+        "SELECT b.id, b.slug, b.name, \
+                (cb.id IS NOT NULL) as \"installed!\" \
+         FROM bundles b \
+         LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
+         ORDER BY b.slug",
     )
+    .bind(auth.customer_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -833,6 +847,7 @@ pub async fn setting_available_bundles(
     path = "/api/setting/available/mcp-servers",
     tag = "Setting — Available",
     summary = "List all MCP servers",
+    description = "Returns all MCP servers with an `installed` flag indicating whether the customer has this server assigned (directly or via a bundle).",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "All MCP servers", body = Vec<OptionRow>),
@@ -842,12 +857,19 @@ pub async fn setting_available_bundles(
 )]
 #[rocket::get("/setting/available/mcp-servers")]
 pub async fn setting_available_mcp_servers(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
     let rows = sqlx::query_as::<_, OptionRow>(
-        "SELECT id, slug, name FROM mcp_servers ORDER BY slug",
+        "SELECT ms.id, ms.slug, ms.name, \
+                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as \"installed!\" \
+         FROM mcp_servers ms \
+         LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
+         LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
+              AND msbi.bundle_id IN (SELECT bundle_id FROM customer_mcp_bundles WHERE customer_id = $1) \
+         ORDER BY ms.slug",
     )
+    .bind(auth.customer_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -859,6 +881,7 @@ pub async fn setting_available_mcp_servers(
     path = "/api/setting/available/mcp-bundles",
     tag = "Setting — Available",
     summary = "List all MCP bundles",
+    description = "Returns all MCP bundles with an `installed` flag indicating whether the customer has this bundle assigned.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "All MCP bundles", body = Vec<OptionRow>),
@@ -868,16 +891,112 @@ pub async fn setting_available_mcp_servers(
 )]
 #[rocket::get("/setting/available/mcp-bundles")]
 pub async fn setting_available_mcp_bundles(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
     let rows = sqlx::query_as::<_, OptionRow>(
-        "SELECT id, slug, name FROM mcp_server_bundles ORDER BY slug",
+        "SELECT msb.id, msb.slug, msb.name, \
+                (cmb.id IS NOT NULL) as \"installed!\" \
+         FROM mcp_server_bundles msb \
+         LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
+         ORDER BY msb.slug",
     )
+    .bind(auth.customer_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
     Ok(Json(rows))
+}
+
+// -- Catalog (combined view) --
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct Catalog {
+    skill_channels: Vec<SkillChannelRow>,
+    bundles: Vec<OptionRow>,
+    mcp_servers: Vec<OptionRow>,
+    mcp_bundles: Vec<OptionRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/catalog",
+    tag = "Setting — Available",
+    summary = "List all available resources with install status",
+    description = "Returns all skill channels, bundles, MCP servers and MCP bundles in a single response, each with an `installed` flag indicating whether the customer has it assigned.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Full catalog", body = Catalog),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::get("/setting/catalog")]
+pub async fn setting_catalog(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Catalog>, Status> {
+    let cid = auth.customer_id;
+
+    let skill_channels = sqlx::query_as::<_, SkillChannelRow>(
+        "SELECT sc.id, s.slug as skill_slug, sc.channel, \
+                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as \"installed!\" \
+         FROM skill_channels sc \
+         JOIN skills s ON s.id = sc.skill_id \
+         LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
+         LEFT JOIN bundle_items bi ON bi.skill_channel_id = sc.id \
+              AND bi.bundle_id IN (SELECT bundle_id FROM customer_bundles WHERE customer_id = $1) \
+         ORDER BY s.slug, sc.channel",
+    )
+    .bind(cid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let bundles = sqlx::query_as::<_, OptionRow>(
+        "SELECT b.id, b.slug, b.name, \
+                (cb.id IS NOT NULL) as \"installed!\" \
+         FROM bundles b \
+         LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
+         ORDER BY b.slug",
+    )
+    .bind(cid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let mcp_servers = sqlx::query_as::<_, OptionRow>(
+        "SELECT ms.id, ms.slug, ms.name, \
+                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as \"installed!\" \
+         FROM mcp_servers ms \
+         LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
+         LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
+              AND msbi.bundle_id IN (SELECT bundle_id FROM customer_mcp_bundles WHERE customer_id = $1) \
+         ORDER BY ms.slug",
+    )
+    .bind(cid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let mcp_bundles = sqlx::query_as::<_, OptionRow>(
+        "SELECT msb.id, msb.slug, msb.name, \
+                (cmb.id IS NOT NULL) as \"installed!\" \
+         FROM mcp_server_bundles msb \
+         LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
+         ORDER BY msb.slug",
+    )
+    .bind(cid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(Catalog {
+        skill_channels,
+        bundles,
+        mcp_servers,
+        mcp_bundles,
+    }))
 }
 
 // ── Admin routes ────────────────────────────────────────────────────

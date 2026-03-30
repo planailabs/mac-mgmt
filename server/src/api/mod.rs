@@ -44,6 +44,8 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_available_bundles,
         routes::setting_available_mcp_servers,
         routes::setting_available_mcp_bundles,
+        // Setting — catalog
+        routes::setting_catalog,
         // Admin
         routes::admin_list_customers,
         routes::admin_create_token,
@@ -62,6 +64,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::AddMcpBundleBody,
         routes::SkillChannelRow,
         routes::OptionRow,
+        routes::Catalog,
         routes::AdminCustomerRow,
         routes::CreateTokenForCustomerBody,
         routes::CreatedToken,
@@ -141,6 +144,8 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
                 routes::setting_available_bundles,
                 routes::setting_available_mcp_servers,
                 routes::setting_available_mcp_bundles,
+                // Setting token routes — catalog
+                routes::setting_catalog,
                 // Admin token routes
                 routes::admin_list_customers,
                 routes::admin_create_token,
