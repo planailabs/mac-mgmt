@@ -19,6 +19,11 @@ async fn create_admin_token(label: String) -> Result<String, ServerFnError> {
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
+    let label = label.trim().to_string();
+    if label.is_empty() {
+        return Err(ServerFnError::new("label is required"));
+    }
+
     let pool = crate::server_pool()?;
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
@@ -84,6 +89,7 @@ pub fn AdminTokenList() -> Element {
             input {
                 class: "flex-1 border border-gray-300 rounded px-3 py-1 text-sm",
                 r#type: "text",
+                required: true,
                 placeholder: "Admin token label",
                 value: "{label}",
                 oninput: move |evt| label.set(evt.value()),

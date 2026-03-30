@@ -1076,13 +1076,18 @@ pub async fn admin_create_token(
         return Err(Status::BadRequest);
     }
 
+    let label = body.label.trim();
+    if label.is_empty() {
+        return Err(Status::BadRequest);
+    }
+
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
     sqlx::query("INSERT INTO tokens (customer_id, token_hash, label, kind) VALUES ($1, $2, $3, $4)")
         .bind(cid)
         .bind(&hash)
-        .bind(&body.label)
+        .bind(label)
         .bind(&body.kind)
         .execute(pool.inner())
         .await
