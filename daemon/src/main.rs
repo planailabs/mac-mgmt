@@ -10,6 +10,7 @@ mod metrics;
 mod metrics_server;
 mod sentry_ext;
 mod nix;
+mod os_mgmt;
 mod scripts;
 mod skills;
 mod service;
@@ -45,6 +46,12 @@ enum Commands {
     Restart,
     /// Run the daemon (called by launchd)
     Daemon,
+    /// Install OS-specific configuration files
+    ConfigureOs {
+        /// Preview changes without writing files
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Check for updates and apply if available
     Update {
         /// Force update even if already on the latest version
@@ -76,6 +83,7 @@ async fn main() -> Result<()> {
         Commands::Stop => service::stop()?,
         Commands::Restart => service::restart()?,
         Commands::Daemon => daemon::run().await?,
+        Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         Commands::Update { force } => daemon::do_update(force)?,
     }
 
