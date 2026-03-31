@@ -787,7 +787,7 @@ pub async fn setting_available_skill_channels(
 ) -> Result<Json<Vec<SkillChannelRow>>, Status> {
     let rows = sqlx::query_as::<_, SkillChannelRow>(
         "SELECT sc.id, s.slug as skill_slug, sc.channel, \
-                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as \"installed!\" \
+                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed \
          FROM skill_channels sc \
          JOIN skills s ON s.id = sc.skill_id \
          LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
@@ -830,7 +830,7 @@ pub async fn setting_available_bundles(
 ) -> Result<Json<Vec<OptionRow>>, Status> {
     let rows = sqlx::query_as::<_, OptionRow>(
         "SELECT b.id, b.slug, b.name, \
-                (cb.id IS NOT NULL) as \"installed!\" \
+                (cb.id IS NOT NULL) as installed \
          FROM bundles b \
          LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
          ORDER BY b.slug",
@@ -862,7 +862,7 @@ pub async fn setting_available_mcp_servers(
 ) -> Result<Json<Vec<OptionRow>>, Status> {
     let rows = sqlx::query_as::<_, OptionRow>(
         "SELECT ms.id, ms.slug, ms.name, \
-                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as \"installed!\" \
+                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as installed \
          FROM mcp_servers ms \
          LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
          LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
@@ -896,7 +896,7 @@ pub async fn setting_available_mcp_bundles(
 ) -> Result<Json<Vec<OptionRow>>, Status> {
     let rows = sqlx::query_as::<_, OptionRow>(
         "SELECT msb.id, msb.slug, msb.name, \
-                (cmb.id IS NOT NULL) as \"installed!\" \
+                (cmb.id IS NOT NULL) as installed \
          FROM mcp_server_bundles msb \
          LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
          ORDER BY msb.slug",
@@ -940,7 +940,7 @@ pub async fn setting_catalog(
 
     let skill_channels = sqlx::query_as::<_, SkillChannelRow>(
         "SELECT sc.id, s.slug as skill_slug, sc.channel, \
-                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as \"installed!\" \
+                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed \
          FROM skill_channels sc \
          JOIN skills s ON s.id = sc.skill_id \
          LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
@@ -955,7 +955,7 @@ pub async fn setting_catalog(
 
     let bundles = sqlx::query_as::<_, OptionRow>(
         "SELECT b.id, b.slug, b.name, \
-                (cb.id IS NOT NULL) as \"installed!\" \
+                (cb.id IS NOT NULL) as installed \
          FROM bundles b \
          LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
          ORDER BY b.slug",
@@ -967,7 +967,7 @@ pub async fn setting_catalog(
 
     let mcp_servers = sqlx::query_as::<_, OptionRow>(
         "SELECT ms.id, ms.slug, ms.name, \
-                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as \"installed!\" \
+                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as installed \
          FROM mcp_servers ms \
          LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
          LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
@@ -981,7 +981,7 @@ pub async fn setting_catalog(
 
     let mcp_bundles = sqlx::query_as::<_, OptionRow>(
         "SELECT msb.id, msb.slug, msb.name, \
-                (cmb.id IS NOT NULL) as \"installed!\" \
+                (cmb.id IS NOT NULL) as installed \
          FROM mcp_server_bundles msb \
          LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
          ORDER BY msb.slug",
