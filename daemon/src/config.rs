@@ -24,7 +24,7 @@ fn merge_toml(base: &mut toml::Value, overlay: &toml::Value) {
     }
 }
 
-async fn fetch_remote_config(url: &str, token: &str) -> Result<toml::Value> {
+async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<toml::Value>> {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/api/config"))
@@ -34,13 +34,17 @@ async fn fetch_remote_config(url: &str, token: &str) -> Result<toml::Value> {
         .context("failed to reach config server")?;
 
     let status = resp.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        tracing::info!("remote config not found (404), skipping");
+        return Ok(None);
+    }
     if !status.is_success() {
         anyhow::bail!("config server returned {status}");
     }
 
     let body = resp.text().await.context("failed to read response body")?;
     let value: toml::Value = toml::from_str(&body).context("failed to parse remote config")?;
-    Ok(value)
+    Ok(Some(value))
 }
 
 pub async fn load() -> Result<Config> {
@@ -72,17 +76,16 @@ pub async fn load() -> Result<Config> {
 
     if let (Some(url), Some(token)) = (server_url, server_token) {
         tracing::info!("fetching remote config from {url}");
-        match fetch_remote_config(&url, &token).await {
-            Ok(mut remote) => {
-                merge_toml(&mut remote, &local_value);
-                let config: Config = remote
-                    .try_into()
-                    .context("failed to deserialize merged config")?;
-                return Ok(config);
-            }
-            Err(e) => {
-                tracing::warn!("failed to fetch remote config, using local only: {e}");
-            }
+        let remote = fetch_remote_config(&url, &token)
+            .await
+            .context("failed to fetch remote config")?;
+
+        if let Some(mut remote) = remote {
+            merge_toml(&mut remote, &local_value);
+            let config: Config = remote
+                .try_into()
+                .context("failed to deserialize merged config")?;
+            return Ok(config);
         }
     }
 
