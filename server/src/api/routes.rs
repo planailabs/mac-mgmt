@@ -425,21 +425,15 @@ pub async fn setting_set_config(
 
 // -- Skills --
 
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct CustomerSkillRow {
-    customer_skill_id: Uuid,
-    skill_slug: String,
-    channel: String,
-}
-
 #[utoipa::path(
     get,
     path = "/api/setting/skills",
     tag = "Setting — Skills",
     summary = "List customer skill assignments",
+    description = "Returns installed skill channels with `installed_bundle` indicating whether the skill comes from a bundle. `customer_skill_id` is present only for direct assignments.",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Customer skills", body = Vec<CustomerSkillRow>),
+        (status = 200, description = "Customer skills", body = Vec<SkillChannelRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -448,19 +442,12 @@ pub(crate) struct CustomerSkillRow {
 pub async fn setting_list_skills(
     auth: SettingAuth,
     pool: &State<PgPool>,
-) -> Result<Json<Vec<CustomerSkillRow>>, Status> {
-    let rows = sqlx::query_as::<_, CustomerSkillRow>(
-        "SELECT cs.id as customer_skill_id, s.slug as skill_slug, sc.channel \
-         FROM customer_skills cs \
-         JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
-         JOIN skills s ON s.id = sc.skill_id \
-         WHERE cs.customer_id = $1 \
-         ORDER BY s.slug, sc.channel",
-    )
-    .bind(auth.customer_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+) -> Result<Json<Vec<SkillChannelRow>>, Status> {
+    let rows = build_skill_channel_rows(auth.customer_id, pool.inner())
+        .await?
+        .into_iter()
+        .filter(|r| r.installed)
+        .collect();
     Ok(Json(rows))
 }
 
@@ -630,21 +617,15 @@ pub async fn setting_remove_bundle(
 
 // -- MCP Servers --
 
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct CustomerMcpServerRow {
-    customer_mcp_server_id: Uuid,
-    server_slug: String,
-    server_name: String,
-}
-
 #[utoipa::path(
     get,
     path = "/api/setting/mcp-servers",
     tag = "Setting — MCP Servers",
     summary = "List customer MCP server assignments",
+    description = "Returns installed MCP servers with `installed_bundle` and `installed_transitive` flags. `customer_mcp_server_id` is present only for direct assignments.",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Customer MCP servers", body = Vec<CustomerMcpServerRow>),
+        (status = 200, description = "Customer MCP servers", body = Vec<McpServerOptionRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -653,18 +634,12 @@ pub(crate) struct CustomerMcpServerRow {
 pub async fn setting_list_mcp_servers(
     auth: SettingAuth,
     pool: &State<PgPool>,
-) -> Result<Json<Vec<CustomerMcpServerRow>>, Status> {
-    let rows = sqlx::query_as::<_, CustomerMcpServerRow>(
-        "SELECT cms.id as customer_mcp_server_id, ms.slug as server_slug, ms.name as server_name \
-         FROM customer_mcp_servers cms \
-         JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
-         WHERE cms.customer_id = $1 \
-         ORDER BY ms.slug",
-    )
-    .bind(auth.customer_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+) -> Result<Json<Vec<McpServerOptionRow>>, Status> {
+    let rows = build_mcp_server_options(auth.customer_id, pool.inner())
+        .await?
+        .into_iter()
+        .filter(|r| r.installed)
+        .collect();
     Ok(Json(rows))
 }
 
@@ -841,6 +816,8 @@ pub(crate) struct SkillChannelRow {
     channel: String,
     installed: bool,
     installed_bundle: bool,
+    /// Present only for direct (non-bundle) assignments; use with DELETE /setting/skills/{id}.
+    customer_skill_id: Option<Uuid>,
 }
 
 async fn build_skill_channel_rows(
@@ -850,7 +827,8 @@ async fn build_skill_channel_rows(
     sqlx::query_as::<_, SkillChannelRow>(
         "SELECT sc.id, s.slug as skill_slug, sc.channel, \
                 (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed, \
-                (bi.id IS NOT NULL) as installed_bundle \
+                (bi.id IS NOT NULL) as installed_bundle, \
+                cs.id as customer_skill_id \
          FROM skill_channels sc \
          JOIN skills s ON s.id = sc.skill_id \
          LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
@@ -901,6 +879,8 @@ pub(crate) struct McpServerOptionRow {
     installed: bool,
     installed_bundle: bool,
     installed_transitive: bool,
+    /// Present only for direct (non-bundle, non-transitive) assignments; use with DELETE /setting/mcp-servers/{id}.
+    customer_mcp_server_id: Option<Uuid>,
 }
 
 async fn build_bundle_rows(
@@ -968,6 +948,7 @@ struct McpServerBaseRow {
     name: String,
     installed_direct: bool,
     installed_bundle: bool,
+    customer_mcp_server_id: Option<Uuid>,
 }
 
 /// Build the full MCP server option list with all install flags.
@@ -978,7 +959,8 @@ async fn build_mcp_server_options(
     let base_rows = sqlx::query_as::<_, McpServerBaseRow>(
         "SELECT ms.id, ms.slug, ms.name, \
                 (cms.id IS NOT NULL) as installed_direct, \
-                (msbi.id IS NOT NULL) as installed_bundle \
+                (msbi.id IS NOT NULL) as installed_bundle, \
+                cms.id as customer_mcp_server_id \
          FROM mcp_servers ms \
          LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
          LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
@@ -1003,6 +985,7 @@ async fn build_mcp_server_options(
                 installed: r.installed_direct || r.installed_bundle || installed_transitive,
                 installed_bundle: r.installed_bundle,
                 installed_transitive,
+                customer_mcp_server_id: r.customer_mcp_server_id,
             }
         })
         .collect())

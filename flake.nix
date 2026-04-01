@@ -39,6 +39,8 @@
         };
 
         mac-mgmt-server = pkgs.callPackage ./server/package.nix { };
+        mac-mgmt-relay = pkgs.callPackage ./relay/package.nix { };
+        relay-ssh = pkgs.callPackage ./relay-ssh/package.nix { };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -69,6 +71,14 @@
 
         packages.default = mac-mgmt;
         packages.server = mac-mgmt-server;
+        packages.relay = mac-mgmt-relay;
+        packages.relay-ssh = relay-ssh;
+
+        checks = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          relay-integration = pkgs.callPackage ./tests/relay.nix {
+            inherit mac-mgmt-relay;
+          };
+        };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
           mkdir -p $out pack
