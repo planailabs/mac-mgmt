@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::models::{Skill, SkillChannel};
 
@@ -97,6 +98,100 @@ async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Vec<(
     }
 
     Ok(result)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChannelMcpDep {
+    dep_id: String,
+    mcp_server_id: String,
+    mcp_server_slug: String,
+}
+
+#[server]
+async fn list_channel_mcp_deps(skill_channel_id: String) -> Result<Vec<ChannelMcpDep>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        dep_id: uuid::Uuid,
+        mcp_server_id: uuid::Uuid,
+        mcp_server_slug: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT smd.id as dep_id, smd.mcp_server_id, ms.slug as mcp_server_slug \
+         FROM skill_mcp_dependencies smd \
+         JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
+         WHERE smd.skill_channel_id = $1 \
+         ORDER BY ms.slug",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows.into_iter().map(|r| ChannelMcpDep {
+        dep_id: r.dep_id.to_string(),
+        mcp_server_id: r.mcp_server_id.to_string(),
+        mcp_server_slug: r.mcp_server_slug,
+    }).collect())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct McpServerOption {
+    id: String,
+    slug: String,
+    name: String,
+}
+
+#[server]
+async fn list_all_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
+    let pool = crate::server_pool()?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: uuid::Uuid,
+        slug: String,
+        name: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>("SELECT id, slug, name FROM mcp_servers ORDER BY slug")
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows.into_iter().map(|r| McpServerOption {
+        id: r.id.to_string(),
+        slug: r.slug,
+        name: r.name,
+    }).collect())
+}
+
+#[server]
+async fn add_channel_mcp_dep(skill_channel_id: String, mcp_server_id: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let sc_id: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let ms_id: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("INSERT INTO skill_mcp_dependencies (skill_channel_id, mcp_server_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(sc_id)
+        .bind(ms_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
+#[server]
+async fn remove_channel_mcp_dep(dep_id: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = dep_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM skill_mcp_dependencies WHERE id = $1")
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
 }
 
 #[component]
@@ -210,6 +305,7 @@ pub fn SkillDetail(id: String) -> Element {
                                             let ch_name = ch.channel.clone();
                                             let ch_created = ch.created_at.format("%Y-%m-%d").to_string();
                                             let arch_paths = path_map.get(&ch.channel).cloned().unwrap_or_default();
+                                            let ch_id = ch.id.to_string();
                                             rsx! {
                                                 li { class: "py-2",
                                                     div {
@@ -222,6 +318,7 @@ pub fn SkillDetail(id: String) -> Element {
                                                             " {path}"
                                                         }
                                                     }
+                                                    ChannelMcpDeps { channel_id: ch_id }
                                                 }
                                             }
                                         }
@@ -237,5 +334,94 @@ pub fn SkillDetail(id: String) -> Element {
         }
         Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
         None => rsx! { p { "Loading..." } },
+    }
+}
+
+#[component]
+fn ChannelMcpDeps(channel_id: String) -> Element {
+    let cid = channel_id.clone();
+    let mut deps = use_server_future(move || {
+        let id = cid.clone();
+        async move { list_channel_mcp_deps(id).await }
+    })?;
+
+    let cid_add = channel_id.clone();
+    let all_servers = use_server_future(move || async move { list_all_mcp_servers().await })?;
+
+    let mut selected_server = use_signal(String::new);
+
+    rsx! {
+        div { class: "mt-3",
+            h4 { class: "text-sm font-semibold text-gray-700 mb-2", "MCP Dependencies" }
+            form {
+                class: "flex gap-2 mb-3",
+                onsubmit: move |evt: FormEvent| {
+                    evt.prevent_default();
+                    let sid = selected_server.read().clone();
+                    let channel = cid_add.clone();
+                    spawn(async move {
+                        if !sid.is_empty() {
+                            if add_channel_mcp_dep(channel, sid).await.is_ok() {
+                                selected_server.set(String::new());
+                                deps.restart();
+                            }
+                        }
+                    });
+                },
+                select {
+                    class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm",
+                    value: "{selected_server}",
+                    onchange: move |e| selected_server.set(e.value()),
+                    option { value: "", "Select MCP server..." }
+                    {match &*all_servers.read() {
+                        Some(Ok(servers)) => rsx! {
+                            for s in servers {
+                                option { value: "{s.id}", "{s.slug} — {s.name}" }
+                            }
+                        },
+                        _ => rsx! {},
+                    }}
+                }
+                button {
+                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                    r#type: "submit",
+                    "Add"
+                }
+            }
+            {match &*deps.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-xs text-gray-400", "No MCP dependencies." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200",
+                        for dep in list {
+                            {
+                                let dep_id = dep.dep_id.clone();
+                                let slug = dep.mcp_server_slug.clone();
+                                rsx! {
+                                    li { class: "py-1 flex justify-between items-center",
+                                        span { class: "text-sm font-mono", "{slug}" }
+                                        button {
+                                            class: "text-xs text-red-600 hover:underline",
+                                            onclick: move |_| {
+                                                let did = dep_id.clone();
+                                                spawn(async move {
+                                                    if remove_channel_mcp_dep(did).await.is_ok() {
+                                                        deps.restart();
+                                                    }
+                                                });
+                                            },
+                                            "Remove"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
+                None => rsx! { p { class: "text-xs", "Loading..." } },
+            }}
+        }
     }
 }

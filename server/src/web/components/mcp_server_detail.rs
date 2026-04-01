@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::models::McpServer;
 use crate::web::app::Route;
@@ -103,6 +104,45 @@ async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillDepRow {
+    skill_slug: String,
+    channel: String,
+    skill_id: String,
+}
+
+#[server]
+async fn list_dependent_skills(mcp_server_id: String) -> Result<Vec<SkillDepRow>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        skill_slug: String,
+        channel: String,
+        skill_id: uuid::Uuid,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT s.slug as skill_slug, sc.channel, s.id as skill_id \
+         FROM skill_mcp_dependencies smd \
+         JOIN skill_channels sc ON sc.id = smd.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE smd.mcp_server_id = $1 \
+         ORDER BY s.slug, sc.channel",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows.into_iter().map(|r| SkillDepRow {
+        skill_slug: r.skill_slug,
+        channel: r.channel,
+        skill_id: r.skill_id.to_string(),
+    }).collect())
+}
+
 // ── Shared form fields component ─────────────────────────────────────
 
 #[component]
@@ -171,6 +211,12 @@ pub fn McpServerDetail(id: String) -> Element {
     })?;
 
     let mut new_pkg = use_signal(String::new);
+
+    let id_deps = id.clone();
+    let dep_skills = use_server_future(move || {
+        let id = id_deps.clone();
+        async move { list_dependent_skills(id).await }
+    })?;
 
     match &*server.read() {
         Some(Ok(s)) => {
@@ -280,6 +326,39 @@ pub fn McpServerDetail(id: String) -> Element {
                             }
                         }
                     }
+                }
+
+                // Required by Skills section
+                div { class: "mt-6",
+                    h3 { class: "text-lg font-semibold mb-3", "Required by Skills" }
+                    {match &*dep_skills.read() {
+                        Some(Ok(list)) if list.is_empty() => rsx! {
+                            p { class: "text-sm text-gray-400", "No skills depend on this MCP server." }
+                        },
+                        Some(Ok(list)) => rsx! {
+                            ul { class: "divide-y divide-gray-200",
+                                for dep in list {
+                                    {
+                                        let skill_slug = dep.skill_slug.clone();
+                                        let channel = dep.channel.clone();
+                                        let skill_id = dep.skill_id.clone();
+                                        rsx! {
+                                            li { class: "py-2",
+                                                Link {
+                                                    to: Route::SkillDetail { id: skill_id },
+                                                    class: "text-sm text-blue-600 hover:underline font-mono",
+                                                    "{skill_slug}"
+                                                }
+                                                span { class: "text-xs text-gray-400 ml-2", "({channel})" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600", "Error: {e}" } },
+                        None => rsx! { p { class: "text-sm", "Loading..." } },
+                    }}
                 }
             }
         }

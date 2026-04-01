@@ -149,6 +149,10 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
                 // Admin token routes
                 routes::admin_list_customers,
                 routes::admin_create_token,
+                // Admin — skill MCP dependencies
+                routes::admin_list_skill_mcp_deps,
+                routes::admin_add_skill_mcp_dep,
+                routes::admin_remove_skill_mcp_dep,
             ],
         )
         .mount(

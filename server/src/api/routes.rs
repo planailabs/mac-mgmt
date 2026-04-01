@@ -91,6 +91,7 @@ pub async fn get_mcp_servers(
     auth: SyncAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<HashMap<String, McpServerEntry>>, Status> {
+    // Precedence: direct (2) > bundle (1) > transitive from skill (0).
     let rows = sqlx::query_as::<_, McpServerRow>(
         "SELECT ms.slug, ms.config_json, ms.nix_packages, true AS is_direct \
          FROM customer_mcp_servers cms \
@@ -109,17 +110,49 @@ pub async fn get_mcp_servers(
     .map_err(|_| Status::InternalServerError)?;
 
     // For each slug, direct assignment wins over bundle.
-    let mut result: HashMap<String, (McpServerEntry, bool)> = HashMap::new();
+    // Track precedence: 2 = direct, 1 = bundle.
+    let mut result: HashMap<String, (McpServerEntry, u8)> = HashMap::new();
     for row in &rows {
+        let prec: u8 = if row.is_direct { 2 } else { 1 };
         match result.get(&row.slug) {
-            Some((_, true)) => {} // already have a direct assignment
+            Some((_, existing)) if *existing >= prec => {}
             _ => {
                 result.insert(
                     row.slug.clone(),
                     (McpServerEntry {
                         config: row.config_json.clone(),
                         nix_packages: row.nix_packages.clone(),
-                    }, row.is_direct),
+                    }, prec),
+                );
+            }
+        }
+    }
+
+    // Resolve transitive MCP deps from winning skill channels.
+    let winning_channels = resolve_winning_skill_channels(auth.customer_id, pool.inner()).await?;
+    let channel_ids: Vec<Uuid> = winning_channels.into_values().collect();
+
+    if !channel_ids.is_empty() {
+        let transitive_rows = sqlx::query_as::<_, McpServerRow>(
+            "SELECT ms.slug, ms.config_json, ms.nix_packages, false AS is_direct \
+             FROM skill_mcp_dependencies smd \
+             JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
+             WHERE smd.skill_channel_id = ANY($1)",
+        )
+        .bind(&channel_ids)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+        for row in &transitive_rows {
+            // Transitive has lowest precedence (0).
+            if !result.contains_key(&row.slug) {
+                result.insert(
+                    row.slug.clone(),
+                    (McpServerEntry {
+                        config: row.config_json.clone(),
+                        nix_packages: row.nix_packages.clone(),
+                    }, 0),
                 );
             }
         }
@@ -170,9 +203,51 @@ pub async fn get_config(
 
 #[derive(sqlx::FromRow)]
 struct SkillSlugChannel {
+    skill_channel_id: Uuid,
     slug: String,
     channel: String,
     is_direct: bool,
+}
+
+/// Resolve the winning skill_channel_id per slug for a customer.
+/// Direct assignments beat bundle assignments for the same slug.
+async fn resolve_winning_skill_channels(
+    customer_id: Uuid,
+    pool: &PgPool,
+) -> Result<HashMap<String, Uuid>, Status> {
+    let rows = sqlx::query_as::<_, SkillSlugChannel>(
+        "SELECT sc.id AS skill_channel_id, s.slug, sc.channel, true AS is_direct \
+         FROM customer_skills cs \
+         JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE cs.customer_id = $1 \
+         UNION ALL \
+         SELECT sc.id AS skill_channel_id, s.slug, sc.channel, false AS is_direct \
+         FROM customer_bundles cb \
+         JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
+         JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE cb.customer_id = $1",
+    )
+    .bind(customer_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let mut winners: HashMap<String, (Uuid, bool)> = HashMap::new();
+    for row in &rows {
+        match winners.get(&row.slug) {
+            Some((_, true)) => {}
+            _ => {
+                winners.insert(
+                    row.slug.clone(),
+                    (row.skill_channel_id, row.is_direct),
+                );
+            }
+        }
+    }
+
+    Ok(winners.into_iter().map(|(slug, (id, _))| (slug, id)).collect())
 }
 
 #[utoipa::path(
@@ -197,13 +272,13 @@ pub async fn get_skills(
     arch: String,
 ) -> Result<Json<HashMap<String, String>>, Status> {
     let rows = sqlx::query_as::<_, SkillSlugChannel>(
-        "SELECT s.slug, sc.channel, true AS is_direct \
+        "SELECT sc.id AS skill_channel_id, s.slug, sc.channel, true AS is_direct \
          FROM customer_skills cs \
          JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
          WHERE cs.customer_id = $1 \
          UNION ALL \
-         SELECT s.slug, sc.channel, false AS is_direct \
+         SELECT sc.id AS skill_channel_id, s.slug, sc.channel, false AS is_direct \
          FROM customer_bundles cb \
          JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
          JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
@@ -765,6 +840,28 @@ pub(crate) struct SkillChannelRow {
     skill_slug: String,
     channel: String,
     installed: bool,
+    installed_bundle: bool,
+}
+
+async fn build_skill_channel_rows(
+    customer_id: Uuid,
+    pool: &PgPool,
+) -> Result<Vec<SkillChannelRow>, Status> {
+    sqlx::query_as::<_, SkillChannelRow>(
+        "SELECT sc.id, s.slug as skill_slug, sc.channel, \
+                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed, \
+                (bi.id IS NOT NULL) as installed_bundle \
+         FROM skill_channels sc \
+         JOIN skills s ON s.id = sc.skill_id \
+         LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
+         LEFT JOIN bundle_items bi ON bi.skill_channel_id = sc.id \
+              AND bi.bundle_id IN (SELECT bundle_id FROM customer_bundles WHERE customer_id = $1) \
+         ORDER BY s.slug, sc.channel",
+    )
+    .bind(customer_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| Status::InternalServerError)
 }
 
 #[utoipa::path(
@@ -785,21 +882,7 @@ pub async fn setting_available_skill_channels(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<SkillChannelRow>>, Status> {
-    let rows = sqlx::query_as::<_, SkillChannelRow>(
-        "SELECT sc.id, s.slug as skill_slug, sc.channel, \
-                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed \
-         FROM skill_channels sc \
-         JOIN skills s ON s.id = sc.skill_id \
-         LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
-         LEFT JOIN bundle_items bi ON bi.skill_channel_id = sc.id \
-              AND bi.bundle_id IN (SELECT bundle_id FROM customer_bundles WHERE customer_id = $1) \
-         ORDER BY s.slug, sc.channel",
-    )
-    .bind(auth.customer_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows))
+    Ok(Json(build_skill_channel_rows(auth.customer_id, pool.inner()).await?))
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -808,6 +891,33 @@ pub(crate) struct OptionRow {
     slug: String,
     name: String,
     installed: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct McpServerOptionRow {
+    id: Uuid,
+    slug: String,
+    name: String,
+    installed: bool,
+    installed_bundle: bool,
+    installed_transitive: bool,
+}
+
+async fn build_bundle_rows(
+    customer_id: Uuid,
+    pool: &PgPool,
+) -> Result<Vec<OptionRow>, Status> {
+    sqlx::query_as::<_, OptionRow>(
+        "SELECT b.id, b.slug, b.name, \
+                (cb.id IS NOT NULL) as installed \
+         FROM bundles b \
+         LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
+         ORDER BY b.slug",
+    )
+    .bind(customer_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| Status::InternalServerError)
 }
 
 #[utoipa::path(
@@ -828,18 +938,74 @@ pub async fn setting_available_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
-    let rows = sqlx::query_as::<_, OptionRow>(
-        "SELECT b.id, b.slug, b.name, \
-                (cb.id IS NOT NULL) as installed \
-         FROM bundles b \
-         LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
-         ORDER BY b.slug",
+    Ok(Json(build_bundle_rows(auth.customer_id, pool.inner()).await?))
+}
+
+/// Fetch the set of MCP server IDs transitively required by a customer's winning skill channels.
+async fn transitive_mcp_server_ids(
+    customer_id: Uuid,
+    pool: &PgPool,
+) -> Result<std::collections::HashSet<Uuid>, Status> {
+    let winning = resolve_winning_skill_channels(customer_id, pool).await?;
+    let channel_ids: Vec<Uuid> = winning.into_values().collect();
+    if channel_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let rows = sqlx::query_scalar::<_, Uuid>(
+        "SELECT DISTINCT mcp_server_id FROM skill_mcp_dependencies WHERE skill_channel_id = ANY($1)",
     )
-    .bind(auth.customer_id)
-    .fetch_all(pool.inner())
+    .bind(&channel_ids)
+    .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows))
+    Ok(rows.into_iter().collect())
+}
+
+#[derive(sqlx::FromRow)]
+struct McpServerBaseRow {
+    id: Uuid,
+    slug: String,
+    name: String,
+    installed_direct: bool,
+    installed_bundle: bool,
+}
+
+/// Build the full MCP server option list with all install flags.
+async fn build_mcp_server_options(
+    customer_id: Uuid,
+    pool: &PgPool,
+) -> Result<Vec<McpServerOptionRow>, Status> {
+    let base_rows = sqlx::query_as::<_, McpServerBaseRow>(
+        "SELECT ms.id, ms.slug, ms.name, \
+                (cms.id IS NOT NULL) as installed_direct, \
+                (msbi.id IS NOT NULL) as installed_bundle \
+         FROM mcp_servers ms \
+         LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
+         LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
+              AND msbi.bundle_id IN (SELECT bundle_id FROM customer_mcp_bundles WHERE customer_id = $1) \
+         ORDER BY ms.slug",
+    )
+    .bind(customer_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let transitive_ids = transitive_mcp_server_ids(customer_id, pool).await?;
+
+    Ok(base_rows
+        .into_iter()
+        .map(|r| {
+            let installed_transitive = transitive_ids.contains(&r.id);
+            McpServerOptionRow {
+                id: r.id,
+                slug: r.slug,
+                name: r.name,
+                installed: r.installed_direct || r.installed_bundle || installed_transitive,
+                installed_bundle: r.installed_bundle,
+                installed_transitive,
+            }
+        })
+        .collect())
 }
 
 #[utoipa::path(
@@ -847,10 +1013,10 @@ pub async fn setting_available_bundles(
     path = "/api/setting/available/mcp-servers",
     tag = "Setting — Available",
     summary = "List all MCP servers",
-    description = "Returns all MCP servers with an `installed` flag indicating whether the customer has this server assigned (directly or via a bundle).",
+    description = "Returns all MCP servers with install flags: installed (any source), installed_bundle, installed_transitive (via skill dependency).",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "All MCP servers", body = Vec<OptionRow>),
+        (status = 200, description = "All MCP servers", body = Vec<McpServerOptionRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -859,21 +1025,26 @@ pub async fn setting_available_bundles(
 pub async fn setting_available_mcp_servers(
     auth: SettingAuth,
     pool: &State<PgPool>,
-) -> Result<Json<Vec<OptionRow>>, Status> {
-    let rows = sqlx::query_as::<_, OptionRow>(
-        "SELECT ms.id, ms.slug, ms.name, \
-                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as installed \
-         FROM mcp_servers ms \
-         LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
-         LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
-              AND msbi.bundle_id IN (SELECT bundle_id FROM customer_mcp_bundles WHERE customer_id = $1) \
-         ORDER BY ms.slug",
-    )
-    .bind(auth.customer_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+) -> Result<Json<Vec<McpServerOptionRow>>, Status> {
+    let rows = build_mcp_server_options(auth.customer_id, pool.inner()).await?;
     Ok(Json(rows))
+}
+
+async fn build_mcp_bundle_rows(
+    customer_id: Uuid,
+    pool: &PgPool,
+) -> Result<Vec<OptionRow>, Status> {
+    sqlx::query_as::<_, OptionRow>(
+        "SELECT msb.id, msb.slug, msb.name, \
+                (cmb.id IS NOT NULL) as installed \
+         FROM mcp_server_bundles msb \
+         LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
+         ORDER BY msb.slug",
+    )
+    .bind(customer_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| Status::InternalServerError)
 }
 
 #[utoipa::path(
@@ -894,18 +1065,7 @@ pub async fn setting_available_mcp_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
-    let rows = sqlx::query_as::<_, OptionRow>(
-        "SELECT msb.id, msb.slug, msb.name, \
-                (cmb.id IS NOT NULL) as installed \
-         FROM mcp_server_bundles msb \
-         LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
-         ORDER BY msb.slug",
-    )
-    .bind(auth.customer_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows))
+    Ok(Json(build_mcp_bundle_rows(auth.customer_id, pool.inner()).await?))
 }
 
 // -- Catalog (combined view) --
@@ -914,7 +1074,7 @@ pub async fn setting_available_mcp_bundles(
 pub(crate) struct Catalog {
     skill_channels: Vec<SkillChannelRow>,
     bundles: Vec<OptionRow>,
-    mcp_servers: Vec<OptionRow>,
+    mcp_servers: Vec<McpServerOptionRow>,
     mcp_bundles: Vec<OptionRow>,
 }
 
@@ -937,59 +1097,12 @@ pub async fn setting_catalog(
     pool: &State<PgPool>,
 ) -> Result<Json<Catalog>, Status> {
     let cid = auth.customer_id;
+    let p = pool.inner();
 
-    let skill_channels = sqlx::query_as::<_, SkillChannelRow>(
-        "SELECT sc.id, s.slug as skill_slug, sc.channel, \
-                (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed \
-         FROM skill_channels sc \
-         JOIN skills s ON s.id = sc.skill_id \
-         LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
-         LEFT JOIN bundle_items bi ON bi.skill_channel_id = sc.id \
-              AND bi.bundle_id IN (SELECT bundle_id FROM customer_bundles WHERE customer_id = $1) \
-         ORDER BY s.slug, sc.channel",
-    )
-    .bind(cid)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-
-    let bundles = sqlx::query_as::<_, OptionRow>(
-        "SELECT b.id, b.slug, b.name, \
-                (cb.id IS NOT NULL) as installed \
-         FROM bundles b \
-         LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
-         ORDER BY b.slug",
-    )
-    .bind(cid)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-
-    let mcp_servers = sqlx::query_as::<_, OptionRow>(
-        "SELECT ms.id, ms.slug, ms.name, \
-                (cms.id IS NOT NULL OR msbi.id IS NOT NULL) as installed \
-         FROM mcp_servers ms \
-         LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
-         LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
-              AND msbi.bundle_id IN (SELECT bundle_id FROM customer_mcp_bundles WHERE customer_id = $1) \
-         ORDER BY ms.slug",
-    )
-    .bind(cid)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-
-    let mcp_bundles = sqlx::query_as::<_, OptionRow>(
-        "SELECT msb.id, msb.slug, msb.name, \
-                (cmb.id IS NOT NULL) as installed \
-         FROM mcp_server_bundles msb \
-         LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
-         ORDER BY msb.slug",
-    )
-    .bind(cid)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let skill_channels = build_skill_channel_rows(cid, p).await?;
+    let bundles = build_bundle_rows(cid, p).await?;
+    let mcp_servers = build_mcp_server_options(cid, p).await?;
+    let mcp_bundles = build_mcp_bundle_rows(cid, p).await?;
 
     Ok(Json(Catalog {
         skill_channels,
@@ -1094,4 +1207,136 @@ pub async fn admin_create_token(
         .map_err(|_| Status::InternalServerError)?;
 
     Ok((Status::Created, Json(CreatedToken { token: raw_token })))
+}
+
+// ── Admin — Skill MCP dependencies ───────────────────────────────────
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub(crate) struct SkillMcpDepRow {
+    id: Uuid,
+    skill_channel_id: Uuid,
+    mcp_server_id: Uuid,
+    mcp_server_slug: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/skill-channels/{skill_channel_id}/mcp-dependencies",
+    tag = "Admin",
+    summary = "List MCP server dependencies for a skill channel",
+    security(("bearer" = [])),
+    params(("skill_channel_id" = Uuid, Path, description = "Skill channel ID")),
+    responses(
+        (status = 200, description = "List of MCP dependencies", body = Vec<SkillMcpDepRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::get("/admin/skill-channels/<skill_channel_id>/mcp-dependencies")]
+pub async fn admin_list_skill_mcp_deps(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    skill_channel_id: &str,
+) -> Result<Json<Vec<SkillMcpDepRow>>, Status> {
+    let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
+    let rows = sqlx::query_as::<_, SkillMcpDepRow>(
+        "SELECT smd.id, smd.skill_channel_id, smd.mcp_server_id, ms.slug AS mcp_server_slug \
+         FROM skill_mcp_dependencies smd \
+         JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
+         WHERE smd.skill_channel_id = $1 \
+         ORDER BY ms.slug",
+    )
+    .bind(sc_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AddSkillMcpDepBody {
+    mcp_server_id: Uuid,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/skill-channels/{skill_channel_id}/mcp-dependencies",
+    tag = "Admin",
+    summary = "Add MCP server dependency to a skill channel",
+    security(("bearer" = [])),
+    params(("skill_channel_id" = Uuid, Path, description = "Skill channel ID")),
+    request_body = AddSkillMcpDepBody,
+    responses(
+        (status = 201, description = "Dependency added"),
+        (status = 400, description = "Invalid ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+        (status = 409, description = "Dependency already exists"),
+    ),
+)]
+#[rocket::post("/admin/skill-channels/<skill_channel_id>/mcp-dependencies", data = "<body>")]
+pub async fn admin_add_skill_mcp_dep(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    skill_channel_id: &str,
+    body: Json<AddSkillMcpDepBody>,
+) -> Result<Status, Status> {
+    let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
+    let res = sqlx::query(
+        "INSERT INTO skill_mcp_dependencies (skill_channel_id, mcp_server_id) VALUES ($1, $2)",
+    )
+    .bind(sc_id)
+    .bind(body.mcp_server_id)
+    .execute(pool.inner())
+    .await;
+
+    match res {
+        Ok(_) => Ok(Status::Created),
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => Err(Status::Conflict),
+        Err(sqlx::Error::Database(e)) if e.is_foreign_key_violation() => Err(Status::BadRequest),
+        Err(_) => Err(Status::InternalServerError),
+    }
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/skill-channels/{skill_channel_id}/mcp-dependencies/{dep_id}",
+    tag = "Admin",
+    summary = "Remove MCP server dependency from a skill channel",
+    security(("bearer" = [])),
+    params(
+        ("skill_channel_id" = Uuid, Path, description = "Skill channel ID"),
+        ("dep_id" = Uuid, Path, description = "Dependency row ID"),
+    ),
+    responses(
+        (status = 200, description = "Dependency removed"),
+        (status = 400, description = "Invalid ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::delete("/admin/skill-channels/<skill_channel_id>/mcp-dependencies/<dep_id>")]
+pub async fn admin_remove_skill_mcp_dep(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    skill_channel_id: &str,
+    dep_id: &str,
+) -> Result<Status, Status> {
+    let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
+    let d_id: Uuid = dep_id.parse().map_err(|_| Status::BadRequest)?;
+    let res = sqlx::query(
+        "DELETE FROM skill_mcp_dependencies WHERE id = $1 AND skill_channel_id = $2",
+    )
+    .bind(d_id)
+    .bind(sc_id)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if res.rows_affected() == 0 {
+        Err(Status::NotFound)
+    } else {
+        Ok(Status::Ok)
+    }
 }
