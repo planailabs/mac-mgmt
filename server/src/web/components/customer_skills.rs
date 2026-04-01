@@ -13,11 +13,11 @@ pub struct CustomerSkillDisplay {
 
 /// Skill coming from a bundle (read-only).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct BundleSkillDisplay {
     pub skill_slug: String,
     pub channel: String,
     pub bundle_slug: String,
+    pub overwritten: bool,
 }
 
 /// Bundle assignment display.
@@ -70,7 +70,15 @@ async fn list_customer_bundles(customer_id: String) -> Result<Vec<CustomerBundle
 async fn list_bundle_skills(customer_id: String) -> Result<Vec<BundleSkillDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let rows = sqlx::query_as::<_, BundleSkillDisplay>(
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        skill_slug: String,
+        channel: String,
+        bundle_slug: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
         "SELECT DISTINCT s.slug as skill_slug, sc.channel, b.slug as bundle_slug \
          FROM customer_bundles cb \
          JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
@@ -84,7 +92,31 @@ async fn list_bundle_skills(customer_id: String) -> Result<Vec<BundleSkillDispla
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows)
+
+    // A bundle skill is overwritten if a direct assignment exists for the same slug.
+    let direct_slugs: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT s.slug \
+         FROM customer_skills cs \
+         JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE cs.customer_id = $1",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .into_iter()
+    .collect();
+
+    Ok(rows
+        .into_iter()
+        .map(|r| BundleSkillDisplay {
+            overwritten: direct_slugs.contains(&r.skill_slug),
+            skill_slug: r.skill_slug,
+            channel: r.channel,
+            bundle_slug: r.bundle_slug,
+        })
+        .collect())
 }
 
 #[server]
@@ -309,9 +341,9 @@ pub fn CustomerSkills(customer_id: String) -> Element {
             }}
         }
 
-        // Skills from bundles (read-only, green)
+        // Skills from bundles (read-only, blue)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-green-700 mb-2", "From Bundles" }
+            h4 { class: "text-sm font-semibold text-blue-700 mb-2", "From Bundles" }
             {match &*bundle_skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
                     p { class: "text-xs text-gray-400", "No skills from bundles." }
@@ -322,10 +354,17 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                             {
                                 let label = format!("{} / {}", bs.skill_slug, bs.channel);
                                 let via = bs.bundle_slug.clone();
+                                let overwritten = bs.overwritten;
                                 rsx! {
                                     li { class: "py-1 flex items-center gap-2",
-                                        span { class: "text-sm font-mono text-green-700", "{label}" }
-                                        span { class: "text-xs text-green-500", "via {via}" }
+                                        span {
+                                            class: if overwritten { "text-sm font-mono text-blue-400 line-through" } else { "text-sm font-mono text-blue-700" },
+                                            "{label}"
+                                        }
+                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, "via {via}" }
+                                        if overwritten {
+                                            span { class: "text-xs text-gray-400 italic", "overwritten" }
+                                        }
                                     }
                                 }
                             }

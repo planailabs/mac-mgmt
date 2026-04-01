@@ -13,21 +13,21 @@ pub struct CustomerMcpServerDisplay {
 
 /// MCP server coming from a bundle (read-only).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct BundleMcpServerDisplay {
     pub server_slug: String,
     pub server_name: String,
     pub bundle_slug: String,
+    pub overwritten: bool,
 }
 
 /// MCP server coming transitively from a skill dependency (read-only).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct TransitiveMcpServerDisplay {
     pub server_slug: String,
     pub server_name: String,
     pub skill_slug: String,
     pub channel: String,
+    pub overwritten: bool,
 }
 
 /// MCP bundle assignment display.
@@ -88,7 +88,15 @@ async fn list_customer_mcp_bundles(customer_id: String) -> Result<Vec<CustomerMc
 async fn list_bundle_mcp_servers(customer_id: String) -> Result<Vec<BundleMcpServerDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let rows = sqlx::query_as::<_, BundleMcpServerDisplay>(
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        server_slug: String,
+        server_name: String,
+        bundle_slug: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
         "SELECT DISTINCT ms.slug as server_slug, ms.name as server_name, msb.slug as bundle_slug \
          FROM customer_mcp_bundles cmb \
          JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
@@ -101,7 +109,30 @@ async fn list_bundle_mcp_servers(customer_id: String) -> Result<Vec<BundleMcpSer
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(rows)
+
+    // Overwritten if a direct assignment exists for the same server slug.
+    let direct_slugs: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT ms.slug \
+         FROM customer_mcp_servers cms \
+         JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
+         WHERE cms.customer_id = $1",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .into_iter()
+    .collect();
+
+    Ok(rows
+        .into_iter()
+        .map(|r| BundleMcpServerDisplay {
+            overwritten: direct_slugs.contains(&r.server_slug),
+            server_slug: r.server_slug,
+            server_name: r.server_name,
+            bundle_slug: r.bundle_slug,
+        })
+        .collect())
 }
 
 #[server]
@@ -182,11 +213,32 @@ async fn list_transitive_mcp_servers(customer_id: String) -> Result<Vec<Transiti
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Overwritten if a direct or bundle assignment exists for the same server slug.
+    let higher_slugs: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT ms.slug \
+         FROM customer_mcp_servers cms \
+         JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
+         WHERE cms.customer_id = $1 \
+         UNION \
+         SELECT ms.slug \
+         FROM customer_mcp_bundles cmb \
+         JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
+         JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
+         WHERE cmb.customer_id = $1",
+    )
+    .bind(cid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .into_iter()
+    .collect();
+
     let result = dep_rows
         .into_iter()
         .filter_map(|r| {
             let (skill_slug, channel) = channel_info.get(&r.skill_channel_id)?;
             Some(TransitiveMcpServerDisplay {
+                overwritten: higher_slugs.contains(&r.server_slug),
                 server_slug: r.server_slug,
                 server_name: r.server_name,
                 skill_slug: skill_slug.clone(),
@@ -413,9 +465,9 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
             }}
         }
 
-        // MCP servers from bundles (read-only, green)
+        // MCP servers from bundles (read-only, blue)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-green-700 mb-2", "From Bundles" }
+            h4 { class: "text-sm font-semibold text-blue-700 mb-2", "From Bundles" }
             {match &*bundle_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
                     p { class: "text-xs text-gray-400", "No MCP servers from bundles." }
@@ -426,10 +478,17 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                             {
                                 let label = format!("{} ({})", bm.server_name, bm.server_slug);
                                 let via = bm.bundle_slug.clone();
+                                let overwritten = bm.overwritten;
                                 rsx! {
                                     li { class: "py-1 flex items-center gap-2",
-                                        span { class: "text-sm font-mono text-green-700", "{label}" }
-                                        span { class: "text-xs text-green-500", "via {via}" }
+                                        span {
+                                            class: if overwritten { "text-sm font-mono text-blue-400 line-through" } else { "text-sm font-mono text-blue-700" },
+                                            "{label}"
+                                        }
+                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, "via {via}" }
+                                        if overwritten {
+                                            span { class: "text-xs text-gray-400 italic", "overwritten" }
+                                        }
                                     }
                                 }
                             }
@@ -454,10 +513,17 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                             {
                                 let label = format!("{} ({})", tm.server_name, tm.server_slug);
                                 let via = format!("{} / {}", tm.skill_slug, tm.channel);
+                                let overwritten = tm.overwritten;
                                 rsx! {
                                     li { class: "py-1 flex items-center gap-2",
-                                        span { class: "text-sm font-mono text-gray-500", "{label}" }
-                                        span { class: "text-xs text-gray-400", "via {via}" }
+                                        span {
+                                            class: if overwritten { "text-sm font-mono text-gray-400 line-through" } else { "text-sm font-mono text-gray-500" },
+                                            "{label}"
+                                        }
+                                        span { class: if overwritten { "text-xs text-gray-300" } else { "text-xs text-gray-400" }, "via {via}" }
+                                        if overwritten {
+                                            span { class: "text-xs text-gray-400 italic", "overwritten" }
+                                        }
                                     }
                                 }
                             }
