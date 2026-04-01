@@ -809,7 +809,7 @@ pub async fn setting_remove_mcp_bundle(
 
 // -- Available resources (for dropdowns) --
 
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
+#[derive(Clone, Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct SkillChannelRow {
     id: Uuid,
     skill_slug: String,
@@ -871,7 +871,7 @@ pub(crate) struct OptionRow {
     installed: bool,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Clone, Serialize, ToSchema)]
 pub(crate) struct McpServerOptionRow {
     id: Uuid,
     slug: String,
@@ -1051,14 +1051,133 @@ pub async fn setting_available_mcp_bundles(
     Ok(Json(build_mcp_bundle_rows(auth.customer_id, pool.inner()).await?))
 }
 
+// -- Bundle contents --
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub(crate) struct BundleSkillChannelRow {
+    id: Uuid,
+    skill_slug: String,
+    channel: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/available/bundles/{id}/skills",
+    tag = "Setting — Available",
+    summary = "List skill channels in a bundle",
+    description = "Returns the skill channels contained in the given skill bundle.",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Bundle ID")),
+    responses(
+        (status = 200, description = "Skill channels in the bundle", body = Vec<BundleSkillChannelRow>),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::get("/setting/available/bundles/<id>/skills")]
+pub async fn setting_bundle_skills(
+    _auth: SettingAuth,
+    pool: &State<PgPool>,
+    id: &str,
+) -> Result<Json<Vec<BundleSkillChannelRow>>, Status> {
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    let rows = sqlx::query_as::<_, BundleSkillChannelRow>(
+        "SELECT sc.id, s.slug as skill_slug, sc.channel \
+         FROM bundle_items bi \
+         JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE bi.bundle_id = $1 \
+         ORDER BY s.slug, sc.channel",
+    )
+    .bind(uuid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub(crate) struct BundleMcpServerRow {
+    id: Uuid,
+    slug: String,
+    name: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/available/mcp-bundles/{id}/mcp-servers",
+    tag = "Setting — Available",
+    summary = "List MCP servers in an MCP bundle",
+    description = "Returns the MCP servers contained in the given MCP bundle.",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "MCP bundle ID")),
+    responses(
+        (status = 200, description = "MCP servers in the bundle", body = Vec<BundleMcpServerRow>),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::get("/setting/available/mcp-bundles/<id>/mcp-servers")]
+pub async fn setting_mcp_bundle_servers(
+    _auth: SettingAuth,
+    pool: &State<PgPool>,
+    id: &str,
+) -> Result<Json<Vec<BundleMcpServerRow>>, Status> {
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    let rows = sqlx::query_as::<_, BundleMcpServerRow>(
+        "SELECT ms.id, ms.slug, ms.name \
+         FROM mcp_server_bundle_items msbi \
+         JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
+         WHERE msbi.bundle_id = $1 \
+         ORDER BY ms.slug",
+    )
+    .bind(uuid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
 // -- Catalog (combined view) --
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CatalogBundle {
+    id: Uuid,
+    slug: String,
+    name: String,
+    installed: bool,
+    skills: Vec<SkillChannelRow>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CatalogMcpBundle {
+    id: Uuid,
+    slug: String,
+    name: String,
+    installed: bool,
+    mcp_servers: Vec<McpServerOptionRow>,
+}
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct Catalog {
     skill_channels: Vec<SkillChannelRow>,
-    bundles: Vec<OptionRow>,
+    bundles: Vec<CatalogBundle>,
     mcp_servers: Vec<McpServerOptionRow>,
-    mcp_bundles: Vec<OptionRow>,
+    mcp_bundles: Vec<CatalogMcpBundle>,
+}
+
+#[derive(sqlx::FromRow)]
+struct BundleItemLink {
+    bundle_id: Uuid,
+    skill_channel_id: Uuid,
+}
+
+#[derive(sqlx::FromRow)]
+struct McpBundleItemLink {
+    bundle_id: Uuid,
+    mcp_server_id: Uuid,
 }
 
 #[utoipa::path(
@@ -1066,7 +1185,7 @@ pub(crate) struct Catalog {
     path = "/api/setting/catalog",
     tag = "Setting — Available",
     summary = "List all available resources with install status",
-    description = "Returns all skill channels, bundles, MCP servers and MCP bundles in a single response, each with an `installed` flag indicating whether the customer has it assigned.",
+    description = "Returns all skill channels, bundles, MCP servers and MCP bundles in a single response. Bundles include their contained skills/MCP servers with full install flags.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Full catalog", body = Catalog),
@@ -1083,9 +1202,92 @@ pub async fn setting_catalog(
     let p = pool.inner();
 
     let skill_channels = build_skill_channel_rows(cid, p).await?;
-    let bundles = build_bundle_rows(cid, p).await?;
+    let bundle_rows = build_bundle_rows(cid, p).await?;
     let mcp_servers = build_mcp_server_options(cid, p).await?;
-    let mcp_bundles = build_mcp_bundle_rows(cid, p).await?;
+    let mcp_bundle_rows = build_mcp_bundle_rows(cid, p).await?;
+
+    // Fetch bundle membership links
+    let skill_links = sqlx::query_as::<_, BundleItemLink>(
+        "SELECT bundle_id, skill_channel_id FROM bundle_items",
+    )
+    .fetch_all(p)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let mcp_links = sqlx::query_as::<_, McpBundleItemLink>(
+        "SELECT bundle_id, mcp_server_id FROM mcp_server_bundle_items",
+    )
+    .fetch_all(p)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    // Index skill channels and MCP servers by id for lookup
+    let sc_by_id: std::collections::HashMap<Uuid, &SkillChannelRow> =
+        skill_channels.iter().map(|r| (r.id, r)).collect();
+    let ms_by_id: std::collections::HashMap<Uuid, &McpServerOptionRow> =
+        mcp_servers.iter().map(|r| (r.id, r)).collect();
+
+    // Group skill links by bundle_id
+    let mut skill_links_by_bundle: std::collections::HashMap<Uuid, Vec<Uuid>> =
+        std::collections::HashMap::new();
+    for link in &skill_links {
+        skill_links_by_bundle
+            .entry(link.bundle_id)
+            .or_default()
+            .push(link.skill_channel_id);
+    }
+
+    // Group MCP links by bundle_id
+    let mut mcp_links_by_bundle: std::collections::HashMap<Uuid, Vec<Uuid>> =
+        std::collections::HashMap::new();
+    for link in &mcp_links {
+        mcp_links_by_bundle
+            .entry(link.bundle_id)
+            .or_default()
+            .push(link.mcp_server_id);
+    }
+
+    let bundles = bundle_rows
+        .into_iter()
+        .map(|b| {
+            let skills = skill_links_by_bundle
+                .get(&b.id)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| sc_by_id.get(id).map(|r| (*r).clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            CatalogBundle {
+                id: b.id,
+                slug: b.slug,
+                name: b.name,
+                installed: b.installed,
+                skills,
+            }
+        })
+        .collect();
+
+    let mcp_bundles = mcp_bundle_rows
+        .into_iter()
+        .map(|b| {
+            let servers = mcp_links_by_bundle
+                .get(&b.id)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| ms_by_id.get(id).map(|r| (*r).clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            CatalogMcpBundle {
+                id: b.id,
+                slug: b.slug,
+                name: b.name,
+                installed: b.installed,
+                mcp_servers: servers,
+            }
+        })
+        .collect();
 
     Ok(Json(Catalog {
         skill_channels,
