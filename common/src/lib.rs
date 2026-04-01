@@ -234,6 +234,13 @@ impl CustomerConfig {
     }
 }
 
+// ── Relay ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RelayConfig {
+    pub url: Option<String>,
+}
+
 // ── Daemon Config (full config including server section) ────────────────
 
 #[derive(Debug, Deserialize, Default)]
@@ -248,6 +255,8 @@ pub struct DaemonConfig {
     pub metrics: MetricsConfig,
     #[serde(default)]
     pub server: DaemonServerConfig,
+    #[serde(default)]
+    pub relay: RelayConfig,
 }
 
 #[cfg(test)]

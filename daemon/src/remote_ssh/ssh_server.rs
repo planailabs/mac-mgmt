@@ -1,0 +1,222 @@
+use anyhow::Result;
+use russh::keys::{parse_public_key_base64, PublicKey};
+use russh::server::{Auth, Handler, Msg, Session};
+use russh::{Channel, ChannelId};
+use std::collections::HashMap;
+use std::os::unix::io::FromRawFd;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
+
+use super::pty;
+
+pub struct SshSession {
+    authorized_keys: Vec<PublicKey>,
+    channels: Arc<Mutex<HashMap<ChannelId, ChannelState>>>,
+}
+
+struct ChannelState {
+    pty_pair: pty::PtyPair,
+}
+
+impl SshSession {
+    pub fn new(authorized_keys: Vec<PublicKey>) -> Self {
+        Self {
+            authorized_keys,
+            channels: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+fn reject_with_pubkey() -> Auth {
+    Auth::Reject {
+        proceed_with_methods: None,
+        partial_success: false,
+    }
+}
+
+impl Handler for SshSession {
+    type Error = anyhow::Error;
+
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        public_key: &PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        for key in &self.authorized_keys {
+            if key == public_key {
+                tracing::info!("public key auth succeeded");
+                return Ok(Auth::Accept);
+            }
+        }
+        tracing::warn!("public key auth rejected");
+        Ok(reject_with_pubkey())
+    }
+
+    async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
+        Ok(reject_with_pubkey())
+    }
+
+    async fn auth_password(
+        &mut self,
+        _user: &str,
+        _password: &str,
+    ) -> Result<Auth, Self::Error> {
+        Ok(reject_with_pubkey())
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        _channel: Channel<Msg>,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn pty_request(
+        &mut self,
+        channel_id: ChannelId,
+        term: &str,
+        col_width: u32,
+        row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(russh::Pty, u32)],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        tracing::info!("PTY request: {term} {col_width}x{row_height}");
+        let pty_pair = pty::spawn_shell(col_width, row_height, term)?;
+
+        let master_fd = pty_pair.master_fd;
+        let channels = Arc::clone(&self.channels);
+        channels.lock().await.insert(channel_id, ChannelState { pty_pair });
+
+        // Spawn PTY → SSH channel reader
+        let handle = session.handle();
+        tokio::spawn(async move {
+            let master_file = unsafe { tokio::fs::File::from_raw_fd(master_fd) };
+            let mut reader = tokio::io::BufReader::new(master_file);
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let data = bytes::Bytes::copy_from_slice(&buf[..n]);
+                        if handle.data(channel_id, data).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("PTY read error: {e}");
+                        break;
+                    }
+                }
+            }
+            let _ = handle.close(channel_id).await;
+        });
+
+        session.request_success();
+        Ok(())
+    }
+
+    async fn shell_request(
+        &mut self,
+        channel_id: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        tracing::info!("shell request on channel {channel_id:?}");
+        session.request_success();
+        Ok(())
+    }
+
+    async fn data(
+        &mut self,
+        channel_id: ChannelId,
+        data: &[u8],
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let channels = self.channels.lock().await;
+        if let Some(state) = channels.get(&channel_id) {
+            let master_fd = state.pty_pair.master_fd;
+            // dup the fd so dropping this file doesn't close the master
+            let dup_fd = unsafe { libc::dup(master_fd) };
+            if dup_fd >= 0 {
+                let mut master_file = unsafe { tokio::fs::File::from_raw_fd(dup_fd) };
+                let _ = master_file.write_all(data).await;
+                // Don't let drop close the fd — we'll let the dup handle it naturally
+            }
+        }
+        Ok(())
+    }
+
+    async fn window_change_request(
+        &mut self,
+        channel_id: ChannelId,
+        col_width: u32,
+        row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let channels = self.channels.lock().await;
+        if let Some(state) = channels.get(&channel_id) {
+            pty::resize(state.pty_pair.master_fd, col_width, row_height);
+        }
+        Ok(())
+    }
+
+    async fn channel_close(
+        &mut self,
+        channel_id: ChannelId,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let mut channels = self.channels.lock().await;
+        if let Some(mut state) = channels.remove(&channel_id) {
+            let _ = state.pty_pair.child.kill().await;
+        }
+        Ok(())
+    }
+
+    async fn channel_eof(
+        &mut self,
+        channel_id: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.channel_close(channel_id, session).await
+    }
+}
+
+pub fn load_authorized_keys() -> Vec<PublicKey> {
+    let path = super::host_keys::authorized_keys_path();
+    if !path.exists() {
+        tracing::warn!("no authorized_keys file at {}", path.display());
+        return Vec::new();
+    }
+
+    let mut keys = Vec::new();
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("failed to read authorized_keys: {e}");
+            return Vec::new();
+        }
+    };
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let b64 = match line.split_whitespace().nth(1) {
+            Some(b) => b,
+            None => continue,
+        };
+        match parse_public_key_base64(b64) {
+            Ok(key) => keys.push(key),
+            Err(e) => tracing::warn!("skipping invalid key line: {e}"),
+        }
+    }
+
+    tracing::info!("loaded {} authorized keys", keys.len());
+    keys
+}

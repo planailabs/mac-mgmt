@@ -7,6 +7,7 @@ use tokio::time;
 use crate::config;
 use crate::managed_service::{ManagedService, ServiceMode};
 use crate::metrics::Metrics;
+use crate::remote_ssh::{self, RemoteSshCommand};
 use crate::sentry_ext;
 use crate::services::{mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
 
@@ -111,6 +112,21 @@ pub async fn run() -> Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("failed to register SIGINT handler")?;
 
+    // Instance ID + FIFO watcher for remote SSH
+    let instance_id = crate::instance_id::get_or_create()
+        .context("failed to get/create instance ID")?;
+    tracing::info!("instance ID: {instance_id}");
+
+    let relay_url = cfg.relay.url.clone();
+    let (ssh_cmd_tx, mut ssh_cmd_rx) = tokio::sync::mpsc::channel::<RemoteSshCommand>(4);
+    tokio::spawn(async move {
+        if let Err(e) = remote_ssh::fifo_watcher::watch(ssh_cmd_tx).await {
+            tracing::error!("FIFO watcher failed: {e:#}");
+        }
+    });
+
+    let mut relay_task: Option<tokio::task::JoinHandle<()>> = None;
+
     // Run immediate update check and skills/MCP sync on startup
     let _ = tokio::task::spawn_blocking(check_and_update).await;
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -188,6 +204,40 @@ pub async fn run() -> Result<()> {
                     }
                 }
             },
+            Some(cmd) = ssh_cmd_rx.recv() => {
+                match cmd {
+                    RemoteSshCommand::Enable => {
+                        if relay_task.as_ref().is_some_and(|t| !t.is_finished()) {
+                            tracing::info!("remote SSH already enabled");
+                            continue;
+                        }
+                        let Some(ref url) = relay_url else {
+                            tracing::warn!("cannot enable remote SSH: no relay URL configured");
+                            continue;
+                        };
+                        let Some(ref token) = server_token else {
+                            tracing::warn!("cannot enable remote SSH: no server token configured");
+                            continue;
+                        };
+                        tracing::info!("enabling remote SSH");
+                        let url = url.clone();
+                        let token = token.clone();
+                        let iid = instance_id.clone();
+                        let agent_name = cfg.server.url.as_ref().and_then(|_| None::<String>); // TODO: pass agent_name from global config if available
+                        relay_task = Some(tokio::spawn(async move {
+                            if let Err(e) = remote_ssh::relay_client::run(&url, &token, &iid, agent_name.as_deref()).await {
+                                tracing::error!("relay client exited: {e:#}");
+                            }
+                        }));
+                    }
+                    RemoteSshCommand::Disable => {
+                        if let Some(task) = relay_task.take() {
+                            tracing::info!("disabling remote SSH");
+                            task.abort();
+                        }
+                    }
+                }
+            }
             _ = health_interval.tick() => {
                 for state in &mut states {
                     let name = state.service.name();
