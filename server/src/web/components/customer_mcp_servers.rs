@@ -11,6 +11,25 @@ pub struct CustomerMcpServerDisplay {
     pub server_name: String,
 }
 
+/// MCP server coming from a bundle (read-only).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct BundleMcpServerDisplay {
+    pub server_slug: String,
+    pub server_name: String,
+    pub bundle_slug: String,
+}
+
+/// MCP server coming transitively from a skill dependency (read-only).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct TransitiveMcpServerDisplay {
+    pub server_slug: String,
+    pub server_name: String,
+    pub skill_slug: String,
+    pub channel: String,
+}
+
 /// MCP bundle assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
@@ -63,6 +82,120 @@ async fn list_customer_mcp_bundles(customer_id: String) -> Result<Vec<CustomerMc
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(bundles)
+}
+
+#[server]
+async fn list_bundle_mcp_servers(customer_id: String) -> Result<Vec<BundleMcpServerDisplay>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let rows = sqlx::query_as::<_, BundleMcpServerDisplay>(
+        "SELECT DISTINCT ms.slug as server_slug, ms.name as server_name, msb.slug as bundle_slug \
+         FROM customer_mcp_bundles cmb \
+         JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
+         JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
+         JOIN mcp_server_bundles msb ON msb.id = cmb.bundle_id \
+         WHERE cmb.customer_id = $1 \
+         ORDER BY ms.slug",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows)
+}
+
+#[server]
+async fn list_transitive_mcp_servers(customer_id: String) -> Result<Vec<TransitiveMcpServerDisplay>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    // Resolve winning skill channels for this customer (direct wins over bundle).
+    #[derive(sqlx::FromRow)]
+    struct WinRow {
+        skill_channel_id: uuid::Uuid,
+        slug: String,
+        channel: String,
+        is_direct: bool,
+    }
+
+    let skill_rows = sqlx::query_as::<_, WinRow>(
+        "SELECT sc.id AS skill_channel_id, s.slug, sc.channel, true AS is_direct \
+         FROM customer_skills cs \
+         JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE cs.customer_id = $1 \
+         UNION ALL \
+         SELECT sc.id AS skill_channel_id, s.slug, sc.channel, false AS is_direct \
+         FROM customer_bundles cb \
+         JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
+         JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         WHERE cb.customer_id = $1",
+    )
+    .bind(cid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Dedup: direct wins per slug.
+    let mut winners: std::collections::HashMap<String, (uuid::Uuid, String, String, bool)> =
+        std::collections::HashMap::new();
+    for r in &skill_rows {
+        match winners.get(&r.slug) {
+            Some((_, _, _, true)) => {}
+            _ => {
+                winners.insert(
+                    r.slug.clone(),
+                    (r.skill_channel_id, r.slug.clone(), r.channel.clone(), r.is_direct),
+                );
+            }
+        }
+    }
+
+    let channel_ids: Vec<uuid::Uuid> = winners.values().map(|(id, _, _, _)| *id).collect();
+    if channel_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build a map from channel_id -> (slug, channel) for labeling.
+    let channel_info: std::collections::HashMap<uuid::Uuid, (String, String)> = winners
+        .into_values()
+        .map(|(id, slug, channel, _)| (id, (slug, channel)))
+        .collect();
+
+    #[derive(sqlx::FromRow)]
+    struct DepRow {
+        skill_channel_id: uuid::Uuid,
+        server_slug: String,
+        server_name: String,
+    }
+
+    let dep_rows = sqlx::query_as::<_, DepRow>(
+        "SELECT smd.skill_channel_id, ms.slug as server_slug, ms.name as server_name \
+         FROM skill_mcp_dependencies smd \
+         JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
+         WHERE smd.skill_channel_id = ANY($1) \
+         ORDER BY ms.slug",
+    )
+    .bind(&channel_ids)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let result = dep_rows
+        .into_iter()
+        .filter_map(|r| {
+            let (skill_slug, channel) = channel_info.get(&r.skill_channel_id)?;
+            Some(TransitiveMcpServerDisplay {
+                server_slug: r.server_slug,
+                server_name: r.server_name,
+                skill_slug: skill_slug.clone(),
+                channel: channel.clone(),
+            })
+        })
+        .collect();
+
+    Ok(result)
 }
 
 #[server]
@@ -179,6 +312,18 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
         async move { list_customer_mcp_bundles(cid).await }
     })?;
 
+    let cid_bmcps = customer_id.clone();
+    let bundle_mcps = use_server_future(move || {
+        let cid = cid_bmcps.clone();
+        async move { list_bundle_mcp_servers(cid).await }
+    })?;
+
+    let cid_tmcps = customer_id.clone();
+    let transitive_mcps = use_server_future(move || {
+        let cid = cid_tmcps.clone();
+        async move { list_transitive_mcp_servers(cid).await }
+    })?;
+
     let available_servers = use_server_future(list_all_mcp_servers)?;
     let available_bundles = use_server_future(list_all_mcp_bundles)?;
 
@@ -257,6 +402,62 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                             },
                                             "Remove"
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
+                None => rsx! { p { class: "text-xs", "Loading..." } },
+            }}
+        }
+
+        // MCP servers from bundles (read-only, green)
+        div { class: "mb-4",
+            h4 { class: "text-sm font-semibold text-green-700 mb-2", "From Bundles" }
+            {match &*bundle_mcps.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-xs text-gray-400", "No MCP servers from bundles." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200",
+                        for bm in list {
+                            {
+                                let label = format!("{} ({})", bm.server_name, bm.server_slug);
+                                let via = bm.bundle_slug.clone();
+                                rsx! {
+                                    li { class: "py-1 flex items-center gap-2",
+                                        span { class: "text-sm font-mono text-green-700", "{label}" }
+                                        span { class: "text-xs text-green-500", "via {via}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
+                None => rsx! { p { class: "text-xs", "Loading..." } },
+            }}
+        }
+
+        // MCP servers from skills (transitive, read-only, grey)
+        div { class: "mb-4",
+            h4 { class: "text-sm font-semibold text-gray-500 mb-2", "From Skills (transitive)" }
+            {match &*transitive_mcps.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-xs text-gray-400", "No transitive MCP dependencies." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200",
+                        for tm in list {
+                            {
+                                let label = format!("{} ({})", tm.server_name, tm.server_slug);
+                                let via = format!("{} / {}", tm.skill_slug, tm.channel);
+                                rsx! {
+                                    li { class: "py-1 flex items-center gap-2",
+                                        span { class: "text-sm font-mono text-gray-500", "{label}" }
+                                        span { class: "text-xs text-gray-400", "via {via}" }
                                     }
                                 }
                             }

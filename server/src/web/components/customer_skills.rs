@@ -11,6 +11,15 @@ pub struct CustomerSkillDisplay {
     pub channel: String,
 }
 
+/// Skill coming from a bundle (read-only).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct BundleSkillDisplay {
+    pub skill_slug: String,
+    pub channel: String,
+    pub bundle_slug: String,
+}
+
 /// Bundle assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
@@ -55,6 +64,27 @@ async fn list_customer_bundles(customer_id: String) -> Result<Vec<CustomerBundle
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(bundles)
+}
+
+#[server]
+async fn list_bundle_skills(customer_id: String) -> Result<Vec<BundleSkillDisplay>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let rows = sqlx::query_as::<_, BundleSkillDisplay>(
+        "SELECT DISTINCT s.slug as skill_slug, sc.channel, b.slug as bundle_slug \
+         FROM customer_bundles cb \
+         JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
+         JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
+         JOIN skills s ON s.id = sc.skill_id \
+         JOIN bundles b ON b.id = cb.bundle_id \
+         WHERE cb.customer_id = $1 \
+         ORDER BY s.slug, sc.channel",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows)
 }
 
 #[server]
@@ -184,6 +214,12 @@ pub fn CustomerSkills(customer_id: String) -> Element {
         async move { list_customer_bundles(cid).await }
     })?;
 
+    let cid_bskills = customer_id.clone();
+    let bundle_skills = use_server_future(move || {
+        let cid = cid_bskills.clone();
+        async move { list_bundle_skills(cid).await }
+    })?;
+
     let available_sc = use_server_future(list_all_skill_channels)?;
     let available_bundles = use_server_future(list_all_bundles)?;
 
@@ -262,6 +298,34 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                                             },
                                             "Remove"
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
+                None => rsx! { p { class: "text-xs", "Loading..." } },
+            }}
+        }
+
+        // Skills from bundles (read-only, green)
+        div { class: "mb-4",
+            h4 { class: "text-sm font-semibold text-green-700 mb-2", "From Bundles" }
+            {match &*bundle_skills.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-xs text-gray-400", "No skills from bundles." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200",
+                        for bs in list {
+                            {
+                                let label = format!("{} / {}", bs.skill_slug, bs.channel);
+                                let via = bs.bundle_slug.clone();
+                                rsx! {
+                                    li { class: "py-1 flex items-center gap-2",
+                                        span { class: "text-sm font-mono text-green-700", "{label}" }
+                                        span { class: "text-xs text-green-500", "via {via}" }
                                     }
                                 }
                             }
