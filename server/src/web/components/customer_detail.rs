@@ -105,7 +105,7 @@ pub fn CustomerDetail(id: String) -> Element {
                         SyncTokenList { customer_id: cid2.clone() }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Setting Tokens" }
+                        h3 { class: "text-lg font-semibold mb-3", "Setting / Customer Tokens" }
                         SettingTokenList { customer_id: cid2.clone() }
                     }
                     div {
