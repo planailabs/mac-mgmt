@@ -22,7 +22,7 @@ toml = "0.8"
 rocket = { version = "0.5", default-features = false }
 prometheus = "0.14"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-russh = "0.59"
+russh = { version = "0.59", default-features = false, features = ["ring", "flate2"] }
 rand = "0.8"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
