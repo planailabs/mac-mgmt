@@ -20,6 +20,27 @@ impl ManagedService for OpenClaw {
         "openclaw"
     }
 
+    fn preflight(&self) -> Result<()> {
+        // Stop any existing openclaw gateway so we don't conflict on ports.
+        let output = Command::new("openclaw")
+            .args(["gateway", "stop"])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                tracing::info!("stopped existing openclaw gateway");
+                sentry_ext::breadcrumb("preflight", "stopped existing openclaw gateway", &[("service", "openclaw")]);
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                tracing::debug!("openclaw gateway stop: {}", stderr.trim());
+            }
+            Err(e) => {
+                tracing::debug!("openclaw gateway stop not available: {e}");
+            }
+        }
+        Ok(())
+    }
+
     fn ensure_installed(&self) -> Result<()> {
         if crate::nix::is_installed("openclaw")? {
             tracing::info!("openclaw is already installed");

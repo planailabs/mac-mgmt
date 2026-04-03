@@ -79,6 +79,7 @@ pub async fn run() -> Result<()> {
             continue;
         }
 
+        service.preflight()?;
         let child = service.spawn()?;
         sentry_ext::breadcrumb("service", &format!("{name} initialized"), &[
             ("service", &name),

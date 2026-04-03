@@ -20,6 +20,12 @@ pub trait ManagedService {
         ServiceMode::Managed
     }
 
+    /// Pre-spawn checks: stop stale instances, clean up locks, etc.
+    /// Called once before the first `spawn` if the service is managed.
+    fn preflight(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Ensure the service binary/package is installed.
     fn ensure_installed(&self) -> Result<()>;
 
