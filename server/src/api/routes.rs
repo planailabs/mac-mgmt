@@ -520,6 +520,7 @@ pub(crate) struct CustomerBundleRow {
     customer_bundle_id: Uuid,
     bundle_slug: String,
     bundle_name: String,
+    bundle_description: String,
 }
 
 #[utoipa::path(
@@ -540,7 +541,7 @@ pub async fn setting_list_bundles(
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<CustomerBundleRow>>, Status> {
     let rows = sqlx::query_as::<_, CustomerBundleRow>(
-        "SELECT cb.id as customer_bundle_id, b.slug as bundle_slug, b.name as bundle_name \
+        "SELECT cb.id as customer_bundle_id, b.slug as bundle_slug, b.name as bundle_name, b.description as bundle_description \
          FROM customer_bundles cb \
          JOIN bundles b ON b.id = cb.bundle_id \
          WHERE cb.customer_id = $1 \
@@ -712,6 +713,7 @@ pub(crate) struct CustomerMcpBundleRow {
     customer_mcp_bundle_id: Uuid,
     bundle_slug: String,
     bundle_name: String,
+    bundle_description: String,
 }
 
 #[utoipa::path(
@@ -732,7 +734,7 @@ pub async fn setting_list_mcp_bundles(
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<CustomerMcpBundleRow>>, Status> {
     let rows = sqlx::query_as::<_, CustomerMcpBundleRow>(
-        "SELECT cmb.id as customer_mcp_bundle_id, msb.slug as bundle_slug, msb.name as bundle_name \
+        "SELECT cmb.id as customer_mcp_bundle_id, msb.slug as bundle_slug, msb.name as bundle_name, msb.description as bundle_description \
          FROM customer_mcp_bundles cmb \
          JOIN mcp_server_bundles msb ON msb.id = cmb.bundle_id \
          WHERE cmb.customer_id = $1 \
@@ -813,6 +815,8 @@ pub async fn setting_remove_mcp_bundle(
 pub(crate) struct SkillChannelRow {
     id: Uuid,
     skill_slug: String,
+    skill_name: String,
+    skill_description: String,
     channel: String,
     installed: bool,
     installed_bundle: bool,
@@ -825,7 +829,7 @@ async fn build_skill_channel_rows(
     pool: &PgPool,
 ) -> Result<Vec<SkillChannelRow>, Status> {
     sqlx::query_as::<_, SkillChannelRow>(
-        "SELECT sc.id, s.slug as skill_slug, sc.channel, \
+        "SELECT sc.id, s.slug as skill_slug, s.name as skill_name, s.description as skill_description, sc.channel, \
                 (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed, \
                 (bi.id IS NOT NULL) as installed_bundle, \
                 cs.id as customer_skill_id \
@@ -868,6 +872,7 @@ pub(crate) struct OptionRow {
     id: Uuid,
     slug: String,
     name: String,
+    description: String,
     installed: bool,
 }
 
@@ -876,6 +881,7 @@ pub(crate) struct McpServerOptionRow {
     id: Uuid,
     slug: String,
     name: String,
+    description: String,
     installed: bool,
     installed_bundle: bool,
     installed_transitive: bool,
@@ -888,7 +894,7 @@ async fn build_bundle_rows(
     pool: &PgPool,
 ) -> Result<Vec<OptionRow>, Status> {
     sqlx::query_as::<_, OptionRow>(
-        "SELECT b.id, b.slug, b.name, \
+        "SELECT b.id, b.slug, b.name, b.description, \
                 (cb.id IS NOT NULL) as installed \
          FROM bundles b \
          LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
@@ -946,6 +952,7 @@ struct McpServerBaseRow {
     id: Uuid,
     slug: String,
     name: String,
+    description: String,
     installed_direct: bool,
     installed_bundle: bool,
     customer_mcp_server_id: Option<Uuid>,
@@ -957,7 +964,7 @@ async fn build_mcp_server_options(
     pool: &PgPool,
 ) -> Result<Vec<McpServerOptionRow>, Status> {
     let base_rows = sqlx::query_as::<_, McpServerBaseRow>(
-        "SELECT ms.id, ms.slug, ms.name, \
+        "SELECT ms.id, ms.slug, ms.name, ms.description, \
                 (cms.id IS NOT NULL) as installed_direct, \
                 (msbi.id IS NOT NULL) as installed_bundle, \
                 cms.id as customer_mcp_server_id \
@@ -982,6 +989,7 @@ async fn build_mcp_server_options(
                 id: r.id,
                 slug: r.slug,
                 name: r.name,
+                description: r.description,
                 installed: r.installed_direct || r.installed_bundle || installed_transitive,
                 installed_bundle: r.installed_bundle,
                 installed_transitive,
@@ -1018,7 +1026,7 @@ async fn build_mcp_bundle_rows(
     pool: &PgPool,
 ) -> Result<Vec<OptionRow>, Status> {
     sqlx::query_as::<_, OptionRow>(
-        "SELECT msb.id, msb.slug, msb.name, \
+        "SELECT msb.id, msb.slug, msb.name, msb.description, \
                 (cmb.id IS NOT NULL) as installed \
          FROM mcp_server_bundles msb \
          LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
@@ -1057,6 +1065,8 @@ pub async fn setting_available_mcp_bundles(
 pub(crate) struct BundleSkillChannelRow {
     id: Uuid,
     skill_slug: String,
+    skill_name: String,
+    skill_description: String,
     channel: String,
 }
 
@@ -1083,7 +1093,7 @@ pub async fn setting_bundle_skills(
 ) -> Result<Json<Vec<BundleSkillChannelRow>>, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
     let rows = sqlx::query_as::<_, BundleSkillChannelRow>(
-        "SELECT sc.id, s.slug as skill_slug, sc.channel \
+        "SELECT sc.id, s.slug as skill_slug, s.name as skill_name, s.description as skill_description, sc.channel \
          FROM bundle_items bi \
          JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
@@ -1102,6 +1112,7 @@ pub(crate) struct BundleMcpServerRow {
     id: Uuid,
     slug: String,
     name: String,
+    description: String,
 }
 
 #[utoipa::path(
@@ -1127,7 +1138,7 @@ pub async fn setting_mcp_bundle_servers(
 ) -> Result<Json<Vec<BundleMcpServerRow>>, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
     let rows = sqlx::query_as::<_, BundleMcpServerRow>(
-        "SELECT ms.id, ms.slug, ms.name \
+        "SELECT ms.id, ms.slug, ms.name, ms.description \
          FROM mcp_server_bundle_items msbi \
          JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
          WHERE msbi.bundle_id = $1 \
@@ -1147,6 +1158,7 @@ pub(crate) struct CatalogBundle {
     id: Uuid,
     slug: String,
     name: String,
+    description: String,
     installed: bool,
     skills: Vec<SkillChannelRow>,
 }
@@ -1156,6 +1168,7 @@ pub(crate) struct CatalogMcpBundle {
     id: Uuid,
     slug: String,
     name: String,
+    description: String,
     installed: bool,
     mcp_servers: Vec<McpServerOptionRow>,
 }
@@ -1262,6 +1275,7 @@ pub async fn setting_catalog(
                 id: b.id,
                 slug: b.slug,
                 name: b.name,
+                description: b.description,
                 installed: b.installed,
                 skills,
             }
@@ -1283,6 +1297,7 @@ pub async fn setting_catalog(
                 id: b.id,
                 slug: b.slug,
                 name: b.name,
+                description: b.description,
                 installed: b.installed,
                 mcp_servers: servers,
             }
@@ -1402,6 +1417,8 @@ pub(crate) struct SkillMcpDepRow {
     skill_channel_id: Uuid,
     mcp_server_id: Uuid,
     mcp_server_slug: String,
+    mcp_server_name: String,
+    mcp_server_description: String,
 }
 
 #[utoipa::path(
@@ -1425,7 +1442,7 @@ pub async fn admin_list_skill_mcp_deps(
 ) -> Result<Json<Vec<SkillMcpDepRow>>, Status> {
     let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
     let rows = sqlx::query_as::<_, SkillMcpDepRow>(
-        "SELECT smd.id, smd.skill_channel_id, smd.mcp_server_id, ms.slug AS mcp_server_slug \
+        "SELECT smd.id, smd.skill_channel_id, smd.mcp_server_id, ms.slug AS mcp_server_slug, ms.name AS mcp_server_name, ms.description AS mcp_server_description \
          FROM skill_mcp_dependencies smd \
          JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
          WHERE smd.skill_channel_id = $1 \
