@@ -1,8 +1,30 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use dioxus::prelude::*;
 
-use crate::anthropic::{
-    GenerateAllItem, generate_name_desc, save_generated_name_desc,
-};
+use crate::anthropic::{GenerateAllItem, generate_name_desc, save_generated_name_desc};
+
+/// A future that yields once to let the event loop process pending work.
+struct YieldNow(bool);
+
+fn yield_now() -> YieldNow {
+    YieldNow(false)
+}
+
+impl Future for YieldNow {
+    type Output = ();
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+}
 
 #[component]
 pub fn GenerateAllButton(
@@ -22,12 +44,22 @@ pub fn GenerateAllButton(
         .collect();
     let pending_count = needs_gen.len();
 
+    // Read signals unconditionally so we're always subscribed to changes.
+    let done_val = *done.read();
+    let total_val = *total.read();
+    let is_running = *running.read();
+    let pct = if total_val > 0 {
+        (done_val as f64 / total_val as f64 * 100.0) as u32
+    } else {
+        0
+    };
+
     rsx! {
         div { class: "inline-flex flex-col gap-1",
             button {
                 class: "text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded hover:bg-purple-200 disabled:opacity-50",
                 r#type: "button",
-                disabled: *running.read() || pending_count == 0,
+                disabled: is_running || pending_count == 0,
                 onclick: move |_| {
                     let batch = needs_gen.clone();
                     spawn(async move {
@@ -40,11 +72,14 @@ pub fn GenerateAllButton(
                             current_slug.set(Some(
                                 match &item.context {
                                     crate::anthropic::GenerateContext::Skill { .. } => item.name.clone(),
-                                    crate::anthropic::GenerateContext::Bundle { slug, .. } => slug.clone(),
-                                    crate::anthropic::GenerateContext::McpServer { slug, .. } => slug.clone(),
-                                    crate::anthropic::GenerateContext::McpBundle { slug, .. } => slug.clone(),
+                                    crate::anthropic::GenerateContext::Bundle { slug, .. }
+                                    | crate::anthropic::GenerateContext::McpServer { slug, .. }
+                                    | crate::anthropic::GenerateContext::McpBundle { slug, .. } => slug.clone(),
                                 }
                             ));
+
+                            // Yield to let the renderer paint the progress update.
+                            yield_now().await;
 
                             match generate_name_desc(
                                 item.context.clone(),
@@ -75,7 +110,7 @@ pub fn GenerateAllButton(
                         on_complete.call(());
                     });
                 },
-                if *running.read() {
+                if is_running {
                     "Generating..."
                 } else if pending_count == 0 {
                     "All have descriptions"
@@ -83,27 +118,18 @@ pub fn GenerateAllButton(
                     "Generate all ({pending_count})"
                 }
             }
-            if *running.read() {
+            if is_running {
                 div { class: "w-48",
                     div { class: "flex justify-between text-xs text-gray-500 mb-0.5",
-                        span { "{done}/{total}" }
+                        span { "{done_val}/{total_val}" }
                         if let Some(slug) = &*current_slug.read() {
                             span { class: "truncate ml-1", "{slug}" }
                         }
                     }
-                    {
-                        let pct = if *total.read() > 0 {
-                            (*done.read() as f64 / *total.read() as f64 * 100.0) as u32
-                        } else {
-                            0
-                        };
-                        rsx! {
-                            div { class: "w-full bg-gray-200 rounded-full h-2",
-                                div {
-                                    class: "bg-purple-600 h-2 rounded-full transition-all duration-300",
-                                    style: "width: {pct}%",
-                                }
-                            }
+                    div { class: "w-full bg-gray-200 rounded-full h-2",
+                        div {
+                            class: "bg-purple-600 h-2 rounded-full transition-all duration-300",
+                            style: "width: {pct}%",
                         }
                     }
                 }
