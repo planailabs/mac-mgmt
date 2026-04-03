@@ -154,17 +154,18 @@ pub fn McpBundleDetail(id: String) -> Element {
                     if *editing.read() {
                         form {
                             class: "space-y-2",
-                            onsubmit: move |_| {
+                            onsubmit: move |evt: FormEvent| {
+                                evt.prevent_default();
                                 let id = bid.clone();
                                 let new_name = draft_name.read().clone();
                                 let new_desc = draft_desc.read().clone();
-                                async move {
+                                spawn(async move {
                                     if !new_name.trim().is_empty() {
                                         let _ = update_mcp_bundle(id, new_name, new_desc).await;
                                         bundle.restart();
                                     }
                                     editing.set(false);
-                                }
+                                });
                             },
                             input {
                                 class: "text-2xl font-bold border border-gray-300 rounded px-2 py-1 w-full",
