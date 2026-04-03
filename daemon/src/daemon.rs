@@ -24,6 +24,7 @@ struct ServiceState {
     upgrade_pending: bool,
     skip_health_check: bool,
     post_start_done: bool,
+    consecutive_crashes: u32,
 }
 
 pub async fn run() -> Result<()> {
