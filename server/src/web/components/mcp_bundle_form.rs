@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::anthropic::GenerateContext;
+use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::McpServerBundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
@@ -90,8 +90,12 @@ pub fn McpBundleForm() -> Element {
                 }
                 GenerateButton {
                     context: GenerateContext::McpBundle { slug: slug.read().clone(), items: vec![] },
-                    name_signal: name,
-                    desc_signal: description,
+                    current_name: name.read().clone(),
+                    current_desc: description.read().clone(),
+                    on_generated: move |result: GeneratedNameDesc| {
+                        name.set(result.name);
+                        description.set(result.description);
+                    },
                 }
             }
         }

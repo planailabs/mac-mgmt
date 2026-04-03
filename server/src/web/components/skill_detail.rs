@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::anthropic::GenerateContext;
+use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::{Skill, SkillChannel};
 use crate::web::components::generate_button::GenerateButton;
 
@@ -268,8 +268,12 @@ pub fn SkillDetail(id: String) -> Element {
                                 }
                                 GenerateButton {
                                     context: GenerateContext::Skill { skill_id: sid.clone() },
-                                    name_signal: draft_name,
-                                    desc_signal: draft_desc,
+                                    current_name: draft_name.read().clone(),
+                                    current_desc: draft_desc.read().clone(),
+                                    on_generated: move |result: GeneratedNameDesc| {
+                                        draft_name.set(result.name);
+                                        draft_desc.set(result.description);
+                                    },
                                 }
                             }
                         }

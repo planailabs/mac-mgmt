@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::anthropic::GenerateContext;
+use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::McpServer;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
@@ -375,8 +375,8 @@ pub fn McpServerDetail(id: String) -> Element {
 pub fn McpServerForm() -> Element {
     let navigator = navigator();
     let slug = use_signal(String::new);
-    let name = use_signal(String::new);
-    let description = use_signal(String::new);
+    let mut name = use_signal(String::new);
+    let mut description = use_signal(String::new);
     let config_json = use_signal(|| r#"{"command": "", "args": []}"#.to_string());
     let mut error = use_signal(|| None::<String>);
 
@@ -415,8 +415,12 @@ pub fn McpServerForm() -> Element {
                 }
                 GenerateButton {
                     context: GenerateContext::McpServer { slug: slug.read().clone(), config_json: config_json.read().clone() },
-                    name_signal: name,
-                    desc_signal: description,
+                    current_name: name.read().clone(),
+                    current_desc: description.read().clone(),
+                    on_generated: move |result: GeneratedNameDesc| {
+                        name.set(result.name);
+                        description.set(result.description);
+                    },
                 }
             }
         }
@@ -498,8 +502,12 @@ pub fn McpServerEdit(id: String) -> Element {
                         }
                         GenerateButton {
                             context: GenerateContext::McpServer { slug: slug.read().clone(), config_json: config_json.read().clone() },
-                            name_signal: name,
-                            desc_signal: description,
+                            current_name: name.read().clone(),
+                            current_desc: description.read().clone(),
+                            on_generated: move |result: GeneratedNameDesc| {
+                                name.set(result.name);
+                                description.set(result.description);
+                            },
                         }
                     }
                 }

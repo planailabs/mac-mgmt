@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::anthropic::{BundleItemContext, GenerateContext};
+use crate::anthropic::{BundleItemContext, GenerateContext, GeneratedNameDesc};
 use crate::models::Bundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
@@ -202,8 +202,12 @@ pub fn BundleDetail(id: String) -> Element {
                                     rsx! {
                                         GenerateButton {
                                             context: GenerateContext::Bundle { slug: slug.clone(), items: bundle_items_ctx },
-                                            name_signal: draft_name,
-                                            desc_signal: draft_desc,
+                                            current_name: draft_name.read().clone(),
+                                            current_desc: draft_desc.read().clone(),
+                                            on_generated: move |result: GeneratedNameDesc| {
+                                                draft_name.set(result.name);
+                                                draft_desc.set(result.description);
+                                            },
                                         }
                                     }
                                 }
