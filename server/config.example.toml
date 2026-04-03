@@ -19,3 +19,7 @@ cookie_secret = "generate-with-openssl-rand-hex-32"
 [xzar]
 url = "https://xzar.example.com"
 token = "xzar-api-token-here"
+
+# Optional: enables "Generate with AI" buttons in the admin UI
+# [anthropic]
+# api_key = "sk-ant-xxx"
