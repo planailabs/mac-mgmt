@@ -103,9 +103,32 @@ impl ManagedService for OpenClaw {
         if changed {
             let merged = serde_json::to_string_pretty(&existing)
                 .context("failed to serialize merged config")?;
-            std::fs::write(&config_path, merged)
+            std::fs::write(&config_path, &merged)
                 .with_context(|| format!("failed to write {}", config_path.display()))?;
-            tracing::info!("openclaw.json updated");
+            tracing::info!("extra_config merged into openclaw.json");
+
+            // Validate the merged config; if openclaw rejects it, run doctor --fix
+            // to remove unrecognized keys so we don't cause a crash loop.
+            let doctor = Command::new("openclaw")
+                .arg("doctor")
+                .output()
+                .context("failed to run openclaw doctor")?;
+            if !doctor.status.success() {
+                let stderr = String::from_utf8_lossy(&doctor.stderr);
+                tracing::warn!("openclaw config invalid after merge, running doctor --fix: {}", stderr.trim());
+                let fix = Command::new("openclaw")
+                    .args(["doctor", "--fix"])
+                    .output()
+                    .context("failed to run openclaw doctor --fix")?;
+                if fix.status.success() {
+                    tracing::info!("openclaw doctor --fix corrected the config");
+                } else {
+                    let fix_stderr = String::from_utf8_lossy(&fix.stderr);
+                    tracing::error!("openclaw doctor --fix failed: {}", fix_stderr.trim());
+                }
+            } else {
+                tracing::info!("extra_config merged and validated successfully");
+            }
         }
 
         Ok(())

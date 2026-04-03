@@ -90,6 +90,7 @@ pub async fn run() -> Result<()> {
             upgrade_pending: false,
             skip_health_check: true,
             post_start_done: false,
+            consecutive_crashes: 0,
         });
     }
 
@@ -247,12 +248,26 @@ pub async fn run() -> Result<()> {
                     // Restart if exited
                     match state.child.try_wait() {
                         Ok(Some(status)) => {
-                            tracing::warn!("{name} exited with {status}, restarting");
+                            state.consecutive_crashes += 1;
+                            tracing::warn!("{name} exited with {status}, restarting (crash #{})", state.consecutive_crashes);
                             let code = status.code().map(|c| c.to_string()).unwrap_or("signal".to_string());
                             sentry_ext::capture_error(
                                 &format!("{name} process exited unexpectedly"),
                                 &[("service", name), ("exit_code", &code)],
                             );
+
+                            // After repeated crashes, run repair and re-setup before respawning
+                            if state.consecutive_crashes >= 2 {
+                                tracing::warn!("{name} crashed {} times, attempting repair before respawn", state.consecutive_crashes);
+                                if let Err(e) = state.service.repair() {
+                                    tracing::error!("{name} repair failed: {e}");
+                                    sentry_ext::capture_error(
+                                        &format!("{name} repair failed: {e}"),
+                                        &[("service", name)],
+                                    );
+                                }
+                            }
+
                             match state.service.spawn() {
                                 Ok(child) => {
                                     state.child = child;
@@ -320,6 +335,7 @@ pub async fn run() -> Result<()> {
                         match state.service.check_health() {
                             Ok(true) => {
                                 tracing::info!("{name} is healthy");
+                                state.consecutive_crashes = 0;
                                 if !state.post_start_done {
                                     if let Err(e) = state.service.post_start() {
                                         tracing::error!("{name} post_start failed: {e}");
