@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::anthropic::GenerateContext;
 use crate::models::{Skill, SkillChannel};
+use crate::web::components::generate_button::GenerateButton;
 
 #[server]
 async fn get_skill(id: String) -> Result<Skill, ServerFnError> {
@@ -263,6 +265,11 @@ pub fn SkillDetail(id: String) -> Element {
                                     r#type: "button",
                                     onclick: move |_| editing.set(false),
                                     "Cancel"
+                                }
+                                GenerateButton {
+                                    context: GenerateContext::Skill { skill_id: sid.clone() },
+                                    name_signal: draft_name,
+                                    desc_signal: draft_desc,
                                 }
                             }
                         }

@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::anthropic::GenerateContext;
 use crate::models::Bundle;
 use crate::web::app::Route;
+use crate::web::components::generate_button::GenerateButton;
 
 #[server]
 async fn create_bundle(slug: String, name: String, description: String) -> Result<Bundle, ServerFnError> {
@@ -80,10 +82,17 @@ pub fn BundleForm() -> Element {
                     oninput: move |evt| description.set(evt.value()),
                 }
             }
-            button {
-                class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                r#type: "submit",
-                "Create"
+            div { class: "flex gap-3 items-center",
+                button {
+                    class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
+                    r#type: "submit",
+                    "Create"
+                }
+                GenerateButton {
+                    context: GenerateContext::Bundle { slug: slug.read().clone(), items: vec![] },
+                    name_signal: name,
+                    desc_signal: description,
+                }
             }
         }
     }

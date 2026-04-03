@@ -6,6 +6,7 @@ mod config;
 mod db;
 #[cfg(feature = "server")]
 mod mcp_schema;
+mod anthropic;
 mod models;
 mod web;
 #[cfg(feature = "server")]

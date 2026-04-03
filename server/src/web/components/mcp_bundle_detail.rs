@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::anthropic::{GenerateContext, McpBundleItemContext};
 use crate::models::McpServerBundle;
 use crate::web::app::Route;
+use crate::web::components::generate_button::GenerateButton;
 
 /// An MCP server for display in the bundle items list.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -184,6 +186,22 @@ pub fn McpBundleDetail(id: String) -> Element {
                                     r#type: "button",
                                     onclick: move |_| editing.set(false),
                                     "Cancel"
+                                }
+                                {
+                                    let mcp_items_ctx = match &*items.read() {
+                                        Some(Ok(list)) => list.iter().map(|i| McpBundleItemContext {
+                                            server_slug: i.server_slug.clone(),
+                                            server_name: i.server_name.clone(),
+                                        }).collect(),
+                                        _ => vec![],
+                                    };
+                                    rsx! {
+                                        GenerateButton {
+                                            context: GenerateContext::McpBundle { slug: slug.clone(), items: mcp_items_ctx },
+                                            name_signal: draft_name,
+                                            desc_signal: draft_desc,
+                                        }
+                                    }
                                 }
                             }
                         }

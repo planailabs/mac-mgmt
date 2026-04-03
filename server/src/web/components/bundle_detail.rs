@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::anthropic::{BundleItemContext, GenerateContext};
 use crate::models::Bundle;
 use crate::web::app::Route;
+use crate::web::components::generate_button::GenerateButton;
 
 /// A skill channel with its skill slug for display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -188,6 +190,22 @@ pub fn BundleDetail(id: String) -> Element {
                                     r#type: "button",
                                     onclick: move |_| editing.set(false),
                                     "Cancel"
+                                }
+                                {
+                                    let bundle_items_ctx = match &*items.read() {
+                                        Some(Ok(list)) => list.iter().map(|i| BundleItemContext {
+                                            skill_slug: i.skill_slug.clone(),
+                                            channel: i.channel.clone(),
+                                        }).collect(),
+                                        _ => vec![],
+                                    };
+                                    rsx! {
+                                        GenerateButton {
+                                            context: GenerateContext::Bundle { slug: slug.clone(), items: bundle_items_ctx },
+                                            name_signal: draft_name,
+                                            desc_signal: draft_desc,
+                                        }
+                                    }
                                 }
                             }
                         }

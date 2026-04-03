@@ -1,8 +1,10 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::anthropic::GenerateContext;
 use crate::models::McpServer;
 use crate::web::app::Route;
+use crate::web::components::generate_button::GenerateButton;
 
 // ── Server functions ─────────────────────────────────────────────────
 
@@ -405,10 +407,17 @@ pub fn McpServerForm() -> Element {
                 config_json,
                 slug_readonly: false,
             }
-            button {
-                class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                r#type: "submit",
-                "Create"
+            div { class: "flex gap-3 items-center",
+                button {
+                    class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
+                    r#type: "submit",
+                    "Create"
+                }
+                GenerateButton {
+                    context: GenerateContext::McpServer { slug: slug.read().clone(), config_json: config_json.read().clone() },
+                    name_signal: name,
+                    desc_signal: description,
+                }
             }
         }
     }
@@ -476,7 +485,7 @@ pub fn McpServerEdit(id: String) -> Element {
                         config_json,
                         slug_readonly: true,
                     }
-                    div { class: "flex gap-3",
+                    div { class: "flex gap-3 items-center",
                         button {
                             class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                             r#type: "submit",
@@ -486,6 +495,11 @@ pub fn McpServerEdit(id: String) -> Element {
                             to: Route::McpServerDetail { id: id.clone() },
                             class: "px-4 py-2 text-gray-600 hover:text-gray-900",
                             "Cancel"
+                        }
+                        GenerateButton {
+                            context: GenerateContext::McpServer { slug: slug.read().clone(), config_json: config_json.read().clone() },
+                            name_signal: name,
+                            desc_signal: description,
                         }
                     }
                 }

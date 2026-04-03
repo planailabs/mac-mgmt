@@ -12,6 +12,12 @@ pub struct ServerConfig {
     pub web: WebConfig,
     pub oidc: OidcConfig,
     pub xzar: XzarConfig,
+    pub anthropic: Option<AnthropicConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnthropicConfig {
+    pub api_key: String,
 }
 
 #[derive(Debug, Deserialize)]
