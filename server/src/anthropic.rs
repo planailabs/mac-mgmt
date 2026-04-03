@@ -29,6 +29,25 @@ pub enum GenerateContext {
     McpBundle { slug: String, items: Vec<McpBundleItemContext> },
 }
 
+/// Entity kind for the bulk save server function.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EntityKind {
+    Skill,
+    Bundle,
+    McpServer,
+    McpBundle,
+}
+
+/// Item descriptor for GenerateAllButton.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GenerateAllItem {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub context: GenerateContext,
+    pub entity_kind: EntityKind,
+}
+
 // ── Server function ─────────────────────────────────────────────────
 
 #[server]
@@ -91,6 +110,38 @@ pub async fn generate_name_desc(
         .map_err(|e| ServerFnError::new(format!("Failed to parse generated JSON: {e}. Raw: {json_str}")))?;
 
     Ok(result)
+}
+
+/// Save a generated name+description for any entity type.
+#[server]
+pub async fn save_generated_name_desc(
+    entity_kind: EntityKind,
+    id: String,
+    name: String,
+    description: String,
+) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    let query = match entity_kind {
+        EntityKind::Skill => "UPDATE skills SET name = $1, description = $2 WHERE id = $3",
+        EntityKind::Bundle => "UPDATE bundles SET name = $1, description = $2 WHERE id = $3",
+        EntityKind::McpServer => "UPDATE mcp_servers SET name = $1, description = $2 WHERE id = $3",
+        EntityKind::McpBundle => {
+            "UPDATE mcp_server_bundles SET name = $1, description = $2 WHERE id = $3"
+        }
+    };
+
+    sqlx::query(query)
+        .bind(&name)
+        .bind(&description)
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
 }
 
 #[cfg(feature = "server")]

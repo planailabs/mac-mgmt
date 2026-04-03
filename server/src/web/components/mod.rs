@@ -4,6 +4,7 @@ pub mod bundle_detail;
 pub mod bundle_form;
 pub mod bundle_list;
 pub mod config_editor;
+pub mod generate_all_button;
 pub mod generate_button;
 pub mod customer_detail;
 pub mod customer_form;

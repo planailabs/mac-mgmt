@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::models::McpServer;
 use crate::web::app::Route;
+use crate::web::components::generate_all_button::GenerateAllButton;
 
 #[server]
 async fn list_mcp_servers() -> Result<Vec<McpServer>, ServerFnError> {
@@ -15,15 +17,38 @@ async fn list_mcp_servers() -> Result<Vec<McpServer>, ServerFnError> {
 
 #[component]
 pub fn McpServerList() -> Element {
-    let servers = use_server_future(list_mcp_servers)?;
+    let mut servers = use_server_future(list_mcp_servers)?;
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
             h2 { class: "text-2xl font-bold", "MCP Servers" }
-            Link {
-                to: Route::McpServerForm {},
-                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                "New MCP Server"
+            div { class: "flex items-center gap-2",
+                {match &*servers.read() {
+                    Some(Ok(list)) => {
+                        let gen_items: Vec<GenerateAllItem> = list.iter().map(|s| GenerateAllItem {
+                            id: s.id.to_string(),
+                            name: s.name.clone(),
+                            description: s.description.clone(),
+                            context: GenerateContext::McpServer {
+                                slug: s.slug.clone(),
+                                config_json: serde_json::to_string(&s.config_json).unwrap_or_default(),
+                            },
+                            entity_kind: EntityKind::McpServer,
+                        }).collect();
+                        rsx! {
+                            GenerateAllButton {
+                                items: gen_items,
+                                on_complete: move |_| { servers.restart(); },
+                            }
+                        }
+                    },
+                    _ => rsx! {},
+                }}
+                Link {
+                    to: Route::McpServerForm {},
+                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                    "New MCP Server"
+                }
             }
         }
         {match &*servers.read() {

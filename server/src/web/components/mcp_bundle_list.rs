@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::models::McpServerBundle;
 use crate::web::app::Route;
+use crate::web::components::generate_all_button::GenerateAllButton;
 
 #[server]
 async fn list_mcp_bundles() -> Result<Vec<McpServerBundle>, ServerFnError> {
@@ -15,15 +17,35 @@ async fn list_mcp_bundles() -> Result<Vec<McpServerBundle>, ServerFnError> {
 
 #[component]
 pub fn McpBundleList() -> Element {
-    let bundles = use_server_future(list_mcp_bundles)?;
+    let mut bundles = use_server_future(list_mcp_bundles)?;
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
             h2 { class: "text-2xl font-bold", "MCP Bundles" }
-            Link {
-                to: Route::McpBundleForm {},
-                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                "New MCP Bundle"
+            div { class: "flex items-center gap-2",
+                {match &*bundles.read() {
+                    Some(Ok(list)) => {
+                        let gen_items: Vec<GenerateAllItem> = list.iter().map(|b| GenerateAllItem {
+                            id: b.id.to_string(),
+                            name: b.name.clone(),
+                            description: b.description.clone(),
+                            context: GenerateContext::McpBundle { slug: b.slug.clone(), items: vec![] },
+                            entity_kind: EntityKind::McpBundle,
+                        }).collect();
+                        rsx! {
+                            GenerateAllButton {
+                                items: gen_items,
+                                on_complete: move |_| { bundles.restart(); },
+                            }
+                        }
+                    },
+                    _ => rsx! {},
+                }}
+                Link {
+                    to: Route::McpBundleForm {},
+                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                    "New MCP Bundle"
+                }
             }
         }
         {match &*bundles.read() {

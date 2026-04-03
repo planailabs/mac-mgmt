@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::models::Skill;
 use crate::web::app::Route;
+use crate::web::components::generate_all_button::GenerateAllButton;
 
 #[server]
 async fn list_skills() -> Result<Vec<Skill>, ServerFnError> {
@@ -154,31 +156,51 @@ pub fn SkillList() -> Element {
     rsx! {
         div { class: "flex items-center justify-between mb-4",
             h2 { class: "text-2xl font-bold", "Skills" }
-            button {
-                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
-                disabled: *syncing.read(),
-                onclick: move |_| {
-                    syncing.set(true);
-                    sync_msg.set(None);
-                    sync_err.set(None);
-                    spawn(async move {
-                        match sync_from_xzar().await {
-                            Ok(result) => {
-                                sync_msg.set(Some(format!(
-                                    "Synced: +{} skills, +{} channels, -{} channels, -{} skills",
-                                    result.created_skills, result.created_channels,
-                                    result.removed_channels, result.removed_skills,
-                                )));
-                                skills.restart();
-                            }
-                            Err(e) => {
-                                sync_err.set(Some(e.to_string()));
+            div { class: "flex items-center gap-2",
+                {match &*skills.read() {
+                    Some(Ok(list)) => {
+                        let gen_items: Vec<GenerateAllItem> = list.iter().map(|s| GenerateAllItem {
+                            id: s.id.to_string(),
+                            name: s.name.clone(),
+                            description: s.description.clone(),
+                            context: GenerateContext::Skill { skill_id: s.id.to_string() },
+                            entity_kind: EntityKind::Skill,
+                        }).collect();
+                        rsx! {
+                            GenerateAllButton {
+                                items: gen_items,
+                                on_complete: move |_| { skills.restart(); },
                             }
                         }
-                        syncing.set(false);
-                    });
-                },
-                if *syncing.read() { "Syncing..." } else { "Sync from xzar" }
+                    },
+                    _ => rsx! {},
+                }}
+                button {
+                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                    disabled: *syncing.read(),
+                    onclick: move |_| {
+                        syncing.set(true);
+                        sync_msg.set(None);
+                        sync_err.set(None);
+                        spawn(async move {
+                            match sync_from_xzar().await {
+                                Ok(result) => {
+                                    sync_msg.set(Some(format!(
+                                        "Synced: +{} skills, +{} channels, -{} channels, -{} skills",
+                                        result.created_skills, result.created_channels,
+                                        result.removed_channels, result.removed_skills,
+                                    )));
+                                    skills.restart();
+                                }
+                                Err(e) => {
+                                    sync_err.set(Some(e.to_string()));
+                                }
+                            }
+                            syncing.set(false);
+                        });
+                    },
+                    if *syncing.read() { "Syncing..." } else { "Sync from xzar" }
+                }
             }
         }
         if let Some(msg) = &*sync_msg.read() {
