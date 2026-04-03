@@ -53,6 +53,7 @@ pub fn GenerateAllButton(
     } else {
         0
     };
+    let min_w = if pct > 0 { "0.75rem" } else { "0" };
 
     rsx! {
         div { class: "inline-flex flex-col gap-1",
@@ -119,17 +120,17 @@ pub fn GenerateAllButton(
                 }
             }
             if is_running {
-                div { class: "w-48",
-                    div { class: "flex justify-between text-xs text-gray-500 mb-0.5",
-                        span { "{done_val}/{total_val}" }
+                div { class: "w-48 mt-1",
+                    div { class: "flex justify-between text-xs text-gray-500 mb-1",
+                        span { "{done_val} / {total_val}" }
                         if let Some(slug) = &*current_slug.read() {
-                            span { class: "truncate ml-1", "{slug}" }
+                            span { class: "truncate ml-1 text-purple-600", "{slug}" }
                         }
                     }
-                    div { class: "w-full bg-gray-200 rounded-full h-2",
+                    div { class: "w-full bg-gray-200 rounded h-3 overflow-hidden",
                         div {
-                            class: "bg-purple-600 h-2 rounded-full transition-all duration-300",
-                            style: "width: {pct}%",
+                            class: "bg-purple-600 h-3 rounded transition-all duration-300 ease-in-out",
+                            style: "width: {pct}%; min-width: {min_w}",
                         }
                     }
                 }
