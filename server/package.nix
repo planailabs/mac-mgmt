@@ -64,7 +64,7 @@ rustPlatform.buildRustPackage {
 
     mkdir -p $out/bin $out/share
     cp -r target/dx/mac-mgmt-server/release/web $out/share/mac-mgmt-server
-    ln -s $out/share/mac-mgmt-server/server $out/bin/mac-mgmt-server
+    ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server
 
     runHook postInstall
   '';

@@ -201,9 +201,9 @@ pkgs.testers.nixosTest {
 
     # Wait for the daemon to register with the relay (port file isn't written,
     # so we poll the tunnel list API instead)
-    retry = 0
+    attempts = 0
     relay_port = None
-    while retry < 60:
+    while attempts < 60:
         try:
             tunnels_json = machine.succeed(
                 "curl -sf -H 'Authorization: Bearer ${testToken}' "
@@ -216,7 +216,7 @@ pkgs.testers.nixosTest {
         except Exception:
             pass
         time.sleep(1)
-        retry += 1
+        attempts += 1
 
     assert relay_port is not None, "daemon did not register with relay within 60s"
     machine.log(f"Daemon registered, relay SSH port: {relay_port}")
