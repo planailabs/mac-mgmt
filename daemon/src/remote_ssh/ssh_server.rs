@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::os::unix::io::FromRawFd;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use super::pty;
@@ -125,6 +126,55 @@ impl Handler for SshSession {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         tracing::info!("shell request on channel {channel_id:?}");
+        session.request_success();
+        Ok(())
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel_id: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let command = String::from_utf8_lossy(data).to_string();
+        tracing::info!("exec request on channel {channel_id:?}: {command}");
+
+        let handle = session.handle();
+        tokio::spawn(async move {
+            let result = Command::new("bash")
+                .args(["-c", &command])
+                .output()
+                .await;
+
+            match result {
+                Ok(output) => {
+                    if !output.stdout.is_empty() {
+                        let _ = handle
+                            .data(channel_id, bytes::Bytes::from(output.stdout))
+                            .await;
+                    }
+                    if !output.stderr.is_empty() {
+                        let _ = handle
+                            .extended_data(channel_id, 1, bytes::Bytes::from(output.stderr))
+                            .await;
+                    }
+                    let code = output.status.code().unwrap_or(1) as u32;
+                    let _ = handle.exit_status_request(channel_id, code).await;
+                    let _ = handle.eof(channel_id).await;
+                    let _ = handle.close(channel_id).await;
+                }
+                Err(e) => {
+                    let msg = format!("exec failed: {e}\n");
+                    let _ = handle
+                        .extended_data(channel_id, 1, bytes::Bytes::from(msg))
+                        .await;
+                    let _ = handle.exit_status_request(channel_id, 1).await;
+                    let _ = handle.eof(channel_id).await;
+                    let _ = handle.close(channel_id).await;
+                }
+            }
+        });
+
         session.request_success();
         Ok(())
     }

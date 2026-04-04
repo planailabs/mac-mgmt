@@ -1,23 +1,32 @@
 # NixOS integration test for the SSH relay.
 #
-# Tests the full relay flow:
-#   1. Mock API server validates tokens
-#   2. Relay starts and listens for daemon WebSocket connections
-#   3. A Python "daemon" connects via WebSocket, receives a port
-#   4. An SSH client connects to that port
-#   5. The relay bridges TCP ↔ WebSocket
-#   6. The daemon-side bridges WebSocket ↔ local OpenSSH
-#   7. The SSH session runs a command and returns output
+# Tests the full relay flow using real mac-mgmt components:
+#   1. PostgreSQL database with seeded customer + token
+#   2. mac-mgmt-server validates tokens via DB
+#   3. mac-mgmt-relay bridges SSH ↔ WebSocket
+#   4. mac-mgmt daemon connects to relay, provides SSH via russh
+#   5. An SSH client connects through the relay port
+#   6. The SSH session runs a command and returns output
 #
 # Run with:  nix build .#checks.x86_64-linux.relay-integration -L
 {
   pkgs,
+  mac-mgmt,
+  mac-mgmt-server,
   mac-mgmt-relay,
   ...
 }:
 
 let
-  testPython = pkgs.python3.withPackages (ps: [ ps.websockets ]);
+  testToken = "test-token-abc123";
+  customerId = "550e8400-e29b-41d4-a716-446655440000";
+
+  # Extract just the daemon binary from the workspace build to avoid
+  # collisions with the dedicated server/relay packages.
+  mac-mgmt-daemon = pkgs.runCommand "mac-mgmt-daemon" {} ''
+    mkdir -p $out/bin
+    cp ${mac-mgmt}/bin/mac-mgmt $out/bin/mac-mgmt
+  '';
 
   # Pre-generate an SSH keypair for the test
   testKeyDir = pkgs.runCommand "test-ssh-keys" {} ''
@@ -25,92 +34,26 @@ let
     ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -f $out/id_ed25519 -N "" -q
   '';
 
-  mockApiScript = pkgs.writeScript "mock_api.py" ''
-    #!${testPython}/bin/python3
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    import json
+  # Server config (API only — web UI unused, OIDC skipped via DEV_ONLY_NO_AUTH)
+  serverConfig = pkgs.writeText "server-config.toml" ''
+    [database]
+    url = "postgres:///mac_mgmt_test?host=/run/postgresql"
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == "/api/self":
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "customer_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "customer_name": "test-customer",
-                    "token_kind": "setting",
-                }).encode())
-            else:
-                self.send_response(404)
-                self.end_headers()
+    [api]
+    port = 7378
 
-        def log_message(self, format, *args):
-            pass
+    [web]
+    port = 7377
 
-    HTTPServer(("127.0.0.1", 7378), Handler).serve_forever()
-  '';
+    [oidc]
+    client_id = "unused"
+    client_secret = "unused"
+    redirect_uri = "http://localhost:7377/callback"
+    cookie_secret = "0123456789abcdef0123456789abcdef"
 
-  daemonSimScript = pkgs.writeScript "daemon_sim.py" ''
-    #!${testPython}/bin/python3
-    import asyncio
-    import json
-    import websockets
-
-    RELAY_WS = "ws://127.0.0.1:8080"
-    TOKEN = "test-token-abc123"
-    INSTANCE_ID = "550e8400-test-daemon-0001"
-    LOCAL_SSH_PORT = 2222
-
-    async def bridge_session(session_id):
-        uri = f"{RELAY_WS}/api/daemon/session/{session_id}"
-        headers = {"Authorization": f"Bearer {TOKEN}"}
-        async with websockets.connect(uri, additional_headers=headers) as ws:
-            reader, writer = await asyncio.open_connection("127.0.0.1", LOCAL_SSH_PORT)
-
-            async def ws_to_tcp():
-                try:
-                    async for msg in ws:
-                        if isinstance(msg, bytes):
-                            writer.write(msg)
-                            await writer.drain()
-                except Exception:
-                    pass
-                finally:
-                    writer.close()
-
-            async def tcp_to_ws():
-                try:
-                    while True:
-                        data = await reader.read(8192)
-                        if not data:
-                            break
-                        await ws.send(data)
-                except Exception:
-                    pass
-
-            await asyncio.gather(ws_to_tcp(), tcp_to_ws())
-
-    async def main():
-        uri = f"{RELAY_WS}/api/daemon/register?instance_id={INSTANCE_ID}&agent_name=test-agent"
-        headers = {"Authorization": f"Bearer {TOKEN}"}
-        async with websockets.connect(uri, additional_headers=headers) as ws:
-            msg = json.loads(await ws.recv())
-            assert msg["type"] == "registered", f"unexpected: {msg}"
-            port = msg["ssh_port"]
-            print(f"REGISTERED port={port}", flush=True)
-
-            with open("/tmp/relay_port", "w") as f:
-                f.write(str(port))
-
-            async for raw in ws:
-                msg = json.loads(raw)
-                if msg["type"] == "session_request":
-                    sid = msg["session_id"]
-                    print(f"SESSION {sid}", flush=True)
-                    asyncio.create_task(bridge_session(sid))
-
-    asyncio.run(main())
+    [xzar]
+    url = "http://localhost:9999"
+    token = "unused"
   '';
 
   relayConfig = pkgs.writeText "relay.toml" ''
@@ -119,6 +62,132 @@ let
     ssh_port_max = 30010
     server_api_url = "http://127.0.0.1:7378"
   '';
+
+  # Daemon config — no server.url so remote config fetch is skipped.
+  # server.token is used for relay authentication.
+  daemonConfig = pkgs.writeText "daemon-config.toml" ''
+    [metrics]
+    port = 9396
+
+    [openclaw]
+    provider = "ollama"
+
+    [ollama]
+    flavour = "cpu"
+    models = []
+    default_model = ""
+
+    [server]
+    token = "${testToken}"
+
+    [relay]
+    url = "ws://127.0.0.1:8080"
+  '';
+
+  # Stub nix wrapper — reports services as installed so the daemon skips
+  # real nix profile operations.  Written to a standalone script (not
+  # systemPackages) to avoid colliding with the real nix binary.
+  nixWrapper = pkgs.writeScript "nix-stub" ''
+    #!/bin/sh
+    if [ "$1" = "profile" ] && [ "$2" = "list" ] && [ "$3" = "--json" ]; then
+      echo '{"elements":{"ollama":{"storePaths":["/nix/store/fake-ollama"]},"openclaw":{"storePaths":["/nix/store/fake-openclaw"]},"mcporter":{"storePaths":["/nix/store/fake-mcporter"]}}}'
+      exit 0
+    fi
+    if [ "$1" = "profile" ]; then
+      exit 0
+    fi
+    if [ "$1" = "upgrade-nix" ]; then
+      exit 0
+    fi
+    exec ${pkgs.nix}/bin/nix "$@"
+  '';
+
+  # Stub ollama — serves a minimal HTTP health response
+  ollamaStub = pkgs.writeShellScriptBin "ollama" ''
+    case "$1" in
+      serve)
+        # Minimal HTTP server responding to health checks
+        ${pkgs.python3}/bin/python3 -c "
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/':
+                body = b'Ollama is running'
+            elif self.path == '/api/ps':
+                body = b'{\"models\":[]}'
+            else:
+                body = b'{}'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a): pass
+    HTTPServer(('127.0.0.1', 11434), H).serve_forever()
+    "
+        ;;
+      pull|launch)
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+  '';
+
+  # Stub openclaw — handles setup, gateway, health, doctor
+  openclawStub = pkgs.writeShellScriptBin "openclaw" ''
+    case "$1" in
+      setup)
+        mkdir -p "$HOME/.openclaw"
+        echo '{"llm_provider":"ollama"}' > "$HOME/.openclaw/openclaw.json"
+        exit 0
+        ;;
+      gateway)
+        if [ "$2" = "stop" ]; then
+          exit 0
+        fi
+        # Run forever as a "gateway"
+        exec sleep infinity
+        ;;
+      health)
+        echo '{"status":"ok"}'
+        exit 0
+        ;;
+      doctor)
+        exit 0
+        ;;
+      sessions)
+        echo '[]'
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+  '';
+
+  # Seed script — inserts customer + hashed token into PostgreSQL
+  seedScript = pkgs.writeScript "seed-db.py" ''
+    #!${pkgs.python3}/bin/python3
+    import hashlib, subprocess, sys
+
+    token_hash = hashlib.sha256(b"${testToken}").hexdigest()
+
+    sql = f"""
+    INSERT INTO customers (id, name) VALUES ('${customerId}', 'test-customer');
+    INSERT INTO tokens (customer_id, token_hash, kind, label)
+      VALUES ('${customerId}', '{token_hash}', 'setting', 'test');
+    """
+
+    result = subprocess.run(
+        ["psql", "-d", "mac_mgmt_test", "-c", sql],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"seed failed: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+    print("database seeded")
+  '';
 in
 
 pkgs.testers.nixosTest {
@@ -126,24 +195,25 @@ pkgs.testers.nixosTest {
 
   nodes.machine = { lib, ... }: {
     environment.systemPackages = [
+      mac-mgmt-daemon
+      mac-mgmt-server
       mac-mgmt-relay
-      testPython
+      ollamaStub
+      openclawStub
       pkgs.openssh
       pkgs.curl
+      pkgs.postgresql
+      pkgs.python3
     ];
 
-    services.openssh = {
+    services.postgresql = {
       enable = true;
-      ports = [ 2222 ];
-      settings = {
-        PermitRootLogin = "yes";
-      };
+      # Allow any local user to connect without password
+      authentication = lib.mkForce ''
+        local all all trust
+        host all all 127.0.0.1/32 trust
+      '';
     };
-
-    # Install the test public key for root
-    users.users.root.openssh.authorizedKeys.keyFiles = [
-      "${testKeyDir}/id_ed25519.pub"
-    ];
 
     networking.firewall.enable = false;
   };
@@ -152,27 +222,32 @@ pkgs.testers.nixosTest {
     import json
     import time
 
-    machine.wait_for_unit("sshd.service")
-    machine.wait_for_open_port(2222)
+    machine.wait_for_unit("postgresql.service")
+    machine.succeed("sudo -u postgres createuser -s root || true")
+    machine.succeed("createdb mac_mgmt_test || true")
 
-    # Copy test SSH key with correct permissions
-    machine.succeed("cp ${testKeyDir}/id_ed25519 /tmp/test_key && chmod 600 /tmp/test_key")
-
-    # Verify direct SSH works first (sanity check)
-    machine.succeed(
-        "ssh -p 2222 -i /tmp/test_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
-        "root@127.0.0.1 'echo DIRECT_OK'"
-    )
-    machine.log("Direct SSH works")
-
-    # 1. Start mock API server
+    # 1. Start mac-mgmt-server (runs DB migrations on startup)
     machine.execute(
-        "${mockApiScript} >/tmp/mock_api.log 2>&1 &"
+        "DEV_ONLY_NO_AUTH=1 CONFIG_PATH=${serverConfig} "
+        "mac-mgmt-server >/tmp/server.log 2>&1 &"
     )
     machine.wait_for_open_port(7378)
-    machine.log("Mock API server started on port 7378")
+    machine.log("mac-mgmt-server API started on port 7378")
 
-    # 2. Start the relay
+    # 2. Seed customer + token into the database
+    machine.succeed("${seedScript}")
+    machine.log("Database seeded with test customer and token")
+
+    # Verify token works via /api/self
+    self_json = machine.succeed(
+        "curl -sf -H 'Authorization: Bearer ${testToken}' http://127.0.0.1:7378/api/self"
+    )
+    self_info = json.loads(self_json)
+    assert self_info["customer_name"] == "test-customer", f"unexpected self info: {self_info}"
+    assert self_info["token_kind"] == "setting", f"unexpected token kind: {self_info}"
+    machine.log("Token validation via mac-mgmt-server verified")
+
+    # 3. Start the relay
     machine.execute(
         "mac-mgmt-relay -c ${relayConfig} >/tmp/relay.log 2>&1 &"
     )
@@ -181,32 +256,70 @@ pkgs.testers.nixosTest {
 
     # Verify health endpoint
     machine.succeed("curl -sf http://127.0.0.1:8080/health")
-    machine.log("Health check passed")
+    machine.log("Relay health check passed")
 
-    # 3. Start daemon simulator
+    # 4. Set up the daemon environment
+    machine.succeed(
+        "mkdir -p /root/.config/mac-mgmt/ssh && "
+        "cp ${daemonConfig} /root/.config/mac-mgmt/config.toml && "
+        "cp ${testKeyDir}/id_ed25519.pub /root/.config/mac-mgmt/ssh/authorized_keys"
+    )
+
+    # Install nix wrapper ahead of real nix in PATH for the daemon
+    machine.succeed(
+        "mkdir -p /tmp/nix-stub && "
+        "cp ${nixWrapper} /tmp/nix-stub/nix && "
+        "chmod +x /tmp/nix-stub/nix"
+    )
+
+    # Start the daemon (stubs in PATH handle service management)
     machine.execute(
-        "${daemonSimScript} >/tmp/daemon_sim.log 2>&1 &"
+        "PATH=/tmp/nix-stub:$PATH mac-mgmt daemon >/tmp/daemon.log 2>&1 &"
     )
 
-    # Wait for daemon to register and write the port file
-    machine.wait_for_file("/tmp/relay_port")
-    relay_port = machine.succeed("cat /tmp/relay_port").strip()
-    machine.log(f"Relay assigned SSH port: {relay_port}")
+    # Wait for the daemon's metrics server (indicates main loop is running)
+    machine.wait_for_open_port(9396)
+    machine.log("Daemon started, metrics server on port 9396")
 
-    # 4. Verify tunnel appears in the API
-    tunnels_json = machine.succeed(
-        "curl -sf -H 'Authorization: Bearer test-token-abc123' http://127.0.0.1:8080/api/tunnels"
-    )
+    # 5. Enable remote SSH via FIFO
+    # Wait for the FIFO to be created by the daemon
+    machine.wait_for_file("/root/.config/mac-mgmt/remote-ssh")
+    machine.succeed("echo enable > /root/.config/mac-mgmt/remote-ssh")
+    machine.log("Sent 'enable' to remote SSH FIFO")
+
+    # Wait for the daemon to register with the relay (port file isn't written,
+    # so we poll the tunnel list API instead)
+    retry = 0
+    relay_port = None
+    while retry < 60:
+        try:
+            tunnels_json = machine.succeed(
+                "curl -sf -H 'Authorization: Bearer ${testToken}' "
+                "http://127.0.0.1:8080/api/tunnels"
+            )
+            tunnels = json.loads(tunnels_json)
+            if len(tunnels) > 0:
+                relay_port = tunnels[0]["ssh_port"]
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+        retry += 1
+
+    assert relay_port is not None, "daemon did not register with relay within 60s"
+    machine.log(f"Daemon registered, relay SSH port: {relay_port}")
+
+    # 6. Verify tunnel metadata from real server
     tunnels = json.loads(tunnels_json)
     assert len(tunnels) == 1, f"expected 1 tunnel, got {len(tunnels)}: {tunnels}"
-    assert tunnels[0]["instance_id"] == "550e8400-test-daemon-0001"
     assert tunnels[0]["customer_name"] == "test-customer"
-    assert tunnels[0]["agent_name"] == "test-agent"
-    assert tunnels[0]["ssh_port"] == int(relay_port)
-    machine.log("Tunnel list API verified")
+    machine.log("Tunnel list API verified with real server auth")
 
-    # 5. SSH through the relay port
-    machine.wait_for_open_port(int(relay_port))
+    # 7. SSH through the relay to the daemon's russh server
+    machine.succeed(
+        "cp ${testKeyDir}/id_ed25519 /tmp/test_key && chmod 600 /tmp/test_key"
+    )
+    machine.wait_for_open_port(relay_port)
     time.sleep(1)
 
     result = machine.succeed(
@@ -215,9 +328,9 @@ pkgs.testers.nixosTest {
         f"root@127.0.0.1 'echo RELAY_TEST_OK'"
     )
     assert "RELAY_TEST_OK" in result, f"SSH command output: {result}"
-    machine.log("SSH through relay succeeded!")
+    machine.log("SSH through relay to daemon succeeded!")
 
-    # 6. Verify a second session works
+    # 8. Verify a second session works (tests session multiplexing)
     result2 = machine.succeed(
         f"ssh -p {relay_port} -i /tmp/test_key "
         f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "

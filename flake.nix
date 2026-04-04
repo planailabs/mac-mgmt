@@ -76,7 +76,7 @@
 
         checks = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           relay-integration = pkgs.callPackage ./tests/relay.nix {
-            inherit mac-mgmt-relay;
+            inherit mac-mgmt mac-mgmt-server mac-mgmt-relay;
           };
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
