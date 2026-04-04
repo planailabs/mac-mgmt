@@ -42,8 +42,9 @@ struct TunnelInfo {
 }
 
 fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home).join(".config/relay-ssh/config.toml")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/root"))
+        .join(".config/relay-ssh/config.toml")
 }
 
 fn load_config() -> Config {

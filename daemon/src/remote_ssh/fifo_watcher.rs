@@ -7,8 +7,9 @@ use tokio::sync::mpsc;
 use super::RemoteSshCommand;
 
 fn fifo_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home).join(".config/mac-mgmt/remote-ssh")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/root"))
+        .join(".config/mac-mgmt/remote-ssh")
 }
 
 fn create_fifo(path: &std::path::Path) -> Result<()> {

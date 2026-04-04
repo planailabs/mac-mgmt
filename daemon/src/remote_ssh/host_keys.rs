@@ -4,8 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 
 fn ssh_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home).join(".config/mac-mgmt/ssh")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/root"))
+        .join(".config/mac-mgmt/ssh")
 }
 
 fn host_key_path() -> PathBuf {

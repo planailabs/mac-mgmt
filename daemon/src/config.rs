@@ -4,8 +4,9 @@ use std::path::PathBuf;
 pub use mac_mgmt_common::DaemonConfig as Config;
 
 fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home).join(".config/mac-mgmt/config.toml")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/root"))
+        .join(".config/mac-mgmt/config.toml")
 }
 
 fn merge_toml(base: &mut toml::Value, overlay: &toml::Value) {

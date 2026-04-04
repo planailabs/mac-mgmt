@@ -3,8 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 
 fn instance_id_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home).join(".config/mac-mgmt/instance-id")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/root"))
+        .join(".config/mac-mgmt/instance-id")
 }
 
 pub fn get_or_create() -> Result<String> {

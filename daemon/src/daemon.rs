@@ -39,10 +39,9 @@ pub async fn run() -> Result<()> {
 
     let server_url = cfg.server.url.clone();
     let server_token = cfg.server.token.clone();
-    let skills_dir = {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-        std::path::PathBuf::from(home).join(".plan-ai-skills")
-    };
+    let skills_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/root"))
+        .join(".plan-ai-skills");
 
     #[cfg(feature = "services")]
     let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg)?;

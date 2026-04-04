@@ -12,8 +12,9 @@ struct McpServerEntry {
 
 /// Path to the state file that tracks which nix packages were installed by MCP sync.
 fn mcp_nix_state_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    std::path::PathBuf::from(home).join(".config/mac-mgmt/mcp-nix-packages.json")
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/root"))
+        .join(".config/mac-mgmt/mcp-nix-packages.json")
 }
 
 fn read_nix_state() -> HashSet<String> {
@@ -73,8 +74,9 @@ pub async fn sync_mcp_servers(server_url: &str, token: &str) -> Result<()> {
 }
 
 fn sync_mcporter_config(servers: &HashMap<String, McpServerEntry>) -> Result<()> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let config_dir = std::path::PathBuf::from(&home).join(".mcporter");
+    let config_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/root"))
+        .join(".mcporter");
     let config_path = config_dir.join("plan-ai.json");
 
     // Ensure directory exists

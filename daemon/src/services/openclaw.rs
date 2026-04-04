@@ -54,8 +54,9 @@ impl ManagedService for OpenClaw {
     }
 
     fn ensure_setup(&self) -> Result<()> {
-        let home = std::env::var("HOME").context("HOME not set")?;
-        let config_path = std::path::PathBuf::from(&home).join(".openclaw/openclaw.json");
+        let config_path = dirs::home_dir()
+            .context("HOME not set")?
+            .join(".openclaw/openclaw.json");
 
         if !config_path.exists() {
             tracing::info!("openclaw config not found, running openclaw setup");
@@ -93,7 +94,9 @@ impl ManagedService for OpenClaw {
         }
 
         // Add skills directory to skills.load.extraDirs
-        let skills_dir = std::path::PathBuf::from(&home).join(".plan-ai-skills");
+        let skills_dir = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("/root"))
+            .join(".plan-ai-skills");
         if skills_dir.exists() {
             let skills_dir_str = skills_dir.to_string_lossy().to_string();
             let extra_dirs = existing

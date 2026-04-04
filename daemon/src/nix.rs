@@ -158,8 +158,10 @@ fn packages_with_upgrades_temp_profile() -> Result<Vec<String>> {
     let tmp_profile = tmp_dir.path().join("profile");
 
     // Get current profile path
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let current_profile = format!("{home}/.nix-profile");
+    let current_profile = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/root"))
+        .join(".nix-profile");
+    let current_profile = current_profile.to_string_lossy();
 
     // Copy current profile to temp
     let status = Command::new("nix")
@@ -171,7 +173,7 @@ fn packages_with_upgrades_temp_profile() -> Result<Vec<String>> {
     }
 
     // Copy profile by creating a symlink to the same generation
-    let real_profile = std::fs::read_link(&current_profile)
+    let real_profile = std::fs::read_link(&*current_profile)
         .with_context(|| format!("failed to read profile link {current_profile}"))?;
     std::os::unix::fs::symlink(&real_profile, &tmp_profile)
         .context("failed to symlink temp profile")?;
