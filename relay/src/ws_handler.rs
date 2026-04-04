@@ -105,6 +105,10 @@ async fn ws_daemon_register(
         Err(status) => return status.into_response(),
     };
 
+    if self_info.token_kind != "sync" {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     ws.on_upgrade(move |socket| {
         handle_daemon_ws(socket, query, self_info, state)
     })
@@ -214,8 +218,13 @@ async fn ws_daemon_session(
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    if validate_token(&state.server_api_url, &token).await.is_err() {
-        return StatusCode::UNAUTHORIZED.into_response();
+    let self_info = match validate_token(&state.server_api_url, &token).await {
+        Ok(info) => info,
+        Err(status) => return status.into_response(),
+    };
+
+    if self_info.token_kind != "sync" {
+        return StatusCode::FORBIDDEN.into_response();
     }
 
     ws.on_upgrade(move |socket| handle_data_session(socket, session_id))

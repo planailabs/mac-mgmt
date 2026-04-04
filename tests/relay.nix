@@ -16,7 +16,8 @@
 }:
 
 let
-  testToken = "test-token-abc123";
+  syncToken = "test-sync-token-abc123";
+  settingToken = "test-setting-token-abc123";
   customerId = "550e8400-e29b-41d4-a716-446655440000";
 
   # Build the daemon without the services feature so it skips
@@ -68,7 +69,7 @@ let
 
     [server]
     url = "http://127.0.0.1:7378"
-    token = "${testToken}"
+    token = "${syncToken}"
 
     [relay]
     url = "ws://127.0.0.1:8080"
@@ -79,12 +80,15 @@ let
     #!${pkgs.python3}/bin/python3
     import hashlib, subprocess, sys
 
-    token_hash = hashlib.sha256(b"${testToken}").hexdigest()
+    sync_hash = hashlib.sha256(b"${syncToken}").hexdigest()
+    setting_hash = hashlib.sha256(b"${settingToken}").hexdigest()
 
     sql = f"""
     INSERT INTO customers (id, name) VALUES ('${customerId}', 'test-customer');
     INSERT INTO tokens (customer_id, token_hash, kind, label)
-      VALUES ('${customerId}', '{token_hash}', 'setting', 'test');
+      VALUES ('${customerId}', '{sync_hash}', 'sync', 'test-sync');
+    INSERT INTO tokens (customer_id, token_hash, kind, label)
+      VALUES ('${customerId}', '{setting_hash}', 'setting', 'test-setting');
     """
 
     result = subprocess.run(
@@ -146,7 +150,7 @@ pkgs.testers.nixosTest {
 
     # Verify token works via /api/self
     self_json = machine.succeed(
-        "curl -sf -H 'Authorization: Bearer ${testToken}' http://127.0.0.1:7378/api/self"
+        "curl -sf -H 'Authorization: Bearer ${settingToken}' http://127.0.0.1:7378/api/self"
     )
     self_info = json.loads(self_json)
     assert self_info["customer_name"] == "test-customer", f"unexpected self info: {self_info}"
@@ -193,7 +197,7 @@ pkgs.testers.nixosTest {
     while attempts < 60:
         try:
             tunnels_json = machine.succeed(
-                "curl -sf -H 'Authorization: Bearer ${testToken}' "
+                "curl -sf -H 'Authorization: Bearer ${settingToken}' "
                 "http://127.0.0.1:8080/api/tunnels"
             )
             tunnels = json.loads(tunnels_json)
