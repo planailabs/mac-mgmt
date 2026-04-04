@@ -45,7 +45,6 @@ fn main() {
         // serve() may call the callback multiple times (hot-reload), so we use OnceLock
         // to ensure one-time init.
         static INIT: OnceLock<Option<axum_oidc_client::auth::AuthLayer>> = OnceLock::new();
-        let no_auth = std::env::var("DEV_ONLY_NO_AUTH").is_ok();
 
         // Set PORT env var for dioxus if not already set.
         // SAFETY: called before any threads are spawned.
@@ -95,13 +94,13 @@ fn main() {
 
                 server_state::set_pool(pool.clone());
 
-                let auth_layer = if no_auth {
-                    tracing::warn!("DEV_ONLY_NO_AUTH is set — authentication disabled");
-                    None
-                } else {
+                let auth_layer = if cfg.oidc.is_some() {
                     let (layer, _cache) =
                         web::auth::build_auth_layer(&cfg.database.url).await;
                     Some(layer)
+                } else {
+                    tracing::warn!("OIDC not configured — web authentication disabled");
+                    None
                 };
 
                 // Rocket API on configured port (background task)

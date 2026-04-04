@@ -243,7 +243,8 @@ async fn read_skill_md(skill_id: &str) -> Option<String> {
         .ok()
         .flatten()?;
 
-    let pins = crate::xzar::fetch_pins(&cfg.xzar.url, &cfg.xzar.token)
+    let xzar = cfg.xzar.as_ref()?;
+    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
         .ok()?;
 

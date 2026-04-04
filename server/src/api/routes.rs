@@ -308,7 +308,10 @@ pub async fn get_skills(
     }
 
     let cfg = crate::config::config();
-    let pins = crate::xzar::fetch_pins(&cfg.xzar.url, &cfg.xzar.token)
+    let Some(ref xzar) = cfg.xzar else {
+        return Ok(Json(std::collections::HashMap::new()));
+    };
+    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
         .map_err(|e| {
             tracing::error!("xzar fetch failed: {e}");

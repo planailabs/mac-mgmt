@@ -35,7 +35,8 @@ fn email_from_id_token(id_token: &str) -> Option<String> {
 pub async fn build_auth_layer(
     db_url: &str,
 ) -> (AuthLayer, Arc<dyn AuthCache + Send + Sync>) {
-    let cfg = &config::config().oidc;
+    let cfg = config::config().oidc.as_ref()
+        .expect("build_auth_layer called without OIDC config");
 
     let oauth_config = OAuthConfigurationBuilder::default()
         .with_issuer("https://accounts.google.com")
@@ -131,9 +132,9 @@ pub async fn require_auth(
             let session_id = session_cookie.value().to_string();
             if let Ok(Some(session)) = AuthCache::get_auth_session(cache.as_ref(), &session_id).await {
                 if let Some(email) = email_from_id_token(&session.id_token) {
-                    let oidc = &config::config().oidc;
-                    let domain_ok = oidc.allowed_domains.iter().any(|d| email.ends_with(&format!("@{d}")));
-                    let email_ok = oidc.allowed_emails.contains(&email);
+                    let oidc = config::config().oidc.as_ref();
+                    let domain_ok = oidc.is_some_and(|o| o.allowed_domains.iter().any(|d| email.ends_with(&format!("@{d}"))));
+                    let email_ok = oidc.is_some_and(|o| o.allowed_emails.contains(&email));
                     if domain_ok || email_ok {
                         return next.run(request).await;
                     }

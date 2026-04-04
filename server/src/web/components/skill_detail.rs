@@ -72,7 +72,9 @@ async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Vec<(
     }
 
     let cfg = crate::config::config();
-    let pins = crate::xzar::fetch_pins(&cfg.xzar.url, &cfg.xzar.token)
+    let xzar = cfg.xzar.as_ref()
+        .ok_or_else(|| ServerFnError::new("xzar not configured".to_string()))?;
+    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
         .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
 

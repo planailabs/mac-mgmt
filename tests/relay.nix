@@ -37,7 +37,7 @@ let
     ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -f $out/id_ed25519 -N "" -q
   '';
 
-  # Server config (API only — web UI unused, OIDC skipped via DEV_ONLY_NO_AUTH)
+  # Server config (API only — OIDC and xzar omitted, allowed in debug builds)
   serverConfig = pkgs.writeText "server-config.toml" ''
     [database]
     url = "postgres:///mac_mgmt_test?host=/run/postgresql"
@@ -47,16 +47,6 @@ let
 
     [web]
     port = 7377
-
-    [oidc]
-    client_id = "unused"
-    client_secret = "unused"
-    redirect_uri = "http://localhost:7377/callback"
-    cookie_secret = "0123456789abcdef0123456789abcdef"
-
-    [xzar]
-    url = "http://localhost:9999"
-    token = "unused"
   '';
 
   relayConfig = pkgs.writeText "relay.toml" ''
@@ -147,7 +137,7 @@ pkgs.testers.nixosTest {
 
     # 1. Start mac-mgmt-server (runs DB migrations on startup)
     machine.execute(
-        "DEV_ONLY_NO_AUTH=1 CONFIG_PATH=${serverConfig} "
+        "CONFIG_PATH=${serverConfig} "
         "mac-mgmt-server >/tmp/server.log 2>&1 &"
     )
     machine.wait_for_open_port(7378)

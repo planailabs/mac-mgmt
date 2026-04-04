@@ -10,8 +10,8 @@ pub struct ServerConfig {
     pub api: ApiConfig,
     #[serde(default)]
     pub web: WebConfig,
-    pub oidc: OidcConfig,
-    pub xzar: XzarConfig,
+    pub oidc: Option<OidcConfig>,
+    pub xzar: Option<XzarConfig>,
     pub anthropic: Option<AnthropicConfig>,
 }
 
@@ -86,8 +86,14 @@ pub fn load() -> &'static ServerConfig {
         let path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "./config.toml".to_string());
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("failed to read config from {path}: {e}"));
-        toml::from_str(&content)
-            .unwrap_or_else(|e| panic!("failed to parse config from {path}: {e}"))
+        let config: ServerConfig = toml::from_str(&content)
+            .unwrap_or_else(|e| panic!("failed to parse config from {path}: {e}"));
+
+        if cfg!(not(debug_assertions)) && config.oidc.is_none() {
+            panic!("[oidc] section is required in release builds");
+        }
+
+        config
     })
 }
 
