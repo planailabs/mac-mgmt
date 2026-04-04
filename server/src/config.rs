@@ -89,6 +89,7 @@ pub fn load() -> &'static ServerConfig {
         let config: ServerConfig = toml::from_str(&content)
             .unwrap_or_else(|e| panic!("failed to parse config from {path}: {e}"));
 
+        #[cfg(feature = "webui")]
         if cfg!(not(debug_assertions)) && config.oidc.is_none() {
             panic!("[oidc] section is required in release builds");
         }

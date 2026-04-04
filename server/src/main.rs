@@ -1,18 +1,21 @@
-#[cfg(feature = "server")]
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod api;
-#[cfg(feature = "server")]
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod config;
-#[cfg(feature = "server")]
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod db;
-#[cfg(feature = "server")]
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod mcp_schema;
+#[cfg(feature = "webui")]
 mod anthropic;
+#[cfg(feature = "webui")]
 mod models;
+#[cfg(feature = "webui")]
 mod web;
-#[cfg(feature = "server")]
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod xzar;
 
-#[cfg(feature = "server")]
+#[cfg(all(feature = "server", feature = "webui"))]
 mod server_state {
     use sqlx::PgPool;
     use std::sync::OnceLock;
@@ -30,22 +33,39 @@ mod server_state {
     }
 }
 
-#[cfg(feature = "server")]
+#[cfg(all(feature = "server", feature = "webui"))]
 pub fn server_pool() -> Result<sqlx::PgPool, dioxus::prelude::ServerFnError> {
     server_state::server_pool()
 }
 
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
+    let cfg = config::load();
+    let pool = db::connect(&cfg.database.url).await;
+
+    sqlx::migrate!()
+        .run(&pool)
+        .await
+        .expect("failed to run migrations");
+
+    #[cfg(feature = "webui")]
+    server_state::set_pool(pool.clone());
+
+    let api_rocket = api::build_rocket(pool.clone(), cfg.api.port)
+        .ignite()
+        .await
+        .expect("failed to ignite API rocket");
+
+    (pool, api_rocket)
+}
+
 fn main() {
-    #[cfg(feature = "server")]
+    #[cfg(all(feature = "server", feature = "webui"))]
     {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
         use std::sync::OnceLock;
 
-        // Shared state initialized once inside the first serve callback invocation.
-        // serve() may call the callback multiple times (hot-reload), so we use OnceLock
-        // to ensure one-time init.
         static INIT: OnceLock<Option<axum_oidc_client::auth::AuthLayer>> = OnceLock::new();
-        let no_auth = std::env::var("DEV_ONLY_NO_AUTH").is_ok();
 
         // Set PORT env var for dioxus if not already set.
         // SAFETY: called before any threads are spawned.
@@ -74,7 +94,6 @@ fn main() {
                     tracing::info!("received SIGTERM, shutting down");
                     if let Some(handle) = ROCKET_SHUTDOWN.get() {
                         handle.clone().notify();
-                        // Give Rocket's grace + mercy period (2+2s) to drain
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     }
                     std::process::exit(0);
@@ -85,20 +104,10 @@ fn main() {
             let auth_layer = if let Some(layer) = INIT.get() {
                 layer.clone()
             } else {
+                let (_pool, api_rocket) = init_server().await;
                 let cfg = config::load();
-                let pool = db::connect(&cfg.database.url).await;
 
-                sqlx::migrate!()
-                    .run(&pool)
-                    .await
-                    .expect("failed to run migrations");
-
-                server_state::set_pool(pool.clone());
-
-                let auth_layer = if no_auth {
-                    tracing::warn!("DEV_ONLY_NO_AUTH is set — web authentication disabled");
-                    None
-                } else if cfg.oidc.is_some() {
+                let auth_layer = if cfg.oidc.is_some() {
                     let (layer, _cache) =
                         web::auth::build_auth_layer(&cfg.database.url).await;
                     Some(layer)
@@ -107,13 +116,6 @@ fn main() {
                     None
                 };
 
-                // Rocket API on configured port (background task)
-                let api_port = cfg.api.port;
-                let api_pool = pool.clone();
-                let api_rocket = api::build_rocket(api_pool, api_port)
-                    .ignite()
-                    .await
-                    .expect("failed to ignite API rocket");
                 let _ = ROCKET_SHUTDOWN.set(api_rocket.shutdown());
                 tokio::spawn(async move {
                     if let Err(e) = api_rocket.launch().await {
@@ -138,7 +140,31 @@ fn main() {
         });
     }
 
-    #[cfg(not(feature = "server"))]
+    // API-only mode: no web UI, just Rocket
+    #[cfg(feature = "server-api-only")]
+    {
+        tracing_subscriber::fmt::init();
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let (_pool, api_rocket) = init_server().await;
+
+            let shutdown = api_rocket.shutdown();
+            tokio::spawn(async move {
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to register SIGTERM handler")
+                    .recv()
+                    .await;
+                tracing::info!("received SIGTERM, shutting down");
+                shutdown.notify();
+            });
+
+            if let Err(e) = api_rocket.launch().await {
+                tracing::error!("API server failed: {e}");
+            }
+        });
+    }
+
+    #[cfg(not(any(feature = "server", feature = "server-api-only")))]
     {
         dioxus::launch(web::app::App);
     }

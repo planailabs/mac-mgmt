@@ -11,7 +11,6 @@
 # Run with:  nix build .#checks.x86_64-linux.relay-integration -L
 {
   pkgs,
-  mac-mgmt-server,
   mac-mgmt-relay,
   ...
 }:
@@ -30,6 +29,15 @@ let
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" ];
     doCheck = false;
   };
+
+  # API-only server build — no webui/WASM, just Rocket + migrations.
+  # Override the full dx build to a plain cargo build without webui.
+  mac-mgmt-server-api = (pkgs.callPackage ../server/package.nix { }).overrideAttrs (old: {
+    cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only" ];
+    # Reset to default cargo buildPhase/installPhase (remove dx build overrides)
+    buildPhase = null;
+    installPhase = null;
+  });
 
   # Pre-generate an SSH keypair for the test
   testKeyDir = pkgs.runCommand "test-ssh-keys" {} ''
@@ -59,6 +67,7 @@ let
     default_model = ""
 
     [server]
+    url = "http://127.0.0.1:7378"
     token = "${testToken}"
 
     [relay]
@@ -100,21 +109,18 @@ pkgs.testers.nixosTest {
       mac-mgmt-relay
       pkgs.openssh
       pkgs.curl
-      pkgs.postgresql
       pkgs.python3
     ];
 
     services.mac-mgmt-server = {
       enable = true;
-      package = mac-mgmt-server;
+      package = mac-mgmt-server-api;
       settings = {
         database.url = "postgres:///mac-mgmt?host=/run/postgresql";
         api.port = 7378;
         web.port = 7377;
       };
     };
-
-    systemd.services.mac-mgmt.environment.DEV_ONLY_NO_AUTH = "1";
 
     # Allow the DynamicUser service to connect to PostgreSQL
     services.postgresql.authentication = lib.mkForce ''
@@ -130,8 +136,6 @@ pkgs.testers.nixosTest {
     import time
 
     machine.wait_for_unit("postgresql.service")
-
-    # Wait for the mac-mgmt service (started by NixOS module, runs migrations)
     machine.wait_for_unit("mac-mgmt.service")
     machine.wait_for_open_port(7378)
     machine.log("mac-mgmt-server API started on port 7378")
