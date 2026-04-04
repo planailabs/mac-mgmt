@@ -55,7 +55,8 @@ pub fn CustomerDetail(id: String) -> Element {
                     if *editing.read() {
                         form {
                             class: "flex items-center gap-2",
-                            onsubmit: move |_| {
+                            onsubmit: move |evt: FormEvent| {
+                                evt.prevent_default();
                                 let id = cid.clone();
                                 let new_name = draft_name.read().clone();
                                 async move {
