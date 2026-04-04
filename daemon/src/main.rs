@@ -14,6 +14,8 @@ mod nix;
 mod os_mgmt;
 mod remote_ssh;
 mod scripts;
+#[cfg(feature = "self-update")]
+mod self_update;
 mod skills;
 mod service;
 mod services;
@@ -86,7 +88,10 @@ async fn main() -> Result<()> {
         Commands::Restart => service::restart()?,
         Commands::Daemon => daemon::run().await?,
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
-        Commands::Update { force } => daemon::do_update(force)?,
+        #[cfg(feature = "self-update")]
+        Commands::Update { force } => self_update::apply(force)?,
+        #[cfg(not(feature = "self-update"))]
+        Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
     }
 
     Ok(())

@@ -3,9 +3,14 @@ name = "mac-mgmt"
 version = "0.1.5"
 edition = "2024"
 
+[features]
+default = ["services"]
+services = []
+self-update = ["dep:self_update", "dep:self-replace"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-self_update = { version = "0.42", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"] }
+self_update = { version = "0.42", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"], optional = true }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
@@ -14,7 +19,7 @@ bytes = "1"
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "panic", "backtrace", "contexts", "debug-images", "log"] }
 rust-embed = "8"
 tempfile = "3"
-self-replace = "1"
+self-replace = { version = "1", optional = true }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

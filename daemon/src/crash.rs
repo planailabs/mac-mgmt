@@ -20,16 +20,19 @@ pub fn init() -> sentry::ClientInitGuard {
         sentry::integrations::panic::panic_handler(info);
         sentry::Hub::current().client().map(|c| c.flush(Some(std::time::Duration::from_secs(5))));
 
-        tracing::error!("daemon panicked, attempting self-update before exit");
+        #[cfg(feature = "self-update")]
+        {
+            tracing::error!("daemon panicked, attempting self-update before exit");
 
-        // Run self-update on a separate thread to avoid creating a nested Tokio
-        // runtime (reqwest::blocking internally creates one, which panics if
-        // dropped inside an existing async context).
-        let handle = std::thread::spawn(|| crate::daemon::do_update(false));
-        match handle.join() {
-            Ok(Ok(())) => tracing::info!("self-update after panic succeeded"),
-            Ok(Err(e)) => tracing::error!("self-update after panic failed: {e}"),
-            Err(_) => tracing::error!("self-update thread panicked"),
+            // Run self-update on a separate thread to avoid creating a nested Tokio
+            // runtime (reqwest::blocking internally creates one, which panics if
+            // dropped inside an existing async context).
+            let handle = std::thread::spawn(|| crate::self_update::apply(false));
+            match handle.join() {
+                Ok(Ok(())) => tracing::info!("self-update after panic succeeded"),
+                Ok(Err(e)) => tracing::error!("self-update after panic failed: {e}"),
+                Err(_) => tracing::error!("self-update thread panicked"),
+            }
         }
 
         // Run the default hook (prints backtrace etc.)

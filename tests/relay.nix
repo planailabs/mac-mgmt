@@ -11,7 +11,6 @@
 # Run with:  nix build .#checks.x86_64-linux.relay-integration -L
 {
   pkgs,
-  mac-mgmt,
   mac-mgmt-server,
   mac-mgmt-relay,
   ...
@@ -21,12 +20,16 @@ let
   testToken = "test-token-abc123";
   customerId = "550e8400-e29b-41d4-a716-446655440000";
 
-  # Extract just the daemon binary from the workspace build to avoid
-  # collisions with the dedicated server/relay packages.
-  mac-mgmt-daemon = pkgs.runCommand "mac-mgmt-daemon" {} ''
-    mkdir -p $out/bin
-    cp ${mac-mgmt}/bin/mac-mgmt $out/bin/mac-mgmt
-  '';
+  # Build the daemon without the services feature so it skips
+  # ollama/openclaw/mcporter management — only relay + SSH are needed.
+  mac-mgmt-daemon = pkgs.rustPlatform.buildRustPackage {
+    pname = "mac-mgmt-daemon";
+    version = "0.1.0";
+    src = ./..;
+    cargoLock.lockFile = ../Cargo.lock;
+    cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" ];
+    doCheck = false;
+  };
 
   # Pre-generate an SSH keypair for the test
   testKeyDir = pkgs.runCommand "test-ssh-keys" {} ''
@@ -84,88 +87,6 @@ let
     url = "ws://127.0.0.1:8080"
   '';
 
-  # Stub nix wrapper — reports services as installed so the daemon skips
-  # real nix profile operations.  Written to a standalone script (not
-  # systemPackages) to avoid colliding with the real nix binary.
-  nixWrapper = pkgs.writeScript "nix-stub" ''
-    #!/bin/sh
-    if [ "$1" = "profile" ] && [ "$2" = "list" ] && [ "$3" = "--json" ]; then
-      echo '{"elements":{"ollama":{"storePaths":["/nix/store/fake-ollama"]},"openclaw":{"storePaths":["/nix/store/fake-openclaw"]},"mcporter":{"storePaths":["/nix/store/fake-mcporter"]}}}'
-      exit 0
-    fi
-    if [ "$1" = "profile" ]; then
-      exit 0
-    fi
-    if [ "$1" = "upgrade-nix" ]; then
-      exit 0
-    fi
-    exec ${pkgs.nix}/bin/nix "$@"
-  '';
-
-  # Stub ollama — serves a minimal HTTP health response
-  ollamaStub = pkgs.writeShellScriptBin "ollama" ''
-    case "$1" in
-      serve)
-        # Minimal HTTP server responding to health checks
-        ${pkgs.python3}/bin/python3 -c "
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    class H(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == '/':
-                body = b'Ollama is running'
-            elif self.path == '/api/ps':
-                body = b'{\"models\":[]}'
-            else:
-                body = b'{}'
-            self.send_response(200)
-            self.send_header('Content-Length', str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        def log_message(self, *a): pass
-    HTTPServer(('127.0.0.1', 11434), H).serve_forever()
-    "
-        ;;
-      pull|launch)
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-  '';
-
-  # Stub openclaw — handles setup, gateway, health, doctor
-  openclawStub = pkgs.writeShellScriptBin "openclaw" ''
-    case "$1" in
-      setup)
-        mkdir -p "$HOME/.openclaw"
-        echo '{"llm_provider":"ollama"}' > "$HOME/.openclaw/openclaw.json"
-        exit 0
-        ;;
-      gateway)
-        if [ "$2" = "stop" ]; then
-          exit 0
-        fi
-        # Run forever as a "gateway"
-        exec sleep infinity
-        ;;
-      health)
-        echo '{"status":"ok"}'
-        exit 0
-        ;;
-      doctor)
-        exit 0
-        ;;
-      sessions)
-        echo '[]'
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-  '';
-
   # Seed script — inserts customer + hashed token into PostgreSQL
   seedScript = pkgs.writeScript "seed-db.py" ''
     #!${pkgs.python3}/bin/python3
@@ -198,8 +119,6 @@ pkgs.testers.nixosTest {
       mac-mgmt-daemon
       mac-mgmt-server
       mac-mgmt-relay
-      ollamaStub
-      openclawStub
       pkgs.openssh
       pkgs.curl
       pkgs.postgresql
@@ -265,16 +184,9 @@ pkgs.testers.nixosTest {
         "cp ${testKeyDir}/id_ed25519.pub /root/.config/mac-mgmt/ssh/authorized_keys"
     )
 
-    # Install nix wrapper ahead of real nix in PATH for the daemon
-    machine.succeed(
-        "mkdir -p /tmp/nix-stub && "
-        "cp ${nixWrapper} /tmp/nix-stub/nix && "
-        "chmod +x /tmp/nix-stub/nix"
-    )
-
-    # Start the daemon (stubs in PATH handle service management)
+    # Start the daemon (built without services feature — no ollama/openclaw needed)
     machine.execute(
-        "PATH=/tmp/nix-stub:$PATH mac-mgmt daemon >/tmp/daemon.log 2>&1 &"
+        "mac-mgmt daemon >/tmp/daemon.log 2>&1 &"
     )
 
     # Wait for the daemon's metrics server (indicates main loop is running)

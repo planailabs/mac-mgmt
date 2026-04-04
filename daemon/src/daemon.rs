@@ -1,23 +1,30 @@
 use anyhow::{Context, Result};
-use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
 use crate::config;
+#[cfg(feature = "services")]
 use crate::managed_service::{ManagedService, ServiceMode};
 use crate::metrics::Metrics;
 use crate::remote_ssh::{self, RemoteSshCommand};
 use crate::sentry_ext;
+#[cfg(feature = "services")]
 use crate::services::{mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
 const HEALTH_INTERVAL: Duration = Duration::from_secs(60); // 1 minute
-const UPDATE_BASE: &str = "https://update.plan.ai";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const ENVIRONMENT: &str = env!("ENVIRONMENT");
-const TARGET: &str = env!("TARGET");
+const ENVIRONMENT: &str = match option_env!("ENVIRONMENT") {
+    Some(v) => v,
+    None => "dev",
+};
+const TARGET: &str = match option_env!("TARGET") {
+    Some(v) => v,
+    None => "unknown",
+};
 
+#[cfg(feature = "services")]
 struct ServiceState {
     service: Box<dyn ManagedService>,
     child: std::process::Child,
@@ -52,48 +59,55 @@ pub async fn run() -> Result<()> {
         std::path::PathBuf::from(home).join(".plan-ai-skills")
     };
 
-    let llm_service: Box<dyn ManagedService> = match cfg.openclaw.provider.as_str() {
-        "nexa" => Box::new(Nexa::new(cfg.nexa)),
-        _ => Box::new(Ollama::new(cfg.ollama)),
+    #[cfg(feature = "services")]
+    let (mut states, install_only) = {
+        let llm_service: Box<dyn ManagedService> = match cfg.openclaw.provider.as_str() {
+            "nexa" => Box::new(Nexa::new(cfg.nexa)),
+            _ => Box::new(Ollama::new(cfg.ollama)),
+        };
+
+        let services: Vec<Box<dyn ManagedService>> = vec![
+            Box::new(OpenClaw::new(cfg.openclaw)),
+            llm_service,
+            Box::new(McPorter),
+        ];
+
+        let mut states: Vec<ServiceState> = Vec::new();
+        let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
+        for service in services {
+            let name = service.name().to_string();
+            service.ensure_installed()?;
+            service.ensure_setup()?;
+
+            if service.service_mode() == ServiceMode::InstallOnly {
+                tracing::info!("{name} is install-only, skipping spawn");
+                sentry_ext::breadcrumb("service", &format!("{name} installed (install-only)"), &[
+                    ("service", &name),
+                ]);
+                install_only.push(service);
+                continue;
+            }
+
+            service.preflight()?;
+            let child = service.spawn()?;
+            sentry_ext::breadcrumb("service", &format!("{name} initialized"), &[
+                ("service", &name),
+                ("pid", &child.id().to_string()),
+            ]);
+            states.push(ServiceState {
+                service,
+                child,
+                upgrade_pending: false,
+                skip_health_check: true,
+                post_start_done: false,
+                consecutive_crashes: 0,
+            });
+        }
+        (states, install_only)
     };
 
-    let services: Vec<Box<dyn ManagedService>> = vec![
-        Box::new(OpenClaw::new(cfg.openclaw)),
-        llm_service,
-        Box::new(McPorter),
-    ];
-
-    let mut states: Vec<ServiceState> = Vec::new();
-    let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
-    for service in services {
-        let name = service.name().to_string();
-        service.ensure_installed()?;
-        service.ensure_setup()?;
-
-        if service.service_mode() == ServiceMode::InstallOnly {
-            tracing::info!("{name} is install-only, skipping spawn");
-            sentry_ext::breadcrumb("service", &format!("{name} installed (install-only)"), &[
-                ("service", &name),
-            ]);
-            install_only.push(service);
-            continue;
-        }
-
-        service.preflight()?;
-        let child = service.spawn()?;
-        sentry_ext::breadcrumb("service", &format!("{name} initialized"), &[
-            ("service", &name),
-            ("pid", &child.id().to_string()),
-        ]);
-        states.push(ServiceState {
-            service,
-            child,
-            upgrade_pending: false,
-            skip_health_check: true,
-            post_start_done: false,
-            consecutive_crashes: 0,
-        });
-    }
+    #[cfg(not(feature = "services"))]
+    tracing::info!("services feature disabled, skipping service management");
 
     let metrics = Arc::new(Metrics::new());
 
@@ -131,7 +145,8 @@ pub async fn run() -> Result<()> {
     let mut relay_task: Option<tokio::task::JoinHandle<()>> = None;
 
     // Run immediate update check and skills/MCP sync on startup
-    let _ = tokio::task::spawn_blocking(check_and_update).await;
+    #[cfg(feature = "self-update")]
+    { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
             tracing::warn!("initial skills sync failed: {e}");
@@ -154,7 +169,8 @@ pub async fn run() -> Result<()> {
                 break;
             }
             _ = update_interval.tick() => {
-                let _ = tokio::task::spawn_blocking(check_and_update).await;
+                #[cfg(feature = "self-update")]
+                { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
                 let _ = tokio::task::spawn_blocking(upgrade_nix).await;
 
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -166,34 +182,16 @@ pub async fn run() -> Result<()> {
                     }
                 }
 
-                // Upgrade install-only services (no restart needed)
-                for svc in &install_only {
-                    let name = svc.name();
-                    sentry_ext::set_tag("service", name);
-                    match svc.check_and_upgrade() {
-                        Ok(true) => {
-                            tracing::info!("{name} upgraded (install-only)");
-                            sentry_ext::breadcrumb("upgrade", &format!("{name} upgraded (install-only)"), &[("service", name)]);
-                        }
-                        Ok(false) => {}
-                        Err(e) => {
-                            tracing::warn!("{name} upgrade check failed: {e}");
-                            sentry_ext::capture_error(
-                                &format!("{name} upgrade check failed: {e}"),
-                                &[("service", name)],
-                            );
-                        }
-                    }
-                }
-
-                for state in &mut states {
-                    if !state.upgrade_pending {
-                        let name = state.service.name();
+                #[cfg(feature = "services")]
+                {
+                    // Upgrade install-only services (no restart needed)
+                    for svc in &install_only {
+                        let name = svc.name();
                         sentry_ext::set_tag("service", name);
-                        match state.service.check_and_upgrade() {
+                        match svc.check_and_upgrade() {
                             Ok(true) => {
-                                state.upgrade_pending = true;
-                                sentry_ext::breadcrumb("upgrade", &format!("{name} upgrade pending"), &[("service", name)]);
+                                tracing::info!("{name} upgraded (install-only)");
+                                sentry_ext::breadcrumb("upgrade", &format!("{name} upgraded (install-only)"), &[("service", name)]);
                             }
                             Ok(false) => {}
                             Err(e) => {
@@ -202,6 +200,27 @@ pub async fn run() -> Result<()> {
                                     &format!("{name} upgrade check failed: {e}"),
                                     &[("service", name)],
                                 );
+                            }
+                        }
+                    }
+
+                    for state in &mut states {
+                        if !state.upgrade_pending {
+                            let name = state.service.name();
+                            sentry_ext::set_tag("service", name);
+                            match state.service.check_and_upgrade() {
+                                Ok(true) => {
+                                    state.upgrade_pending = true;
+                                    sentry_ext::breadcrumb("upgrade", &format!("{name} upgrade pending"), &[("service", name)]);
+                                }
+                                Ok(false) => {}
+                                Err(e) => {
+                                    tracing::warn!("{name} upgrade check failed: {e}");
+                                    sentry_ext::capture_error(
+                                        &format!("{name} upgrade check failed: {e}"),
+                                        &[("service", name)],
+                                    );
+                                }
                             }
                         }
                     }
@@ -242,6 +261,7 @@ pub async fn run() -> Result<()> {
                 }
             }
             _ = health_interval.tick() => {
+                #[cfg(feature = "services")]
                 for state in &mut states {
                     let name = state.service.name();
                     sentry_ext::set_tag("service", name);
@@ -378,35 +398,38 @@ pub async fn run() -> Result<()> {
     }
 
     // Shutdown: send SIGTERM to all services, then wait up to 10s before SIGKILL
-    for state in &mut states {
-        let name = state.service.name();
-        let pid = state.child.id();
-        tracing::info!("sending SIGTERM to {name} (pid {pid})");
-        unsafe { libc::kill(pid as i32, libc::SIGTERM); }
-    }
+    #[cfg(feature = "services")]
+    {
+        for state in &mut states {
+            let name = state.service.name();
+            let pid = state.child.id();
+            tracing::info!("sending SIGTERM to {name} (pid {pid})");
+            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+        }
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    for state in &mut states {
-        let name = state.service.name();
-        loop {
-            match state.child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if tokio::time::Instant::now() >= deadline => {
-                    tracing::warn!("{name} did not exit in time, sending SIGKILL");
-                    let _ = state.child.kill();
-                    let _ = state.child.wait();
-                    break;
-                }
-                Ok(None) => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                Err(e) => {
-                    tracing::error!("failed to check {name} exit status: {e}");
-                    break;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        for state in &mut states {
+            let name = state.service.name();
+            loop {
+                match state.child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) if tokio::time::Instant::now() >= deadline => {
+                        tracing::warn!("{name} did not exit in time, sending SIGKILL");
+                        let _ = state.child.kill();
+                        let _ = state.child.wait();
+                        break;
+                    }
+                    Ok(None) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(e) => {
+                        tracing::error!("failed to check {name} exit status: {e}");
+                        break;
+                    }
                 }
             }
+            tracing::info!("{name} stopped");
         }
-        tracing::info!("{name} stopped");
     }
     sentry_ext::breadcrumb("daemon", "daemon shutdown complete", &[]);
     tracing::info!("daemon shutdown complete");
@@ -423,84 +446,4 @@ fn upgrade_nix() {
             &[],
         );
     }
-}
-
-fn check_and_update() {
-    tracing::info!("checking for updates (current: {CURRENT_VERSION})");
-    sentry_ext::breadcrumb("self-update", "checking for updates", &[("version", CURRENT_VERSION)]);
-
-    if let Err(e) = do_update(false) {
-        tracing::warn!("update failed: {e}");
-        sentry_ext::capture_error(
-            &format!("self-update failed: {e}"),
-            &[("version", CURRENT_VERSION)],
-        );
-    }
-}
-
-fn fetch_remote_version() -> Result<String> {
-    let url = format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.version");
-    let mut body = Vec::new();
-    let mut download = self_update::Download::from_url(&url);
-    download.show_progress(false);
-    download.download_to(&mut body)?;
-    let version = String::from_utf8(body)
-        .context("invalid UTF-8 in version file")?
-        .trim()
-        .to_string();
-    Ok(version)
-}
-
-pub fn do_update(force: bool) -> Result<()> {
-    let remote_version = fetch_remote_version()?;
-
-    if !force && remote_version == CURRENT_VERSION {
-        tracing::info!("already up to date ({CURRENT_VERSION})");
-        return Ok(());
-    }
-
-    tracing::info!("update available: {CURRENT_VERSION} -> {remote_version}");
-    sentry_ext::breadcrumb("self-update", "downloading update", &[
-        ("from", CURRENT_VERSION),
-        ("to", &remote_version),
-    ]);
-
-    let url = format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.tar.gz");
-    let mut tmp_archive = tempfile::Builder::new()
-        .suffix(".tar.gz")
-        .tempfile()
-        .context("failed to create temp file")?;
-
-    // Download the tarball
-    tracing::info!("downloading {url}");
-    let mut download = self_update::Download::from_url(&url);
-    download.show_progress(false);
-    let mut body = Vec::new();
-    download.download_to(&mut body)?;
-    tmp_archive.write_all(&body)?;
-    tmp_archive.flush()?;
-
-    // Extract the binary from the archive
-    let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
-    self_update::Extract::from_source(tmp_archive.path())
-        .archive(self_update::ArchiveKind::Tar(Some(
-            self_update::Compression::Gz,
-        )))
-        .extract_into(tmp_dir.path())?;
-
-    let bin_name = format!("mac-mgmt-{TARGET}");
-    let new_bin = tmp_dir.path().join(&bin_name);
-    if !new_bin.exists() {
-        anyhow::bail!("binary '{bin_name}' not found in archive");
-    }
-
-    // Replace the running binary
-    self_replace::self_replace(&new_bin).context("failed to replace binary")?;
-
-    tracing::info!("binary updated successfully");
-    sentry_ext::breadcrumb("self-update", "binary updated", &[
-        ("from", CURRENT_VERSION),
-        ("to", &remote_version),
-    ]);
-    Ok(())
 }
