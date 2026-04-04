@@ -6,8 +6,10 @@ TARGETS=(
   aarch64-apple-darwin
 )
 
-cargo build --release --target "${TARGETS[0]}" -p mac-mgmt
-cargo zigbuild --release --target "${TARGETS[1]}" -p mac-mgmt
+FEATURES="self-update"
+
+cargo build --release --target "${TARGETS[0]}" -p mac-mgmt --features "$FEATURES"
+cargo zigbuild --release --target "${TARGETS[1]}" -p mac-mgmt --features "$FEATURES"
 
 TMP=$(mktemp -d)
 for target in "${TARGETS[@]}"; do
