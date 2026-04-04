@@ -1,13 +1,10 @@
 use anyhow::{Context, Result};
-use russh::keys::PublicKey;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
 use tokio::time;
 
 use crate::config;
 use crate::metrics::Metrics;
-use crate::remote_ssh::{self, RemoteSshCommand};
 use crate::sentry_ext;
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
@@ -73,21 +70,17 @@ pub async fn run() -> Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("failed to register SIGINT handler")?;
 
-    // Instance ID + FIFO watcher for remote SSH
     let instance_id = crate::instance_id::get_or_create()
         .context("failed to get/create instance ID")?;
     tracing::info!("instance ID: {instance_id}");
 
-    let relay_url = cfg.relay.url.clone();
-    let (ssh_cmd_tx, mut ssh_cmd_rx) = tokio::sync::mpsc::channel::<RemoteSshCommand>(4);
-    tokio::spawn(async move {
-        if let Err(e) = remote_ssh::fifo_watcher::watch(ssh_cmd_tx).await {
-            tracing::error!("FIFO watcher failed: {e:#}");
-        }
-    });
-
-    let mut relay_task: Option<tokio::task::JoinHandle<()>> = None;
-    let server_ssh_keys: Arc<RwLock<Vec<PublicKey>>> = Arc::new(RwLock::new(Vec::new()));
+    #[cfg(feature = "relay")]
+    let mut relay_mgr = crate::remote_ssh::Manager::new(
+        cfg.relay.url.clone(),
+        server_url.clone(),
+        server_token.clone(),
+        instance_id,
+    );
 
     // Run immediate update check and skills/MCP/SSH-key sync on startup
     #[cfg(feature = "self-update")]
@@ -99,25 +92,13 @@ pub async fn run() -> Result<()> {
         if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
             tracing::warn!("initial MCP servers sync failed: {e}");
         }
-        match crate::ssh_keys::sync(url, token).await {
-            Ok(keys) => *server_ssh_keys.write().await = keys,
-            Err(e) => tracing::warn!("initial SSH keys sync failed: {e}"),
-        }
     }
+    #[cfg(feature = "relay")]
+    relay_mgr.sync_ssh_keys().await;
 
-    loop {
-        tokio::select! {
-            _ = sigterm.recv() => {
-                tracing::info!("received SIGTERM, shutting down");
-                sentry_ext::breadcrumb("daemon", "SIGTERM received, shutting down", &[]);
-                break;
-            }
-            _ = sigint.recv() => {
-                tracing::info!("received SIGINT, shutting down");
-                sentry_ext::breadcrumb("daemon", "SIGINT received, shutting down", &[]);
-                break;
-            }
-            _ = update_interval.tick() => {
+    macro_rules! handle_update {
+        () => {
+            {
                 #[cfg(feature = "self-update")]
                 { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
                 let _ = tokio::task::spawn_blocking(upgrade_nix).await;
@@ -129,53 +110,53 @@ pub async fn run() -> Result<()> {
                     if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
                         tracing::warn!("MCP servers sync failed: {e}");
                     }
-                    match crate::ssh_keys::sync(url, token).await {
-                        Ok(keys) => *server_ssh_keys.write().await = keys,
-                        Err(e) => tracing::warn!("SSH keys sync failed: {e}"),
-                    }
                 }
+
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys().await;
 
                 #[cfg(feature = "services")]
                 svc_mgr.check_upgrades();
-            },
-            Some(cmd) = ssh_cmd_rx.recv() => {
-                match cmd {
-                    RemoteSshCommand::Enable => {
-                        if relay_task.as_ref().is_some_and(|t| !t.is_finished()) {
-                            tracing::info!("remote SSH already enabled");
-                            continue;
-                        }
-                        let Some(ref url) = relay_url else {
-                            tracing::warn!("cannot enable remote SSH: no relay URL configured");
-                            continue;
-                        };
-                        let Some(ref token) = server_token else {
-                            tracing::warn!("cannot enable remote SSH: no server token configured");
-                            continue;
-                        };
-                        tracing::info!("enabling remote SSH");
-                        let url = url.clone();
-                        let token = token.clone();
-                        let iid = instance_id.clone();
-                        let agent_name = cfg.server.url.as_ref().and_then(|_| None::<String>); // TODO: pass agent_name from global config if available
-                        let ssh_keys = Arc::clone(&server_ssh_keys);
-                        relay_task = Some(tokio::spawn(async move {
-                            if let Err(e) = remote_ssh::relay_client::run(&url, &token, &iid, agent_name.as_deref(), ssh_keys).await {
-                                tracing::error!("relay client exited: {e:#}");
-                            }
-                        }));
-                    }
-                    RemoteSshCommand::Disable => {
-                        if let Some(task) = relay_task.take() {
-                            tracing::info!("disabling remote SSH");
-                            task.abort();
-                        }
-                    }
+            }
+        };
+    }
+
+    macro_rules! handle_shutdown {
+        ($signal:expr) => {
+            {
+                tracing::info!("received {}, shutting down", $signal);
+                sentry_ext::breadcrumb("daemon", &format!("{} received, shutting down", $signal), &[]);
+            }
+        };
+    }
+
+    loop {
+        #[cfg(feature = "relay")]
+        {
+            tokio::select! {
+                _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
+                _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
+                _ = update_interval.tick() => { handle_update!(); },
+                Some(cmd) = relay_mgr.recv_cmd() => {
+                    relay_mgr.handle_cmd(cmd);
+                }
+                _ = health_interval.tick() => {
+                    #[cfg(feature = "services")]
+                    svc_mgr.health_tick(&metrics);
                 }
             }
-            _ = health_interval.tick() => {
-                #[cfg(feature = "services")]
-                svc_mgr.health_tick(&metrics);
+        }
+
+        #[cfg(not(feature = "relay"))]
+        {
+            tokio::select! {
+                _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
+                _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
+                _ = update_interval.tick() => { handle_update!(); },
+                _ = health_interval.tick() => {
+                    #[cfg(feature = "services")]
+                    svc_mgr.health_tick(&metrics);
+                }
             }
         }
     }

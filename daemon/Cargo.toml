@@ -4,9 +4,10 @@ version = "0.1.5"
 edition = "2024"
 
 [features]
-default = ["services"]
+default = ["services", "relay"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
+relay = ["dep:russh", "dep:tokio-tungstenite", "dep:futures-util", "dep:urlencoding"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -27,10 +28,10 @@ toml = "0.8"
 rocket = { version = "0.5", default-features = false }
 prometheus = "0.14"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-russh = { version = "0.59", default-features = false, features = ["ring", "flate2"] }
+russh = { version = "0.59", default-features = false, features = ["ring", "flate2"], optional = true }
 rand = "0.8"
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
-futures-util = "0.3"
-urlencoding = "2"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"], optional = true }
+futures-util = { version = "0.3", optional = true }
+urlencoding = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4"] }
 mac-mgmt-common = { path = "../common" }

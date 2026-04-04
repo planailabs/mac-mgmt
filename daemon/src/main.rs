@@ -12,6 +12,7 @@ mod metrics_server;
 mod sentry_ext;
 mod nix;
 mod os_mgmt;
+#[cfg(feature = "relay")]
 mod remote_ssh;
 mod scripts;
 #[cfg(feature = "self-update")]
@@ -19,7 +20,6 @@ mod self_update;
 #[cfg(feature = "services")]
 mod service_mgmt;
 mod skills;
-mod ssh_keys;
 mod service;
 mod services;
 
