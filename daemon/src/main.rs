@@ -16,6 +16,8 @@ mod remote_ssh;
 mod scripts;
 #[cfg(feature = "self-update")]
 mod self_update;
+#[cfg(feature = "services")]
+mod service_mgmt;
 mod skills;
 mod service;
 mod services;
