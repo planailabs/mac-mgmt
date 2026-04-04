@@ -2,7 +2,7 @@
 #
 # Tests the full relay flow using real mac-mgmt components:
 #   1. PostgreSQL database with seeded customer + token
-#   2. mac-mgmt-server validates tokens via DB
+#   2. mac-mgmt-server validates tokens via DB (managed by NixOS module)
 #   3. mac-mgmt-relay bridges SSH ↔ WebSocket
 #   4. mac-mgmt daemon connects to relay, provides SSH via russh
 #   5. An SSH client connects through the relay port
@@ -35,18 +35,6 @@ let
   testKeyDir = pkgs.runCommand "test-ssh-keys" {} ''
     mkdir -p $out
     ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -f $out/id_ed25519 -N "" -q
-  '';
-
-  # Server config (API only — OIDC and xzar omitted, allowed in debug builds)
-  serverConfig = pkgs.writeText "server-config.toml" ''
-    [database]
-    url = "postgres:///mac_mgmt_test?host=/run/postgresql"
-
-    [api]
-    port = 7378
-
-    [web]
-    port = 7377
   '';
 
   relayConfig = pkgs.writeText "relay.toml" ''
@@ -91,7 +79,7 @@ let
     """
 
     result = subprocess.run(
-        ["psql", "-d", "mac_mgmt_test", "-c", sql],
+        ["psql", "-d", "mac-mgmt", "-c", sql],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -105,9 +93,10 @@ pkgs.testers.nixosTest {
   name = "relay-integration";
 
   nodes.machine = { lib, ... }: {
+    imports = [ ../server/module.nix ];
+
     environment.systemPackages = [
       mac-mgmt-daemon
-      mac-mgmt-server
       mac-mgmt-relay
       pkgs.openssh
       pkgs.curl
@@ -115,14 +104,23 @@ pkgs.testers.nixosTest {
       pkgs.python3
     ];
 
-    services.postgresql = {
+    services.mac-mgmt-server = {
       enable = true;
-      # Allow any local user to connect without password
-      authentication = lib.mkForce ''
-        local all all trust
-        host all all 127.0.0.1/32 trust
-      '';
+      package = mac-mgmt-server;
+      settings = {
+        database.url = "postgres:///mac-mgmt?host=/run/postgresql";
+        api.port = 7378;
+        web.port = 7377;
+      };
     };
+
+    systemd.services.mac-mgmt.environment.DEV_ONLY_NO_AUTH = "1";
+
+    # Allow the DynamicUser service to connect to PostgreSQL
+    services.postgresql.authentication = lib.mkForce ''
+      local all all trust
+      host all all 127.0.0.1/32 trust
+    '';
 
     networking.firewall.enable = false;
   };
@@ -132,19 +130,14 @@ pkgs.testers.nixosTest {
     import time
 
     machine.wait_for_unit("postgresql.service")
-    machine.succeed("sudo -u postgres createuser -s root || true")
-    machine.succeed("createdb mac_mgmt_test || true")
 
-    # 1. Start mac-mgmt-server (runs DB migrations on startup)
-    machine.execute(
-        "CONFIG_PATH=${serverConfig} "
-        "mac-mgmt-server >/tmp/server.log 2>&1 &"
-    )
+    # Wait for the mac-mgmt service (started by NixOS module, runs migrations)
+    machine.wait_for_unit("mac-mgmt.service")
     machine.wait_for_open_port(7378)
     machine.log("mac-mgmt-server API started on port 7378")
 
-    # 2. Seed customer + token into the database
-    machine.succeed("${seedScript}")
+    # Seed customer + token into the database
+    machine.succeed("sudo -u postgres ${seedScript}")
     machine.log("Database seeded with test customer and token")
 
     # Verify token works via /api/self
@@ -156,7 +149,7 @@ pkgs.testers.nixosTest {
     assert self_info["token_kind"] == "setting", f"unexpected token kind: {self_info}"
     machine.log("Token validation via mac-mgmt-server verified")
 
-    # 3. Start the relay
+    # Start the relay
     machine.execute(
         "mac-mgmt-relay -c ${relayConfig} >/tmp/relay.log 2>&1 &"
     )
@@ -167,7 +160,7 @@ pkgs.testers.nixosTest {
     machine.succeed("curl -sf http://127.0.0.1:8080/health")
     machine.log("Relay health check passed")
 
-    # 4. Set up the daemon environment
+    # Set up the daemon environment
     machine.succeed(
         "mkdir -p /root/.config/mac-mgmt/ssh && "
         "cp ${daemonConfig} /root/.config/mac-mgmt/config.toml && "
@@ -183,7 +176,7 @@ pkgs.testers.nixosTest {
     machine.wait_for_open_port(9396)
     machine.log("Daemon started, metrics server on port 9396")
 
-    # 5. Enable remote SSH via FIFO
+    # Enable remote SSH via FIFO
     # Wait for the FIFO to be created by the daemon
     machine.wait_for_file("/root/.config/mac-mgmt/remote-ssh")
     machine.succeed("echo enable > /root/.config/mac-mgmt/remote-ssh")
@@ -211,13 +204,13 @@ pkgs.testers.nixosTest {
     assert relay_port is not None, "daemon did not register with relay within 60s"
     machine.log(f"Daemon registered, relay SSH port: {relay_port}")
 
-    # 6. Verify tunnel metadata from real server
+    # Verify tunnel metadata from real server
     tunnels = json.loads(tunnels_json)
     assert len(tunnels) == 1, f"expected 1 tunnel, got {len(tunnels)}: {tunnels}"
     assert tunnels[0]["customer_name"] == "test-customer"
     machine.log("Tunnel list API verified with real server auth")
 
-    # 7. SSH through the relay to the daemon's russh server
+    # SSH through the relay to the daemon's russh server
     machine.succeed(
         "cp ${testKeyDir}/id_ed25519 /tmp/test_key && chmod 600 /tmp/test_key"
     )
@@ -232,7 +225,7 @@ pkgs.testers.nixosTest {
     assert "RELAY_TEST_OK" in result, f"SSH command output: {result}"
     machine.log("SSH through relay to daemon succeeded!")
 
-    # 8. Verify a second session works (tests session multiplexing)
+    # Verify a second session works (tests session multiplexing)
     result2 = machine.succeed(
         f"ssh -p {relay_port} -i /tmp/test_key "
         f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "

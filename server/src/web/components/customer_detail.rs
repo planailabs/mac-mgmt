@@ -5,6 +5,7 @@ use crate::models::Customer;
 use super::config_editor::ConfigEditor;
 use super::customer_mcp_servers::CustomerMcpServers;
 use super::customer_skills::CustomerSkills;
+use super::customer_ssh_keys::CustomerSshKeys;
 use super::setting_token_list::SettingTokenList;
 use super::token_list::SyncTokenList;
 
@@ -120,6 +121,10 @@ pub fn CustomerDetail(id: String) -> Element {
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "MCP Servers" }
                         CustomerMcpServers { customer_id: cid2.clone() }
+                    }
+                    div {
+                        h3 { class: "text-lg font-semibold mb-3", "SSH Keys" }
+                        CustomerSshKeys { customer_id: cid2.clone() }
                     }
                 }
             }

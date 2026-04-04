@@ -256,6 +256,10 @@ async fn list_tunnels(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let tunnels = state.registry.list_tunnels();
+    let mut tunnels = state.registry.list_tunnels();
+    if self_info.token_kind == "setting" {
+        let cid = self_info.customer_id;
+        tunnels.retain(|t| t.customer_id == cid);
+    }
     Json(tunnels).into_response()
 }

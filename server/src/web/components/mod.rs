@@ -11,6 +11,7 @@ pub mod customer_form;
 pub mod customer_list;
 pub mod customer_mcp_servers;
 pub mod customer_skills;
+pub mod customer_ssh_keys;
 pub mod layout;
 pub mod mcp_bundle_detail;
 pub mod mcp_bundle_form;

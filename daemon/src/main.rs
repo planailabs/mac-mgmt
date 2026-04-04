@@ -19,6 +19,7 @@ mod self_update;
 #[cfg(feature = "services")]
 mod service_mgmt;
 mod skills;
+mod ssh_keys;
 mod service;
 mod services;
 

@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
+use russh::keys::PublicKey;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::http::Uri;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -23,13 +25,14 @@ pub async fn run(
     token: &str,
     instance_id: &str,
     agent_name: Option<&str>,
+    server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
 ) -> Result<()> {
     let mut backoff = Duration::from_secs(1);
     let max_backoff = Duration::from_secs(60);
 
     loop {
         tracing::info!("connecting to relay at {relay_url}");
-        match connect_and_serve(relay_url, token, instance_id, agent_name).await {
+        match connect_and_serve(relay_url, token, instance_id, agent_name, Arc::clone(&server_ssh_keys)).await {
             Ok(()) => {
                 tracing::info!("relay connection closed normally");
                 return Ok(());
@@ -48,6 +51,7 @@ async fn connect_and_serve(
     token: &str,
     instance_id: &str,
     agent_name: Option<&str>,
+    server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
 ) -> Result<()> {
     let agent_name_param = agent_name
         .map(|n| format!("&agent_name={}", urlencoding::encode(n)))
@@ -98,12 +102,14 @@ async fn connect_and_serve(
                         let relay_url = relay_url.to_string();
                         let token = token.to_string();
                         let config = Arc::clone(&russh_config);
+                        let ssh_keys = Arc::clone(&server_ssh_keys);
                         tokio::spawn(async move {
                             if let Err(e) = handle_session(
                                 &relay_url,
                                 &token,
                                 &session_id,
                                 config,
+                                ssh_keys,
                             )
                             .await
                             {
@@ -129,6 +135,7 @@ async fn handle_session(
     token: &str,
     session_id: &str,
     config: Arc<russh::server::Config>,
+    server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
 ) -> Result<()> {
     let ws_url = format!("{relay_url}/api/daemon/session/{session_id}");
     let host = extract_host(relay_url)?;
@@ -148,7 +155,8 @@ async fn handle_session(
         .context("session WS connect failed")?;
 
     let stream = WsStream::new(ws);
-    let authorized_keys = ssh_server::load_authorized_keys();
+    let mut authorized_keys = server_ssh_keys.read().await.clone();
+    authorized_keys.extend(ssh_server::load_authorized_keys());
     let handler = SshSession::new(authorized_keys);
 
     let session = russh::server::run_stream(config, stream, handler)

@@ -9,6 +9,9 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use base64::Engine;
+use sha2::{Sha256, Digest};
+
 use super::auth::{AdminAuth, AuthenticatedCustomer, SettingAuth, SyncAuth};
 
 // ── Common routes (any valid token) ────────────────────────────────────
@@ -1544,4 +1547,172 @@ pub async fn admin_remove_skill_mcp_dep(
     } else {
         Ok(Status::Ok)
     }
+}
+
+// ── SSH key routes ─────────────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SshKeySyncEntry {
+    public_key: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/ssh-keys",
+    tag = "Sync",
+    summary = "List SSH public keys for daemon sync",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "SSH public keys", body = Vec<SshKeySyncEntry>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
+#[rocket::get("/ssh-keys")]
+pub async fn get_ssh_keys(
+    auth: SyncAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<SshKeySyncEntry>>, Status> {
+    let keys = sqlx::query_scalar::<_, String>(
+        "SELECT public_key FROM customer_ssh_keys WHERE customer_id = $1",
+    )
+    .bind(auth.customer_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(keys.into_iter().map(|k| SshKeySyncEntry { public_key: k }).collect()))
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub(crate) struct SshKeyRow {
+    id: Uuid,
+    fingerprint: String,
+    comment: String,
+    created_at: DateTime<Utc>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/ssh-keys",
+    tag = "Setting — SSH Keys",
+    summary = "List customer SSH keys",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "SSH keys", body = Vec<SshKeyRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::get("/setting/ssh-keys")]
+pub async fn setting_list_ssh_keys(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<SshKeyRow>>, Status> {
+    let rows = sqlx::query_as::<_, SshKeyRow>(
+        "SELECT id, fingerprint, comment, created_at \
+         FROM customer_ssh_keys WHERE customer_id = $1 ORDER BY created_at",
+    )
+    .bind(auth.customer_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AddSshKeyBody {
+    public_key: String,
+}
+
+fn parse_ssh_public_key(raw: &str) -> Result<(String, String), Status> {
+    let parts: Vec<&str> = raw.split_whitespace().collect();
+    if parts.len() < 2 {
+        return Err(Status::UnprocessableEntity);
+    }
+    let b64_data = base64::engine::general_purpose::STANDARD
+        .decode(parts[1])
+        .map_err(|_| Status::UnprocessableEntity)?;
+    let fingerprint = format!("SHA256:{}", base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&b64_data)));
+    let comment = if parts.len() > 2 {
+        parts[2..].join(" ")
+    } else {
+        String::new()
+    };
+    Ok((fingerprint, comment))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/ssh-keys",
+    tag = "Setting — SSH Keys",
+    summary = "Add an SSH public key",
+    security(("bearer" = [])),
+    request_body = AddSshKeyBody,
+    responses(
+        (status = 201, description = "SSH key added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+        (status = 409, description = "Key already exists"),
+        (status = 422, description = "Invalid SSH public key"),
+    ),
+)]
+#[rocket::post("/setting/ssh-keys", data = "<body>")]
+pub async fn setting_add_ssh_key(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    body: Json<AddSshKeyBody>,
+) -> Result<Status, Status> {
+    let trimmed = body.public_key.trim();
+    let (fingerprint, comment) = parse_ssh_public_key(trimmed)?;
+
+    sqlx::query(
+        "INSERT INTO customer_ssh_keys (customer_id, public_key, comment, fingerprint) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(auth.customer_id)
+    .bind(trimmed)
+    .bind(&comment)
+    .bind(&fingerprint)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("unique constraint") || e.to_string().contains("duplicate key") {
+            Status::Conflict
+        } else {
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/setting/ssh-keys/{id}",
+    tag = "Setting — SSH Keys",
+    summary = "Remove an SSH public key",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "SSH key ID")),
+    responses(
+        (status = 204, description = "SSH key removed"),
+        (status = 400, description = "Invalid UUID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::delete("/setting/ssh-keys/<id>")]
+pub async fn setting_remove_ssh_key(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    id: &str,
+) -> Result<Status, Status> {
+    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query("DELETE FROM customer_ssh_keys WHERE id = $1 AND customer_id = $2")
+        .bind(uuid)
+        .bind(auth.customer_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
 }

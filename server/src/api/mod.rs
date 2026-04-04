@@ -49,6 +49,12 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_mcp_bundle_servers,
         // Setting — catalog
         routes::setting_catalog,
+        // Sync — SSH keys
+        routes::get_ssh_keys,
+        // Setting — SSH keys
+        routes::setting_list_ssh_keys,
+        routes::setting_add_ssh_key,
+        routes::setting_remove_ssh_key,
         // Admin
         routes::admin_list_customers,
         routes::admin_create_token,
@@ -74,6 +80,9 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::AdminCustomerRow,
         routes::CreateTokenForCustomerBody,
         routes::CreatedToken,
+        routes::SshKeySyncEntry,
+        routes::SshKeyRow,
+        routes::AddSshKeyBody,
     )),
     security(("bearer" = [])),
     modifiers(&SecurityAddon),
@@ -155,6 +164,12 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
                 routes::setting_mcp_bundle_servers,
                 // Setting token routes — catalog
                 routes::setting_catalog,
+                // Sync token routes — SSH keys
+                routes::get_ssh_keys,
+                // Setting token routes — SSH keys
+                routes::setting_list_ssh_keys,
+                routes::setting_add_ssh_key,
+                routes::setting_remove_ssh_key,
                 // Admin token routes
                 routes::admin_list_customers,
                 routes::admin_create_token,

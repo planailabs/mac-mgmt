@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use russh::keys::PublicKey;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tokio::time;
 
 use crate::config;
@@ -85,8 +87,9 @@ pub async fn run() -> Result<()> {
     });
 
     let mut relay_task: Option<tokio::task::JoinHandle<()>> = None;
+    let server_ssh_keys: Arc<RwLock<Vec<PublicKey>>> = Arc::new(RwLock::new(Vec::new()));
 
-    // Run immediate update check and skills/MCP sync on startup
+    // Run immediate update check and skills/MCP/SSH-key sync on startup
     #[cfg(feature = "self-update")]
     { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -95,6 +98,10 @@ pub async fn run() -> Result<()> {
         }
         if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
             tracing::warn!("initial MCP servers sync failed: {e}");
+        }
+        match crate::ssh_keys::sync(url, token).await {
+            Ok(keys) => *server_ssh_keys.write().await = keys,
+            Err(e) => tracing::warn!("initial SSH keys sync failed: {e}"),
         }
     }
 
@@ -122,6 +129,10 @@ pub async fn run() -> Result<()> {
                     if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
                         tracing::warn!("MCP servers sync failed: {e}");
                     }
+                    match crate::ssh_keys::sync(url, token).await {
+                        Ok(keys) => *server_ssh_keys.write().await = keys,
+                        Err(e) => tracing::warn!("SSH keys sync failed: {e}"),
+                    }
                 }
 
                 #[cfg(feature = "services")]
@@ -147,8 +158,9 @@ pub async fn run() -> Result<()> {
                         let token = token.clone();
                         let iid = instance_id.clone();
                         let agent_name = cfg.server.url.as_ref().and_then(|_| None::<String>); // TODO: pass agent_name from global config if available
+                        let ssh_keys = Arc::clone(&server_ssh_keys);
                         relay_task = Some(tokio::spawn(async move {
-                            if let Err(e) = remote_ssh::relay_client::run(&url, &token, &iid, agent_name.as_deref()).await {
+                            if let Err(e) = remote_ssh::relay_client::run(&url, &token, &iid, agent_name.as_deref(), ssh_keys).await {
                                 tracing::error!("relay client exited: {e:#}");
                             }
                         }));
