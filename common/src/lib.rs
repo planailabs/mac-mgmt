@@ -42,8 +42,6 @@ pub struct DaemonSettings {
     #[serde(default = "default_log_level")]
     pub log_level: String,
     #[serde(default)]
-    pub log_dir: Option<String>,
-    #[serde(default)]
     pub upgrade_window: Option<String>,
 }
 
@@ -53,7 +51,6 @@ impl Default for DaemonSettings {
             update_interval: default_update_interval(),
             health_interval: default_health_interval(),
             log_level: default_log_level(),
-            log_dir: None,
             upgrade_window: None,
         }
     }

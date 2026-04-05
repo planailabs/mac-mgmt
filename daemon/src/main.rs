@@ -7,6 +7,7 @@ mod config_watch;
 mod connectors;
 mod crash;
 mod daemon;
+mod log_buffer;
 mod log_capture;
 mod events;
 mod instance_id;
@@ -127,7 +128,7 @@ async fn main() -> Result<()> {
         Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
         Commands::Status { port } => status::print_status(port).await?,
         Commands::Logs { service, lines, follow } => {
-            logs::tail_logs(service.as_deref(), lines, follow, None)?;
+            logs::tail_logs(service.as_deref(), lines, follow, None).await?;
         }
         Commands::CheckConfig => {
             let cfg = config::load().await;

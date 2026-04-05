@@ -77,8 +77,10 @@ pub async fn run() -> Result<()> {
         _ => {}
     }
 
+    let log_buf = crate::log_buffer::LogBuffer::new();
+
     #[cfg(feature = "services")]
-    let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher))?;
+    let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher), log_buf.clone())?;
 
     #[cfg(not(feature = "services"))]
     tracing::info!("services feature disabled, skipping service management");
@@ -87,8 +89,9 @@ pub async fn run() -> Result<()> {
 
     // Spawn the metrics server
     let metrics_clone = Arc::clone(&metrics);
+    let log_buf_clone = log_buf.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::metrics_server::build_rocket(metrics_clone, metrics_port).launch().await {
+        if let Err(e) = crate::metrics_server::build_rocket(metrics_clone, log_buf_clone, metrics_port).launch().await {
             tracing::error!("metrics server failed: {e}");
             sentry_ext::capture_error(&format!("metrics server failed: {e}"), &[]);
         }
