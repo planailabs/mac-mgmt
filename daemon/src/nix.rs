@@ -5,7 +5,32 @@ use std::sync::OnceLock;
 
 use crate::sentry_ext;
 
-const NIX_SOURCE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
+const NIX_SOURCE_BASE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
+
+fn nix_current_system() -> Result<&'static str> {
+    static CACHED: OnceLock<Result<String, String>> = OnceLock::new();
+    let result = CACHED.get_or_init(|| {
+        let output = Command::new("nix-instantiate")
+            .args(["--eval", "--expr", "builtins.currentSystem"])
+            .output()
+            .map_err(|e| format!("failed to run nix-instantiate: {e}"))?;
+        if !output.status.success() {
+            return Err("nix-instantiate failed".into());
+        }
+        String::from_utf8(output.stdout)
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .map_err(|e| format!("non-utf8 nix system: {e}"))
+    });
+    match result {
+        Ok(s) => Ok(s.as_str()),
+        Err(e) => anyhow::bail!("{e}"),
+    }
+}
+
+fn nix_source() -> Result<String> {
+    let system = nix_current_system()?;
+    Ok(format!("{NIX_SOURCE_BASE}_{system}"))
+}
 
 /// Cached result of whether `nix profile upgrade --dry-run` is supported.
 static DRY_RUN_SUPPORTED: OnceLock<bool> = OnceLock::new();
@@ -287,7 +312,8 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
 
 /// Install or upgrade a package via `nix profile`, using the given nix binary path.
 fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<()> {
-    let flake_ref = format!("{NIX_SOURCE}#{pkg}");
+    let source = nix_source()?;
+    let flake_ref = format!("{source}#{pkg}");
     let action = if upgrade { "upgrade" } else { "install" };
     tracing::info!("running nix profile {action} {pkg}");
 
