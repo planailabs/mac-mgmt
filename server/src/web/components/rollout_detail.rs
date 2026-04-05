@@ -19,7 +19,7 @@ struct RolloutInfo {
 struct StageInfo {
     id: Uuid,
     group_name: String,
-    group_id: Uuid,
+    group_id: Option<Uuid>,
     stage_order: i32,
     status: String,
     started_at: Option<DateTime<Utc>>,
@@ -56,7 +56,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     struct SRow {
         id: Uuid,
         group_name: String,
-        group_id: Uuid,
+        group_id: Option<Uuid>,
         stage_order: i32,
         status: String,
         started_at: Option<DateTime<Utc>>,
@@ -64,9 +64,9 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     }
 
     let stages = sqlx::query_as::<_, SRow>(
-        "SELECT rs.id, rg.name AS group_name, rs.group_id, rs.stage_order, rs.status, \
+        "SELECT rs.id, COALESCE(rg.name, 'All Customers') AS group_name, rs.group_id, rs.stage_order, rs.status, \
          rs.started_at, rs.completed_at \
-         FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
+         FROM rollout_stages rs LEFT JOIN rollout_groups rg ON rg.id = rs.group_id \
          WHERE rs.rollout_id = $1 ORDER BY rs.stage_order",
     )
     .bind(rid)
@@ -77,29 +77,31 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     // Get per-group health from heartbeats
     #[derive(sqlx::FromRow)]
     struct HealthRow {
-        group_id: Uuid,
+        stage_order: i32,
         total: i64,
         healthy: i64,
     }
 
+    // For group-based stages, count heartbeats of group members.
+    // For "all" stages (group_id IS NULL), count all heartbeats.
     let health = sqlx::query_as::<_, HealthRow>(
-        "SELECT rs.group_id, \
+        "SELECT rs.stage_order, \
          COUNT(DISTINCT dh.instance_id) AS total, \
          COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.reported_at > now() - interval '5 minutes') AS healthy \
          FROM rollout_stages rs \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         LEFT JOIN daemon_heartbeats dh ON dh.customer_id = rgm.customer_id \
+         LEFT JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         LEFT JOIN daemon_heartbeats dh ON (rs.group_id IS NULL OR dh.customer_id = rgm.customer_id) \
          WHERE rs.rollout_id = $1 \
-         GROUP BY rs.group_id",
+         GROUP BY rs.stage_order",
     )
     .bind(rid)
     .fetch_all(&pool)
     .await
     .unwrap_or_default();
 
-    let health_map: std::collections::HashMap<Uuid, (i64, i64)> = health
+    let health_map: std::collections::HashMap<i32, (i64, i64)> = health
         .into_iter()
-        .map(|h| (h.group_id, (h.healthy, h.total)))
+        .map(|h| (h.stage_order, (h.healthy, h.total)))
         .collect();
 
     Ok(RolloutInfo {
@@ -112,7 +114,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
             .into_iter()
             .map(|s| {
                 let (healthy, total) = health_map
-                    .get(&s.group_id)
+                    .get(&s.stage_order)
                     .copied()
                     .unwrap_or((0, 0));
                 StageInfo {
@@ -279,18 +281,36 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-            sqlx::query(
-                "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
-                 SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-                 JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-                 WHERE rs.rollout_id = $3)",
+            // Check if any stage targets all customers (group_id IS NULL)
+            let has_all: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM rollout_stages WHERE rollout_id = $1 AND group_id IS NULL)",
             )
-            .bind(&tgt.target_environment)
-            .bind(&tgt.target_version)
             .bind(rid)
-            .execute(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+            if has_all {
+                sqlx::query("UPDATE customers SET environment = $1, pinned_version = $2")
+                    .bind(&tgt.target_environment)
+                    .bind(&tgt.target_version)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| ServerFnError::new(e.to_string()))?;
+            } else {
+                sqlx::query(
+                    "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
+                     SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+                     JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+                     WHERE rs.rollout_id = $3)",
+                )
+                .bind(&tgt.target_environment)
+                .bind(&tgt.target_version)
+                .bind(rid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            }
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;

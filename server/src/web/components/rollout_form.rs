@@ -120,6 +120,7 @@ pub fn RolloutForm() -> Element {
     let groups = use_server_future(move || async move { get_group_options().await })?;
     let mut target_version = use_signal(String::new);
     let mut target_env = use_signal(|| "stable".to_string());
+    let mut all_customers = use_signal(|| false);
     let mut selected_groups = use_signal(Vec::<String>::new);
     let mut error = use_signal(|| Option::<String>::None);
     let nav = navigator();
@@ -168,6 +169,24 @@ pub fn RolloutForm() -> Element {
                     }
 
                     div {
+                        label { class: "block text-sm font-medium text-gray-700 mb-1",
+                            "Target"
+                        }
+                        div { class: "flex items-center gap-2 mb-2",
+                            input {
+                                r#type: "checkbox",
+                                checked: *all_customers.read(),
+                                onchange: move |_| {
+                                    let v = !*all_customers.read();
+                                    all_customers.set(v);
+                                    if v {
+                                        selected_groups.write().clear();
+                                    }
+                                },
+                            }
+                            span { class: "font-medium", "All Customers" }
+                        }
+                        if !*all_customers.read() {
                         label { class: "block text-sm font-medium text-gray-700 mb-1",
                             "Stages (select groups in order)"
                         }
@@ -221,6 +240,7 @@ pub fn RolloutForm() -> Element {
                                 }
                             }
                         }
+                        } // end if !all_customers
                     }
 
                     if let Some(err) = &*error.read() {
@@ -232,14 +252,19 @@ pub fn RolloutForm() -> Element {
                         onclick: move |_| {
                             let ver = target_version.read().clone();
                             let env = target_env.read().clone();
-                            let groups = selected_groups.read().clone();
+                            let is_all = *all_customers.read();
+                            let groups = if is_all {
+                                vec![]
+                            } else {
+                                selected_groups.read().clone()
+                            };
                             async move {
                                 if ver.trim().is_empty() {
                                     error.set(Some("Target version is required".into()));
                                     return;
                                 }
-                                if groups.is_empty() {
-                                    error.set(Some("Select at least one group".into()));
+                                if !is_all && groups.is_empty() {
+                                    error.set(Some("Select groups or check 'All Customers'".into()));
                                     return;
                                 }
                                 match create_rollout(ver, env, groups).await {

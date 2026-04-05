@@ -235,8 +235,8 @@ pub async fn get_update_target(
     let rollout_version = sqlx::query_scalar::<_, String>(
         "SELECT r.target_version FROM rollouts r \
          JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE rgm.customer_id = $1 \
+         LEFT JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE (rs.group_id IS NULL OR rgm.customer_id = $1) \
            AND r.status = 'rolling' \
            AND rs.status = 'rolling' \
          ORDER BY r.created_at DESC LIMIT 1",
@@ -2031,7 +2031,7 @@ pub async fn admin_create_rollout(
     pool: &State<PgPool>,
     body: Json<CreateRolloutBody>,
 ) -> Result<Json<serde_json::Value>, Status> {
-    if body.target_version.trim().is_empty() || body.group_ids.is_empty() {
+    if body.target_version.trim().is_empty() {
         return Err(Status::BadRequest);
     }
 
@@ -2049,15 +2049,18 @@ pub async fn admin_create_rollout(
     #[derive(sqlx::FromRow)]
     struct SkippedCustomer { name: String, pinned_version: String }
 
+    let has_all = body.group_ids.is_empty(); // "all" represented as empty group_ids
     let skipped = sqlx::query_as::<_, SkippedCustomer>(
         "SELECT c.name, c.pinned_version FROM customers c \
-         JOIN rollout_group_members rgm ON rgm.customer_id = c.id \
-         WHERE rgm.group_id = ANY($1) \
-           AND c.pinned_version IS NOT NULL \
-           AND c.pinned_version > $2",
+         WHERE c.pinned_version IS NOT NULL \
+           AND c.pinned_version > $1 \
+           AND ($2 OR c.id IN (\
+             SELECT rgm.customer_id FROM rollout_group_members rgm \
+             WHERE rgm.group_id = ANY($3)))",
     )
-    .bind(&body.group_ids)
     .bind(&body.target_version)
+    .bind(has_all)
+    .bind(&body.group_ids)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -2078,14 +2081,23 @@ pub async fn admin_create_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    for (i, group_id) in body.group_ids.iter().enumerate() {
-        sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)")
+    if body.group_ids.is_empty() {
+        // "All customers" stage — group_id = NULL
+        sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, NULL, 0)")
             .bind(rollout_id)
-            .bind(group_id)
-            .bind(i as i32)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
+    } else {
+        for (i, group_id) in body.group_ids.iter().enumerate() {
+            sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)")
+                .bind(rollout_id)
+                .bind(group_id)
+                .bind(i as i32)
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| Status::InternalServerError)?;
+        }
     }
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
@@ -2193,8 +2205,8 @@ pub async fn admin_get_rollout(
     struct StageRow { id: Uuid, group_name: String, stage_order: i32, status: String, started_at: Option<DateTime<Utc>>, completed_at: Option<DateTime<Utc>> }
 
     let stages = sqlx::query_as::<_, StageRow>(
-        "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.started_at, rs.completed_at \
-         FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
+        "SELECT rs.id, COALESCE(rg.name, 'All Customers') AS group_name, rs.stage_order, rs.status, rs.started_at, rs.completed_at \
+         FROM rollout_stages rs LEFT JOIN rollout_groups rg ON rg.id = rs.group_id \
          WHERE rs.rollout_id = $1 ORDER BY rs.stage_order"
     )
     .bind(rid)
@@ -2425,19 +2437,37 @@ pub async fn admin_complete_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    // Pin version and environment for all targeted customers
-    sqlx::query(
-        "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
-         SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE rs.rollout_id = $3)",
+    // Pin version and environment for all targeted customers.
+    // If any stage has group_id IS NULL, it targets all customers.
+    let has_all_stage: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM rollout_stages WHERE rollout_id = $1 AND group_id IS NULL)",
     )
-    .bind(&target.target_environment)
-    .bind(&target.target_version)
     .bind(rid)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|_| Status::InternalServerError)?;
+
+    if has_all_stage {
+        sqlx::query("UPDATE customers SET environment = $1, pinned_version = $2")
+            .bind(&target.target_environment)
+            .bind(&target.target_version)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    } else {
+        sqlx::query(
+            "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
+             SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+             JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+             WHERE rs.rollout_id = $3)",
+        )
+        .bind(&target.target_environment)
+        .bind(&target.target_version)
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    }
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     Ok(Status::Ok)
