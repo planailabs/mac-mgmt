@@ -1,9 +1,11 @@
 use dioxus::prelude::*;
+use dioxus_tabular::*;
 
 use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::models::McpServerBundle;
 use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
+use crate::web::components::table_utils::*;
 
 #[server]
 async fn list_mcp_bundles() -> Result<Vec<McpServerBundle>, ServerFnError> {
@@ -49,35 +51,39 @@ pub fn McpBundleList() -> Element {
             }
         }
         {match &*bundles.read() {
-            Some(Ok(list)) => rsx! {
-                table { class: "min-w-full divide-y divide-gray-200",
-                    thead { class: "bg-gray-50",
-                        tr {
-                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Slug" }
-                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Name" }
-                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Created" }
-                        }
+            Some(Ok(list)) => {
+                let search = use_signal(String::new);
+                let limit = use_signal(|| 20usize);
+
+                let list_clone = list.clone();
+                let filtered = use_memo(move || {
+                    let q = search.read().to_lowercase();
+                    if q.is_empty() {
+                        list_clone.clone()
+                    } else {
+                        list_clone.iter().filter(|b| b.matches_search(&q)).cloned().collect()
                     }
-                    tbody { class: "bg-white divide-y divide-gray-200",
-                        for bundle in list {
-                            {
-                                let bid = bundle.id.to_string();
-                                let slug = bundle.slug.clone();
-                                let name = bundle.name.clone();
-                                let created = bundle.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                rsx! {
-                                    tr { key: "{bid}",
-                                        td { class: "px-6 py-4",
-                                            Link {
-                                                to: Route::McpBundleDetail { id: bid },
-                                                class: "text-blue-600 hover:underline font-mono text-sm",
-                                                "{slug}"
-                                            }
-                                        }
-                                        td { class: "px-6 py-4", "{name}" }
-                                        td { class: "px-6 py-4 text-gray-500", "{created}" }
-                                    }
-                                }
+                });
+
+                let total = list.len();
+                let data = use_tabular(
+                    (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, CreatedAtColumn),
+                    filtered.into(),
+                );
+                let all_rows: Vec<_> = data.rows().collect();
+                let filtered_count = all_rows.len();
+                let limit_val = *limit.read();
+                let shown = filtered_count.min(limit_val);
+
+                rsx! {
+                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                    table { class: "min-w-full divide-y divide-gray-200",
+                        thead { class: "bg-gray-50",
+                            tr { TableHeaders { data } }
+                        }
+                        tbody { class: "bg-white divide-y divide-gray-200",
+                            for row in all_rows.into_iter().take(limit_val) {
+                                tr { key: "{row.key()}", TableCells { row } }
                             }
                         }
                     }

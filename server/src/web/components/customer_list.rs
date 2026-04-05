@@ -3,6 +3,7 @@ use dioxus_tabular::*;
 
 use crate::models::Customer;
 use crate::web::app::Route;
+use crate::web::components::table_utils::*;
 
 #[server]
 async fn list_customers() -> Result<Vec<Customer>, ServerFnError> {
@@ -13,106 +14,6 @@ async fn list_customers() -> Result<Vec<Customer>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(customers)
 }
-
-// Row impl
-
-impl Row for Customer {
-    fn key(&self) -> impl Into<String> {
-        self.id.to_string()
-    }
-}
-
-// Data accessors
-
-#[derive(Clone, PartialEq)]
-struct CustomerName {
-    id: String,
-    name: String,
-}
-
-#[derive(Clone, PartialEq)]
-struct CustomerCreatedAt(String);
-
-impl GetRowData<CustomerName> for Customer {
-    fn get(&self) -> CustomerName {
-        CustomerName {
-            id: self.id.to_string(),
-            name: self.name.clone(),
-        }
-    }
-}
-
-impl GetRowData<CustomerCreatedAt> for Customer {
-    fn get(&self) -> CustomerCreatedAt {
-        CustomerCreatedAt(self.created_at.format("%Y-%m-%d %H:%M").to_string())
-    }
-}
-
-// Columns
-
-#[derive(Clone, PartialEq)]
-struct NameColumn;
-
-impl<R: Row + GetRowData<CustomerName>> TableColumn<R> for NameColumn {
-    fn column_name(&self) -> String {
-        "name".into()
-    }
-
-    fn render_header(&self, _context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
-        rsx! {
-            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
-                "Name"
-            }
-        }
-    }
-
-    fn render_cell(&self, _context: ColumnContext, row: &R, _attributes: Vec<Attribute>) -> Element {
-        let data: CustomerName = row.get();
-        rsx! {
-            td { class: "px-6 py-4",
-                Link {
-                    to: Route::CustomerDetail { id: data.id },
-                    class: "text-blue-600 hover:underline",
-                    "{data.name}"
-                }
-            }
-        }
-    }
-
-    fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
-        let a: CustomerName = a.get();
-        let b: CustomerName = b.get();
-        a.name.to_lowercase().cmp(&b.name.to_lowercase())
-    }
-}
-
-#[derive(Clone, PartialEq)]
-struct CreatedAtColumn;
-
-impl<R: Row + GetRowData<CustomerCreatedAt>> TableColumn<R> for CreatedAtColumn {
-    fn column_name(&self) -> String {
-        "created_at".into()
-    }
-
-    fn render_header(&self, _context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
-        rsx! {
-            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
-                "Created"
-            }
-        }
-    }
-
-    fn render_cell(&self, _context: ColumnContext, row: &R, _attributes: Vec<Attribute>) -> Element {
-        let data: CustomerCreatedAt = row.get();
-        rsx! {
-            td { class: "px-6 py-4 text-gray-500",
-                "{data.0}"
-            }
-        }
-    }
-}
-
-// Component
 
 #[component]
 pub fn CustomerList() -> Element {
@@ -129,16 +30,37 @@ pub fn CustomerList() -> Element {
         }
         {match &*customers.read() {
             Some(Ok(list)) => {
-                let rows = use_signal(|| list.clone());
-                let data = use_tabular((NameColumn, CreatedAtColumn), rows.into());
+                let search = use_signal(String::new);
+                let limit = use_signal(|| 20usize);
+
+                let list_clone = list.clone();
+                let filtered = use_memo(move || {
+                    let q = search.read().to_lowercase();
+                    if q.is_empty() {
+                        list_clone.clone()
+                    } else {
+                        list_clone.iter().filter(|c| c.matches_search(&q)).cloned().collect()
+                    }
+                });
+
+                let total = list.len();
+                let data = use_tabular(
+                    (LinkColumn { header: "Name" }, CreatedAtColumn),
+                    filtered.into(),
+                );
+                let all_rows: Vec<_> = data.rows().collect();
+                let filtered_count = all_rows.len();
+                let limit_val = *limit.read();
+                let shown = filtered_count.min(limit_val);
 
                 rsx! {
+                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
                     table { class: "min-w-full divide-y divide-gray-200",
                         thead { class: "bg-gray-50",
                             tr { TableHeaders { data } }
                         }
                         tbody { class: "bg-white divide-y divide-gray-200",
-                            for row in data.rows() {
+                            for row in all_rows.into_iter().take(limit_val) {
                                 tr { key: "{row.key()}", TableCells { row } }
                             }
                         }

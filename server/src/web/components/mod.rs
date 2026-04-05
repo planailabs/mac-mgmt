@@ -1,4 +1,5 @@
 pub mod admin_token_list;
+pub mod table_utils;
 pub mod admin_tokens_page;
 pub mod bundle_detail;
 pub mod bundle_form;
