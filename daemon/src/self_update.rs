@@ -93,8 +93,29 @@ pub fn apply(force: bool) -> Result<()> {
         anyhow::bail!("binary '{bin_name}' not found in archive");
     }
 
-    // Replace the running binary
-    self_replace::self_replace(&new_bin).context("failed to replace binary")?;
+    // Replace the running binary.
+    // self_replace can fail with "text file busy" on some systems, so fall back
+    // to a manual rename-over approach: copy new binary next to the current one
+    // with a temp name, then atomically rename over it.
+    if let Err(e) = self_replace::self_replace(&new_bin) {
+        tracing::warn!("self_replace failed ({e}), falling back to rename-over");
+        let current_exe = std::env::current_exe().context("failed to get current exe path")?;
+        let parent = current_exe.parent().context("current exe has no parent dir")?;
+        let tmp_target = parent.join(".mac-mgmt.update");
+        std::fs::copy(&new_bin, &tmp_target)
+            .context("failed to copy new binary to temp location")?;
+
+        // Set executable permissions
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp_target, std::fs::Permissions::from_mode(0o755))
+                .context("failed to set permissions on new binary")?;
+        }
+
+        std::fs::rename(&tmp_target, &current_exe)
+            .context("failed to rename new binary over current")?;
+    }
 
     tracing::info!("binary updated successfully");
     sentry_ext::breadcrumb("self-update", "binary updated", &[

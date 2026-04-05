@@ -47,7 +47,7 @@ pub fn start(
 
 async fn connect_sse(url: &str, cmd_tx: &mpsc::Sender<PushCommand>) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(0))
+        .connect_timeout(Duration::from_secs(10))
         .build()?;
 
     let mut resp = client.get(url).send().await?;
