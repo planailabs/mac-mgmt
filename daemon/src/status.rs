@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
 
 #[derive(Deserialize)]
 struct StatusResponse {
@@ -29,35 +27,25 @@ fn format_uptime(secs: u64) -> String {
 }
 
 pub fn print_status(port: u16) -> Result<()> {
-    let addr = format!("127.0.0.1:{port}");
-    let mut stream =
-        TcpStream::connect(&addr).context("daemon not running or metrics port differs")?;
+    let url = format!("http://127.0.0.1:{port}/status");
 
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    let resp = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .context("failed to build HTTP client")?
+        .get(&url)
+        .send()
+        .map_err(|e| {
+            if e.is_connect() {
+                anyhow::anyhow!("daemon not running or metrics port differs")
+            } else {
+                anyhow::anyhow!("{e}")
+            }
+        })?;
 
-    let request = format!(
-        "GET /status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-    );
-    stream.write_all(request.as_bytes())?;
-
-    let reader = BufReader::new(&stream);
-    let mut lines: Vec<String> = Vec::new();
-    for line in reader.lines() {
-        match line {
-            Ok(l) => lines.push(l),
-            Err(_) => break,
-        }
-    }
-
-    // Find the body (after the blank line)
-    let body_start = lines
-        .iter()
-        .position(|l| l.is_empty())
-        .context("invalid HTTP response")?;
-    let body = lines[body_start + 1..].join("\n");
-
-    let status: StatusResponse =
-        serde_json::from_str(&body).context("failed to parse status response")?;
+    let status: StatusResponse = resp
+        .json()
+        .context("failed to parse status response")?;
 
     println!(
         "mac-mgmt v{} (up {})\n",
