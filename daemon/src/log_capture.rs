@@ -1,10 +1,44 @@
 use std::io::BufRead;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::task::JoinHandle;
+
+const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+const MAX_ROTATED: usize = 3;
 
 fn strip_ansi(s: &str) -> String {
     let stripped = strip_ansi_escapes::strip(s);
     String::from_utf8(stripped).unwrap_or_else(|_| s.to_string())
+}
+
+/// Rotate log file if it exceeds MAX_LOG_SIZE.
+/// Keeps up to MAX_ROTATED old files: name.log.1, name.log.2, etc.
+fn maybe_rotate(log_path: &Path) -> std::io::Result<bool> {
+    let meta = match std::fs::metadata(log_path) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    if meta.len() < MAX_LOG_SIZE {
+        return Ok(false);
+    }
+
+    // Shift existing rotated files
+    for i in (1..MAX_ROTATED).rev() {
+        let from = rotated_path(log_path, i);
+        let to = rotated_path(log_path, i + 1);
+        if from.exists() {
+            let _ = std::fs::rename(&from, &to);
+        }
+    }
+
+    // Rotate current → .1
+    let _ = std::fs::rename(log_path, rotated_path(log_path, 1));
+    Ok(true)
+}
+
+fn rotated_path(base: &Path, n: usize) -> PathBuf {
+    let mut p = base.as_os_str().to_owned();
+    p.push(format!(".{n}"));
+    PathBuf::from(p)
 }
 
 /// Capture stdout/stderr from a child process, log via tracing, and write to a log file.
@@ -27,34 +61,69 @@ pub fn capture(
         }
 
         let log_path = log_dir.join(format!("{name}.log"));
-        let mut log_file = match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!("failed to open log file {}: {e}", log_path.display());
-                return;
-            }
-        };
+
+        // Rotate if the log file is already large (e.g., from a previous run)
+        let _ = maybe_rotate(&log_path);
 
         use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        let log_file = Arc::new(Mutex::new(
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!("failed to open log file {}: {e}", log_path.display());
+                    return;
+                }
+            },
+        ));
+        let bytes_written = Arc::new(std::sync::atomic::AtomicU64::new(
+            std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0),
+        ));
+
+        let log_file2 = Arc::clone(&log_file);
+        let bytes_written2 = Arc::clone(&bytes_written);
+        let log_path2 = log_path.clone();
+
+        // Helper: write a line, rotate if needed, reopen file
+        let write_line = move |file: &Arc<Mutex<std::fs::File>>,
+                               bytes: &Arc<std::sync::atomic::AtomicU64>,
+                               path: &Path,
+                               line: &str| {
+            let mut f = file.lock().unwrap();
+            let n = writeln!(f, "{line}").map(|_| line.len() as u64 + 1).unwrap_or(0);
+            let total = bytes.fetch_add(n, std::sync::atomic::Ordering::Relaxed) + n;
+            if total >= MAX_LOG_SIZE {
+                drop(f);
+                if maybe_rotate(path).unwrap_or(false) {
+                    if let Ok(new_f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                    {
+                        *file.lock().unwrap() = new_f;
+                        bytes.store(0, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+        };
 
         // We need to read from both stdout and stderr concurrently.
         // Use threads since this is already spawn_blocking.
         let name_clone = name.clone();
-        let mut log_file_clone = log_file.try_clone().unwrap_or_else(|e| {
-            tracing::error!("failed to clone log file handle: {e}");
-            // Return a handle anyway -- writes will fail
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&log_path)
-                .unwrap()
-        });
 
         let stderr_thread = stderr.map(|stderr| {
             let name = name_clone.clone();
+            let write = {
+                let file = Arc::clone(&log_file2);
+                let bytes = Arc::clone(&bytes_written2);
+                let path = log_path2.clone();
+                move |line: &str| write_line(&file, &bytes, &path, line)
+            };
             std::thread::spawn(move || {
                 let reader = std::io::BufReader::new(stderr);
                 for line in reader.lines() {
@@ -62,7 +131,7 @@ pub fn capture(
                         Ok(line) => {
                             let line = strip_ansi(&line);
                             tracing::warn!("[{name}] {line}");
-                            let _ = writeln!(log_file_clone, "[stderr] {line}");
+                            write(&format!("[stderr] {line}"));
                         }
                         Err(e) => {
                             tracing::debug!("[{name}] stderr read error: {e}");
@@ -74,13 +143,19 @@ pub fn capture(
         });
 
         if let Some(stdout) = stdout {
+            let write = {
+                let file = Arc::clone(&log_file);
+                let bytes = Arc::clone(&bytes_written);
+                let path = log_path.clone();
+                move |line: &str| write_line(&file, &bytes, &path, line)
+            };
             let reader = std::io::BufReader::new(stdout);
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
                         let line = strip_ansi(&line);
                         tracing::info!("[{name}] {line}");
-                        let _ = writeln!(log_file, "[stdout] {line}");
+                        write(&format!("[stdout] {line}"));
                     }
                     Err(e) => {
                         tracing::debug!("[{name}] stdout read error: {e}");
