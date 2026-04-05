@@ -366,11 +366,6 @@ pub fn remove_old_source_packages() -> Result<()> {
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
 
-    // The old URL is exactly NIX_SOURCE_BASE (ending in ?job=build) followed by #pkg.
-    // The new URL has ?job=build_<system> so we match URLs that contain ?job=build#
-    // (i.e. nothing between "build" and "#").
-    let old_prefix = format!("{NIX_SOURCE_BASE}#");
-
     let Some(elements) = json.get("elements").and_then(|e| e.as_object()) else {
         return Ok(());
     };
@@ -380,7 +375,9 @@ pub fn remove_old_source_packages() -> Result<()> {
             .get("originalUrl")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if url.starts_with(&old_prefix) {
+        // Old source has originalUrl exactly equal to NIX_SOURCE_BASE (ending in ?job=build).
+        // New source will have ?job=build_<system> so won't match.
+        if url == NIX_SOURCE_BASE {
             tracing::info!("removing package {name} from old nix source: {url}");
             if let Err(e) = profile_remove(name) {
                 tracing::warn!("failed to remove old-source package {name}: {e}");
