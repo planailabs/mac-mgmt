@@ -2,8 +2,10 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::events::DaemonEvent;
 use crate::managed_service::{ManagedService, ServiceMode};
 use crate::metrics::Metrics;
+use crate::notify::Dispatcher;
 use crate::sentry_ext;
 use crate::services::{mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
 struct ServiceState {
@@ -13,30 +15,55 @@ struct ServiceState {
     skip_health_check: bool,
     post_start_done: bool,
     consecutive_crashes: u32,
+    was_unhealthy: bool,
 }
 
 pub struct ServiceManager {
     states: Vec<ServiceState>,
     install_only: Vec<Box<dyn ManagedService>>,
+    dispatcher: Arc<Dispatcher>,
 }
 
 impl ServiceManager {
     /// Create services from config, install, set up, and spawn them.
-    pub fn init(cfg: &mut crate::config::Config) -> Result<Self> {
+    pub fn init(cfg: &mut crate::config::Config, dispatcher: Arc<Dispatcher>) -> Result<Self> {
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
         let nexa_cfg = std::mem::take(&mut cfg.nexa);
 
-        let llm_service: Box<dyn ManagedService> = match openclaw_cfg.provider.as_str() {
-            "nexa" => Box::new(Nexa::new(nexa_cfg)),
-            _ => Box::new(Ollama::new(ollama_cfg)),
-        };
+        let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
-        let services: Vec<Box<dyn ManagedService>> = vec![
-            Box::new(OpenClaw::new(openclaw_cfg)),
-            llm_service,
-            Box::new(McPorter),
-        ];
+        if openclaw_cfg.enabled {
+            // Select LLM backend based on provider, but only if enabled
+            let llm_service: Option<Box<dyn ManagedService>> = match openclaw_cfg.provider.as_str()
+            {
+                "nexa" => {
+                    if nexa_cfg.enabled {
+                        Some(Box::new(Nexa::new(nexa_cfg)))
+                    } else {
+                        tracing::info!("nexa is disabled, skipping");
+                        None
+                    }
+                }
+                _ => {
+                    if ollama_cfg.enabled {
+                        Some(Box::new(Ollama::new(ollama_cfg)))
+                    } else {
+                        tracing::info!("ollama is disabled, skipping");
+                        None
+                    }
+                }
+            };
+
+            services.push(Box::new(OpenClaw::new(openclaw_cfg)));
+            if let Some(llm) = llm_service {
+                services.push(llm);
+            }
+        } else {
+            tracing::info!("openclaw is disabled, skipping openclaw and LLM services");
+        }
+
+        services.push(Box::new(McPorter));
 
         let mut states: Vec<ServiceState> = Vec::new();
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
@@ -71,12 +98,14 @@ impl ServiceManager {
                 skip_health_check: true,
                 post_start_done: false,
                 consecutive_crashes: 0,
+                was_unhealthy: false,
             });
         }
 
         Ok(Self {
             states,
             install_only,
+            dispatcher,
         })
     }
 
@@ -93,6 +122,9 @@ impl ServiceManager {
                         &format!("{name} upgraded (install-only)"),
                         &[("service", name)],
                     );
+                    self.dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
+                        service: name.to_string(),
+                    });
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -101,6 +133,10 @@ impl ServiceManager {
                         &format!("{name} upgrade check failed: {e}"),
                         &[("service", name)],
                     );
+                    self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
+                        service: name.to_string(),
+                        error: e.to_string(),
+                    });
                 }
             }
         }
@@ -125,6 +161,10 @@ impl ServiceManager {
                             &format!("{name} upgrade check failed: {e}"),
                             &[("service", name)],
                         );
+                        self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
+                            service: name.to_string(),
+                            error: e.to_string(),
+                        });
                     }
                 }
             }
@@ -153,6 +193,11 @@ impl ServiceManager {
                         &format!("{name} process exited unexpectedly"),
                         &[("service", name), ("exit_code", &code)],
                     );
+
+                    self.dispatcher.dispatch(&DaemonEvent::ServiceCrashed {
+                        service: name.to_string(),
+                        exit_code: status.code(),
+                    });
 
                     if state.consecutive_crashes >= 2 {
                         tracing::warn!(
@@ -206,6 +251,9 @@ impl ServiceManager {
                                     &format!("{name} restarted for upgrade"),
                                     &[("service", name)],
                                 );
+                                self.dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
+                                    service: name.to_string(),
+                                });
                             }
                             Err(e) => {
                                 tracing::error!("{name} upgrade respawn failed: {e}");
@@ -240,6 +288,12 @@ impl ServiceManager {
                     Ok(true) => {
                         tracing::info!("{name} is healthy");
                         state.consecutive_crashes = 0;
+                        if state.was_unhealthy {
+                            state.was_unhealthy = false;
+                            self.dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
+                                service: name.to_string(),
+                            });
+                        }
                         if !state.post_start_done {
                             if let Err(e) = state.service.post_start() {
                                 tracing::error!("{name} post_start failed: {e}");
@@ -259,6 +313,12 @@ impl ServiceManager {
                             &format!("{name} unhealthy, repairing"),
                             &[("service", name)],
                         );
+                        if !state.was_unhealthy {
+                            state.was_unhealthy = true;
+                            self.dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy {
+                                service: name.to_string(),
+                            });
+                        }
                         if let Err(e) = state.service.repair() {
                             tracing::error!("{name} repair failed: {e}");
                             sentry_ext::capture_error(

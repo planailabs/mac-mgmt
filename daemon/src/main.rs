@@ -4,11 +4,13 @@ use clap::{Parser, Subcommand};
 mod config;
 mod crash;
 mod daemon;
+mod events;
 mod instance_id;
 mod managed_service;
 mod mcp_servers;
 mod metrics;
 mod metrics_server;
+mod notify;
 mod sentry_ext;
 mod nix;
 mod os_mgmt;
@@ -65,6 +67,8 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Validate the config file and exit
+    CheckConfig,
 }
 
 #[tokio::main]
@@ -95,6 +99,22 @@ async fn main() -> Result<()> {
         Commands::Update { force } => self_update::apply(force)?,
         #[cfg(not(feature = "self-update"))]
         Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
+        Commands::CheckConfig => {
+            let cfg = config::load().await;
+            match cfg {
+                Ok(c) => {
+                    if let Err(e) = c.daemon.validate() {
+                        eprintln!("config error: {e}");
+                        std::process::exit(1);
+                    }
+                    println!("config OK");
+                }
+                Err(e) => {
+                    eprintln!("config error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 
     Ok(())

@@ -1,26 +1,113 @@
+# mac-mgmt daemon configuration
+# All sections are optional — sensible defaults are used when omitted.
+# Place this file at: ~/.config/mac-mgmt/config.toml
+
+# ── Daemon behavior ──────────────────────────────────────────────────
+# Controls the daemon's own operational parameters.
+# All fields are optional; shown values are the defaults.
+# [daemon]
+# How often to check for binary updates, sync skills, and sync MCP servers.
+# Accepts human-readable durations: "30s", "5m", "1h", "2h30m", etc.
+# update_interval = "1h"
+#
+# How often to run health checks on managed services.
+# health_interval = "1m"
+#
+# Log verbosity. One of: error, warn, info, debug, trace
+# Can also be overridden at runtime via RUST_LOG env var.
+# log_level = "info"
+
+# ── Metrics ──────────────────────────────────────────────────────────
+# Prometheus metrics endpoint. Scraped by monitoring systems.
+# Exposes: mac_mgmt_service_healthy, mac_mgmt_service_upgrade_pending,
+#          mac_mgmt_service_busy (per-service gauges).
 [metrics]
 port = 9396
 
+# ── OpenClaw ─────────────────────────────────────────────────────────
+# OpenClaw AI gateway configuration.
 [openclaw]
+# Set to false to skip managing OpenClaw entirely.
+# enabled = true
+#
+# Which LLM backend OpenClaw should use: "ollama" or "nexa"
 provider = "ollama"
-# Extra configuration merged into ~/.openclaw/openclaw.json
-# extra_config = { "key" = "value" }
 
+# Gateway settings merged into ~/.openclaw/openclaw.json.
+# These are typed, validated fields for common settings.
+# [openclaw.gateway]
+# port = 8080
+# host = "127.0.0.1"
+
+# Skills auto-update behavior.
+# [openclaw.skills]
+# auto_update = true
+
+# Escape hatch: arbitrary key-value pairs merged into openclaw.json
+# AFTER the typed fields above. Use for niche settings not covered above.
+# extra_config = { "some" = { "deep" = { "key" = "value" } } }
+
+# ── Ollama ───────────────────────────────────────────────────────────
+# Ollama LLM inference engine. Only used when openclaw.provider = "ollama".
 [ollama]
+# Set to false to skip managing Ollama entirely.
+# enabled = true
 host = "127.0.0.1"
 port = 11434
+# Models to pull on startup. At least one required.
 models = ["phi4-mini", "qwen3.5", "Flux_AI/Flux_AI"]
 default_model = "phi4-mini"
-# Package flavour: cpu, rocm, cuda, vulkan
-# "cpu" installs "ollama", others install "ollama-{flavour}"
+# Package flavour determines GPU support.
+# Options: cpu, rocm (AMD), cuda (NVIDIA), vulkan
+# "cpu" installs "ollama", others install "ollama-{flavour}".
 flavour = "cpu"
 
+# ── Nexa ─────────────────────────────────────────────────────────────
+# Alternative LLM provider. Only used when openclaw.provider = "nexa".
 # [nexa]
+# enabled = true
 # host = "127.0.0.1"
 # port = 18181
 # models = ["ggml-org/Qwen3-1.7B-GGUF"]
 # default_model = "ggml-org/Qwen3-1.7B-GGUF"
 
+# ── Notifications (via apprise) ──────────────────────────────────────
+# Push notifications when daemon events occur (crashes, upgrades, etc.).
+# Uses the apprise CLI for delivery — supports 100+ services including
+# Telegram, Slack, Discord, email, Matrix, Gotify, ntfy, and more.
+#
+# Install: pip install apprise (or nix, brew, etc.)
+# URL formats: https://github.com/caronc/apprise/wiki
+#
+# Available events:
+#   service_crashed      — a managed service process exited unexpectedly
+#   service_unhealthy    — a health check failed
+#   service_recovered    — a previously unhealthy service is healthy again
+#   upgrade_installed    — a nix package upgrade was applied
+#   upgrade_failed       — a nix package upgrade failed
+#   daemon_started       — the mac-mgmt daemon started
+#   daemon_stopped       — the mac-mgmt daemon is shutting down
+#
+# [notifications]
+# Apprise notification URLs. Add one per service you want to notify.
+# urls = [
+#     "tgram://bot_token/chat_id",
+#     "slack://token_a/token_b/token_c/#channel",
+#     "discord://webhook_id/webhook_token",
+#     "ntfy://ntfy.sh/my-topic",
+# ]
+# Which events trigger notifications. Omit to notify on ALL events.
+# events = ["service_crashed", "service_unhealthy", "upgrade_installed"]
+
+# ── Server connection ────────────────────────────────────────────────
+# Connect to a mac-mgmt management server for centralized configuration.
+# When configured, the daemon fetches a base config from the server and
+# merges local settings on top (local always wins).
 # [server]
 # url = "https://mgmt.example.com:8080"
 # token = "customer-token-here"
+
+# ── Relay ────────────────────────────────────────────────────────────
+# Connect to a relay server for remote SSH access to this machine.
+# [relay]
+# url = "https://relay.example.com"

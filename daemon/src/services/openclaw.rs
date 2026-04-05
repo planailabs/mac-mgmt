@@ -86,7 +86,30 @@ impl ManagedService for OpenClaw {
             serde_json::from_str(&contents).context("failed to parse openclaw.json")?;
         let mut changed = false;
 
-        // Merge extra_config if configured
+        // Apply typed gateway fields
+        if let Some(gw) = &self.config.gateway {
+            let patch = serde_json::json!({
+                "gateway": {
+                    "port": gw.port,
+                    "host": gw.host,
+                }
+            });
+            merge_json(&mut existing, &patch);
+            changed = true;
+        }
+
+        // Apply typed skills fields
+        if let Some(skills) = &self.config.skills {
+            let patch = serde_json::json!({
+                "skills": {
+                    "autoUpdate": skills.auto_update,
+                }
+            });
+            merge_json(&mut existing, &patch);
+            changed = true;
+        }
+
+        // Merge extra_config if configured (applied AFTER typed fields)
         if let Some(extra) = &self.config.extra_config {
             tracing::info!("merging extra_config into openclaw.json");
             merge_json(&mut existing, extra);
@@ -129,7 +152,7 @@ impl ManagedService for OpenClaw {
                 .context("failed to serialize merged config")?;
             std::fs::write(&config_path, &merged)
                 .with_context(|| format!("failed to write {}", config_path.display()))?;
-            tracing::info!("extra_config merged into openclaw.json");
+            tracing::info!("config merged into openclaw.json");
 
             // Validate the merged config; if openclaw rejects it, run doctor --fix
             // to remove unrecognized keys so we don't cause a crash loop.
@@ -151,7 +174,7 @@ impl ManagedService for OpenClaw {
                     tracing::error!("openclaw doctor --fix failed: {}", fix_stderr.trim());
                 }
             } else {
-                tracing::info!("extra_config merged and validated successfully");
+                tracing::info!("config merged and validated successfully");
             }
         }
 

@@ -1,14 +1,13 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::time;
 
 use crate::config;
+use crate::events::DaemonEvent;
 use crate::metrics::Metrics;
+use crate::notify::Dispatcher;
 use crate::sentry_ext;
 
-const UPDATE_INTERVAL: Duration = Duration::from_secs(3600); // 1 hour
-const HEALTH_INTERVAL: Duration = Duration::from_secs(60); // 1 minute
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ENVIRONMENT: &str = match option_env!("ENVIRONMENT") {
     Some(v) => v,
@@ -20,12 +19,6 @@ const TARGET: &str = match option_env!("TARGET") {
 };
 
 pub async fn run() -> Result<()> {
-    tracing::info!(
-        "daemon started, update interval: {:?}, health interval: {:?}",
-        UPDATE_INTERVAL,
-        HEALTH_INTERVAL
-    );
-
     sentry_ext::set_tag("environment", ENVIRONMENT);
     sentry_ext::set_tag("target", TARGET);
     sentry_ext::breadcrumb("daemon", "daemon started", &[
@@ -35,6 +28,18 @@ pub async fn run() -> Result<()> {
     ]);
 
     let mut cfg = config::load().await?;
+
+    let update_interval = humantime::parse_duration(&cfg.daemon.update_interval)
+        .context("invalid update_interval")?;
+    let health_interval = humantime::parse_duration(&cfg.daemon.health_interval)
+        .context("invalid health_interval")?;
+
+    tracing::info!(
+        "daemon started, update interval: {:?}, health interval: {:?}",
+        update_interval,
+        health_interval
+    );
+
     let metrics_port = cfg.metrics.port;
 
     let server_url = cfg.server.url.clone();
@@ -42,6 +47,13 @@ pub async fn run() -> Result<()> {
     let skills_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/root"))
         .join(".plan-ai-skills");
+
+    let dispatcher = Arc::new(Dispatcher::new(
+        std::mem::take(&mut cfg.notifications.urls),
+        cfg.notifications.events.take(),
+    ));
+
+    dispatcher.dispatch(&DaemonEvent::DaemonStarted);
 
     // Remove packages installed from the old nix source (before per-system job names).
     // Must run before ServiceManager::init which calls ensure_installed().
@@ -52,7 +64,7 @@ pub async fn run() -> Result<()> {
     }
 
     #[cfg(feature = "services")]
-    let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg)?;
+    let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher))?;
 
     #[cfg(not(feature = "services"))]
     tracing::info!("services feature disabled, skipping service management");
@@ -69,8 +81,8 @@ pub async fn run() -> Result<()> {
     });
     tracing::info!("metrics server started on port {metrics_port}");
 
-    let mut update_interval = time::interval(UPDATE_INTERVAL);
-    let mut health_interval = time::interval(HEALTH_INTERVAL);
+    let mut update_tick = time::interval(update_interval);
+    let mut health_tick = time::interval(health_interval);
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to register SIGTERM handler")?;
@@ -133,6 +145,7 @@ pub async fn run() -> Result<()> {
             {
                 tracing::info!("received {}, shutting down", $signal);
                 sentry_ext::breadcrumb("daemon", &format!("{} received, shutting down", $signal), &[]);
+                dispatcher.dispatch(&DaemonEvent::DaemonStopped);
             }
         };
     }
@@ -143,11 +156,11 @@ pub async fn run() -> Result<()> {
             tokio::select! {
                 _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
                 _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
-                _ = update_interval.tick() => { handle_update!(); },
+                _ = update_tick.tick() => { handle_update!(); },
                 Some(cmd) = relay_mgr.recv_cmd() => {
                     relay_mgr.handle_cmd(cmd);
                 }
-                _ = health_interval.tick() => {
+                _ = health_tick.tick() => {
                     #[cfg(feature = "services")]
                     svc_mgr.health_tick(&metrics);
                 }
@@ -159,8 +172,8 @@ pub async fn run() -> Result<()> {
             tokio::select! {
                 _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
                 _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
-                _ = update_interval.tick() => { handle_update!(); },
-                _ = health_interval.tick() => {
+                _ = update_tick.tick() => { handle_update!(); },
+                _ = health_tick.tick() => {
                     #[cfg(feature = "services")]
                     svc_mgr.health_tick(&metrics);
                 }

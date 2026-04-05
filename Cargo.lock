@@ -2926,6 +2926,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
+name = "humantime"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+
+[[package]]
 name = "hybrid-array"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3580,6 +3586,7 @@ dependencies = [
  "clap",
  "dirs",
  "futures-util",
+ "humantime",
  "libc",
  "mac-mgmt-common",
  "prometheus",
@@ -3607,6 +3614,7 @@ dependencies = [
 name = "mac-mgmt-common"
 version = "0.1.0"
 dependencies = [
+ "humantime",
  "schemars",
  "serde",
  "serde_json",
