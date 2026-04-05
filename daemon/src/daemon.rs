@@ -139,7 +139,11 @@ pub async fn run() -> Result<()> {
 
     // Run immediate update check and skills/MCP/SSH-key sync on startup
     #[cfg(feature = "self-update")]
-    { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
+    if in_upgrade_window!() {
+        let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
+    } else {
+        tracing::info!("outside upgrade window, skipping initial self-update");
+    }
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
             tracing::warn!("initial skills sync failed: {e}");
