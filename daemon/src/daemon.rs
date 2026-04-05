@@ -43,6 +43,14 @@ pub async fn run() -> Result<()> {
         .unwrap_or_else(|| std::path::PathBuf::from("/root"))
         .join(".plan-ai-skills");
 
+    // Remove packages installed from the old nix source (before per-system job names).
+    // Must run before ServiceManager::init which calls ensure_installed().
+    match tokio::task::spawn_blocking(crate::nix::remove_old_source_packages).await {
+        Ok(Err(e)) => tracing::warn!("old nix source cleanup failed: {e}"),
+        Err(e) => tracing::warn!("old nix source cleanup task panicked: {e}"),
+        _ => {}
+    }
+
     #[cfg(feature = "services")]
     let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg)?;
 
@@ -80,13 +88,6 @@ pub async fn run() -> Result<()> {
         server_token.clone(),
         instance_id,
     );
-
-    // Remove packages installed from the old nix source (before per-system job names)
-    match tokio::task::spawn_blocking(crate::nix::remove_old_source_packages).await {
-        Ok(Err(e)) => tracing::warn!("old nix source cleanup failed: {e}"),
-        Err(e) => tracing::warn!("old nix source cleanup task panicked: {e}"),
-        _ => {}
-    }
 
     // Run immediate update check and skills/MCP/SSH-key sync on startup
     #[cfg(feature = "self-update")]
