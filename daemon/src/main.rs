@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod config;
+#[cfg(feature = "services")]
+mod connectors;
 mod crash;
 mod daemon;
 mod events;

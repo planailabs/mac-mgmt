@@ -2,12 +2,13 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::connectors;
 use crate::events::DaemonEvent;
 use crate::managed_service::{ManagedService, ServiceMode};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
 use crate::sentry_ext;
-use crate::services::{mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
+
 struct ServiceState {
     service: Box<dyn ManagedService>,
     child: std::process::Child,
@@ -27,43 +28,17 @@ pub struct ServiceManager {
 impl ServiceManager {
     /// Create services from config, install, set up, and spawn them.
     pub fn init(cfg: &mut crate::config::Config, dispatcher: Arc<Dispatcher>) -> Result<Self> {
+        let global_cfg = std::mem::take(&mut cfg.global);
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
         let nexa_cfg = std::mem::take(&mut cfg.nexa);
 
-        let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
-
-        if openclaw_cfg.enabled {
-            // Select LLM backend based on provider, but only if enabled
-            let llm_service: Option<Box<dyn ManagedService>> = match openclaw_cfg.provider.as_str()
-            {
-                "nexa" => {
-                    if nexa_cfg.enabled {
-                        Some(Box::new(Nexa::new(nexa_cfg)))
-                    } else {
-                        tracing::info!("nexa is disabled, skipping");
-                        None
-                    }
-                }
-                _ => {
-                    if ollama_cfg.enabled {
-                        Some(Box::new(Ollama::new(ollama_cfg)))
-                    } else {
-                        tracing::info!("ollama is disabled, skipping");
-                        None
-                    }
-                }
-            };
-
-            services.push(Box::new(OpenClaw::new(openclaw_cfg)));
-            if let Some(llm) = llm_service {
-                services.push(llm);
-            }
-        } else {
-            tracing::info!("openclaw is disabled, skipping openclaw and LLM services");
-        }
-
-        services.push(Box::new(McPorter));
+        let services = connectors::build_services(
+            &global_cfg,
+            openclaw_cfg,
+            ollama_cfg,
+            nexa_cfg,
+        );
 
         let mut states: Vec<ServiceState> = Vec::new();
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();

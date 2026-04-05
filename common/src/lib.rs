@@ -3,7 +3,8 @@ use serde::Deserialize;
 use std::fmt;
 
 const VALID_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
-const VALID_PROVIDERS: &[&str] = &["ollama", "nexa"];
+const VALID_LLM_PROVIDERS: &[&str] = &["ollama", "nexa", "none"];
+const VALID_AGENT_PROVIDERS: &[&str] = &["openclaw", "none"];
 const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
 
 #[derive(Debug)]
@@ -96,9 +97,6 @@ fn default_true() -> bool {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
-    #[schemars(description = "Set to false to skip managing Ollama entirely")]
-    #[serde(default = "default_true")]
-    pub enabled: bool,
     #[schemars(description = "Ollama listen address")]
     #[serde(default = "default_host")]
     pub host: String,
@@ -119,7 +117,6 @@ pub struct OllamaConfig {
 impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
             host: default_host(),
             port: default_port(),
             models: default_models(),
@@ -146,9 +143,6 @@ fn default_nexa_model() -> String {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NexaConfig {
-    #[schemars(description = "Set to false to skip managing Nexa entirely")]
-    #[serde(default = "default_true")]
-    pub enabled: bool,
     #[schemars(description = "Nexa listen address")]
     #[serde(default = "default_host")]
     pub host: String,
@@ -166,7 +160,6 @@ pub struct NexaConfig {
 impl Default for NexaConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
             host: default_host(),
             port: default_nexa_port(),
             models: default_nexa_models(),
@@ -185,10 +178,6 @@ impl NexaConfig {
 }
 
 // ── OpenClaw ────────────────────────────────────────────────────────────
-
-fn default_provider() -> String {
-    "ollama".to_string()
-}
 
 fn default_gateway_port() -> u16 {
     8080
@@ -220,12 +209,6 @@ pub struct OpenClawSkillsConfig {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
-    #[schemars(description = "Set to false to skip managing OpenClaw entirely")]
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[schemars(description = "LLM backend: ollama or nexa")]
-    #[serde(default = "default_provider")]
-    pub provider: String,
     #[schemars(description = "Gateway settings merged into ~/.openclaw/openclaw.json")]
     #[serde(default)]
     pub gateway: Option<OpenClawGatewayConfig>,
@@ -240,8 +223,6 @@ pub struct OpenClawConfig {
 impl Default for OpenClawConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            provider: default_provider(),
             gateway: None,
             skills: None,
             extra_config: None,
@@ -273,15 +254,60 @@ pub struct DaemonServerConfig {
 
 // ── Global ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize, Default, JsonSchema)]
+fn default_llm_provider() -> String {
+    "ollama".to_string()
+}
+
+fn default_agent_provider() -> String {
+    "openclaw".to_string()
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
+    #[schemars(description = "LLM backend to use: ollama, nexa, or none")]
+    #[serde(default = "default_llm_provider")]
+    pub llm_provider: String,
+    #[schemars(description = "Agent provider to use: openclaw or none")]
+    #[serde(default = "default_agent_provider")]
+    pub agent_provider: String,
     #[schemars(description = "Display name for this agent")]
     #[serde(default)]
     pub agent_name: Option<String>,
     #[schemars(description = "Display name for the user")]
     #[serde(default)]
     pub user_name: Option<String>,
+}
+
+impl Default for GlobalConfig {
+    fn default() -> Self {
+        Self {
+            llm_provider: default_llm_provider(),
+            agent_provider: default_agent_provider(),
+            agent_name: None,
+            user_name: None,
+        }
+    }
+}
+
+impl GlobalConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if !VALID_LLM_PROVIDERS.contains(&self.llm_provider.as_str()) {
+            return Err(ValidationError(format!(
+                "invalid llm_provider '{}', must be one of: {}",
+                self.llm_provider,
+                VALID_LLM_PROVIDERS.join(", ")
+            )));
+        }
+        if !VALID_AGENT_PROVIDERS.contains(&self.agent_provider.as_str()) {
+            return Err(ValidationError(format!(
+                "invalid agent_provider '{}', must be one of: {}",
+                self.agent_provider,
+                VALID_AGENT_PROVIDERS.join(", ")
+            )));
+        }
+        Ok(())
+    }
 }
 
 // ── Customer Config (what the server manages per-customer) ──────────────
@@ -317,19 +343,6 @@ impl OllamaConfig {
     }
 }
 
-impl OpenClawConfig {
-    pub fn validate(&self) -> Result<(), ValidationError> {
-        if !VALID_PROVIDERS.contains(&self.provider.as_str()) {
-            return Err(ValidationError(format!(
-                "invalid openclaw provider '{}', must be one of: {}",
-                self.provider,
-                VALID_PROVIDERS.join(", ")
-            )));
-        }
-        Ok(())
-    }
-}
-
 impl CustomerConfig {
     /// Parse and validate a TOML string as a customer config.
     pub fn from_toml(toml_str: &str) -> Result<Self, String> {
@@ -339,9 +352,9 @@ impl CustomerConfig {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.global.validate().map_err(|e| e.to_string())?;
         self.ollama.validate().map_err(|e| e.to_string())?;
         self.nexa.validate().map_err(|e| e.to_string())?;
-        self.openclaw.validate().map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -361,6 +374,8 @@ pub struct DaemonConfig {
     pub daemon: DaemonSettings,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    #[serde(default)]
+    pub global: GlobalConfig,
     #[serde(default)]
     pub openclaw: OpenClawConfig,
     #[serde(default)]
@@ -405,9 +420,9 @@ impl DaemonConfig {
     pub fn from_toml(toml_str: &str) -> Result<Self, String> {
         let config: Self = toml::from_str(toml_str).map_err(|e| e.to_string())?;
         config.daemon.validate().map_err(|e| e.to_string())?;
+        config.global.validate().map_err(|e| e.to_string())?;
         config.ollama.validate().map_err(|e| e.to_string())?;
         config.nexa.validate().map_err(|e| e.to_string())?;
-        config.openclaw.validate().map_err(|e| e.to_string())?;
         Ok(config)
     }
 }
@@ -420,21 +435,22 @@ mod tests {
     fn valid_minimal_config() {
         let config = CustomerConfig::from_toml("").unwrap();
         assert_eq!(config.ollama.flavour, "cpu");
-        assert_eq!(config.openclaw.provider, "ollama");
+        assert_eq!(config.global.llm_provider, "ollama");
+        assert_eq!(config.global.agent_provider, "openclaw");
     }
 
     #[test]
     fn valid_full_config() {
         let toml = r#"
+[global]
+llm_provider = "ollama"
+
 [ollama]
 host = "10.0.0.1"
 port = 11435
 models = ["qwen3.5"]
 default_model = "qwen3.5"
 flavour = "rocm"
-
-[openclaw]
-provider = "ollama"
 
 [metrics]
 port = 9000
@@ -487,13 +503,23 @@ models = []
     }
 
     #[test]
-    fn rejects_invalid_provider() {
+    fn rejects_invalid_llm_provider() {
         let toml = r#"
-[openclaw]
-provider = "chatgpt"
+[global]
+llm_provider = "chatgpt"
 "#;
         let err = CustomerConfig::from_toml(toml).unwrap_err();
-        assert!(err.contains("invalid openclaw provider"), "got: {err}");
+        assert!(err.contains("invalid llm_provider"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_invalid_agent_provider() {
+        let toml = r#"
+[global]
+agent_provider = "chatgpt"
+"#;
+        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        assert!(err.contains("invalid agent_provider"), "got: {err}");
     }
 
     #[test]
@@ -521,10 +547,20 @@ models = []
     }
 
     #[test]
-    fn accepts_nexa_provider() {
+    fn accepts_nexa_llm_provider() {
         let toml = r#"
-[openclaw]
-provider = "nexa"
+[global]
+llm_provider = "nexa"
+"#;
+        CustomerConfig::from_toml(toml).unwrap();
+    }
+
+    #[test]
+    fn accepts_none_providers() {
+        let toml = r#"
+[global]
+llm_provider = "none"
+agent_provider = "none"
 "#;
         CustomerConfig::from_toml(toml).unwrap();
     }
@@ -591,30 +627,25 @@ log_level = "verbose"
         assert!(err.contains("invalid log_level"), "got: {err}");
     }
 
-    // ── Enabled toggle tests ───────────────────────────────────────────
+    // ── Provider toggle tests ──────────────────────────────────────────
 
     #[test]
-    fn enabled_defaults_to_true() {
+    fn providers_default_to_ollama_and_openclaw() {
         let config = CustomerConfig::from_toml("").unwrap();
-        assert!(config.ollama.enabled);
-        assert!(config.nexa.enabled);
-        assert!(config.openclaw.enabled);
+        assert_eq!(config.global.llm_provider, "ollama");
+        assert_eq!(config.global.agent_provider, "openclaw");
     }
 
     #[test]
-    fn enabled_can_be_set_to_false() {
+    fn providers_can_be_set_to_none() {
         let toml = r#"
-[ollama]
-enabled = false
-[nexa]
-enabled = false
-[openclaw]
-enabled = false
+[global]
+llm_provider = "none"
+agent_provider = "none"
 "#;
         let config = CustomerConfig::from_toml(toml).unwrap();
-        assert!(!config.ollama.enabled);
-        assert!(!config.nexa.enabled);
-        assert!(!config.openclaw.enabled);
+        assert_eq!(config.global.llm_provider, "none");
+        assert_eq!(config.global.agent_provider, "none");
     }
 
     // ── Notifications config tests ─────────────────────────────────────
@@ -681,9 +712,6 @@ auto_update = false
     #[test]
     fn openclaw_gateway_and_extra_config() {
         let toml = r#"
-[openclaw]
-provider = "ollama"
-
 [openclaw.gateway]
 port = 8080
 
@@ -704,6 +732,6 @@ some_key = "some_value"
         // Spot-check that descriptions made it into the schema
         assert!(json.contains("Package flavour"), "schema missing flavour description");
         assert!(json.contains("Models to pull"), "schema missing models description");
-        assert!(json.contains("LLM backend"), "schema missing provider description");
+        assert!(json.contains("LLM backend"), "schema missing llm_provider description");
     }
 }

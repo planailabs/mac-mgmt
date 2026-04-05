@@ -17,6 +17,15 @@
 # Can also be overridden at runtime via RUST_LOG env var.
 # log_level = "info"
 
+# ── Global ───────────────────────────────────────────────────────────
+# Controls which service providers are active. These two fields drive
+# which [ollama]/[nexa]/[openclaw] sections are actually used.
+[global]
+# LLM inference backend: "ollama", "nexa", or "none"
+llm_provider = "ollama"
+# Agent provider: "openclaw" or "none"
+agent_provider = "openclaw"
+
 # ── Metrics ──────────────────────────────────────────────────────────
 # Prometheus metrics endpoint. Scraped by monitoring systems.
 # Exposes: mac_mgmt_service_healthy, mac_mgmt_service_upgrade_pending,
@@ -26,32 +35,25 @@ port = 9396
 
 # ── OpenClaw ─────────────────────────────────────────────────────────
 # OpenClaw AI gateway configuration.
-[openclaw]
-# Set to false to skip managing OpenClaw entirely.
-# enabled = true
-#
-# Which LLM backend OpenClaw should use: "ollama" or "nexa"
-provider = "ollama"
-
+# Only used when global.agent_provider = "openclaw".
+# [openclaw]
 # Gateway settings merged into ~/.openclaw/openclaw.json.
 # These are typed, validated fields for common settings.
 # [openclaw.gateway]
 # port = 8080
 # host = "127.0.0.1"
-
+#
 # Skills auto-update behavior.
 # [openclaw.skills]
 # auto_update = true
-
+#
 # Escape hatch: arbitrary key-value pairs merged into openclaw.json
 # AFTER the typed fields above. Use for niche settings not covered above.
 # extra_config = { "some" = { "deep" = { "key" = "value" } } }
 
 # ── Ollama ───────────────────────────────────────────────────────────
-# Ollama LLM inference engine. Only used when openclaw.provider = "ollama".
+# Ollama LLM inference engine. Only used when global.llm_provider = "ollama".
 [ollama]
-# Set to false to skip managing Ollama entirely.
-# enabled = true
 host = "127.0.0.1"
 port = 11434
 # Models to pull on startup. At least one required.
@@ -63,9 +65,8 @@ default_model = "phi4-mini"
 flavour = "cpu"
 
 # ── Nexa ─────────────────────────────────────────────────────────────
-# Alternative LLM provider. Only used when openclaw.provider = "nexa".
+# Alternative LLM provider. Only used when global.llm_provider = "nexa".
 # [nexa]
-# enabled = true
 # host = "127.0.0.1"
 # port = 18181
 # models = ["ggml-org/Qwen3-1.7B-GGUF"]
