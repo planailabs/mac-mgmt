@@ -108,6 +108,34 @@ fn sync_nix_packages(servers: &HashMap<String, McpServerEntry>) {
 
     let current = read_nix_state();
 
+    // Verify desired packages that the state file claims are installed
+    // actually exist in the nix profile — reinstall any that are missing.
+    let installed: HashSet<String> = match crate::nix::installed_elements() {
+        Ok(elems) => elems.into_iter().collect(),
+        Err(e) => {
+            tracing::warn!("failed to list installed nix elements, skipping profile verification: {e}");
+            HashSet::new()
+        }
+    };
+
+    if !installed.is_empty() {
+        let missing: Vec<&String> = desired
+            .intersection(&current)
+            .filter(|pkg| !installed.contains(*pkg))
+            .collect();
+        for pkg in &missing {
+            tracing::warn!("MCP nix package {pkg} missing from profile, reinstalling");
+            sentry_ext::breadcrumb("mcp-nix", &format!("reinstalling missing {pkg}"), &[("package", pkg)]);
+            if let Err(e) = crate::nix::profile_install(pkg, false) {
+                tracing::warn!("failed to reinstall missing MCP nix dependency {pkg}: {e}");
+                sentry_ext::capture_error(
+                    &format!("MCP nix reinstall failed: {pkg}: {e}"),
+                    &[("package", pkg)],
+                );
+            }
+        }
+    }
+
     // Install new packages
     let to_install: Vec<&String> = desired.difference(&current).collect();
     for pkg in &to_install {
