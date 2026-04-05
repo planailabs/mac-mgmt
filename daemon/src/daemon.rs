@@ -81,6 +81,13 @@ pub async fn run() -> Result<()> {
         instance_id,
     );
 
+    // Remove packages installed from the old nix source (before per-system job names)
+    match tokio::task::spawn_blocking(crate::nix::remove_old_source_packages).await {
+        Ok(Err(e)) => tracing::warn!("old nix source cleanup failed: {e}"),
+        Err(e) => tracing::warn!("old nix source cleanup task panicked: {e}"),
+        _ => {}
+    }
+
     // Run immediate update check and skills/MCP/SSH-key sync on startup
     #[cfg(feature = "self-update")]
     { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }

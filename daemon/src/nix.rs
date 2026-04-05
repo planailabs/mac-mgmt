@@ -348,6 +348,49 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
     Ok(())
 }
 
+/// Remove packages installed from the old NIX_SOURCE (without system suffix in the job name).
+/// The old source ended with `?job=build#pkg` while the new one ends with `?job=build_<system>#pkg`.
+pub fn remove_old_source_packages() -> Result<()> {
+    let output = Command::new("nix")
+        .args(["profile", "list", "--json"])
+        .output()
+        .context("failed to run nix profile list")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "nix profile list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
+
+    // The old URL is exactly NIX_SOURCE_BASE (ending in ?job=build) followed by #pkg.
+    // The new URL has ?job=build_<system> so we match URLs that contain ?job=build#
+    // (i.e. nothing between "build" and "#").
+    let old_prefix = format!("{NIX_SOURCE_BASE}#");
+
+    let Some(elements) = json.get("elements").and_then(|e| e.as_object()) else {
+        return Ok(());
+    };
+
+    for (name, element) in elements {
+        let url = element
+            .get("originalUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if url.starts_with(&old_prefix) {
+            tracing::info!("removing package {name} from old nix source: {url}");
+            if let Err(e) = profile_remove(name) {
+                tracing::warn!("failed to remove old-source package {name}: {e}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Resolve the absolute path to the nix binary.
 /// Must be called before any operation that might remove nix from the profile.
 fn resolve_nix_binary() -> Result<PathBuf> {
