@@ -31,6 +31,7 @@ pub async fn print_status(port: u16) -> Result<()> {
 
     let resp = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
         .build()
         .context("failed to build HTTP client")?
         .get(&url)
