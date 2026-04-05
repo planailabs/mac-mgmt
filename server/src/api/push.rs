@@ -72,6 +72,7 @@ pub async fn sse_events(
 
     Some(EventStream! {
         let mut rx = rx;
+        let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             tokio::select! {
                 msg = rx.recv() => {
@@ -85,6 +86,9 @@ pub async fn sse_events(
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
                     }
+                }
+                _ = keepalive.tick() => {
+                    yield Event::comment("");
                 }
                 _ = &mut shutdown => break,
             }
