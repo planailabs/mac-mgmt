@@ -8,7 +8,8 @@ use crate::web::app::Route;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutInfo {
     id: Uuid,
-    config_toml: String,
+    target_version: String,
+    target_environment: String,
     status: String,
     created_at: DateTime<Utc>,
     stages: Vec<StageInfo>,
@@ -37,13 +38,14 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     #[derive(sqlx::FromRow)]
     struct RRow {
         id: Uuid,
-        config_toml: String,
+        target_version: String,
+        target_environment: String,
         status: String,
         created_at: DateTime<Utc>,
     }
 
     let rollout = sqlx::query_as::<_, RRow>(
-        "SELECT id, config_toml, status, created_at FROM rollouts WHERE id = $1",
+        "SELECT id, target_version, target_environment, status, created_at FROM rollouts WHERE id = $1",
     )
     .bind(rid)
     .fetch_one(&pool)
@@ -102,7 +104,8 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
 
     Ok(RolloutInfo {
         id: rollout.id,
-        config_toml: rollout.config_toml,
+        target_version: rollout.target_version,
+        target_environment: rollout.target_environment,
         status: rollout.status,
         created_at: rollout.created_at,
         stages: stages
@@ -249,18 +252,14 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
         }
         "complete" => {
-            let config_toml: String =
-                sqlx::query_scalar("SELECT config_toml FROM rollouts WHERE id = $1")
-                    .bind(rid)
-                    .fetch_one(&pool)
-                    .await
-                    .map_err(|e| ServerFnError::new(e.to_string()))?;
-            let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-                 JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id WHERE rs.rollout_id = $1",
+            #[derive(sqlx::FromRow)]
+            struct Tgt { target_version: String, target_environment: String }
+
+            let tgt = sqlx::query_as::<_, Tgt>(
+                "SELECT target_version, target_environment FROM rollouts WHERE id = $1",
             )
             .bind(rid)
-            .fetch_all(&pool)
+            .fetch_one(&pool)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
@@ -280,16 +279,18 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-            for cid in &customer_ids {
-                sqlx::query(
-                    "INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)",
-                )
-                .bind(cid)
-                .bind(&config_toml)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-            }
+            sqlx::query(
+                "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
+                 SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+                 JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+                 WHERE rs.rollout_id = $3)",
+            )
+            .bind(&tgt.target_environment)
+            .bind(&tgt.target_version)
+            .bind(rid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -499,10 +500,11 @@ pub fn RolloutDetail(id: String) -> Element {
                     }
                 }
 
-                // Config
-                h3 { class: "text-lg font-semibold mb-2", "Config" }
-                pre { class: "bg-gray-100 p-4 rounded text-xs font-mono overflow-auto max-h-64",
-                    "{info.config_toml}"
+                // Target
+                h3 { class: "text-lg font-semibold mb-2", "Target" }
+                div { class: "bg-gray-100 p-4 rounded text-sm space-y-1",
+                    p { span { class: "font-medium", "Version: " } "{info.target_version}" }
+                    p { span { class: "font-medium", "Environment: " } "{info.target_environment}" }
                 }
             }
         }

@@ -14,9 +14,42 @@ fn update_base() -> String {
     std::env::var("MAC_MGMT_UPDATE_URL").unwrap_or_else(|_| UPDATE_BASE.to_string())
 }
 
+/// Effective environment: if a runtime override is stored (fetched from
+/// server), use it; otherwise fall back to compile-time ENVIRONMENT.
+static RUNTIME_ENVIRONMENT: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set the runtime environment override (called from daemon after fetching from server).
+pub fn set_environment(env: String) {
+    *RUNTIME_ENVIRONMENT.write().unwrap() = Some(env);
+}
+
+static PINNED_VERSION: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set the pinned target version (from server rollout).
+/// If set, self-update will only apply this exact version (no downgrades).
+pub fn set_pinned_version(ver: String) {
+    *PINNED_VERSION.write().unwrap() = Some(ver);
+}
+
+fn pinned_version() -> Option<String> {
+    PINNED_VERSION.read().unwrap().clone()
+}
+
+fn effective_environment() -> String {
+    RUNTIME_ENVIRONMENT
+        .read()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| ENVIRONMENT.to_string())
+}
+
 pub fn check_and_apply() {
-    tracing::info!("checking for updates (current: {CURRENT_VERSION})");
-    sentry_ext::breadcrumb("self-update", "checking for updates", &[("version", CURRENT_VERSION)]);
+    let env = effective_environment();
+    tracing::info!("checking for updates (current: {CURRENT_VERSION}, env: {env})");
+    sentry_ext::breadcrumb("self-update", "checking for updates", &[
+        ("version", CURRENT_VERSION),
+        ("environment", &env),
+    ]);
 
     if let Err(e) = apply(false) {
         tracing::warn!("update failed: {e}");
@@ -29,12 +62,14 @@ pub fn check_and_apply() {
 
 fn version_url() -> String {
     let base = update_base();
-    format!("{base}/{ENVIRONMENT}/mac-mgmt.version")
+    let env = effective_environment();
+    format!("{base}/{env}/mac-mgmt.version")
 }
 
 fn archive_url() -> String {
     let base = update_base();
-    format!("{base}/{ENVIRONMENT}/mac-mgmt.tar.gz")
+    let env = effective_environment();
+    format!("{base}/{env}/mac-mgmt.tar.gz")
 }
 
 fn fetch_remote_version() -> Result<String> {
@@ -53,8 +88,26 @@ fn fetch_remote_version() -> Result<String> {
 pub fn apply(force: bool) -> Result<()> {
     let remote_version = fetch_remote_version()?;
 
+    // If a pinned version is set, only update to that exact version
+    if let Some(ref pinned) = pinned_version() {
+        if &remote_version != pinned {
+            tracing::info!(
+                "remote version {remote_version} != pinned {pinned}, skipping"
+            );
+            return Ok(());
+        }
+    }
+
     if !force && remote_version == CURRENT_VERSION {
         tracing::info!("already up to date ({CURRENT_VERSION})");
+        return Ok(());
+    }
+
+    // Prevent downgrades
+    if !force && remote_version < *CURRENT_VERSION {
+        tracing::info!(
+            "remote version {remote_version} is older than current {CURRENT_VERSION}, skipping"
+        );
         return Ok(());
     }
 

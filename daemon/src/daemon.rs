@@ -137,6 +137,11 @@ pub async fn run() -> Result<()> {
         None
     };
 
+    // Fetch environment from server for self-update channel
+    if let (Some(url), Some(token)) = (&server_url, &server_token) {
+        fetch_and_set_environment(url, token).await;
+    }
+
     // Run immediate update check and skills/MCP/SSH-key sync on startup
     #[cfg(feature = "self-update")]
     if in_upgrade_window!() {
@@ -158,6 +163,11 @@ pub async fn run() -> Result<()> {
     macro_rules! handle_update {
         () => {
             {
+                // Fetch environment from server before self-update
+                if let (Some(url), Some(token)) = (&server_url, &server_token) {
+                    fetch_and_set_environment(url, token).await;
+                }
+
                 if in_upgrade_window!() {
                     #[cfg(feature = "self-update")]
                     { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
@@ -366,6 +376,49 @@ pub async fn run() -> Result<()> {
     tracing::info!("daemon shutdown complete");
 
     Ok(())
+}
+
+/// Fetch the update environment and pinned version from the server.
+async fn fetch_and_set_environment(server_url: &str, server_token: &str) {
+    #[derive(serde::Deserialize)]
+    struct UpdateInfo {
+        environment: String,
+        pinned_version: Option<String>,
+    }
+
+    let client = reqwest::Client::new();
+    let url = format!("{server_url}/api/environment");
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.get(&url).bearer_auth(server_token).send(),
+    )
+    .await
+    {
+        Ok(Ok(resp)) if resp.status().is_success() => {
+            if let Ok(info) = resp.json::<UpdateInfo>().await {
+                tracing::info!(
+                    "server update info: env={}, pinned={:?}",
+                    info.environment,
+                    info.pinned_version
+                );
+                #[cfg(feature = "self-update")]
+                crate::self_update::set_environment(info.environment);
+                #[cfg(feature = "self-update")]
+                if let Some(ver) = info.pinned_version {
+                    crate::self_update::set_pinned_version(ver);
+                }
+            }
+        }
+        Ok(Ok(resp)) => {
+            tracing::debug!("environment fetch returned {}", resp.status());
+        }
+        Ok(Err(e)) => {
+            tracing::debug!("environment fetch failed: {e}");
+        }
+        Err(_) => {
+            tracing::debug!("environment fetch timed out");
+        }
+    }
 }
 
 async fn send_heartbeat(

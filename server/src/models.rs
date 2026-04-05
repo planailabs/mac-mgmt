@@ -7,6 +7,8 @@ use uuid::Uuid;
 pub struct Customer {
     pub id: Uuid,
     pub name: String,
+    pub environment: String,
+    pub pinned_version: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -178,7 +180,8 @@ pub struct RolloutGroupMember {
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct Rollout {
     pub id: Uuid,
-    pub config_toml: String,
+    pub target_version: String,
+    pub target_environment: String,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

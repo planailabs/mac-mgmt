@@ -188,26 +188,6 @@ pub async fn get_config(
     auth: SyncAuth,
     pool: &State<PgPool>,
 ) -> Result<String, Status> {
-    // Check for active rollout targeting this customer
-    let rollout_config = sqlx::query_scalar::<_, String>(
-        "SELECT r.config_toml FROM rollouts r \
-         JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE rgm.customer_id = $1 \
-           AND r.status = 'rolling' \
-           AND rs.status = 'rolling' \
-         ORDER BY r.created_at DESC LIMIT 1"
-    )
-    .bind(auth.customer_id)
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-
-    if let Some(config) = rollout_config {
-        return Ok(config);
-    }
-
-    // Normal config delivery
     let config = sqlx::query_scalar::<_, String>(
         "SELECT config_toml FROM customer_configs \
          WHERE customer_id = $1 \
@@ -223,6 +203,83 @@ pub async fn get_config(
         Some(toml) => Ok(toml),
         None => Err(Status::NotFound),
     }
+}
+
+// ── Update info (for daemon self-update) ────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct UpdateInfo {
+    /// Update channel (e.g., "stable", "beta", "canary")
+    environment: String,
+    /// If set, the daemon should update to exactly this version
+    pinned_version: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/environment",
+    tag = "Sync",
+    summary = "Get update channel and pinned version for this daemon",
+    description = "Returns the environment and optional pinned version. If an active rollout targets this customer, returns the rollout's target version and environment.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Update info", body = UpdateInfo),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
+#[rocket::get("/environment")]
+pub async fn get_environment(
+    auth: SyncAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<UpdateInfo>, Status> {
+    // Check for active rollout targeting this customer
+    #[derive(sqlx::FromRow)]
+    struct RolloutTarget {
+        target_version: String,
+        target_environment: String,
+    }
+
+    let rollout = sqlx::query_as::<_, RolloutTarget>(
+        "SELECT r.target_version, r.target_environment FROM rollouts r \
+         JOIN rollout_stages rs ON rs.rollout_id = r.id \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rgm.customer_id = $1 \
+           AND r.status = 'rolling' \
+           AND rs.status = 'rolling' \
+         ORDER BY r.created_at DESC LIMIT 1",
+    )
+    .bind(auth.customer_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if let Some(r) = rollout {
+        return Ok(Json(UpdateInfo {
+            environment: r.target_environment,
+            pinned_version: Some(r.target_version),
+        }));
+    }
+
+    // Fall back to customer's default
+    #[derive(sqlx::FromRow)]
+    struct CustomerInfo {
+        environment: String,
+        pinned_version: Option<String>,
+    }
+
+    let info = sqlx::query_as::<_, CustomerInfo>(
+        "SELECT environment, pinned_version FROM customers WHERE id = $1",
+    )
+    .bind(auth.customer_id)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(UpdateInfo {
+        environment: info.environment,
+        pinned_version: info.pinned_version,
+    }))
 }
 
 #[derive(sqlx::FromRow)]
@@ -1957,21 +2014,31 @@ pub async fn admin_remove_group_member(
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CreateRolloutBody {
-    config_toml: String,
+    /// Target version to roll out (semver, e.g., "0.1.6")
+    target_version: String,
+    /// Target environment/channel (e.g., "stable", "beta")
+    #[serde(default = "default_stable")]
+    target_environment: String,
     /// Ordered list of group IDs for the rollout stages
     group_ids: Vec<Uuid>,
+}
+
+fn default_stable() -> String {
+    "stable".to_string()
 }
 
 #[utoipa::path(
     post,
     path = "/api/admin/rollouts",
     tag = "Admin — Rollouts",
-    summary = "Create a new rollout",
+    summary = "Create a new version rollout",
+    description = "Creates a staged rollout to move groups of customers to a target daemon version. Validates the version is semver and prevents downgrades.",
     security(("bearer" = [])),
     request_body = CreateRolloutBody,
     responses(
         (status = 201, description = "Rollout created", body = String),
-        (status = 422, description = "Invalid config"),
+        (status = 400, description = "Bad request"),
+        (status = 409, description = "Would downgrade some customers"),
     ),
 )]
 #[rocket::post("/admin/rollouts", data = "<body>")]
@@ -1980,12 +2047,41 @@ pub async fn admin_create_rollout(
     pool: &State<PgPool>,
     body: Json<CreateRolloutBody>,
 ) -> Result<Json<serde_json::Value>, Status> {
-    // Validate config
-    mac_mgmt_common::CustomerConfig::from_toml(&body.config_toml)
-        .map_err(|_| Status::UnprocessableEntity)?;
-
-    if body.group_ids.is_empty() {
+    if body.target_version.trim().is_empty() || body.group_ids.is_empty() {
         return Err(Status::BadRequest);
+    }
+
+    // Validate semver
+    let target_parts: Vec<u64> = body
+        .target_version
+        .split('.')
+        .filter_map(|p| p.parse().ok())
+        .collect();
+    if target_parts.len() < 3 {
+        return Err(Status::BadRequest);
+    }
+
+    // Check for downgrades: find the highest pinned_version among targeted customers
+    let max_version: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(c.pinned_version) FROM customers c \
+         JOIN rollout_group_members rgm ON rgm.customer_id = c.id \
+         WHERE rgm.group_id = ANY($1) AND c.pinned_version IS NOT NULL",
+    )
+    .bind(&body.group_ids)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if let Some(ref max_ver) = max_version {
+        let max_parts: Vec<u64> = max_ver.split('.').filter_map(|p| p.parse().ok()).collect();
+        if max_parts.len() >= 3 && max_parts > target_parts {
+            tracing::warn!(
+                "rollout rejected: target {} would downgrade from {}",
+                body.target_version,
+                max_ver
+            );
+            return Err(Status::Conflict);
+        }
     }
 
     let rollout_id = Uuid::new_v4();
@@ -1993,9 +2089,10 @@ pub async fn admin_create_rollout(
     // Use a transaction
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
 
-    sqlx::query("INSERT INTO rollouts (id, config_toml) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO rollouts (id, target_version, target_environment) VALUES ($1, $2, $3)")
         .bind(rollout_id)
-        .bind(&body.config_toml)
+        .bind(&body.target_version)
+        .bind(&body.target_environment)
         .execute(&mut *tx)
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -2060,7 +2157,8 @@ pub async fn admin_list_rollouts(
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RolloutDetail {
     id: Uuid,
-    config_toml: String,
+    target_version: String,
+    target_environment: String,
     status: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -2097,9 +2195,9 @@ pub async fn admin_get_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct RolloutRow2 { id: Uuid, config_toml: String, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
+    struct RolloutRow2 { id: Uuid, target_version: String, target_environment: String, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
 
-    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, config_toml, status, created_at, updated_at FROM rollouts WHERE id = $1")
+    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, target_environment, status, created_at, updated_at FROM rollouts WHERE id = $1")
         .bind(rid)
         .fetch_optional(pool.inner())
         .await
@@ -2121,7 +2219,8 @@ pub async fn admin_get_rollout(
 
     Ok(Json(RolloutDetail {
         id: rollout.id,
-        config_toml: rollout.config_toml,
+        target_version: rollout.target_version,
+        target_environment: rollout.target_environment,
         status: rollout.status,
         created_at: rollout.created_at,
         updated_at: rollout.updated_at,
@@ -2312,24 +2411,18 @@ pub async fn admin_complete_rollout(
 ) -> Result<Status, Status> {
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
-    // Get config_toml
-    let config_toml: String = sqlx::query_scalar("SELECT config_toml FROM rollouts WHERE id = $1")
-        .bind(rid)
-        .fetch_optional(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?
-        .ok_or(Status::NotFound)?;
+    // Get rollout target
+    #[derive(sqlx::FromRow)]
+    struct Target { target_version: String, target_environment: String }
 
-    // Get all customer IDs from all stages
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE rs.rollout_id = $1"
+    let target = sqlx::query_as::<_, Target>(
+        "SELECT target_version, target_environment FROM rollouts WHERE id = $1",
     )
     .bind(rid)
-    .fetch_all(pool.inner())
+    .fetch_optional(pool.inner())
     .await
-    .map_err(|_| Status::InternalServerError)?;
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::NotFound)?;
 
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
 
@@ -2347,15 +2440,19 @@ pub async fn admin_complete_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    // Persist config to each customer
-    for cid in &customer_ids {
-        sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
-            .bind(cid)
-            .bind(&config_toml)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| Status::InternalServerError)?;
-    }
+    // Pin version and environment for all targeted customers
+    sqlx::query(
+        "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
+         SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rs.rollout_id = $3)",
+    )
+    .bind(&target.target_environment)
+    .bind(&target.target_version)
+    .bind(rid)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     Ok(Status::Ok)
