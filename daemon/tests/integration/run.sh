@@ -52,6 +52,7 @@ run_test() {
 }
 
 # Run tests
+run_test "$SCRIPT_DIR/test_self_update.sh"
 run_test "$SCRIPT_DIR/test_ollama.sh"
 run_test "$SCRIPT_DIR/test_openclaw.sh"
 run_test "$SCRIPT_DIR/test_config.sh"

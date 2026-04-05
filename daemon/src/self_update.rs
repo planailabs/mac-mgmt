@@ -8,6 +8,12 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ENVIRONMENT: &str = env!("ENVIRONMENT");
 const TARGET: &str = env!("TARGET");
 
+/// Effective update base URL: runtime `MAC_MGMT_UPDATE_URL` overrides the
+/// compile-time default.  This lets integration tests point at a local server.
+fn update_base() -> String {
+    std::env::var("MAC_MGMT_UPDATE_URL").unwrap_or_else(|_| UPDATE_BASE.to_string())
+}
+
 pub fn check_and_apply() {
     tracing::info!("checking for updates (current: {CURRENT_VERSION})");
     sentry_ext::breadcrumb("self-update", "checking for updates", &[("version", CURRENT_VERSION)]);
@@ -22,11 +28,13 @@ pub fn check_and_apply() {
 }
 
 fn version_url() -> String {
-    format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.version")
+    let base = update_base();
+    format!("{base}/{ENVIRONMENT}/mac-mgmt.version")
 }
 
 fn archive_url() -> String {
-    format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.tar.gz")
+    let base = update_base();
+    format!("{base}/{ENVIRONMENT}/mac-mgmt.tar.gz")
 }
 
 fn fetch_remote_version() -> Result<String> {
@@ -113,6 +121,8 @@ mod tests {
 
     #[test]
     fn version_url_format() {
+        // Ensure no runtime override interferes
+        unsafe { std::env::remove_var("MAC_MGMT_UPDATE_URL") };
         let url = version_url();
         assert!(url.starts_with(UPDATE_BASE));
         assert!(url.contains(ENVIRONMENT));
@@ -121,10 +131,20 @@ mod tests {
 
     #[test]
     fn archive_url_format() {
+        unsafe { std::env::remove_var("MAC_MGMT_UPDATE_URL") };
         let url = archive_url();
         assert!(url.starts_with(UPDATE_BASE));
         assert!(url.contains(ENVIRONMENT));
         assert!(url.ends_with("/mac-mgmt.tar.gz"));
+    }
+
+    #[test]
+    fn runtime_override_takes_precedence() {
+        unsafe { std::env::set_var("MAC_MGMT_UPDATE_URL", "http://localhost:9999") };
+        assert_eq!(update_base(), "http://localhost:9999");
+        let url = version_url();
+        assert!(url.starts_with("http://localhost:9999"));
+        unsafe { std::env::remove_var("MAC_MGMT_UPDATE_URL") };
     }
 
     #[test]
