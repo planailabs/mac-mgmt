@@ -37,7 +37,6 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
 #[server]
 async fn create_rollout(
     target_version: String,
-    target_environment: String,
     group_ids: Vec<String>,
 ) -> Result<String, ServerFnError> {
     let pool = crate::server_pool()?;
@@ -89,10 +88,9 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    sqlx::query("INSERT INTO rollouts (id, target_version, target_environment) VALUES ($1, $2, $3)")
+    sqlx::query("INSERT INTO rollouts (id, target_version) VALUES ($1, $2)")
         .bind(rollout_id)
         .bind(&target_version)
-        .bind(&target_environment)
         .execute(&mut *tx)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -119,7 +117,6 @@ async fn create_rollout(
 pub fn RolloutForm() -> Element {
     let groups = use_server_future(move || async move { get_group_options().await })?;
     let mut target_version = use_signal(String::new);
-    let mut target_env = use_signal(|| "stable".to_string());
     let mut all_customers = use_signal(|| false);
     let mut selected_groups = use_signal(Vec::<String>::new);
     let mut error = use_signal(|| Option::<String>::None);
@@ -153,21 +150,6 @@ pub fn RolloutForm() -> Element {
                             "Semver version to roll out. Downgrades are blocked."
                         }
                     }
-                    div {
-                        label { class: "block text-sm font-medium text-gray-700 mb-1",
-                            "Environment"
-                        }
-                        input {
-                            class: "w-full border rounded px-3 py-2 text-sm font-mono",
-                            placeholder: "e.g. stable, beta, canary",
-                            value: "{target_env}",
-                            oninput: move |e| target_env.set(e.value()),
-                        }
-                        p { class: "text-xs text-gray-400 mt-1",
-                            "Update channel. Maps to {{UPDATE_BASE}}/{{environment}}/mac-mgmt.tar.gz"
-                        }
-                    }
-
                     div {
                         label { class: "block text-sm font-medium text-gray-700 mb-1",
                             "Target"
@@ -251,7 +233,6 @@ pub fn RolloutForm() -> Element {
                         class: "bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600",
                         onclick: move |_| {
                             let ver = target_version.read().clone();
-                            let env = target_env.read().clone();
                             let is_all = *all_customers.read();
                             let groups = if is_all {
                                 vec![]
@@ -267,7 +248,7 @@ pub fn RolloutForm() -> Element {
                                     error.set(Some("Select groups or check 'All Customers'".into()));
                                     return;
                                 }
-                                match create_rollout(ver, env, groups).await {
+                                match create_rollout(ver, groups).await {
                                     Ok(id) => {
                                         nav.push(Route::RolloutDetail { id });
                                     }

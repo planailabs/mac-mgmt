@@ -2000,15 +2000,8 @@ pub async fn admin_remove_group_member(
 pub(crate) struct CreateRolloutBody {
     /// Target version to roll out (semver, e.g., "0.1.6")
     target_version: String,
-    /// Target environment/channel (e.g., "stable", "beta")
-    #[serde(default = "default_stable")]
-    target_environment: String,
     /// Ordered list of group IDs for the rollout stages
     group_ids: Vec<Uuid>,
-}
-
-fn default_stable() -> String {
-    "stable".to_string()
 }
 
 #[utoipa::path(
@@ -2073,10 +2066,9 @@ pub async fn admin_create_rollout(
 
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
 
-    sqlx::query("INSERT INTO rollouts (id, target_version, target_environment) VALUES ($1, $2, $3)")
+    sqlx::query("INSERT INTO rollouts (id, target_version) VALUES ($1, $2)")
         .bind(rollout_id)
         .bind(&body.target_version)
-        .bind(&body.target_environment)
         .execute(&mut *tx)
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -2155,7 +2147,6 @@ pub async fn admin_list_rollouts(
 pub(crate) struct RolloutDetail {
     id: Uuid,
     target_version: String,
-    target_environment: String,
     status: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -2192,9 +2183,9 @@ pub async fn admin_get_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct RolloutRow2 { id: Uuid, target_version: String, target_environment: String, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
+    struct RolloutRow2 { id: Uuid, target_version: String, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
 
-    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, target_environment, status, created_at, updated_at FROM rollouts WHERE id = $1")
+    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, status, created_at, updated_at FROM rollouts WHERE id = $1")
         .bind(rid)
         .fetch_optional(pool.inner())
         .await
@@ -2217,7 +2208,6 @@ pub async fn admin_get_rollout(
     Ok(Json(RolloutDetail {
         id: rollout.id,
         target_version: rollout.target_version,
-        target_environment: rollout.target_environment,
         status: rollout.status,
         created_at: rollout.created_at,
         updated_at: rollout.updated_at,
@@ -2409,11 +2399,8 @@ pub async fn admin_complete_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     // Get rollout target
-    #[derive(sqlx::FromRow)]
-    struct Target { target_version: String, target_environment: String }
-
-    let target = sqlx::query_as::<_, Target>(
-        "SELECT target_version, target_environment FROM rollouts WHERE id = $1",
+    let target_version: String = sqlx::query_scalar(
+        "SELECT target_version FROM rollouts WHERE id = $1",
     )
     .bind(rid)
     .fetch_optional(pool.inner())
@@ -2437,8 +2424,7 @@ pub async fn admin_complete_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    // Pin version and environment for all targeted customers.
-    // If any stage has group_id IS NULL, it targets all customers.
+    // Pin version for all targeted customers.
     let has_all_stage: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM rollout_stages WHERE rollout_id = $1 AND group_id IS NULL)",
     )
@@ -2448,21 +2434,19 @@ pub async fn admin_complete_rollout(
     .map_err(|_| Status::InternalServerError)?;
 
     if has_all_stage {
-        sqlx::query("UPDATE customers SET environment = $1, pinned_version = $2")
-            .bind(&target.target_environment)
-            .bind(&target.target_version)
+        sqlx::query("UPDATE customers SET pinned_version = $1")
+            .bind(&target_version)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     } else {
         sqlx::query(
-            "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
+            "UPDATE customers SET pinned_version = $1 WHERE id IN (\
              SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
              JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-             WHERE rs.rollout_id = $3)",
+             WHERE rs.rollout_id = $2)",
         )
-        .bind(&target.target_environment)
-        .bind(&target.target_version)
+        .bind(&target_version)
         .bind(rid)
         .execute(&mut *tx)
         .await

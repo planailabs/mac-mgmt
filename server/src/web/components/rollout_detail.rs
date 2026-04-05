@@ -9,7 +9,6 @@ use crate::web::app::Route;
 struct RolloutInfo {
     id: Uuid,
     target_version: String,
-    target_environment: String,
     status: String,
     created_at: DateTime<Utc>,
     stages: Vec<StageInfo>,
@@ -39,13 +38,12 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     struct RRow {
         id: Uuid,
         target_version: String,
-        target_environment: String,
         status: String,
         created_at: DateTime<Utc>,
     }
 
     let rollout = sqlx::query_as::<_, RRow>(
-        "SELECT id, target_version, target_environment, status, created_at FROM rollouts WHERE id = $1",
+        "SELECT id, target_version, status, created_at FROM rollouts WHERE id = $1",
     )
     .bind(rid)
     .fetch_one(&pool)
@@ -107,7 +105,6 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     Ok(RolloutInfo {
         id: rollout.id,
         target_version: rollout.target_version,
-        target_environment: rollout.target_environment,
         status: rollout.status,
         created_at: rollout.created_at,
         stages: stages
@@ -254,11 +251,8 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
         }
         "complete" => {
-            #[derive(sqlx::FromRow)]
-            struct Tgt { target_version: String, target_environment: String }
-
-            let tgt = sqlx::query_as::<_, Tgt>(
-                "SELECT target_version, target_environment FROM rollouts WHERE id = $1",
+            let target_version: String = sqlx::query_scalar(
+                "SELECT target_version FROM rollouts WHERE id = $1",
             )
             .bind(rid)
             .fetch_one(&pool)
@@ -291,21 +285,19 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
             if has_all {
-                sqlx::query("UPDATE customers SET environment = $1, pinned_version = $2")
-                    .bind(&tgt.target_environment)
-                    .bind(&tgt.target_version)
+                sqlx::query("UPDATE customers SET pinned_version = $1")
+                    .bind(&target_version)
                     .execute(&mut *tx)
                     .await
                     .map_err(|e| ServerFnError::new(e.to_string()))?;
             } else {
                 sqlx::query(
-                    "UPDATE customers SET environment = $1, pinned_version = $2 WHERE id IN (\
+                    "UPDATE customers SET pinned_version = $1 WHERE id IN (\
                      SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
                      JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-                     WHERE rs.rollout_id = $3)",
+                     WHERE rs.rollout_id = $2)",
                 )
-                .bind(&tgt.target_environment)
-                .bind(&tgt.target_version)
+                .bind(&target_version)
                 .bind(rid)
                 .execute(&mut *tx)
                 .await
@@ -524,7 +516,6 @@ pub fn RolloutDetail(id: String) -> Element {
                 h3 { class: "text-lg font-semibold mb-2", "Target" }
                 div { class: "bg-gray-100 p-4 rounded text-sm space-y-1",
                     p { span { class: "font-medium", "Version: " } "{info.target_version}" }
-                    p { span { class: "font-medium", "Environment: " } "{info.target_environment}" }
                 }
             }
         }
