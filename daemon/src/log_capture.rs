@@ -1,5 +1,6 @@
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
@@ -41,49 +42,86 @@ fn rotated_path(base: &Path, n: usize) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// Handle for writing daemon-level messages to a service's log file.
+#[derive(Clone)]
+pub struct ServiceLogger {
+    name: String,
+    file: Arc<Mutex<std::fs::File>>,
+    bytes_written: Arc<std::sync::atomic::AtomicU64>,
+    log_path: PathBuf,
+}
+
+impl ServiceLogger {
+    /// Write a daemon-level message to the service log file (e.g., health check results).
+    pub fn write(&self, msg: &str) {
+        use std::io::Write;
+        let mut f = self.file.lock().unwrap();
+        let line = format!("[mac-mgmt] {msg}");
+        let n = writeln!(f, "{line}").map(|_| line.len() as u64 + 1).unwrap_or(0);
+        let total = self.bytes_written.fetch_add(n, std::sync::atomic::Ordering::Relaxed) + n;
+        if total >= MAX_LOG_SIZE {
+            drop(f);
+            if maybe_rotate(&self.log_path).unwrap_or(false) {
+                if let Ok(new_f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.log_path)
+                {
+                    *self.file.lock().unwrap() = new_f;
+                    self.bytes_written.store(0, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+    }
+}
+
 /// Capture stdout/stderr from a child process, log via tracing, and write to a log file.
-/// Returns a JoinHandle that completes when the child's pipes close (process exits).
+/// Returns a JoinHandle and a ServiceLogger for writing daemon-level messages.
 pub fn capture(
     service_name: &str,
     child: &mut std::process::Child,
     log_dir: &Path,
-) -> JoinHandle<()> {
+) -> (JoinHandle<()>, ServiceLogger) {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let name = service_name.to_string();
     let log_dir = log_dir.to_path_buf();
 
-    tokio::task::spawn_blocking(move || {
-        // Create log directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&log_dir) {
-            tracing::error!("failed to create log dir {}: {e}", log_dir.display());
-            return;
-        }
+    // Create log directory and file before spawning so we can return the ServiceLogger
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        tracing::error!("failed to create log dir {}: {e}", log_dir.display());
+    }
 
-        let log_path = log_dir.join(format!("{name}.log"));
+    let log_path = log_dir.join(format!("{name}.log"));
+    let _ = maybe_rotate(&log_path);
 
-        // Rotate if the log file is already large (e.g., from a previous run)
-        let _ = maybe_rotate(&log_path);
+    let log_file = Arc::new(Mutex::new(
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .unwrap_or_else(|e| {
+                tracing::error!("failed to open log file {}: {e}", log_path.display());
+                // Create a file that writes to /dev/null as fallback
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open("/dev/null")
+                    .unwrap()
+            }),
+    ));
+    let bytes_written = Arc::new(std::sync::atomic::AtomicU64::new(
+        std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0),
+    ));
 
+    let logger = ServiceLogger {
+        name: name.clone(),
+        file: Arc::clone(&log_file),
+        bytes_written: Arc::clone(&bytes_written),
+        log_path: log_path.clone(),
+    };
+
+    let handle = tokio::task::spawn_blocking(move || {
         use std::io::Write;
-        use std::sync::{Arc, Mutex};
-
-        let log_file = Arc::new(Mutex::new(
-            match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-            {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::error!("failed to open log file {}: {e}", log_path.display());
-                    return;
-                }
-            },
-        ));
-        let bytes_written = Arc::new(std::sync::atomic::AtomicU64::new(
-            std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0),
-        ));
 
         let log_file2 = Arc::clone(&log_file);
         let bytes_written2 = Arc::clone(&bytes_written);
@@ -168,7 +206,9 @@ pub fn capture(
         if let Some(t) = stderr_thread {
             let _ = t.join();
         }
-    })
+    });
+
+    (handle, logger)
 }
 
 #[cfg(test)]
@@ -186,7 +226,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        let handle = capture("test_svc", &mut child, dir.path());
+        let (handle, _logger) = capture("test_svc", &mut child, dir.path());
         handle.await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("test_svc.log")).unwrap();
@@ -206,7 +246,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        let handle = capture("test_svc", &mut child, dir.path());
+        let (handle, _logger) = capture("test_svc", &mut child, dir.path());
         handle.await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("test_svc.log")).unwrap();
@@ -227,7 +267,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        let handle = capture("svc", &mut child, &log_dir);
+        let (handle, _logger) = capture("svc", &mut child, &log_dir);
         handle.await.unwrap();
 
         assert!(log_dir.join("svc.log").exists());
@@ -252,7 +292,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        let handle = capture("ansi_svc", &mut child, dir.path());
+        let (handle, _logger) = capture("ansi_svc", &mut child, dir.path());
         handle.await.unwrap();
 
         let content = std::fs::read_to_string(dir.path().join("ansi_svc.log")).unwrap();
@@ -272,7 +312,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        let handle = capture("svc", &mut child, dir.path());
+        let (handle, _logger) = capture("svc", &mut child, dir.path());
         // Should complete without hanging
         tokio::time::timeout(std::time::Duration::from_secs(5), handle)
             .await

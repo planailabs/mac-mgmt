@@ -21,6 +21,7 @@ struct ServiceState {
     consecutive_crashes: u32,
     was_unhealthy: bool,
     log_task: Option<JoinHandle<()>>,
+    logger: Option<crate::log_capture::ServiceLogger>,
 }
 
 pub struct ServiceManager {
@@ -74,7 +75,9 @@ impl ServiceManager {
 
             service.preflight()?;
             let mut child = service.spawn()?;
-            let log_task = Some(crate::log_capture::capture(service.name(), &mut child, &log_dir));
+            let (log_handle, log) = crate::log_capture::capture(service.name(), &mut child, &log_dir);
+            let log_task = Some(log_handle);
+            let logger = Some(log);
             sentry_ext::breadcrumb(
                 "service",
                 &format!("{name} initialized"),
@@ -90,6 +93,7 @@ impl ServiceManager {
                 consecutive_crashes: 0,
                 was_unhealthy: false,
                 log_task,
+                logger,
             });
         }
 
@@ -164,6 +168,12 @@ impl ServiceManager {
     }
 
     /// Run health checks, restart crashed services, apply pending upgrades.
+    fn log_to_service(state: &ServiceState, msg: &str) {
+        if let Some(ref logger) = state.logger {
+            logger.write(msg);
+        }
+    }
+
     pub fn health_tick(&mut self, metrics: &Arc<Metrics>, in_upgrade_window: bool) {
         for state in &mut self.states {
             let name = state.service.name();
@@ -186,6 +196,7 @@ impl ServiceManager {
                         &[("service", name), ("exit_code", &code)],
                     );
 
+                    Self::log_to_service(state, &format!("crashed with {status} (#{crashes})", crashes = state.consecutive_crashes));
                     self.dispatcher.dispatch(&DaemonEvent::ServiceCrashed {
                         service: name.to_string(),
                         exit_code: status.code(),
@@ -210,7 +221,9 @@ impl ServiceManager {
                             if let Some(old_task) = state.log_task.take() {
                                 old_task.abort();
                             }
-                            state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_dir));
+                            let (lh, lg) = crate::log_capture::capture(name, &mut child, &self.log_dir);
+                                state.log_task = Some(lh);
+                                state.logger = Some(lg);
                             state.child = child;
                             state.upgrade_pending = false;
                             state.skip_health_check = true;
@@ -241,7 +254,9 @@ impl ServiceManager {
                                 if let Some(old_task) = state.log_task.take() {
                                     old_task.abort();
                                 }
-                                state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_dir));
+                                let (lh, lg) = crate::log_capture::capture(name, &mut child, &self.log_dir);
+                                state.log_task = Some(lh);
+                                state.logger = Some(lg);
                                 state.child = child;
                                 state.restart_pending = false;
                                 state.upgrade_pending = false;
@@ -274,7 +289,9 @@ impl ServiceManager {
                                 if let Some(old_task) = state.log_task.take() {
                                     old_task.abort();
                                 }
-                                state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_dir));
+                                let (lh, lg) = crate::log_capture::capture(name, &mut child, &self.log_dir);
+                                state.log_task = Some(lh);
+                                state.logger = Some(lg);
                                 state.child = child;
                                 state.upgrade_pending = false;
                                 state.skip_health_check = true;
@@ -320,6 +337,7 @@ impl ServiceManager {
                 match state.service.check_health() {
                     Ok(true) => {
                         tracing::info!("{name} is healthy");
+                        Self::log_to_service(state, "healthy");
                         state.consecutive_crashes = 0;
                         if state.was_unhealthy {
                             state.was_unhealthy = false;
@@ -341,6 +359,7 @@ impl ServiceManager {
                     }
                     Ok(false) => {
                         tracing::warn!("{name} is unhealthy, attempting repair");
+                        Self::log_to_service(state, "unhealthy, attempting repair");
                         sentry_ext::breadcrumb(
                             "health",
                             &format!("{name} unhealthy, repairing"),
