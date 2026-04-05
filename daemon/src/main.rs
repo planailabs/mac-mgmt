@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
         Commands::Update { force } => self_update::apply(force)?,
         #[cfg(not(feature = "self-update"))]
         Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
-        Commands::Status { port } => status::print_status(port)?,
+        Commands::Status { port } => status::print_status(port).await?,
         Commands::Logs { service, lines, follow } => {
             logs::tail_logs(service.as_deref(), lines, follow, None)?;
         }

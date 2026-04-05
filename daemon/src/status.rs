@@ -26,15 +26,16 @@ fn format_uptime(secs: u64) -> String {
     }
 }
 
-pub fn print_status(port: u16) -> Result<()> {
+pub async fn print_status(port: u16) -> Result<()> {
     let url = format!("http://127.0.0.1:{port}/status");
 
-    let resp = reqwest::blocking::Client::builder()
+    let resp = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .context("failed to build HTTP client")?
         .get(&url)
         .send()
+        .await
         .map_err(|e| {
             if e.is_connect() {
                 anyhow::anyhow!("daemon not running or metrics port differs")
@@ -45,6 +46,7 @@ pub fn print_status(port: u16) -> Result<()> {
 
     let status: StatusResponse = resp
         .json()
+        .await
         .context("failed to parse status response")?;
 
     println!(
@@ -110,9 +112,9 @@ mod tests {
         assert!(status.services[1].busy);
     }
 
-    #[test]
-    fn connection_refused_gives_helpful_error() {
-        let result = print_status(19999); // unlikely to be in use
+    #[tokio::test]
+    async fn connection_refused_gives_helpful_error() {
+        let result = print_status(19999).await; // unlikely to be in use
         let err = result.unwrap_err();
         assert!(
             err.to_string().contains("daemon not running"),
