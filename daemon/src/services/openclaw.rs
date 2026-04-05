@@ -109,6 +109,22 @@ impl ManagedService for OpenClaw {
             changed = true;
         }
 
+        // Apply typed telegram fields
+        if let Some(tg) = &self.config.telegram {
+            let mut telegram_obj = serde_json::json!({
+                "telegram": {
+                    "botToken": tg.bot_token,
+                    "enabled": tg.enabled,
+                }
+            });
+            if !tg.allowed_chat_ids.is_empty() {
+                telegram_obj["telegram"]["allowedChatIds"] =
+                    serde_json::json!(tg.allowed_chat_ids);
+            }
+            merge_json(&mut existing, &telegram_obj);
+            changed = true;
+        }
+
         // Merge extra_config if configured (applied AFTER typed fields)
         if let Some(extra) = &self.config.extra_config {
             tracing::info!("merging extra_config into openclaw.json");

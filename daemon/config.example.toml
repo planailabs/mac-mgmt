@@ -52,6 +52,13 @@ port = 9396
 # [openclaw.skills]
 # auto_update = true
 #
+# Telegram bot integration. Connects OpenClaw to a Telegram bot so users
+# can chat with the agent via Telegram.
+# [openclaw.telegram]
+# bot_token = "123456:ABC-DEF..."          # from @BotFather
+# allowed_chat_ids = [123456789, -100...]  # optional; empty = allow all
+# enabled = true                           # default: true
+#
 # Escape hatch: arbitrary key-value pairs merged into openclaw.json
 # AFTER the typed fields above. Use for niche settings not covered above.
 # extra_config = { "some" = { "deep" = { "key" = "value" } } }

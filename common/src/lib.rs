@@ -212,6 +212,19 @@ pub struct OpenClawSkillsConfig {
     pub auto_update: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenClawTelegramConfig {
+    #[schemars(description = "Telegram bot token from @BotFather")]
+    pub bot_token: String,
+    #[schemars(description = "Allowed Telegram chat IDs. If empty, all chats are allowed.")]
+    #[serde(default)]
+    pub allowed_chat_ids: Vec<i64>,
+    #[schemars(description = "Enable the Telegram integration")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
@@ -221,6 +234,9 @@ pub struct OpenClawConfig {
     #[schemars(description = "Skills auto-update behavior")]
     #[serde(default)]
     pub skills: Option<OpenClawSkillsConfig>,
+    #[schemars(description = "Telegram bot integration")]
+    #[serde(default)]
+    pub telegram: Option<OpenClawTelegramConfig>,
     #[schemars(description = "Arbitrary key-value pairs merged into openclaw.json after typed fields")]
     #[serde(default)]
     pub extra_config: Option<serde_json::Value>,
@@ -231,6 +247,7 @@ impl Default for OpenClawConfig {
         Self {
             gateway: None,
             skills: None,
+            telegram: None,
             extra_config: None,
         }
     }
@@ -744,6 +761,33 @@ auto_update = false
         let config = CustomerConfig::from_toml(toml).unwrap();
         let skills = config.openclaw.skills.unwrap();
         assert!(!skills.auto_update);
+    }
+
+    #[test]
+    fn openclaw_telegram_config() {
+        let toml = r#"
+[openclaw.telegram]
+bot_token = "123456:ABC-DEF"
+allowed_chat_ids = [111, 222]
+"#;
+        let config = CustomerConfig::from_toml(toml).unwrap();
+        let tg = config.openclaw.telegram.unwrap();
+        assert_eq!(tg.bot_token, "123456:ABC-DEF");
+        assert_eq!(tg.allowed_chat_ids, vec![111, 222]);
+        assert!(tg.enabled); // default true
+    }
+
+    #[test]
+    fn openclaw_telegram_minimal() {
+        let toml = r#"
+[openclaw.telegram]
+bot_token = "tok"
+"#;
+        let config = CustomerConfig::from_toml(toml).unwrap();
+        let tg = config.openclaw.telegram.unwrap();
+        assert_eq!(tg.bot_token, "tok");
+        assert!(tg.allowed_chat_ids.is_empty());
+        assert!(tg.enabled);
     }
 
     #[test]
