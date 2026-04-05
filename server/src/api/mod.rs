@@ -1,4 +1,5 @@
 mod auth;
+pub mod push;
 mod routes;
 
 use rocket::config::Shutdown;
@@ -145,8 +146,11 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
         ..Config::default()
     };
 
+    let push_channels = push::new_push_channels();
+
     rocket::custom(config)
         .manage(pool)
+        .manage(push_channels)
         .mount(
             "/api",
             rocket::routes![
@@ -213,6 +217,8 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
                 routes::admin_advance_rollout,
                 routes::admin_pause_rollout,
                 routes::admin_complete_rollout,
+                // SSE push
+                push::sse_events,
             ],
         )
         .mount(

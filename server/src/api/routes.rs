@@ -13,6 +13,7 @@ use base64::Engine;
 use sha2::{Sha256, Digest};
 
 use super::auth::{AdminAuth, AuthenticatedCustomer, SettingAuth, SyncAuth};
+use super::push::{self, PushChannels, PushMessage};
 
 // ── Common routes (any valid token) ────────────────────────────────────
 
@@ -435,6 +436,7 @@ pub struct SetConfigBody {
 pub async fn setting_set_config(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     body: Json<SetConfigBody>,
 ) -> Result<Status, Status> {
     mac_mgmt_common::CustomerConfig::from_toml(&body.config_toml)
@@ -446,6 +448,8 @@ pub async fn setting_set_config(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+
+    push::notify(channels, auth.customer_id, PushMessage::SyncConfig).await;
     Ok(Status::Created)
 }
 
@@ -499,6 +503,7 @@ pub struct AddSkillBody {
 pub async fn setting_add_skill(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     body: Json<AddSkillBody>,
 ) -> Result<Status, Status> {
     sqlx::query("INSERT INTO customer_skills (customer_id, skill_channel_id) VALUES ($1, $2)")
@@ -507,6 +512,7 @@ pub async fn setting_add_skill(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
     Ok(Status::Created)
 }
 
@@ -526,8 +532,9 @@ pub async fn setting_add_skill(
 )]
 #[rocket::delete("/setting/skills/<id>")]
 pub async fn setting_remove_skill(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
@@ -536,6 +543,7 @@ pub async fn setting_remove_skill(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
     Ok(Status::NoContent)
 }
 
@@ -602,6 +610,7 @@ pub struct AddBundleBody {
 pub async fn setting_add_bundle(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     body: Json<AddBundleBody>,
 ) -> Result<Status, Status> {
     sqlx::query("INSERT INTO customer_bundles (customer_id, bundle_id) VALUES ($1, $2)")
@@ -610,6 +619,7 @@ pub async fn setting_add_bundle(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
     Ok(Status::Created)
 }
 
@@ -629,8 +639,9 @@ pub async fn setting_add_bundle(
 )]
 #[rocket::delete("/setting/bundles/<id>")]
 pub async fn setting_remove_bundle(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
@@ -639,6 +650,7 @@ pub async fn setting_remove_bundle(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
     Ok(Status::NoContent)
 }
 
@@ -692,6 +704,7 @@ pub struct AddMcpServerBody {
 pub async fn setting_add_mcp_server(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     body: Json<AddMcpServerBody>,
 ) -> Result<Status, Status> {
     sqlx::query("INSERT INTO customer_mcp_servers (customer_id, mcp_server_id) VALUES ($1, $2)")
@@ -700,6 +713,7 @@ pub async fn setting_add_mcp_server(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Created)
 }
 
@@ -719,8 +733,9 @@ pub async fn setting_add_mcp_server(
 )]
 #[rocket::delete("/setting/mcp-servers/<id>")]
 pub async fn setting_remove_mcp_server(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
@@ -729,6 +744,7 @@ pub async fn setting_remove_mcp_server(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
     Ok(Status::NoContent)
 }
 
@@ -795,6 +811,7 @@ pub struct AddMcpBundleBody {
 pub async fn setting_add_mcp_bundle(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     body: Json<AddMcpBundleBody>,
 ) -> Result<Status, Status> {
     sqlx::query("INSERT INTO customer_mcp_bundles (customer_id, bundle_id) VALUES ($1, $2)")
@@ -803,6 +820,7 @@ pub async fn setting_add_mcp_bundle(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Created)
 }
 
@@ -822,8 +840,9 @@ pub async fn setting_add_mcp_bundle(
 )]
 #[rocket::delete("/setting/mcp-bundles/<id>")]
 pub async fn setting_remove_mcp_bundle(
-    _auth: SettingAuth,
+    auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
@@ -832,6 +851,7 @@ pub async fn setting_remove_mcp_bundle(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
     Ok(Status::NoContent)
 }
 
@@ -1681,6 +1701,7 @@ fn parse_ssh_public_key(raw: &str) -> Result<(String, String), Status> {
 pub async fn setting_add_ssh_key(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     body: Json<AddSshKeyBody>,
 ) -> Result<Status, Status> {
     let trimmed = body.public_key.trim();
@@ -1704,6 +1725,7 @@ pub async fn setting_add_ssh_key(
         }
     })?;
 
+    push::notify(channels, auth.customer_id, PushMessage::SyncSshKeys).await;
     Ok(Status::Created)
 }
 
@@ -1725,6 +1747,7 @@ pub async fn setting_add_ssh_key(
 pub async fn setting_remove_ssh_key(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    channels: &State<PushChannels>,
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
@@ -1734,6 +1757,7 @@ pub async fn setting_remove_ssh_key(
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncSshKeys).await;
     Ok(Status::NoContent)
 }
 
