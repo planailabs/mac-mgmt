@@ -16,6 +16,11 @@
 # Log verbosity. One of: error, warn, info, debug, trace
 # Can also be overridden at runtime via RUST_LOG env var.
 # log_level = "info"
+#
+# Time window during which binary and nix upgrades are allowed.
+# Format: "HH:MM-HH:MM" (24-hour, local time). Supports midnight crossing.
+# Omit to allow upgrades at any time. Skills/MCP/SSH sync is not affected.
+# upgrade_window = "02:00-05:00"
 
 # ── Global ───────────────────────────────────────────────────────────
 # Controls which service providers are active. These two fields drive

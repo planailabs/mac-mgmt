@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use crate::models::Customer;
 
 use super::config_editor::ConfigEditor;
+use super::config_history::ConfigHistory;
 use super::customer_mcp_servers::CustomerMcpServers;
 use super::customer_skills::CustomerSkills;
 use super::customer_ssh_keys::CustomerSshKeys;
@@ -113,6 +114,10 @@ pub fn CustomerDetail(id: String) -> Element {
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Config" }
                         ConfigEditor { customer_id: cid2.clone() }
+                    }
+                    div {
+                        h3 { class: "text-lg font-semibold mb-3", "Config History" }
+                        ConfigHistory { customer_id: cid2.clone() }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Skills" }

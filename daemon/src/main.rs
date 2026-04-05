@@ -2,12 +2,15 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod config;
+mod config_watch;
 #[cfg(feature = "services")]
 mod connectors;
 mod crash;
 mod daemon;
+mod log_capture;
 mod events;
 mod instance_id;
+mod logs;
 mod managed_service;
 mod mcp_servers;
 mod metrics;
@@ -25,6 +28,9 @@ mod self_update;
 mod service_mgmt;
 mod skills;
 mod service;
+mod server_push;
+mod status;
+mod ws_reconnect;
 mod services;
 
 #[derive(Parser)]
@@ -71,6 +77,24 @@ enum Commands {
     },
     /// Validate the config file and exit
     CheckConfig,
+    /// Show daemon and service status
+    Status {
+        /// Metrics port (default: 9396)
+        #[arg(long, default_value_t = 9396)]
+        port: u16,
+    },
+    /// View service logs
+    Logs {
+        /// Service name (e.g., "ollama"). Shows all services if omitted.
+        #[arg(short, long)]
+        service: Option<String>,
+        /// Number of lines to show (default: 50)
+        #[arg(short = 'n', long, default_value_t = 50)]
+        lines: usize,
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+    },
 }
 
 #[tokio::main]
@@ -101,6 +125,10 @@ async fn main() -> Result<()> {
         Commands::Update { force } => self_update::apply(force)?,
         #[cfg(not(feature = "self-update"))]
         Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
+        Commands::Status { port } => status::print_status(port)?,
+        Commands::Logs { service, lines, follow } => {
+            logs::tail_logs(service.as_deref(), lines, follow, None)?;
+        }
         Commands::CheckConfig => {
             let cfg = config::load().await;
             match cfg {

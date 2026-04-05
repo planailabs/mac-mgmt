@@ -184,6 +184,8 @@ impl ManagedService for OpenClaw {
     fn spawn(&self) -> Result<std::process::Child> {
         let child = Command::new("openclaw")
             .arg("gateway")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .context("failed to start openclaw gateway")?;
         tracing::info!("openclaw gateway started (pid: {})", child.id());

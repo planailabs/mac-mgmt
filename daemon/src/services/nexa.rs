@@ -84,7 +84,11 @@ impl ManagedService for Nexa {
             "--skip-update",
         ]);
 
-        let child = cmd.spawn().context("failed to start nexa serve")?;
+        let child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("failed to start nexa serve")?;
         tracing::info!("nexa serve started (pid: {})", child.id());
         sentry_ext::breadcrumb("spawn", "nexa serve started", &[
             ("service", "nexa"),

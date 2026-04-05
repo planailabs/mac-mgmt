@@ -1,32 +1,41 @@
 use std::collections::HashSet;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use crate::events::DaemonEvent;
 
 pub struct Dispatcher {
-    urls: Vec<String>,
-    events: Option<HashSet<String>>,
+    urls: RwLock<Vec<String>>,
+    events: RwLock<Option<HashSet<String>>>,
 }
 
 impl Dispatcher {
     pub fn new(urls: Vec<String>, events: Option<Vec<String>>) -> Self {
         Self {
-            urls,
-            events: events.map(|v| v.into_iter().collect()),
+            urls: RwLock::new(urls),
+            events: RwLock::new(events.map(|v| v.into_iter().collect())),
         }
     }
 
+    pub fn reconfigure(&self, urls: Vec<String>, events: Option<Vec<String>>) {
+        *self.urls.write().unwrap() = urls;
+        *self.events.write().unwrap() = events.map(|v| v.into_iter().collect());
+        tracing::info!("notification dispatcher reconfigured");
+    }
+
     pub fn dispatch(&self, event: &DaemonEvent) {
-        if self.urls.is_empty() {
+        let urls = self.urls.read().unwrap();
+        if urls.is_empty() {
             return;
         }
-        if let Some(filter) = &self.events {
+        let events = self.events.read().unwrap();
+        if let Some(filter) = &*events {
             if !filter.contains(event.kind()) {
                 return;
             }
         }
         let message = event.to_string();
-        let urls = self.urls.clone();
+        let urls = urls.clone();
         tokio::spawn(async move {
             let mut cmd = tokio::process::Command::new("apprise");
             cmd.arg("-b").arg(&message);

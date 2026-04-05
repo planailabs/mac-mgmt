@@ -187,6 +187,26 @@ pub async fn get_config(
     auth: SyncAuth,
     pool: &State<PgPool>,
 ) -> Result<String, Status> {
+    // Check for active rollout targeting this customer
+    let rollout_config = sqlx::query_scalar::<_, String>(
+        "SELECT r.config_toml FROM rollouts r \
+         JOIN rollout_stages rs ON rs.rollout_id = r.id \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rgm.customer_id = $1 \
+           AND r.status = 'rolling' \
+           AND rs.status = 'rolling' \
+         ORDER BY r.created_at DESC LIMIT 1"
+    )
+    .bind(auth.customer_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if let Some(config) = rollout_config {
+        return Ok(config);
+    }
+
+    // Normal config delivery
     let config = sqlx::query_scalar::<_, String>(
         "SELECT config_toml FROM customer_configs \
          WHERE customer_id = $1 \
@@ -1715,4 +1735,604 @@ pub async fn setting_remove_ssh_key(
         .await
         .map_err(|_| Status::InternalServerError)?;
     Ok(Status::NoContent)
+}
+
+// ── Rollout Groups (admin) ──────────────────────────────────────────
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateRolloutGroupBody {
+    name: String,
+    #[serde(default)]
+    description: String,
+}
+
+// ── Heartbeat (sync token) ──────────────────────────────────────────
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct HeartbeatBody {
+    instance_id: String,
+    version: String,
+    services: serde_json::Value,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/heartbeat",
+    tag = "Sync",
+    summary = "Report daemon heartbeat",
+    description = "Upserts a heartbeat record for the authenticated daemon instance.",
+    security(("bearer" = [])),
+    request_body = HeartbeatBody,
+    responses(
+        (status = 200, description = "Heartbeat recorded"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
+#[rocket::post("/heartbeat", data = "<body>")]
+pub async fn post_heartbeat(
+    auth: SyncAuth,
+    pool: &State<PgPool>,
+    body: Json<HeartbeatBody>,
+) -> Result<Status, Status> {
+    sqlx::query(
+        "INSERT INTO daemon_heartbeats (customer_id, instance_id, version, services) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (customer_id, instance_id) \
+         DO UPDATE SET version = $3, services = $4, reported_at = now()",
+    )
+    .bind(auth.customer_id)
+    .bind(&body.instance_id)
+    .bind(&body.version)
+    .bind(&body.services)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Status::Ok)
+}
+
+// ── Rollout Groups (admin) ──────────────────────────────────────────
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollout-groups",
+    tag = "Admin — Rollouts",
+    summary = "Create a rollout group",
+    security(("bearer" = [])),
+    request_body = CreateRolloutGroupBody,
+    responses(
+        (status = 201, description = "Group created"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[rocket::post("/admin/rollout-groups", data = "<body>")]
+pub async fn admin_create_rollout_group(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    body: Json<CreateRolloutGroupBody>,
+) -> Result<Status, Status> {
+    sqlx::query("INSERT INTO rollout_groups (name, description) VALUES ($1, $2)")
+        .bind(&body.name)
+        .bind(&body.description)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Created)
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RolloutGroupRow {
+    id: Uuid,
+    name: String,
+    description: String,
+    member_count: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/rollout-groups",
+    tag = "Admin — Rollouts",
+    summary = "List rollout groups",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout groups", body = Vec<RolloutGroupRow>),
+    ),
+)]
+#[rocket::get("/admin/rollout-groups")]
+pub async fn admin_list_rollout_groups(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<RolloutGroupRow>>, Status> {
+    #[derive(sqlx::FromRow)]
+    struct Row { id: Uuid, name: String, description: String, member_count: i64 }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT rg.id, rg.name, rg.description, COUNT(rgm.id) AS member_count \
+         FROM rollout_groups rg \
+         LEFT JOIN rollout_group_members rgm ON rgm.group_id = rg.id \
+         GROUP BY rg.id ORDER BY rg.name"
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(rows.into_iter().map(|r| RolloutGroupRow {
+        id: r.id, name: r.name, description: r.description, member_count: r.member_count,
+    }).collect()))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AddGroupMemberBody {
+    customer_id: Uuid,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollout-groups/{group_id}/members",
+    tag = "Admin — Rollouts",
+    summary = "Add customer to rollout group",
+    security(("bearer" = [])),
+    responses(
+        (status = 201, description = "Member added"),
+        (status = 409, description = "Already a member"),
+    ),
+)]
+#[rocket::post("/admin/rollout-groups/<group_id>/members", data = "<body>")]
+pub async fn admin_add_group_member(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    group_id: &str,
+    body: Json<AddGroupMemberBody>,
+) -> Result<Status, Status> {
+    let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query("INSERT INTO rollout_group_members (group_id, customer_id) VALUES ($1, $2)")
+        .bind(gid)
+        .bind(body.customer_id)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("duplicate") || e.to_string().contains("unique") {
+                Status::Conflict
+            } else {
+                Status::InternalServerError
+            }
+        })?;
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/rollout-groups/{group_id}/members/{customer_id}",
+    tag = "Admin — Rollouts",
+    summary = "Remove customer from rollout group",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Member removed"),
+    ),
+)]
+#[rocket::delete("/admin/rollout-groups/<group_id>/members/<customer_id>")]
+pub async fn admin_remove_group_member(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    group_id: &str,
+    customer_id: &str,
+) -> Result<Status, Status> {
+    let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
+    let cid: Uuid = customer_id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query("DELETE FROM rollout_group_members WHERE group_id = $1 AND customer_id = $2")
+        .bind(gid)
+        .bind(cid)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Ok)
+}
+
+// ── Rollouts (admin) ────────────────────────────────────────────────
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateRolloutBody {
+    config_toml: String,
+    /// Ordered list of group IDs for the rollout stages
+    group_ids: Vec<Uuid>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts",
+    tag = "Admin — Rollouts",
+    summary = "Create a new rollout",
+    security(("bearer" = [])),
+    request_body = CreateRolloutBody,
+    responses(
+        (status = 201, description = "Rollout created", body = String),
+        (status = 422, description = "Invalid config"),
+    ),
+)]
+#[rocket::post("/admin/rollouts", data = "<body>")]
+pub async fn admin_create_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    body: Json<CreateRolloutBody>,
+) -> Result<Json<serde_json::Value>, Status> {
+    // Validate config
+    mac_mgmt_common::CustomerConfig::from_toml(&body.config_toml)
+        .map_err(|_| Status::UnprocessableEntity)?;
+
+    if body.group_ids.is_empty() {
+        return Err(Status::BadRequest);
+    }
+
+    let rollout_id = Uuid::new_v4();
+
+    // Use a transaction
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+
+    sqlx::query("INSERT INTO rollouts (id, config_toml) VALUES ($1, $2)")
+        .bind(rollout_id)
+        .bind(&body.config_toml)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    for (i, group_id) in body.group_ids.iter().enumerate() {
+        sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)")
+            .bind(rollout_id)
+            .bind(group_id)
+            .bind(i as i32)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(serde_json::json!({ "id": rollout_id })))
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RolloutRow {
+    id: Uuid,
+    status: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    stage_count: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/rollouts",
+    tag = "Admin — Rollouts",
+    summary = "List rollouts",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout list", body = Vec<RolloutRow>),
+    ),
+)]
+#[rocket::get("/admin/rollouts")]
+pub async fn admin_list_rollouts(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<RolloutRow>>, Status> {
+    #[derive(sqlx::FromRow)]
+    struct Row { id: Uuid, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc>, stage_count: i64 }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT r.id, r.status, r.created_at, r.updated_at, COUNT(rs.id) AS stage_count \
+         FROM rollouts r \
+         LEFT JOIN rollout_stages rs ON rs.rollout_id = r.id \
+         GROUP BY r.id ORDER BY r.created_at DESC"
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(rows.into_iter().map(|r| RolloutRow {
+        id: r.id, status: r.status, created_at: r.created_at, updated_at: r.updated_at, stage_count: r.stage_count,
+    }).collect()))
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RolloutDetail {
+    id: Uuid,
+    config_toml: String,
+    status: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    stages: Vec<StageDetail>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct StageDetail {
+    id: Uuid,
+    group_name: String,
+    stage_order: i32,
+    status: String,
+    started_at: Option<DateTime<Utc>>,
+    completed_at: Option<DateTime<Utc>>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/rollouts/{rollout_id}",
+    tag = "Admin — Rollouts",
+    summary = "Get rollout detail with stages",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout detail", body = RolloutDetail),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::get("/admin/rollouts/<rollout_id>")]
+pub async fn admin_get_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+) -> Result<Json<RolloutDetail>, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+
+    #[derive(sqlx::FromRow)]
+    struct RolloutRow2 { id: Uuid, config_toml: String, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
+
+    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, config_toml, status, created_at, updated_at FROM rollouts WHERE id = $1")
+        .bind(rid)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+        .ok_or(Status::NotFound)?;
+
+    #[derive(sqlx::FromRow)]
+    struct StageRow { id: Uuid, group_name: String, stage_order: i32, status: String, started_at: Option<DateTime<Utc>>, completed_at: Option<DateTime<Utc>> }
+
+    let stages = sqlx::query_as::<_, StageRow>(
+        "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.started_at, rs.completed_at \
+         FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
+         WHERE rs.rollout_id = $1 ORDER BY rs.stage_order"
+    )
+    .bind(rid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(RolloutDetail {
+        id: rollout.id,
+        config_toml: rollout.config_toml,
+        status: rollout.status,
+        created_at: rollout.created_at,
+        updated_at: rollout.updated_at,
+        stages: stages.into_iter().map(|s| StageDetail {
+            id: s.id, group_name: s.group_name, stage_order: s.stage_order,
+            status: s.status, started_at: s.started_at, completed_at: s.completed_at,
+        }).collect(),
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts/{rollout_id}/start",
+    tag = "Admin — Rollouts",
+    summary = "Start a rollout (set first stage to rolling)",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout started"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "Not in pending state"),
+    ),
+)]
+#[rocket::post("/admin/rollouts/<rollout_id>/start")]
+pub async fn admin_start_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+
+    let status: String = sqlx::query_scalar("SELECT status FROM rollouts WHERE id = $1")
+        .bind(rid)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+        .ok_or(Status::NotFound)?;
+
+    if status != "pending" {
+        return Err(Status::Conflict);
+    }
+
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+
+    sqlx::query("UPDATE rollouts SET status = 'rolling', updated_at = now() WHERE id = $1")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    sqlx::query("UPDATE rollout_stages SET status = 'rolling', started_at = now() WHERE rollout_id = $1 AND stage_order = 0")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Ok)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts/{rollout_id}/advance",
+    tag = "Admin — Rollouts",
+    summary = "Advance to next stage",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Advanced to next stage"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "Cannot advance"),
+    ),
+)]
+#[rocket::post("/admin/rollouts/<rollout_id>/advance")]
+pub async fn admin_advance_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+
+    // Find current rolling stage
+    #[derive(sqlx::FromRow)]
+    struct StageInfo { stage_order: i32 }
+
+    let current = sqlx::query_as::<_, StageInfo>(
+        "SELECT stage_order FROM rollout_stages WHERE rollout_id = $1 AND status = 'rolling' LIMIT 1"
+    )
+    .bind(rid)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::Conflict)?;
+
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+
+    // Complete current stage
+    sqlx::query("UPDATE rollout_stages SET status = 'completed', completed_at = now() WHERE rollout_id = $1 AND stage_order = $2")
+        .bind(rid)
+        .bind(current.stage_order)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    // Start next stage
+    let next_order = current.stage_order + 1;
+    let updated = sqlx::query("UPDATE rollout_stages SET status = 'rolling', started_at = now() WHERE rollout_id = $1 AND stage_order = $2")
+        .bind(rid)
+        .bind(next_order)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    if updated.rows_affected() == 0 {
+        // No more stages — rollout is complete
+        sqlx::query("UPDATE rollouts SET status = 'completed', updated_at = now() WHERE id = $1")
+            .bind(rid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+
+    sqlx::query("UPDATE rollouts SET updated_at = now() WHERE id = $1")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Ok)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts/{rollout_id}/pause",
+    tag = "Admin — Rollouts",
+    summary = "Pause a rollout",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout paused"),
+        (status = 409, description = "No rolling stage"),
+    ),
+)]
+#[rocket::post("/admin/rollouts/<rollout_id>/pause")]
+pub async fn admin_pause_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+
+    let updated = sqlx::query("UPDATE rollout_stages SET status = 'paused' WHERE rollout_id = $1 AND status = 'rolling'")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    if updated.rows_affected() == 0 {
+        return Err(Status::Conflict);
+    }
+
+    sqlx::query("UPDATE rollouts SET status = 'paused', updated_at = now() WHERE id = $1")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Ok)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts/{rollout_id}/complete",
+    tag = "Admin — Rollouts",
+    summary = "Complete a rollout and persist config to all targeted customers",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout completed"),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::post("/admin/rollouts/<rollout_id>/complete")]
+pub async fn admin_complete_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+
+    // Get config_toml
+    let config_toml: String = sqlx::query_scalar("SELECT config_toml FROM rollouts WHERE id = $1")
+        .bind(rid)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+        .ok_or(Status::NotFound)?;
+
+    // Get all customer IDs from all stages
+    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rs.rollout_id = $1"
+    )
+    .bind(rid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+
+    // Mark all stages completed
+    sqlx::query("UPDATE rollout_stages SET status = 'completed', completed_at = COALESCE(completed_at, now()) WHERE rollout_id = $1")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    // Mark rollout completed
+    sqlx::query("UPDATE rollouts SET status = 'completed', updated_at = now() WHERE id = $1")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    // Persist config to each customer
+    for cid in &customer_ids {
+        sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
+            .bind(cid)
+            .bind(&config_toml)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Ok)
 }

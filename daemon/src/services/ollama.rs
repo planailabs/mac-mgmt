@@ -122,7 +122,11 @@ impl ManagedService for Ollama {
             );
         }
 
-        let child = cmd.spawn().context("failed to start ollama serve")?;
+        let child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("failed to start ollama serve")?;
         tracing::info!("ollama serve started (pid: {})", child.id());
         sentry_ext::breadcrumb("spawn", "ollama serve started", &[
             ("service", "ollama"),

@@ -32,7 +32,7 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonSettings {
     #[serde(default = "default_update_interval")]
@@ -41,6 +41,10 @@ pub struct DaemonSettings {
     pub health_interval: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    #[serde(default)]
+    pub log_dir: Option<String>,
+    #[serde(default)]
+    pub upgrade_window: Option<String>,
 }
 
 impl Default for DaemonSettings {
@@ -49,13 +53,15 @@ impl Default for DaemonSettings {
             update_interval: default_update_interval(),
             health_interval: default_health_interval(),
             log_level: default_log_level(),
+            log_dir: None,
+            upgrade_window: None,
         }
     }
 }
 
 // ── Notifications (daemon-only) ──────────────────────────────────────────
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
     #[serde(default)]
@@ -94,7 +100,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
     #[schemars(description = "Ollama listen address")]
@@ -140,7 +146,7 @@ fn default_nexa_model() -> String {
     "ggml-org/Qwen3-1.7B-GGUF".to_string()
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NexaConfig {
     #[schemars(description = "Nexa listen address")]
@@ -187,7 +193,7 @@ fn default_gateway_host() -> String {
     "127.0.0.1".to_string()
 }
 
-#[derive(Debug, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawGatewayConfig {
     #[schemars(description = "OpenClaw gateway listen port")]
@@ -198,7 +204,7 @@ pub struct OpenClawGatewayConfig {
     pub host: String,
 }
 
-#[derive(Debug, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawSkillsConfig {
     #[schemars(description = "Automatically update skills on the update interval")]
@@ -206,7 +212,7 @@ pub struct OpenClawSkillsConfig {
     pub auto_update: bool,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
     #[schemars(description = "Gateway settings merged into ~/.openclaw/openclaw.json")]
@@ -236,7 +242,7 @@ fn default_metrics_port() -> u16 {
     9396
 }
 
-#[derive(Debug, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     #[schemars(description = "Prometheus metrics endpoint port")]
@@ -246,7 +252,7 @@ pub struct MetricsConfig {
 
 // ── Server (daemon → server connection) ─────────────────────────────────
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct DaemonServerConfig {
     pub url: Option<String>,
     pub token: Option<String>,
@@ -262,7 +268,7 @@ fn default_agent_provider() -> String {
     "openclaw".to_string()
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
     #[schemars(description = "LLM backend to use: ollama, nexa, or none")]
@@ -312,7 +318,7 @@ impl GlobalConfig {
 
 // ── Customer Config (what the server manages per-customer) ──────────────
 
-#[derive(Debug, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CustomerConfig {
     #[serde(default)]
@@ -361,14 +367,14 @@ impl CustomerConfig {
 
 // ── Relay ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RelayConfig {
     pub url: Option<String>,
 }
 
 // ── Daemon Config (full config including server section) ────────────────
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct DaemonConfig {
     #[serde(default)]
     pub daemon: DaemonSettings,
@@ -411,6 +417,11 @@ impl DaemonSettings {
                 VALID_LOG_LEVELS.join(", ")
             )));
         }
+        if let Some(ref window) = self.upgrade_window {
+            parse_time_window(window).map_err(|e| {
+                ValidationError(format!("invalid upgrade_window '{}': {e}", window))
+            })?;
+        }
         Ok(())
     }
 }
@@ -425,6 +436,32 @@ impl DaemonConfig {
         config.nexa.validate().map_err(|e| e.to_string())?;
         Ok(config)
     }
+}
+
+use chrono::NaiveTime;
+
+pub fn parse_time_window(s: &str) -> Result<(NaiveTime, NaiveTime), String> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 2 {
+        return Err("expected format HH:MM-HH:MM".to_string());
+    }
+    let start = NaiveTime::parse_from_str(parts[0].trim(), "%H:%M")
+        .map_err(|e| format!("invalid start time: {e}"))?;
+    let end = NaiveTime::parse_from_str(parts[1].trim(), "%H:%M")
+        .map_err(|e| format!("invalid end time: {e}"))?;
+    Ok((start, end))
+}
+
+pub fn is_within_window_at(start: NaiveTime, end: NaiveTime, now: NaiveTime) -> bool {
+    if start <= end {
+        now >= start && now < end
+    } else {
+        now >= start || now < end
+    }
+}
+
+pub fn is_within_window(start: NaiveTime, end: NaiveTime) -> bool {
+    is_within_window_at(start, end, chrono::Local::now().time())
 }
 
 #[cfg(test)]
@@ -721,6 +758,84 @@ some_key = "some_value"
         let config = CustomerConfig::from_toml(toml).unwrap();
         assert!(config.openclaw.gateway.is_some());
         assert!(config.openclaw.extra_config.is_some());
+    }
+
+    // ── Upgrade window tests ──────────────────────────────────────────
+
+    #[test]
+    fn parse_valid_window() {
+        let (start, end) = parse_time_window("02:00-05:00").unwrap();
+        assert_eq!(start, NaiveTime::from_hms_opt(2, 0, 0).unwrap());
+        assert_eq!(end, NaiveTime::from_hms_opt(5, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn parse_midnight_crossing_window() {
+        let (start, end) = parse_time_window("23:00-05:00").unwrap();
+        assert_eq!(start, NaiveTime::from_hms_opt(23, 0, 0).unwrap());
+        assert_eq!(end, NaiveTime::from_hms_opt(5, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn parse_invalid_window_format() {
+        assert!(parse_time_window("invalid").is_err());
+        assert!(parse_time_window("").is_err());
+        assert!(parse_time_window("02:00").is_err());
+        assert!(parse_time_window("25:00-05:00").is_err());
+    }
+
+    #[test]
+    fn daemon_config_with_upgrade_window() {
+        let toml = r#"
+[daemon]
+upgrade_window = "02:00-05:00"
+"#;
+        let config = DaemonConfig::from_toml(toml).unwrap();
+        assert_eq!(config.daemon.upgrade_window.as_deref(), Some("02:00-05:00"));
+    }
+
+    #[test]
+    fn daemon_config_invalid_upgrade_window() {
+        let toml = r#"
+[daemon]
+upgrade_window = "bogus"
+"#;
+        let err = DaemonConfig::from_toml(toml).unwrap_err();
+        assert!(err.contains("invalid upgrade_window"), "got: {err}");
+    }
+
+    #[test]
+    fn daemon_config_no_upgrade_window() {
+        let config: DaemonConfig = toml::from_str("").unwrap();
+        assert!(config.daemon.upgrade_window.is_none());
+    }
+
+    #[test]
+    fn within_normal_window() {
+        let start = NaiveTime::from_hms_opt(2, 0, 0).unwrap();
+        let end = NaiveTime::from_hms_opt(5, 0, 0).unwrap();
+        let at_3am = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
+        let at_6am = NaiveTime::from_hms_opt(6, 0, 0).unwrap();
+        let at_1am = NaiveTime::from_hms_opt(1, 0, 0).unwrap();
+
+        assert!(is_within_window_at(start, end, at_3am));
+        assert!(!is_within_window_at(start, end, at_6am));
+        assert!(!is_within_window_at(start, end, at_1am));
+    }
+
+    #[test]
+    fn within_midnight_crossing_window() {
+        let start = NaiveTime::from_hms_opt(23, 0, 0).unwrap();
+        let end = NaiveTime::from_hms_opt(5, 0, 0).unwrap();
+        let at_1am = NaiveTime::from_hms_opt(1, 0, 0).unwrap();
+        let at_midnight = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
+        let at_noon = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        let at_23_30 = NaiveTime::from_hms_opt(23, 30, 0).unwrap();
+
+        assert!(is_within_window_at(start, end, at_1am));
+        assert!(is_within_window_at(start, end, at_midnight));
+        assert!(is_within_window_at(start, end, at_23_30));
+        assert!(!is_within_window_at(start, end, at_noon));
     }
 
     // ── Schema description tests ───────────────────────────────────────

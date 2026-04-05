@@ -19,6 +19,8 @@ pub fn Layout() -> Element {
                             Link { to: Route::McpServerList {}, class: "text-gray-600 hover:text-gray-900", "MCP Servers" }
                             Link { to: Route::McpBundleList {}, class: "text-gray-600 hover:text-gray-900", "MCP Bundles" }
                             Link { to: Route::AdminTokens {}, class: "text-gray-600 hover:text-gray-900", "Admin Tokens" }
+                            Link { to: Route::FleetDashboard {}, class: "text-gray-600 hover:text-gray-900", "Fleet" }
+                            Link { to: Route::RolloutList {}, class: "text-gray-600 hover:text-gray-900", "Rollouts" }
                         }
                     }
                 }

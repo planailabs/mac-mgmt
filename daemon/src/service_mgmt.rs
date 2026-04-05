@@ -1,6 +1,8 @@
 use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::task::JoinHandle;
 
 use crate::connectors;
 use crate::events::DaemonEvent;
@@ -13,21 +15,32 @@ struct ServiceState {
     service: Box<dyn ManagedService>,
     child: std::process::Child,
     upgrade_pending: bool,
+    restart_pending: bool,
     skip_health_check: bool,
     post_start_done: bool,
     consecutive_crashes: u32,
     was_unhealthy: bool,
+    log_task: Option<JoinHandle<()>>,
 }
 
 pub struct ServiceManager {
     states: Vec<ServiceState>,
     install_only: Vec<Box<dyn ManagedService>>,
     dispatcher: Arc<Dispatcher>,
+    log_dir: PathBuf,
 }
 
 impl ServiceManager {
     /// Create services from config, install, set up, and spawn them.
     pub fn init(cfg: &mut crate::config::Config, dispatcher: Arc<Dispatcher>) -> Result<Self> {
+        let log_dir = cfg.daemon.log_dir.as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("/root"))
+                    .join(".local/share/mac-mgmt/logs")
+            });
+
         let global_cfg = std::mem::take(&mut cfg.global);
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
@@ -60,7 +73,8 @@ impl ServiceManager {
             }
 
             service.preflight()?;
-            let child = service.spawn()?;
+            let mut child = service.spawn()?;
+            let log_task = Some(crate::log_capture::capture(service.name(), &mut child, &log_dir));
             sentry_ext::breadcrumb(
                 "service",
                 &format!("{name} initialized"),
@@ -70,10 +84,12 @@ impl ServiceManager {
                 service,
                 child,
                 upgrade_pending: false,
+                restart_pending: false,
                 skip_health_check: true,
                 post_start_done: false,
                 consecutive_crashes: 0,
                 was_unhealthy: false,
+                log_task,
             });
         }
 
@@ -81,6 +97,7 @@ impl ServiceManager {
             states,
             install_only,
             dispatcher,
+            log_dir,
         })
     }
 
@@ -147,7 +164,7 @@ impl ServiceManager {
     }
 
     /// Run health checks, restart crashed services, apply pending upgrades.
-    pub fn health_tick(&mut self, metrics: &Arc<Metrics>) {
+    pub fn health_tick(&mut self, metrics: &Arc<Metrics>, in_upgrade_window: bool) {
         for state in &mut self.states {
             let name = state.service.name();
             sentry_ext::set_tag("service", name);
@@ -189,7 +206,11 @@ impl ServiceManager {
                     }
 
                     match state.service.spawn() {
-                        Ok(child) => {
+                        Ok(mut child) => {
+                            if let Some(old_task) = state.log_task.take() {
+                                old_task.abort();
+                            }
+                            state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_dir));
                             state.child = child;
                             state.upgrade_pending = false;
                             state.skip_health_check = true;
@@ -208,15 +229,52 @@ impl ServiceManager {
                 Err(e) => tracing::error!("failed to check {name} status: {e}"),
             }
 
+            // Apply pending restart (config change) when idle
+            if state.restart_pending {
+                match state.service.is_busy() {
+                    Ok(false) => {
+                        tracing::info!("{name} is idle, restarting for config change");
+                        let _ = state.child.kill();
+                        let _ = state.child.wait();
+                        match state.service.spawn() {
+                            Ok(mut child) => {
+                                if let Some(old_task) = state.log_task.take() {
+                                    old_task.abort();
+                                }
+                                state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_dir));
+                                state.child = child;
+                                state.restart_pending = false;
+                                state.upgrade_pending = false;
+                                state.skip_health_check = true;
+                                state.post_start_done = false;
+                            }
+                            Err(e) => {
+                                tracing::error!("{name} restart failed: {e}");
+                            }
+                        }
+                    }
+                    Ok(true) => {
+                        tracing::info!("{name} is busy, deferring restart");
+                    }
+                    Err(e) => {
+                        tracing::warn!("{name} busy check for restart failed: {e}");
+                    }
+                }
+            }
+
             // Apply pending upgrade when idle
-            let busy = if state.upgrade_pending {
+            let busy = if state.upgrade_pending && in_upgrade_window {
                 match state.service.is_busy() {
                     Ok(false) => {
                         tracing::info!("{name} is idle, restarting to apply upgrade");
                         let _ = state.child.kill();
                         let _ = state.child.wait();
                         match state.service.spawn() {
-                            Ok(child) => {
+                            Ok(mut child) => {
+                                if let Some(old_task) = state.log_task.take() {
+                                    old_task.abort();
+                                }
+                                state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_dir));
                                 state.child = child;
                                 state.upgrade_pending = false;
                                 state.skip_health_check = true;
@@ -325,6 +383,31 @@ impl ServiceManager {
         }
     }
 
+    /// Schedule a restart for all managed services (e.g., after config change).
+    /// Services will be restarted when idle, similar to upgrade_pending.
+    pub fn schedule_restart(&mut self) {
+        for state in &mut self.states {
+            state.restart_pending = true;
+            tracing::info!("{} restart pending (config change)", state.service.name());
+        }
+    }
+
+    /// Collect current service statuses for heartbeat reporting.
+    pub fn collect_statuses(&self) -> Vec<serde_json::Value> {
+        self.states
+            .iter()
+            .map(|state| {
+                let name = state.service.name();
+                serde_json::json!({
+                    "name": name,
+                    "healthy": !state.was_unhealthy,
+                    "upgrade_pending": state.upgrade_pending,
+                    "busy": false,
+                })
+            })
+            .collect()
+    }
+
     /// Graceful shutdown: SIGTERM all services, then SIGKILL after 10 s.
     pub async fn shutdown(&mut self) {
         for state in &mut self.states {
@@ -356,6 +439,9 @@ impl ServiceManager {
                         break;
                     }
                 }
+            }
+            if let Some(task) = state.log_task.take() {
+                task.abort();
             }
             tracing::info!("{name} stopped");
         }

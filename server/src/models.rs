@@ -141,3 +141,57 @@ pub struct CustomerMcpBundle {
     pub bundle_id: Uuid,
     pub created_at: DateTime<Utc>,
 }
+
+// ── Heartbeat models ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct DaemonHeartbeat {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub instance_id: String,
+    pub version: String,
+    pub services: serde_json::Value,
+    pub reported_at: DateTime<Utc>,
+}
+
+// ── Rollout models ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct RolloutGroup {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct RolloutGroupMember {
+    pub id: Uuid,
+    pub group_id: Uuid,
+    pub customer_id: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct Rollout {
+    pub id: Uuid,
+    pub config_toml: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct RolloutStage {
+    pub id: Uuid,
+    pub rollout_id: Uuid,
+    pub group_id: Uuid,
+    pub stage_order: i32,
+    pub status: String,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}

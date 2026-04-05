@@ -6,6 +6,7 @@ use super::components::bundle_list::BundleList;
 use super::components::customer_detail::CustomerDetail;
 use super::components::customer_form::CustomerForm;
 use super::components::customer_list::CustomerList;
+use super::components::fleet_dashboard::FleetDashboard;
 use super::components::layout::Layout;
 use super::components::mcp_bundle_detail::McpBundleDetail;
 use super::components::mcp_bundle_form::McpBundleForm;
@@ -13,6 +14,10 @@ use super::components::mcp_bundle_list::McpBundleList;
 use super::components::admin_tokens_page::AdminTokens;
 use super::components::mcp_server_detail::{McpServerDetail, McpServerEdit, McpServerForm};
 use super::components::mcp_server_list::McpServerList;
+use super::components::rollout_detail::RolloutDetail;
+use super::components::rollout_form::RolloutForm;
+use super::components::rollout_group_list::RolloutGroupList;
+use super::components::rollout_list::RolloutList;
 use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
 
@@ -51,6 +56,16 @@ pub enum Route {
     McpBundleDetail { id: String },
     #[route("/admin-tokens")]
     AdminTokens {},
+    #[route("/rollouts")]
+    RolloutList {},
+    #[route("/rollouts/new")]
+    RolloutForm {},
+    #[route("/rollouts/:id")]
+    RolloutDetail { id: String },
+    #[route("/fleet")]
+    FleetDashboard {},
+    #[route("/rollout-groups")]
+    RolloutGroupList {},
 }
 
 #[component]

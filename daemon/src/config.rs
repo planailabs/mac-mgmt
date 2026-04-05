@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 pub use mac_mgmt_common::DaemonConfig as Config;
 
-fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/root"))
         .join(".config/mac-mgmt/config.toml")
@@ -46,6 +46,10 @@ async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<toml::Valu
     let body = resp.text().await.context("failed to read response body")?;
     let value: toml::Value = toml::from_str(&body).context("failed to parse remote config")?;
     Ok(Some(value))
+}
+
+pub async fn reload() -> Result<Config> {
+    load().await
 }
 
 pub async fn load() -> Result<Config> {
