@@ -259,12 +259,20 @@ fn default_metrics_port() -> u16 {
     9396
 }
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     #[schemars(description = "Prometheus metrics endpoint port")]
     #[serde(default = "default_metrics_port")]
     pub port: u16,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            port: default_metrics_port(),
+        }
+    }
 }
 
 // ── Server (daemon → server connection) ─────────────────────────────────
