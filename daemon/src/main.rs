@@ -9,6 +9,7 @@ mod crash;
 mod daemon;
 mod log_buffer;
 mod log_capture;
+mod log_layer;
 mod events;
 mod instance_id;
 mod logs;
@@ -100,7 +101,16 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let log_buf = log_buffer::LogBuffer::new();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(log_layer::BufferLayer::new(log_buf.clone()))
+        .init();
+
     let _sentry = crash::init();
     let cli = Cli::parse();
 
@@ -120,7 +130,7 @@ async fn main() -> Result<()> {
         Commands::Start => service::start()?,
         Commands::Stop => service::stop()?,
         Commands::Restart => service::restart()?,
-        Commands::Daemon => daemon::run().await?,
+        Commands::Daemon => daemon::run(log_buf).await?,
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]
         Commands::Update { force } => self_update::apply(force)?,

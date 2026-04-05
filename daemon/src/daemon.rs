@@ -18,7 +18,7 @@ const TARGET: &str = match option_env!("TARGET") {
     None => "unknown",
 };
 
-pub async fn run() -> Result<()> {
+pub async fn run(log_buf: crate::log_buffer::LogBuffer) -> Result<()> {
     sentry_ext::set_tag("environment", ENVIRONMENT);
     sentry_ext::set_tag("target", TARGET);
     sentry_ext::breadcrumb("daemon", "daemon started", &[
@@ -76,8 +76,6 @@ pub async fn run() -> Result<()> {
         Err(e) => tracing::warn!("old nix source cleanup task panicked: {e}"),
         _ => {}
     }
-
-    let log_buf = crate::log_buffer::LogBuffer::new();
 
     #[cfg(feature = "services")]
     let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher), log_buf.clone())?;
