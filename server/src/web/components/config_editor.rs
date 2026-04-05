@@ -44,6 +44,28 @@ async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
     Ok(value)
 }
 
+/// Parse TOML string into JSON (server-side, since toml crate isn't in WASM).
+#[server]
+async fn toml_to_json(toml_str: String) -> Result<serde_json::Value, ServerFnError> {
+    if toml_str.is_empty() {
+        return Ok(serde_json::Value::Object(serde_json::Map::new()));
+    }
+    let val: toml::Value = toml::from_str(&toml_str)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    serde_json::to_value(val).map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Convert JSON value back to TOML string (server-side).
+#[server]
+async fn json_to_toml(json: serde_json::Value) -> Result<String, ServerFnError> {
+    if json.as_object().is_some_and(|o| o.is_empty()) {
+        return Ok(String::new());
+    }
+    let val: toml::Value = serde_json::from_value(json)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    toml::to_string_pretty(&val).map_err(|e| ServerFnError::new(e.to_string()))
+}
+
 #[component]
 pub fn ConfigEditor(customer_id: String) -> Element {
     let cid = customer_id.clone();
@@ -156,30 +178,33 @@ pub fn ConfigEditor(customer_id: String) -> Element {
 }
 
 /// Renders structured form sections from JSON Schema, keeping the TOML signal in sync.
+/// Uses serde_json::Value for form state (works in WASM), converts to TOML server-side.
 #[component]
 fn StructuredEditor(schema: serde_json::Value, mut toml_text: Signal<String>) -> Element {
-    // Parse existing TOML into a mutable value for the form
-    let form_values = use_signal(|| {
-        let text = toml_text.read().clone();
-        if text.is_empty() {
-            toml::Value::Table(toml::map::Map::new())
-        } else {
-            text.parse::<toml::Value>()
-                .unwrap_or(toml::Value::Table(toml::map::Map::new()))
+    // Parse existing TOML into JSON for the form (server-side conversion)
+    let initial_text = toml_text.read().clone();
+    let initial_json = use_server_future(move || {
+        let text = initial_text.clone();
+        async move { toml_to_json(text).await }
+    })?;
+
+    let form_values: Signal<serde_json::Value> = use_signal(|| {
+        match &*initial_json.read() {
+            Some(Ok(v)) => v.clone(),
+            _ => serde_json::Value::Object(serde_json::Map::new()),
         }
     });
 
-    // Sync form_values -> TOML text whenever form changes
+    // Sync form_values -> TOML text via server-side conversion
     let sync_to_toml = move || {
+        let json = form_values.read().clone();
         let mut text = toml_text;
-        let val = form_values.read();
-        if let toml::Value::Table(t) = &*val {
-            if t.is_empty() {
-                text.set(String::new());
-            } else {
-                text.set(toml::to_string_pretty(&*val).unwrap_or_default());
+        spawn(async move {
+            match json_to_toml(json).await {
+                Ok(toml_str) => text.set(toml_str),
+                Err(e) => tracing::warn!("json_to_toml failed: {e}"),
             }
-        }
+        });
     };
 
     // Get schema properties (top-level sections)
@@ -253,7 +278,7 @@ fn render_section_fields(
     section_schema: &serde_json::Value,
     defs: &serde_json::Value,
     section_name: String,
-    mut form_values: Signal<toml::Value>,
+    mut form_values: Signal<serde_json::Value>,
     sync_to_toml: impl Fn() + Clone + 'static,
 ) -> Element {
     let properties = section_schema
@@ -310,7 +335,7 @@ fn render_section_fields(
                                     checked: checked,
                                     onchange: move |evt| {
                                         set_field(&mut form_values, &section_c, &field_c,
-                                            toml::Value::Boolean(evt.checked()));
+                                            serde_json::Value::Bool(evt.checked()));
                                         sync_c();
                                     },
                                 }
@@ -319,7 +344,7 @@ fn render_section_fields(
                         "integer" => {
                             let val_str = current_value
                                 .as_ref()
-                                .and_then(|v| v.as_integer())
+                                .and_then(|v| v.as_i64())
                                 .map(|n| n.to_string())
                                 .unwrap_or_default();
                             let section_c = section_clone.clone();
@@ -333,7 +358,7 @@ fn render_section_fields(
                                     oninput: move |evt| {
                                         if let Ok(n) = evt.value().parse::<i64>() {
                                             set_field(&mut form_values, &section_c, &field_c,
-                                                toml::Value::Integer(n));
+                                                serde_json::json!(n));
                                             sync_c();
                                         }
                                     },
@@ -361,13 +386,13 @@ fn render_section_fields(
                                     placeholder: "comma-separated values",
                                     value: val_str,
                                     oninput: move |evt| {
-                                        let arr: Vec<toml::Value> = evt.value()
+                                        let arr: Vec<serde_json::Value> = evt.value()
                                             .split(',')
-                                            .map(|s| toml::Value::String(s.trim().to_string()))
+                                            .map(|s| serde_json::Value::String(s.trim().to_string()))
                                             .filter(|v| v.as_str() != Some(""))
                                             .collect();
                                         set_field(&mut form_values, &section_c, &field_c,
-                                            toml::Value::Array(arr));
+                                            serde_json::Value::Array(arr));
                                         sync_c();
                                     },
                                 }
@@ -395,10 +420,10 @@ fn render_section_fields(
                                         value: val_str,
                                         onchange: move |evt| {
                                             set_field(&mut form_values, &section_c, &field_c,
-                                                toml::Value::String(evt.value()));
+                                                serde_json::Value::String(evt.value()));
                                             sync_c();
                                         },
-                                        option { value: "", "— select —" }
+                                        option { value: "", "-- select --" }
                                         {enum_values.iter().map(|v| {
                                             let v = v.clone();
                                             rsx! { option { value: "{v}", "{v}" } }
@@ -417,7 +442,7 @@ fn render_section_fields(
                                                 remove_field(&mut form_values, &section_c, &field_c);
                                             } else {
                                                 set_field(&mut form_values, &section_c, &field_c,
-                                                    toml::Value::String(v));
+                                                    serde_json::Value::String(v));
                                             }
                                             sync_c();
                                         },
@@ -433,26 +458,26 @@ fn render_section_fields(
 }
 
 fn set_field(
-    form_values: &mut Signal<toml::Value>,
+    form_values: &mut Signal<serde_json::Value>,
     section: &str,
     field: &str,
-    value: toml::Value,
+    value: serde_json::Value,
 ) {
     let mut val = form_values.write();
-    if let toml::Value::Table(root) = &mut *val {
-        let section_table = root
+    if let serde_json::Value::Object(root) = &mut *val {
+        let section_obj = root
             .entry(section)
-            .or_insert(toml::Value::Table(toml::map::Map::new()));
-        if let toml::Value::Table(t) = section_table {
+            .or_insert(serde_json::Value::Object(serde_json::Map::new()));
+        if let serde_json::Value::Object(t) = section_obj {
             t.insert(field.to_string(), value);
         }
     }
 }
 
-fn remove_field(form_values: &mut Signal<toml::Value>, section: &str, field: &str) {
+fn remove_field(form_values: &mut Signal<serde_json::Value>, section: &str, field: &str) {
     let mut val = form_values.write();
-    if let toml::Value::Table(root) = &mut *val {
-        if let Some(toml::Value::Table(t)) = root.get_mut(section) {
+    if let serde_json::Value::Object(root) = &mut *val {
+        if let Some(serde_json::Value::Object(t)) = root.get_mut(section) {
             t.remove(field);
             if t.is_empty() {
                 root.remove(section);
