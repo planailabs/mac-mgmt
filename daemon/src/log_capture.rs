@@ -2,29 +2,9 @@ use std::io::BufRead;
 use std::path::Path;
 use tokio::task::JoinHandle;
 
-/// Strip ANSI escape sequences (colors, cursor movement, etc.) from a string.
 fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Consume the escape sequence
-            if let Some(next) = chars.next() {
-                if next == '[' {
-                    // CSI sequence: consume until a letter is found
-                    for c in chars.by_ref() {
-                        if c.is_ascii_alphabetic() {
-                            break;
-                        }
-                    }
-                }
-                // else: single-char escape, already consumed
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    let stripped = strip_ansi_escapes::strip(s);
+    String::from_utf8(stripped).unwrap_or_else(|_| s.to_string())
 }
 
 /// Capture stdout/stderr from a child process, log via tracing, and write to a log file.
