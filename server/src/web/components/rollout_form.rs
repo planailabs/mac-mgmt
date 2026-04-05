@@ -74,7 +74,13 @@ pub fn RolloutForm() -> Element {
         Some(Ok(group_list)) => {
             let group_list_clone = group_list.clone();
             rsx! {
-                h2 { class: "text-2xl font-bold mb-4", "New Rollout" }
+                div { class: "flex justify-between items-center mb-4",
+                    h2 { class: "text-2xl font-bold", "New Rollout" }
+                    Link { to: Route::RolloutGroupList {},
+                        class: "text-blue-600 hover:underline text-sm",
+                        "Manage Groups"
+                    }
+                }
 
                 div { class: "space-y-4",
                     div {

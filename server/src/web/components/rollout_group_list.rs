@@ -2,6 +2,8 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::web::app::Route;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupEntry {
     id: Uuid,
@@ -100,10 +102,20 @@ pub fn RolloutGroupList() -> Element {
                         }
                         tbody { class: "divide-y divide-gray-200",
                             for g in list {
-                                tr {
-                                    td { class: "px-4 py-2 text-sm font-medium", "{g.name}" }
-                                    td { class: "px-4 py-2 text-sm text-gray-500", "{g.description}" }
-                                    td { class: "px-4 py-2 text-sm", "{g.member_count}" }
+                                {
+                                    let gid = g.id.to_string();
+                                    rsx! {
+                                        tr {
+                                            td { class: "px-4 py-2 text-sm font-medium",
+                                                Link { to: Route::RolloutGroupDetail { id: gid },
+                                                    class: "text-blue-600 hover:underline",
+                                                    "{g.name}"
+                                                }
+                                            }
+                                            td { class: "px-4 py-2 text-sm text-gray-500", "{g.description}" }
+                                            td { class: "px-4 py-2 text-sm", "{g.member_count}" }
+                                        }
+                                    }
                                 }
                             }
                         }

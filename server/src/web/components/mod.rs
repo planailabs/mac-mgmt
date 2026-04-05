@@ -26,6 +26,7 @@ pub mod skill_list;
 pub mod fleet_dashboard;
 pub mod rollout_detail;
 pub mod rollout_form;
+pub mod rollout_group_detail;
 pub mod rollout_group_list;
 pub mod rollout_list;
 pub mod token_list;

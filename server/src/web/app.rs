@@ -16,6 +16,7 @@ use super::components::mcp_server_detail::{McpServerDetail, McpServerEdit, McpSe
 use super::components::mcp_server_list::McpServerList;
 use super::components::rollout_detail::RolloutDetail;
 use super::components::rollout_form::RolloutForm;
+use super::components::rollout_group_detail::RolloutGroupDetail;
 use super::components::rollout_group_list::RolloutGroupList;
 use super::components::rollout_list::RolloutList;
 use super::components::skill_detail::SkillDetail;
@@ -66,6 +67,8 @@ pub enum Route {
     FleetDashboard {},
     #[route("/rollout-groups")]
     RolloutGroupList {},
+    #[route("/rollout-groups/:id")]
+    RolloutGroupDetail { id: String },
 }
 
 #[component]

@@ -2360,3 +2360,188 @@ pub async fn admin_complete_rollout(
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     Ok(Status::Ok)
 }
+
+// ── Resume (unpause) ────────────────────────────────────────────────
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts/{rollout_id}/resume",
+    tag = "Admin — Rollouts",
+    summary = "Resume a paused rollout",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout resumed"),
+        (status = 409, description = "Not paused"),
+    ),
+)]
+#[rocket::post("/admin/rollouts/<rollout_id>/resume")]
+pub async fn admin_resume_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+
+    let updated = sqlx::query(
+        "UPDATE rollout_stages SET status = 'rolling' WHERE rollout_id = $1 AND status = 'paused'",
+    )
+    .bind(rid)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if updated.rows_affected() == 0 {
+        return Err(Status::Conflict);
+    }
+
+    sqlx::query("UPDATE rollouts SET status = 'rolling', updated_at = now() WHERE id = $1")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    Ok(Status::Ok)
+}
+
+// ── Delete rollout ──────────────────────────────────────────────────
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/rollouts/{rollout_id}",
+    tag = "Admin — Rollouts",
+    summary = "Delete a rollout and its stages",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout deleted"),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::delete("/admin/rollouts/<rollout_id>")]
+pub async fn admin_delete_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+    let result = sqlx::query("DELETE FROM rollouts WHERE id = $1")
+        .bind(rid)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    if result.rows_affected() == 0 {
+        Err(Status::NotFound)
+    } else {
+        Ok(Status::Ok)
+    }
+}
+
+// ── Delete rollout group ────────────────────────────────────────────
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/rollout-groups/{group_id}",
+    tag = "Admin — Rollouts",
+    summary = "Delete a rollout group",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Group deleted"),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::delete("/admin/rollout-groups/<group_id>")]
+pub async fn admin_delete_rollout_group(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    group_id: &str,
+) -> Result<Status, Status> {
+    let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
+    let result = sqlx::query("DELETE FROM rollout_groups WHERE id = $1")
+        .bind(gid)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    if result.rows_affected() == 0 {
+        Err(Status::NotFound)
+    } else {
+        Ok(Status::Ok)
+    }
+}
+
+// ── Get rollout group detail with members ───────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct GroupDetail {
+    id: Uuid,
+    name: String,
+    description: String,
+    members: Vec<GroupMemberRow>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct GroupMemberRow {
+    member_id: Uuid,
+    customer_id: Uuid,
+    customer_name: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/rollout-groups/{group_id}",
+    tag = "Admin — Rollouts",
+    summary = "Get rollout group detail with members",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Group detail", body = GroupDetail),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::get("/admin/rollout-groups/<group_id>")]
+pub async fn admin_get_rollout_group(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    group_id: &str,
+) -> Result<Json<GroupDetail>, Status> {
+    let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
+
+    #[derive(sqlx::FromRow)]
+    struct GRow { id: Uuid, name: String, description: String }
+
+    let group = sqlx::query_as::<_, GRow>(
+        "SELECT id, name, description FROM rollout_groups WHERE id = $1",
+    )
+    .bind(gid)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::NotFound)?;
+
+    #[derive(sqlx::FromRow)]
+    struct MRow { member_id: Uuid, customer_id: Uuid, customer_name: String }
+
+    let members = sqlx::query_as::<_, MRow>(
+        "SELECT rgm.id AS member_id, rgm.customer_id, c.name AS customer_name \
+         FROM rollout_group_members rgm \
+         JOIN customers c ON c.id = rgm.customer_id \
+         WHERE rgm.group_id = $1 ORDER BY c.name",
+    )
+    .bind(gid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(GroupDetail {
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        members: members.into_iter().map(|m| GroupMemberRow {
+            member_id: m.member_id,
+            customer_id: m.customer_id,
+            customer_name: m.customer_name,
+        }).collect(),
+    }))
+}
