@@ -18,7 +18,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::get_self,
         // Sync
         routes::get_config,
-        routes::get_environment,
+        routes::get_update_target,
         routes::get_skills,
         routes::get_mcp_servers,
         // Setting — config
@@ -113,7 +113,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::StageDetail,
         routes::GroupDetail,
         routes::GroupMemberRow,
-        routes::UpdateInfo,
+        routes::UpdateTarget,
     )),
     security(("bearer" = [])),
     modifiers(&SecurityAddon),
@@ -166,7 +166,7 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
                 routes::get_self,
                 // Sync token routes
                 routes::get_config,
-                routes::get_environment,
+                routes::get_update_target,
                 routes::get_skills,
                 routes::get_mcp_servers,
                 // Setting token routes — config

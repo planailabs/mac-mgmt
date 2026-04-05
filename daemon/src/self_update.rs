@@ -14,116 +14,81 @@ fn update_base() -> String {
     std::env::var("MAC_MGMT_UPDATE_URL").unwrap_or_else(|_| UPDATE_BASE.to_string())
 }
 
-/// Effective environment: if a runtime override is stored (fetched from
-/// server), use it; otherwise fall back to compile-time ENVIRONMENT.
-static RUNTIME_ENVIRONMENT: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+/// The version the server wants us to run. Set by the daemon after
+/// fetching from the server's `/api/update` endpoint.
+static TARGET_VERSION: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
-/// Set the runtime environment override (called from daemon after fetching from server).
-pub fn set_environment(env: String) {
-    *RUNTIME_ENVIRONMENT.write().unwrap() = Some(env);
+pub fn set_target_version(ver: String) {
+    *TARGET_VERSION.write().unwrap() = Some(ver);
 }
 
-static PINNED_VERSION: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
-
-/// Set the pinned target version (from server rollout).
-/// If set, self-update will only apply this exact version (no downgrades).
-pub fn set_pinned_version(ver: String) {
-    *PINNED_VERSION.write().unwrap() = Some(ver);
+fn target_version() -> Option<String> {
+    TARGET_VERSION.read().unwrap().clone()
 }
 
-fn pinned_version() -> Option<String> {
-    PINNED_VERSION.read().unwrap().clone()
+pub fn current_version() -> &'static str {
+    CURRENT_VERSION
 }
 
-fn effective_environment() -> String {
-    RUNTIME_ENVIRONMENT
-        .read()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(|| ENVIRONMENT.to_string())
-}
-
+/// Check if the server has assigned a target version and apply it.
 pub fn check_and_apply() {
-    let env = effective_environment();
-    tracing::info!("checking for updates (current: {CURRENT_VERSION}, env: {env})");
-    sentry_ext::breadcrumb("self-update", "checking for updates", &[
-        ("version", CURRENT_VERSION),
-        ("environment", &env),
-    ]);
-
-    if let Err(e) = apply(false) {
-        tracing::warn!("update failed: {e}");
-        sentry_ext::capture_error(
-            &format!("self-update failed: {e}"),
-            &[("version", CURRENT_VERSION)],
-        );
-    }
-}
-
-fn version_url() -> String {
-    let base = update_base();
-    let env = effective_environment();
-    format!("{base}/{env}/mac-mgmt.version")
-}
-
-fn archive_url() -> String {
-    let base = update_base();
-    let env = effective_environment();
-    format!("{base}/{env}/mac-mgmt.tar.gz")
-}
-
-fn fetch_remote_version() -> Result<String> {
-    let url = version_url();
-    let mut body = Vec::new();
-    let mut download = self_update::Download::from_url(&url);
-    download.show_progress(false);
-    download.download_to(&mut body)?;
-    let version = String::from_utf8(body)
-        .context("invalid UTF-8 in version file")?
-        .trim()
-        .to_string();
-    Ok(version)
-}
-
-pub fn apply(force: bool) -> Result<()> {
-    let remote_version = fetch_remote_version()?;
-
-    // If a pinned version is set, only update to that exact version
-    if let Some(ref pinned) = pinned_version() {
-        if &remote_version != pinned {
-            tracing::info!(
-                "remote version {remote_version} != pinned {pinned}, skipping"
-            );
-            return Ok(());
+    let target = match target_version() {
+        Some(v) => v,
+        None => {
+            tracing::debug!("no target version set, skipping self-update");
+            return;
         }
-    }
+    };
 
-    if !force && remote_version == CURRENT_VERSION {
-        tracing::info!("already up to date ({CURRENT_VERSION})");
-        return Ok(());
+    if target == CURRENT_VERSION {
+        tracing::info!("already at target version {CURRENT_VERSION}");
+        return;
     }
 
     // Prevent downgrades
-    if !force && remote_version < *CURRENT_VERSION {
-        tracing::info!(
-            "remote version {remote_version} is older than current {CURRENT_VERSION}, skipping"
+    if version_cmp(&target) < 0 {
+        tracing::warn!(
+            "target version {target} is older than current {CURRENT_VERSION}, refusing downgrade"
         );
-        return Ok(());
+        return;
     }
 
-    tracing::info!("update available: {CURRENT_VERSION} -> {remote_version}");
-    sentry_ext::breadcrumb("self-update", "downloading update", &[
+    tracing::info!("updating: {CURRENT_VERSION} -> {target}");
+    sentry_ext::breadcrumb("self-update", "updating", &[
         ("from", CURRENT_VERSION),
-        ("to", &remote_version),
+        ("to", &target),
     ]);
 
-    let url = archive_url();
+    if let Err(e) = apply_version(&target) {
+        tracing::warn!("update to {target} failed: {e}");
+        sentry_ext::capture_error(
+            &format!("self-update to {target} failed: {e}"),
+            &[("from", CURRENT_VERSION), ("to", &target)],
+        );
+    }
+}
+
+/// Compare a version string against CURRENT_VERSION.
+/// Returns -1 if ver < current, 0 if equal, 1 if ver > current.
+fn version_cmp(ver: &str) -> i32 {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split('.').filter_map(|p| p.parse().ok()).collect()
+    };
+    let a = parse(ver);
+    let b = parse(CURRENT_VERSION);
+    a.cmp(&b) as i32
+}
+
+/// Download `{UPDATE_BASE}/{ENVIRONMENT}/{version}/mac-mgmt.tar.gz` and replace the binary.
+fn apply_version(version: &str) -> Result<()> {
+    let base = update_base();
+    let url = format!("{base}/{ENVIRONMENT}/{version}/mac-mgmt.tar.gz");
+
     let mut tmp_archive = tempfile::Builder::new()
         .suffix(".tar.gz")
         .tempfile()
         .context("failed to create temp file")?;
 
-    // Download the tarball
     tracing::info!("downloading {url}");
     let mut download = self_update::Download::from_url(&url);
     download.show_progress(false);
@@ -132,7 +97,6 @@ pub fn apply(force: bool) -> Result<()> {
     tmp_archive.write_all(&body)?;
     tmp_archive.flush()?;
 
-    // Extract the binary from the archive
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     self_update::Extract::from_source(tmp_archive.path())
         .archive(self_update::ArchiveKind::Tar(Some(
@@ -146,10 +110,6 @@ pub fn apply(force: bool) -> Result<()> {
         anyhow::bail!("binary '{bin_name}' not found in archive");
     }
 
-    // Replace the running binary.
-    // self_replace can fail with "text file busy" on some systems, so fall back
-    // to a manual rename-over approach: copy new binary next to the current one
-    // with a temp name, then atomically rename over it.
     if let Err(e) = self_replace::self_replace(&new_bin) {
         tracing::warn!("self_replace failed ({e}), falling back to rename-over");
         let current_exe = std::env::current_exe().context("failed to get current exe path")?;
@@ -158,7 +118,6 @@ pub fn apply(force: bool) -> Result<()> {
         std::fs::copy(&new_bin, &tmp_target)
             .context("failed to copy new binary to temp location")?;
 
-        // Set executable permissions
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -170,12 +129,38 @@ pub fn apply(force: bool) -> Result<()> {
             .context("failed to rename new binary over current")?;
     }
 
-    tracing::info!("binary updated successfully");
+    tracing::info!("binary updated to {version}");
     sentry_ext::breadcrumb("self-update", "binary updated", &[
         ("from", CURRENT_VERSION),
-        ("to", &remote_version),
+        ("to", version),
     ]);
     Ok(())
+}
+
+/// CLI: force-apply from the default update channel (no server needed).
+pub fn apply(force: bool) -> Result<()> {
+    let base = update_base();
+    let url = format!("{base}/{ENVIRONMENT}/mac-mgmt.version");
+    let mut body = Vec::new();
+    let mut download = self_update::Download::from_url(&url);
+    download.show_progress(false);
+    download.download_to(&mut body)?;
+    let remote_version = String::from_utf8(body)
+        .context("invalid UTF-8 in version file")?
+        .trim()
+        .to_string();
+
+    if !force && remote_version == CURRENT_VERSION {
+        println!("already up to date ({CURRENT_VERSION})");
+        return Ok(());
+    }
+
+    if !force && version_cmp(&remote_version) < 0 {
+        anyhow::bail!("remote version {remote_version} < current {CURRENT_VERSION}, use --force to downgrade");
+    }
+
+    println!("updating: {CURRENT_VERSION} -> {remote_version}");
+    apply_version(&remote_version)
 }
 
 #[cfg(test)]
@@ -189,36 +174,7 @@ mod tests {
 
     #[test]
     fn default_update_base_is_plan_ai() {
-        // When built without overriding UPDATE_BASE_URL, the default should be used
         assert_eq!(UPDATE_BASE, "https://update.plan.ai");
-    }
-
-    #[test]
-    fn version_url_format() {
-        // Ensure no runtime override interferes
-        unsafe { std::env::remove_var("MAC_MGMT_UPDATE_URL") };
-        let url = version_url();
-        assert!(url.starts_with(UPDATE_BASE));
-        assert!(url.contains(ENVIRONMENT));
-        assert!(url.ends_with("/mac-mgmt.version"));
-    }
-
-    #[test]
-    fn archive_url_format() {
-        unsafe { std::env::remove_var("MAC_MGMT_UPDATE_URL") };
-        let url = archive_url();
-        assert!(url.starts_with(UPDATE_BASE));
-        assert!(url.contains(ENVIRONMENT));
-        assert!(url.ends_with("/mac-mgmt.tar.gz"));
-    }
-
-    #[test]
-    fn runtime_override_takes_precedence() {
-        unsafe { std::env::set_var("MAC_MGMT_UPDATE_URL", "http://localhost:9999") };
-        assert_eq!(update_base(), "http://localhost:9999");
-        let url = version_url();
-        assert!(url.starts_with("http://localhost:9999"));
-        unsafe { std::env::remove_var("MAC_MGMT_UPDATE_URL") };
     }
 
     #[test]
@@ -237,5 +193,15 @@ mod tests {
     #[test]
     fn target_is_set() {
         assert!(!TARGET.is_empty());
+    }
+
+    #[test]
+    fn version_cmp_works() {
+        // These compare against CURRENT_VERSION (0.1.5)
+        assert!(version_cmp("0.1.5") == 0);
+        assert!(version_cmp("0.1.6") > 0);
+        assert!(version_cmp("0.1.4") < 0);
+        assert!(version_cmp("0.2.0") > 0);
+        assert!(version_cmp("1.0.0") > 0);
     }
 }

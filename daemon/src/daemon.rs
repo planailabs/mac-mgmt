@@ -139,7 +139,7 @@ pub async fn run() -> Result<()> {
 
     // Fetch environment from server for self-update channel
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        fetch_and_set_environment(url, token).await;
+        fetch_target_version(url, token).await;
     }
 
     // Run immediate update check and skills/MCP/SSH-key sync on startup
@@ -165,7 +165,7 @@ pub async fn run() -> Result<()> {
             {
                 // Fetch environment from server before self-update
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    fetch_and_set_environment(url, token).await;
+                    fetch_target_version(url, token).await;
                 }
 
                 if in_upgrade_window!() {
@@ -378,16 +378,15 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-/// Fetch the update environment and pinned version from the server.
-async fn fetch_and_set_environment(server_url: &str, server_token: &str) {
+/// Fetch the target version from the server and set it for self-update.
+async fn fetch_target_version(server_url: &str, server_token: &str) {
     #[derive(serde::Deserialize)]
-    struct UpdateInfo {
-        environment: String,
-        pinned_version: Option<String>,
+    struct UpdateTarget {
+        target_version: Option<String>,
     }
 
     let client = reqwest::Client::new();
-    let url = format!("{server_url}/api/environment");
+    let url = format!("{server_url}/api/update");
     match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         client.get(&url).bearer_auth(server_token).send(),
@@ -395,28 +394,24 @@ async fn fetch_and_set_environment(server_url: &str, server_token: &str) {
     .await
     {
         Ok(Ok(resp)) if resp.status().is_success() => {
-            if let Ok(info) = resp.json::<UpdateInfo>().await {
-                tracing::info!(
-                    "server update info: env={}, pinned={:?}",
-                    info.environment,
-                    info.pinned_version
-                );
-                #[cfg(feature = "self-update")]
-                crate::self_update::set_environment(info.environment);
-                #[cfg(feature = "self-update")]
-                if let Some(ver) = info.pinned_version {
-                    crate::self_update::set_pinned_version(ver);
+            if let Ok(info) = resp.json::<UpdateTarget>().await {
+                if let Some(ver) = info.target_version {
+                    tracing::info!("server target version: {ver}");
+                    #[cfg(feature = "self-update")]
+                    crate::self_update::set_target_version(ver);
+                } else {
+                    tracing::debug!("no target version set by server");
                 }
             }
         }
         Ok(Ok(resp)) => {
-            tracing::debug!("environment fetch returned {}", resp.status());
+            tracing::debug!("update target fetch returned {}", resp.status());
         }
         Ok(Err(e)) => {
-            tracing::debug!("environment fetch failed: {e}");
+            tracing::debug!("update target fetch failed: {e}");
         }
         Err(_) => {
-            tracing::debug!("environment fetch timed out");
+            tracing::debug!("update target fetch timed out");
         }
     }
 }
