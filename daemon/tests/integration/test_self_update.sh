@@ -29,7 +29,7 @@ echo -e "${YELLOW}=== TEST: self-update (force) ===${NC}"
 
 # --- Build ---------------------------------------------------------------
 echo "  Building mac-mgmt ($TARGET, features=$FEATURES)..."
-cargo zigbuild --release --target "$TARGET" -p mac-mgmt --features "$FEATURES" \
+cargo build --release --target "$TARGET" -p mac-mgmt --features "$FEATURES" \
     --manifest-path "$PROJECT_DIR/daemon/Cargo.toml" 2>&1 | tail -1
 
 BINARY="$PROJECT_DIR/target/$TARGET/release/mac-mgmt"
