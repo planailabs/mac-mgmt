@@ -4,6 +4,11 @@ fn main() {
         println!("cargo::rustc-env=ENVIRONMENT=dev");
     }
 
+    println!("cargo::rerun-if-env-changed=UPDATE_BASE_URL");
+    if std::env::var("UPDATE_BASE_URL").is_err() {
+        println!("cargo::rustc-env=UPDATE_BASE_URL=https://update.plan.ai");
+    }
+
     // Expose the build target triple
     let target = std::env::var("TARGET").unwrap();
     println!("cargo::rustc-env=TARGET={target}");

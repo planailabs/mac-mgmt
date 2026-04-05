@@ -3,7 +3,7 @@ use std::io::Write;
 
 use crate::sentry_ext;
 
-const UPDATE_BASE: &str = "https://update.plan.ai";
+const UPDATE_BASE: &str = env!("UPDATE_BASE_URL");
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const ENVIRONMENT: &str = env!("ENVIRONMENT");
 const TARGET: &str = env!("TARGET");
@@ -21,8 +21,16 @@ pub fn check_and_apply() {
     }
 }
 
+fn version_url() -> String {
+    format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.version")
+}
+
+fn archive_url() -> String {
+    format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.tar.gz")
+}
+
 fn fetch_remote_version() -> Result<String> {
-    let url = format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.version");
+    let url = version_url();
     let mut body = Vec::new();
     let mut download = self_update::Download::from_url(&url);
     download.show_progress(false);
@@ -48,7 +56,7 @@ pub fn apply(force: bool) -> Result<()> {
         ("to", &remote_version),
     ]);
 
-    let url = format!("{UPDATE_BASE}/{ENVIRONMENT}/mac-mgmt.tar.gz");
+    let url = archive_url();
     let mut tmp_archive = tempfile::Builder::new()
         .suffix(".tar.gz")
         .tempfile()
@@ -86,4 +94,54 @@ pub fn apply(force: bool) -> Result<()> {
         ("to", &remote_version),
     ]);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_base_is_set() {
+        assert!(!UPDATE_BASE.is_empty(), "UPDATE_BASE_URL must be set at build time");
+    }
+
+    #[test]
+    fn default_update_base_is_plan_ai() {
+        // When built without overriding UPDATE_BASE_URL, the default should be used
+        assert_eq!(UPDATE_BASE, "https://update.plan.ai");
+    }
+
+    #[test]
+    fn version_url_format() {
+        let url = version_url();
+        assert!(url.starts_with(UPDATE_BASE));
+        assert!(url.contains(ENVIRONMENT));
+        assert!(url.ends_with("/mac-mgmt.version"));
+    }
+
+    #[test]
+    fn archive_url_format() {
+        let url = archive_url();
+        assert!(url.starts_with(UPDATE_BASE));
+        assert!(url.contains(ENVIRONMENT));
+        assert!(url.ends_with("/mac-mgmt.tar.gz"));
+    }
+
+    #[test]
+    fn current_version_is_valid_semver() {
+        assert!(
+            CURRENT_VERSION.split('.').count() >= 3,
+            "CURRENT_VERSION should be semver: {CURRENT_VERSION}"
+        );
+    }
+
+    #[test]
+    fn environment_is_set() {
+        assert!(!ENVIRONMENT.is_empty());
+    }
+
+    #[test]
+    fn target_is_set() {
+        assert!(!TARGET.is_empty());
+    }
 }
