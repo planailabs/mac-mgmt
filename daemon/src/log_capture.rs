@@ -2,6 +2,31 @@ use std::io::BufRead;
 use std::path::Path;
 use tokio::task::JoinHandle;
 
+/// Strip ANSI escape sequences (colors, cursor movement, etc.) from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Consume the escape sequence
+            if let Some(next) = chars.next() {
+                if next == '[' {
+                    // CSI sequence: consume until a letter is found
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+                // else: single-char escape, already consumed
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Capture stdout/stderr from a child process, log via tracing, and write to a log file.
 /// Returns a JoinHandle that completes when the child's pipes close (process exits).
 pub fn capture(
@@ -55,6 +80,7 @@ pub fn capture(
                 for line in reader.lines() {
                     match line {
                         Ok(line) => {
+                            let line = strip_ansi(&line);
                             tracing::warn!("[{name}] {line}");
                             let _ = writeln!(log_file_clone, "[stderr] {line}");
                         }
@@ -72,6 +98,7 @@ pub fn capture(
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
+                        let line = strip_ansi(&line);
                         tracing::info!("[{name}] {line}");
                         let _ = writeln!(log_file, "[stdout] {line}");
                     }
@@ -149,6 +176,36 @@ mod tests {
         handle.await.unwrap();
 
         assert!(log_dir.join("svc.log").exists());
+    }
+
+    #[test]
+    fn strip_ansi_removes_colors() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(strip_ansi("\x1b[1;32mbold green\x1b[0m"), "bold green");
+        assert_eq!(strip_ansi("no escapes"), "no escapes");
+        assert_eq!(strip_ansi(""), "");
+        assert_eq!(strip_ansi("\x1b[38;5;196mext color\x1b[0m"), "ext color");
+    }
+
+    #[tokio::test]
+    async fn strips_ansi_from_captured_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = Command::new("sh")
+            .args(["-c", "printf '\\033[31mred text\\033[0m\\n'"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let handle = capture("ansi_svc", &mut child, dir.path());
+        handle.await.unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("ansi_svc.log")).unwrap();
+        assert!(
+            !content.contains("\x1b"),
+            "log should not contain ANSI escapes, got: {content:?}"
+        );
+        assert!(content.contains("red text"), "log should contain stripped text");
     }
 
     #[tokio::test]
