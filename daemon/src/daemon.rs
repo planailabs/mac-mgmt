@@ -293,27 +293,7 @@ pub async fn run() -> Result<()> {
                 match $cmd {
                     crate::server_push::PushCommand::SyncConfig => {
                         tracing::info!("server push: sync config");
-                        // Re-fetch and reload config
-                        match crate::config::reload().await {
-                            Ok(new_cfg) => {
-                                if new_cfg.daemon.validate().is_ok() {
-                                    let needs_restart =
-                                        new_cfg.global.llm_provider != current_cfg.global.llm_provider
-                                        || new_cfg.global.agent_provider != current_cfg.global.agent_provider
-                                        || format!("{:?}", new_cfg.ollama) != format!("{:?}", current_cfg.ollama)
-                                        || format!("{:?}", new_cfg.nexa) != format!("{:?}", current_cfg.nexa)
-                                        || format!("{:?}", new_cfg.openclaw) != format!("{:?}", current_cfg.openclaw);
-
-                                    if needs_restart {
-                                        tracing::info!("pushed config requires restart, scheduling");
-                                        #[cfg(feature = "services")]
-                                        svc_mgr.schedule_restart();
-                                    }
-                                    current_cfg = new_cfg;
-                                }
-                            }
-                            Err(e) => tracing::warn!("push config reload failed: {e}"),
-                        }
+                        handle_config_reload!();
                     }
                     crate::server_push::PushCommand::SyncSkills => {
                         if let (Some(url), Some(token)) = (&server_url, &server_token) {
