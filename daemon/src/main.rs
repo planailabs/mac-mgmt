@@ -79,9 +79,9 @@ enum Commands {
     CheckConfig,
     /// Show daemon and service status
     Status {
-        /// Metrics port (default: 9396)
-        #[arg(long, default_value_t = 9396)]
-        port: u16,
+        /// Metrics port (reads from config if omitted)
+        #[arg(long)]
+        port: Option<u16>,
     },
     /// View service logs
     Logs {

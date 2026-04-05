@@ -26,7 +26,26 @@ fn format_uptime(secs: u64) -> String {
     }
 }
 
-pub async fn print_status(port: u16) -> Result<()> {
+pub async fn print_status(port: Option<u16>) -> Result<()> {
+    let port = match port {
+        Some(p) => p,
+        None => {
+            // Try to read port from config file
+            let config_path = crate::config::config_path();
+            if config_path.exists() {
+                let contents = std::fs::read_to_string(&config_path).unwrap_or_default();
+                let val: toml::Value = toml::from_str(&contents)
+                    .unwrap_or(toml::Value::Table(Default::default()));
+                val.get("metrics")
+                    .and_then(|m| m.get("port"))
+                    .and_then(|p| p.as_integer())
+                    .map(|p| p as u16)
+                    .unwrap_or(9396)
+            } else {
+                9396
+            }
+        }
+    };
     let url = format!("http://127.0.0.1:{port}/status");
 
     let resp = reqwest::Client::builder()
@@ -115,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn connection_refused_gives_helpful_error() {
-        let result = print_status(19999).await; // unlikely to be in use
+        let result = print_status(Some(19999)).await; // unlikely to be in use
         let err = result.unwrap_err();
         assert!(
             err.to_string().contains("daemon not running"),
