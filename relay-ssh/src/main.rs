@@ -42,9 +42,9 @@ struct TunnelInfo {
 }
 
 fn config_path() -> PathBuf {
-    dirs::home_dir()
+    dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("/root"))
-        .join(".config/relay-ssh/config.toml")
+        .join("relay-ssh/config.toml")
 }
 
 fn load_config() -> Config {
