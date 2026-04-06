@@ -32,8 +32,9 @@ pub fn capture(
                 for line in reader.lines() {
                     match line {
                         Ok(line) => {
-                            let line = strip_ansi(&line);
-                            buf.push(format!("[{name}] {line}"));
+                            eprintln!("[{name}] {line}");
+                            let clean = strip_ansi(&line);
+                            buf.push(format!("[{name}] {clean}"));
                         }
                         Err(_) => break,
                     }
@@ -46,8 +47,9 @@ pub fn capture(
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
-                        let line = strip_ansi(&line);
-                        buf.push(format!("[{name}] {line}"));
+                        println!("[{name}] {line}");
+                        let clean = strip_ansi(&line);
+                        buf.push(format!("[{name}] {clean}"));
                     }
                     Err(_) => break,
                 }
