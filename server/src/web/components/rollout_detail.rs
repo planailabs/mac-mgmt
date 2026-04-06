@@ -18,7 +18,7 @@ struct RolloutInfo {
 struct StageInfo {
     id: Uuid,
     group_name: String,
-    group_id: Option<Uuid>,
+    group_id: Uuid,
     stage_order: i32,
     status: String,
     started_at: Option<DateTime<Utc>>,
@@ -54,7 +54,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     struct SRow {
         id: Uuid,
         group_name: String,
-        group_id: Option<Uuid>,
+        group_id: Uuid,
         stage_order: i32,
         status: String,
         started_at: Option<DateTime<Utc>>,
@@ -62,9 +62,9 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     }
 
     let stages = sqlx::query_as::<_, SRow>(
-        "SELECT rs.id, COALESCE(rg.name, 'All Customers') AS group_name, rs.group_id, rs.stage_order, rs.status, \
+        "SELECT rs.id, rg.name AS group_name, rs.group_id, rs.stage_order, rs.status, \
          rs.started_at, rs.completed_at \
-         FROM rollout_stages rs LEFT JOIN rollout_groups rg ON rg.id = rs.group_id \
+         FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
          WHERE rs.rollout_id = $1 ORDER BY rs.stage_order",
     )
     .bind(rid)
@@ -80,15 +80,13 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         healthy: i64,
     }
 
-    // For group-based stages, count heartbeats of group members.
-    // For "all" stages (group_id IS NULL), count all heartbeats.
     let health = sqlx::query_as::<_, HealthRow>(
         "SELECT rs.stage_order, \
          COUNT(DISTINCT dh.instance_id) AS total, \
          COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.reported_at > now() - interval '5 minutes') AS healthy \
          FROM rollout_stages rs \
-         LEFT JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         LEFT JOIN daemon_heartbeats dh ON (rs.group_id IS NULL OR dh.customer_id = rgm.customer_id) \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         LEFT JOIN daemon_heartbeats dh ON dh.customer_id = rgm.customer_id \
          WHERE rs.rollout_id = $1 \
          GROUP BY rs.stage_order",
     )
@@ -275,34 +273,17 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-            // Check if any stage targets all customers (group_id IS NULL)
-            let has_all: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM rollout_stages WHERE rollout_id = $1 AND group_id IS NULL)",
+            sqlx::query(
+                "UPDATE customers SET pinned_version = $1 WHERE id IN (\
+                 SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+                 JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+                 WHERE rs.rollout_id = $2)",
             )
+            .bind(&target_version)
             .bind(rid)
-            .fetch_one(&mut *tx)
+            .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-            if has_all {
-                sqlx::query("UPDATE customers SET pinned_version = $1")
-                    .bind(&target_version)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| ServerFnError::new(e.to_string()))?;
-            } else {
-                sqlx::query(
-                    "UPDATE customers SET pinned_version = $1 WHERE id IN (\
-                     SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-                     JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-                     WHERE rs.rollout_id = $2)",
-                )
-                .bind(&target_version)
-                .bind(rid)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-            }
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;

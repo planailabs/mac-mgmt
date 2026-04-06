@@ -129,6 +129,25 @@ async fn add_member(group_id: String, customer_id: String) -> Result<(), ServerF
 }
 
 #[server]
+async fn add_all_customers(group_id: String) -> Result<u64, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let gid: Uuid = group_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let result = sqlx::query(
+        "INSERT INTO rollout_group_members (group_id, customer_id) \
+         SELECT $1, id FROM customers \
+         WHERE id NOT IN (SELECT customer_id FROM rollout_group_members WHERE group_id = $1) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(gid)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(result.rows_affected())
+}
+
+#[server]
 async fn remove_member(member_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let mid: Uuid = member_id
@@ -245,6 +264,24 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                             }
                         },
                         "Add"
+                    }
+                    if !customers.is_empty() {
+                        button {
+                            class: "bg-gray-500 text-white px-4 py-1 rounded hover:bg-gray-600 text-sm",
+                            onclick: {
+                                let gid = gid.clone();
+                                move |_| {
+                                    let gid = gid.clone();
+                                    async move {
+                                        let _ = add_all_customers(gid).await;
+                                        selected_customer.set(None);
+                                        detail.restart();
+                                        available.restart();
+                                    }
+                                }
+                            },
+                            "Add All Customers"
+                        }
                     }
                 }
 

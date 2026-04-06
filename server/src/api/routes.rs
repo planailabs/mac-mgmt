@@ -235,8 +235,8 @@ pub async fn get_update_target(
     let rollout_version = sqlx::query_scalar::<_, String>(
         "SELECT r.target_version FROM rollouts r \
          JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         LEFT JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE (rs.group_id IS NULL OR rgm.customer_id = $1) \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rgm.customer_id = $1 \
            AND r.status = 'rolling' \
            AND rs.status = 'rolling' \
          ORDER BY r.created_at DESC LIMIT 1",
@@ -2074,22 +2074,17 @@ pub async fn admin_create_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     if body.group_ids.is_empty() {
-        // "All customers" stage — group_id = NULL
-        sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, NULL, 0)")
+        return Err(Status::UnprocessableEntity);
+    }
+
+    for (i, group_id) in body.group_ids.iter().enumerate() {
+        sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)")
             .bind(rollout_id)
+            .bind(group_id)
+            .bind(i as i32)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
-    } else {
-        for (i, group_id) in body.group_ids.iter().enumerate() {
-            sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)")
-                .bind(rollout_id)
-                .bind(group_id)
-                .bind(i as i32)
-                .execute(&mut *tx)
-                .await
-                .map_err(|_| Status::InternalServerError)?;
-        }
     }
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
@@ -2196,8 +2191,8 @@ pub async fn admin_get_rollout(
     struct StageRow { id: Uuid, group_name: String, stage_order: i32, status: String, started_at: Option<DateTime<Utc>>, completed_at: Option<DateTime<Utc>> }
 
     let stages = sqlx::query_as::<_, StageRow>(
-        "SELECT rs.id, COALESCE(rg.name, 'All Customers') AS group_name, rs.stage_order, rs.status, rs.started_at, rs.completed_at \
-         FROM rollout_stages rs LEFT JOIN rollout_groups rg ON rg.id = rs.group_id \
+        "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.started_at, rs.completed_at \
+         FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
          WHERE rs.rollout_id = $1 ORDER BY rs.stage_order"
     )
     .bind(rid)
@@ -2425,33 +2420,17 @@ pub async fn admin_complete_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     // Pin version for all targeted customers.
-    let has_all_stage: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM rollout_stages WHERE rollout_id = $1 AND group_id IS NULL)",
+    sqlx::query(
+        "UPDATE customers SET pinned_version = $1 WHERE id IN (\
+         SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rs.rollout_id = $2)",
     )
+    .bind(&target_version)
     .bind(rid)
-    .fetch_one(&mut *tx)
+    .execute(&mut *tx)
     .await
     .map_err(|_| Status::InternalServerError)?;
-
-    if has_all_stage {
-        sqlx::query("UPDATE customers SET pinned_version = $1")
-            .bind(&target_version)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| Status::InternalServerError)?;
-    } else {
-        sqlx::query(
-            "UPDATE customers SET pinned_version = $1 WHERE id IN (\
-             SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-             JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-             WHERE rs.rollout_id = $2)",
-        )
-        .bind(&target_version)
-        .bind(rid)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    }
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     Ok(Status::Ok)
