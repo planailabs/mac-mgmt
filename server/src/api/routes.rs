@@ -170,10 +170,10 @@ pub async fn get_mcp_servers(
     get,
     path = "/api/config",
     tag = "Sync",
-    summary = "Get customer config TOML for daemon sync",
+    summary = "Get customer config JSON for daemon sync",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Config TOML string", body = String),
+        (status = 200, description = "Config JSON"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Sync token required"),
         (status = 404, description = "No config saved"),
@@ -183,9 +183,9 @@ pub async fn get_mcp_servers(
 pub async fn get_config(
     auth: SyncAuth,
     pool: &State<PgPool>,
-) -> Result<String, Status> {
-    let config = sqlx::query_scalar::<_, String>(
-        "SELECT config_toml FROM customer_configs \
+) -> Result<Json<serde_json::Value>, Status> {
+    let config = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config_json FROM customer_configs \
          WHERE customer_id = $1 \
          ORDER BY created_at DESC \
          LIMIT 1",
@@ -196,7 +196,7 @@ pub async fn get_config(
     .map_err(|_| Status::InternalServerError)?;
 
     match config {
-        Some(toml) => Ok(toml),
+        Some(json) => Ok(Json(json)),
         None => Err(Status::NotFound),
     }
 }
@@ -429,8 +429,8 @@ pub async fn setting_get_config(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<serde_json::Value>, Status> {
-    let config_toml = sqlx::query_scalar::<_, String>(
-        "SELECT config_toml FROM customer_configs \
+    let config = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config_json FROM customer_configs \
          WHERE customer_id = $1 \
          ORDER BY created_at DESC \
          LIMIT 1",
@@ -441,10 +441,7 @@ pub async fn setting_get_config(
     .map_err(|_| Status::InternalServerError)?
     .ok_or(Status::NotFound)?;
 
-    let config: mac_mgmt_common::CustomerConfig =
-        toml::from_str(&config_toml).map_err(|_| Status::InternalServerError)?;
-    let json = serde_json::to_value(&config).map_err(|_| Status::InternalServerError)?;
-    Ok(Json(json))
+    Ok(Json(config))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -457,7 +454,7 @@ pub struct SetConfigBody {
     put,
     path = "/api/setting/config",
     tag = "Setting — Config",
-    summary = "Set customer config (JSON body, stored as TOML)",
+    summary = "Set customer config (JSON body)",
     security(("bearer" = [])),
     request_body = SetConfigBody,
     responses(
@@ -474,17 +471,13 @@ pub async fn setting_set_config(
     channels: &State<PushChannels>,
     body: Json<SetConfigBody>,
 ) -> Result<Status, Status> {
-    // Convert JSON to TOML for storage
-    let config_toml = toml::to_string_pretty(&body.config)
+    // Validate by deserializing into CustomerConfig
+    let _: mac_mgmt_common::CustomerConfig = serde_json::from_value(body.config.clone())
         .map_err(|_| Status::UnprocessableEntity)?;
 
-    // Validate
-    mac_mgmt_common::CustomerConfig::from_toml(&config_toml)
-        .map_err(|_| Status::UnprocessableEntity)?;
-
-    sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO customer_configs (customer_id, config_json) VALUES ($1, $2)")
         .bind(auth.customer_id)
-        .bind(&config_toml)
+        .bind(&body.config)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -524,9 +517,9 @@ pub async fn setting_patch_config(
     channels: &State<PushChannels>,
     body: Json<PatchConfigBody>,
 ) -> Result<Status, Status> {
-    // Load current config (or empty)
-    let current_toml = sqlx::query_scalar::<_, String>(
-        "SELECT config_toml FROM customer_configs \
+    // Load current config
+    let current: serde_json::Value = sqlx::query_scalar(
+        "SELECT config_json FROM customer_configs \
          WHERE customer_id = $1 \
          ORDER BY created_at DESC \
          LIMIT 1",
@@ -535,16 +528,9 @@ pub async fn setting_patch_config(
     .fetch_optional(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?
-    .unwrap_or_default();
+    .unwrap_or(serde_json::json!({}));
 
-    // Parse current config as JSON, merge the patch, convert back to TOML
-    let mut config: serde_json::Value = if current_toml.is_empty() {
-        serde_json::json!({})
-    } else {
-        let parsed: mac_mgmt_common::CustomerConfig =
-            toml::from_str(&current_toml).map_err(|_| Status::InternalServerError)?;
-        serde_json::to_value(&parsed).map_err(|_| Status::InternalServerError)?
-    };
+    let mut config = current;
 
     // Merge: config[section][key] = value
     let section_obj = config
@@ -557,16 +543,13 @@ pub async fn setting_patch_config(
         .ok_or(Status::UnprocessableEntity)?;
     section_map.insert(body.key.clone(), body.value.clone());
 
-    // Convert merged JSON → TOML
-    let new_toml = toml::to_string_pretty(&config).map_err(|_| Status::UnprocessableEntity)?;
-
     // Validate
-    mac_mgmt_common::CustomerConfig::from_toml(&new_toml)
+    let _: mac_mgmt_common::CustomerConfig = serde_json::from_value(config.clone())
         .map_err(|_| Status::UnprocessableEntity)?;
 
-    sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO customer_configs (customer_id, config_json) VALUES ($1, $2)")
         .bind(auth.customer_id)
-        .bind(&new_toml)
+        .bind(&config)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;

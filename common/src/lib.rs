@@ -449,6 +449,13 @@ impl CustomerConfig {
         Ok(config)
     }
 
+    /// Parse and validate a JSON value as a customer config.
+    pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
+        let config: Self = serde_json::from_value(json.clone()).map_err(|e| e.to_string())?;
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.daemon.validate().map_err(|e| e.to_string())?;
         self.global.validate().map_err(|e| e.to_string())?;

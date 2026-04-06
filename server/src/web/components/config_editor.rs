@@ -19,17 +19,20 @@ async fn get_current_config(customer_id: String) -> Result<Option<CustomerConfig
 }
 
 #[server]
-async fn save_config(customer_id: String, config_toml: String) -> Result<(), ServerFnError> {
-    mac_mgmt_common::CustomerConfig::from_toml(&config_toml)
+async fn save_config(customer_id: String, config_json: String) -> Result<(), ServerFnError> {
+    let json: serde_json::Value = serde_json::from_str(&config_json)
+        .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
+    // Validate
+    let _: mac_mgmt_common::CustomerConfig = serde_json::from_value(json.clone())
         .map_err(|e| ServerFnError::new(format!("invalid config: {e}")))?;
 
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = customer_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO customer_configs (customer_id, config_json) VALUES ($1, $2)")
         .bind(uuid)
-        .bind(&config_toml)
+        .bind(&json)
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -43,28 +46,6 @@ async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
     let value = serde_json::to_value(&schema)
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(value)
-}
-
-/// Parse TOML string into JSON (server-side, since toml crate isn't in WASM).
-#[server]
-async fn toml_to_json(toml_str: String) -> Result<serde_json::Value, ServerFnError> {
-    if toml_str.is_empty() {
-        return Ok(serde_json::Value::Object(serde_json::Map::new()));
-    }
-    let val: toml::Value = toml::from_str(&toml_str)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    serde_json::to_value(val).map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-/// Convert JSON value back to TOML string (server-side).
-#[server]
-async fn json_to_toml(json: serde_json::Value) -> Result<String, ServerFnError> {
-    if json.as_object().is_some_and(|o| o.is_empty()) {
-        return Ok(String::new());
-    }
-    let val: toml::Value = serde_json::from_value(json)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    toml::to_string_pretty(&val).map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 #[component]
@@ -84,7 +65,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
 
     if !*initialized.read() {
         if let Some(Ok(Some(cfg))) = &*config.read() {
-            editor_text.set(cfg.config_toml.clone());
+            editor_text.set(serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default());
             initialized.set(true);
         }
     }
@@ -119,7 +100,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
                     checked: *raw_mode.read(),
                     onchange: move |evt| raw_mode.set(evt.checked()),
                 }
-                "Raw TOML"
+                "Raw JSON"
             }
         }
 
@@ -127,7 +108,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
             if *raw_mode.read() {
                 textarea {
                     class: "w-full h-64 font-mono text-sm border border-gray-300 rounded p-2 mb-2",
-                    placeholder: "Paste TOML config here...",
+                    placeholder: "Paste JSON config here...",
                     value: "{editor_text}",
                     oninput: move |evt| editor_text.set(evt.value()),
                 }
@@ -137,7 +118,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
                         rsx! {
                             StructuredEditor {
                                 schema: schema_val.clone(),
-                                toml_text: editor_text,
+                                json_text: editor_text,
                             }
                         }
                     }
@@ -145,7 +126,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
                         p { class: "text-red-600 text-sm", "Failed to load schema: {e}" }
                         textarea {
                             class: "w-full h-64 font-mono text-sm border border-gray-300 rounded p-2 mb-2",
-                            placeholder: "Paste TOML config here...",
+                            placeholder: "Paste JSON config here...",
                             value: "{editor_text}",
                             oninput: move |evt| editor_text.set(evt.value()),
                         }
@@ -178,34 +159,16 @@ pub fn ConfigEditor(customer_id: String) -> Element {
     }
 }
 
-/// Renders structured form sections from JSON Schema, keeping the TOML signal in sync.
-/// Uses serde_json::Value for form state (works in WASM), converts to TOML server-side.
+/// Renders structured form sections from JSON Schema, keeping the JSON signal in sync.
 #[component]
-fn StructuredEditor(schema: serde_json::Value, mut toml_text: Signal<String>) -> Element {
-    // Parse existing TOML into JSON for the form (server-side conversion)
-    let initial_text = toml_text.read().clone();
-    let initial_json = use_server_future(move || {
-        let text = initial_text.clone();
-        async move { toml_to_json(text).await }
-    })?;
-
+fn StructuredEditor(schema: serde_json::Value, mut json_text: Signal<String>) -> Element {
     let form_values: Signal<serde_json::Value> = use_signal(|| {
-        match &*initial_json.read() {
-            Some(Ok(v)) => v.clone(),
-            _ => serde_json::Value::Object(serde_json::Map::new()),
-        }
+        serde_json::from_str(&json_text.read()).unwrap_or(serde_json::Value::Object(Default::default()))
     });
 
-    // Sync form_values -> TOML text via server-side conversion
-    let sync_to_toml = move || {
+    let sync_to_json = move || {
         let json = form_values.read().clone();
-        let mut text = toml_text;
-        spawn(async move {
-            match json_to_toml(json).await {
-                Ok(toml_str) => text.set(toml_str),
-                Err(e) => tracing::warn!("json_to_toml failed: {e}"),
-            }
-        });
+        json_text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
     };
 
     // Get schema properties (top-level sections)
@@ -248,7 +211,7 @@ fn StructuredEditor(schema: serde_json::Value, mut toml_text: Signal<String>) ->
                                 &defs,
                                 section_name.clone(),
                                 form_values,
-                                sync_to_toml,
+                                sync_to_json,
                             )}
                         }
                     }
@@ -280,7 +243,7 @@ fn render_section_fields(
     defs: &serde_json::Value,
     section_name: String,
     mut form_values: Signal<serde_json::Value>,
-    sync_to_toml: impl Fn() + Clone + 'static,
+    sync_to_json: impl Fn() + Clone + 'static,
 ) -> Element {
     let properties = section_schema
         .get("properties")
@@ -311,7 +274,7 @@ fn render_section_fields(
 
             let section_clone = section_name.clone();
             let field_clone = field_name.clone();
-            let sync = sync_to_toml.clone();
+            let sync = sync_to_json.clone();
 
             rsx! {
                 div { class: "flex flex-col gap-0.5",

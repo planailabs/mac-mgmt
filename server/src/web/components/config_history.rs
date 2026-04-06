@@ -60,21 +60,23 @@ async fn get_config_diff(
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    let left_toml: String =
-        sqlx::query_scalar("SELECT config_toml FROM customer_configs WHERE id = $1")
+    let left_json: serde_json::Value =
+        sqlx::query_scalar("SELECT config_json FROM customer_configs WHERE id = $1")
             .bind(left_uuid)
             .fetch_one(&pool)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let left_text = serde_json::to_string_pretty(&left_json).unwrap_or_default();
 
-    let right_toml: String =
-        sqlx::query_scalar("SELECT config_toml FROM customer_configs WHERE id = $1")
+    let right_json: serde_json::Value =
+        sqlx::query_scalar("SELECT config_json FROM customer_configs WHERE id = $1")
             .bind(right_uuid)
             .fetch_one(&pool)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let right_text = serde_json::to_string_pretty(&right_json).unwrap_or_default();
 
-    let diff = TextDiff::from_lines(&left_toml, &right_toml);
+    let diff = TextDiff::from_lines(&left_text, &right_text);
     let lines: Vec<DiffLine> = diff
         .iter_all_changes()
         .map(|change| {

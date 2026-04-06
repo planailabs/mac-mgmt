@@ -29,12 +29,12 @@ pub fn read_metrics_port() -> u16 {
         .unwrap_or(DEFAULT_METRICS_PORT)
 }
 
-fn merge_toml(base: &mut toml::Value, overlay: &toml::Value) {
+fn merge_json(base: &mut serde_json::Value, overlay: &serde_json::Value) {
     match (base, overlay) {
-        (toml::Value::Table(b), toml::Value::Table(o)) => {
+        (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
             for (k, v) in o {
-                merge_toml(
-                    b.entry(k).or_insert(toml::Value::Boolean(false)),
+                merge_json(
+                    b.entry(k).or_insert(serde_json::Value::Null),
                     v,
                 );
             }
@@ -45,7 +45,7 @@ fn merge_toml(base: &mut toml::Value, overlay: &toml::Value) {
     }
 }
 
-async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<toml::Value>> {
+async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<serde_json::Value>> {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/api/config"))
@@ -63,9 +63,8 @@ async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<toml::Valu
         anyhow::bail!("config server returned {status}");
     }
 
-    let body = resp.text().await.context("failed to read response body")?;
-    let value: toml::Value = toml::from_str(&body).context("failed to parse remote config")?;
-    Ok(Some(value))
+    let json: serde_json::Value = resp.json().await.context("failed to parse remote config")?;
+    Ok(Some(json))
 }
 
 pub async fn reload() -> Result<Config> {
@@ -105,10 +104,13 @@ pub async fn load() -> Result<Config> {
             .await
             .context("failed to fetch remote config")?;
 
-        if let Some(mut remote) = remote {
-            merge_toml(&mut remote, &local_value);
-            let config: Config = remote
-                .try_into()
+        if let Some(mut remote_json) = remote {
+            // Convert local TOML to JSON for merging
+            let local_json: serde_json::Value = serde_json::to_value(
+                toml::from_str::<toml::Value>(&contents)?
+            ).context("failed to convert local config to JSON")?;
+            merge_json(&mut remote_json, &local_json);
+            let config: Config = serde_json::from_value(remote_json)
                 .context("failed to deserialize merged config")?;
             return Ok(config);
         }

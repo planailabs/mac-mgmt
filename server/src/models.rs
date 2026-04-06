@@ -28,7 +28,7 @@ pub struct Token {
 pub struct CustomerConfig {
     pub id: Uuid,
     pub customer_id: Uuid,
-    pub config_toml: String,
+    pub config_json: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
 
