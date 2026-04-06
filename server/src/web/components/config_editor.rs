@@ -216,7 +216,7 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                             {render_section_fields(
                                 &resolved,
                                 &defs,
-                                section_name.clone(),
+                                vec![section_name.clone()],
                                 form_values,
                                 sync_to_json,
                             )}
@@ -244,11 +244,11 @@ fn resolve_ref<'a>(
     std::borrow::Cow::Borrowed(schema)
 }
 
-/// Render fields for one config section.
+/// Render fields for one config section, including nested subsections.
 fn render_section_fields(
     section_schema: &serde_json::Value,
     defs: &serde_json::Value,
-    section_name: String,
+    path: Vec<String>,
     mut form_values: Signal<serde_json::Value>,
     sync_to_json: impl Fn() + Clone + 'static,
 ) -> Element {
@@ -273,186 +273,226 @@ fn render_section_fields(
                 .unwrap_or("string")
                 .to_string();
 
-            let current_value = form_values
-                .read()
-                .get(&section_name)
-                .and_then(|s| s.get(&field_name))
-                .cloned();
+            // Check if this field is a nested object (subsection)
+            let is_object = field_type == "object"
+                || resolved.get("properties").is_some();
 
-            let section_clone = section_name.clone();
-            let field_clone = field_name.clone();
+            let mut field_path = path.clone();
+            field_path.push(field_name.clone());
+
+            let current_value = get_at_path(&form_values.read(), &field_path);
+
+            let key = field_path.join(".");
             let sync = sync_to_json.clone();
 
-            rsx! {
-                div { class: "flex flex-col gap-0.5",
-                    key: "{section_name}-{field_name}",
-                    label { class: "text-sm font-medium text-gray-700", "{field_clone}" }
-                    if !description.is_empty() {
-                        p { class: "text-xs text-gray-500", "{description}" }
+            if is_object {
+                // Render as a nested subsection
+                let defs_clone = defs.clone();
+                let resolved_clone = resolved.into_owned();
+                rsx! {
+                    div { class: "border-l-2 border-gray-200 pl-3 mt-1",
+                        key: "{key}",
+                        label { class: "text-sm font-medium text-gray-600", "{field_name}" }
+                        if !description.is_empty() {
+                            p { class: "text-xs text-gray-500", "{description}" }
+                        }
+                        {render_section_fields(
+                            &resolved_clone,
+                            &defs_clone,
+                            field_path,
+                            form_values,
+                            sync,
+                        )}
                     }
-                    {match field_type.as_str() {
-                        "boolean" => {
-                            let checked = current_value
-                                .as_ref()
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let section_c = section_clone.clone();
-                            let field_c = field_clone.clone();
-                            let sync_c = sync.clone();
-                            rsx! {
-                                input {
-                                    r#type: "checkbox",
-                                    class: "h-4 w-4",
-                                    checked: checked,
-                                    onchange: move |evt| {
-                                        set_field(&mut form_values, &section_c, &field_c,
-                                            serde_json::Value::Bool(evt.checked()));
-                                        sync_c();
-                                    },
-                                }
-                            }
+                }
+            } else {
+                let fp = field_path.clone();
+                let fp2 = field_path.clone();
+                rsx! {
+                    div { class: "flex flex-col gap-0.5",
+                        key: "{key}",
+                        label { class: "text-sm font-medium text-gray-700", "{field_name}" }
+                        if !description.is_empty() {
+                            p { class: "text-xs text-gray-500", "{description}" }
                         }
-                        "integer" => {
-                            let val_str = current_value
-                                .as_ref()
-                                .and_then(|v| v.as_i64())
-                                .map(|n| n.to_string())
-                                .unwrap_or_default();
-                            let section_c = section_clone.clone();
-                            let field_c = field_clone.clone();
-                            let sync_c = sync.clone();
-                            rsx! {
-                                input {
-                                    r#type: "number",
-                                    class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
-                                    value: val_str,
-                                    oninput: move |evt| {
-                                        if let Ok(n) = evt.value().parse::<i64>() {
-                                            set_field(&mut form_values, &section_c, &field_c,
-                                                serde_json::json!(n));
-                                            sync_c();
-                                        }
-                                    },
-                                }
-                            }
-                        }
-                        "array" => {
-                            let val_str = current_value
-                                .as_ref()
-                                .and_then(|v| v.as_array())
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|v| v.as_str().map(String::from))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                })
-                                .unwrap_or_default();
-                            let section_c = section_clone.clone();
-                            let field_c = field_clone.clone();
-                            let sync_c = sync.clone();
-                            rsx! {
-                                input {
-                                    r#type: "text",
-                                    class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
-                                    placeholder: "comma-separated values",
-                                    value: val_str,
-                                    oninput: move |evt| {
-                                        let arr: Vec<serde_json::Value> = evt.value()
-                                            .split(',')
-                                            .map(|s| serde_json::Value::String(s.trim().to_string()))
-                                            .filter(|v| v.as_str() != Some(""))
-                                            .collect();
-                                        set_field(&mut form_values, &section_c, &field_c,
-                                            serde_json::Value::Array(arr));
-                                        sync_c();
-                                    },
-                                }
-                            }
-                        }
-                        _ => {
-                            // Check for enum values (string with enum constraint)
-                            let enum_values: Vec<String> = resolved
-                                .get("enum")
-                                .and_then(|e| e.as_array())
-                                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                                .unwrap_or_default();
-                            let val_str = current_value
-                                .as_ref()
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let section_c = section_clone.clone();
-                            let field_c = field_clone.clone();
-                            let sync_c = sync.clone();
-                            if !enum_values.is_empty() {
+                        {match field_type.as_str() {
+                            "boolean" => {
+                                let checked = current_value
+                                    .as_ref()
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let fp = fp.clone();
+                                let sync_c = sync.clone();
                                 rsx! {
-                                    select {
-                                        class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
-                                        value: val_str,
+                                    input {
+                                        r#type: "checkbox",
+                                        class: "h-4 w-4",
+                                        checked: checked,
                                         onchange: move |evt| {
-                                            set_field(&mut form_values, &section_c, &field_c,
-                                                serde_json::Value::String(evt.value()));
+                                            set_at_path(&mut form_values, &fp,
+                                                serde_json::Value::Bool(evt.checked()));
                                             sync_c();
                                         },
-                                        option { value: "", "-- select --" }
-                                        {enum_values.iter().map(|v| {
-                                            let v = v.clone();
-                                            rsx! { option { value: "{v}", "{v}" } }
-                                        })}
                                     }
                                 }
-                            } else {
+                            }
+                            "integer" => {
+                                let val_str = current_value
+                                    .as_ref()
+                                    .and_then(|v| v.as_i64())
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_default();
+                                let fp = fp.clone();
+                                let sync_c = sync.clone();
+                                rsx! {
+                                    input {
+                                        r#type: "number",
+                                        class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
+                                        value: val_str,
+                                        oninput: move |evt| {
+                                            if let Ok(n) = evt.value().parse::<i64>() {
+                                                set_at_path(&mut form_values, &fp,
+                                                    serde_json::json!(n));
+                                                sync_c();
+                                            }
+                                        },
+                                    }
+                                }
+                            }
+                            "array" => {
+                                let val_str = current_value
+                                    .as_ref()
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    })
+                                    .unwrap_or_default();
+                                let fp = fp.clone();
+                                let sync_c = sync.clone();
                                 rsx! {
                                     input {
                                         r#type: "text",
                                         class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
+                                        placeholder: "comma-separated values",
                                         value: val_str,
                                         oninput: move |evt| {
-                                            let v = evt.value();
-                                            if v.is_empty() {
-                                                remove_field(&mut form_values, &section_c, &field_c);
-                                            } else {
-                                                set_field(&mut form_values, &section_c, &field_c,
-                                                    serde_json::Value::String(v));
-                                            }
+                                            let arr: Vec<serde_json::Value> = evt.value()
+                                                .split(',')
+                                                .map(|s| serde_json::Value::String(s.trim().to_string()))
+                                                .filter(|v| v.as_str() != Some(""))
+                                                .collect();
+                                            set_at_path(&mut form_values, &fp,
+                                                serde_json::Value::Array(arr));
                                             sync_c();
                                         },
                                     }
                                 }
                             }
-                        }
-                    }}
+                            _ => {
+                                let enum_values: Vec<String> = resolved
+                                    .get("enum")
+                                    .and_then(|e| e.as_array())
+                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                                    .unwrap_or_default();
+                                let val_str = current_value
+                                    .as_ref()
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let sync_c = sync.clone();
+                                if !enum_values.is_empty() {
+                                    let fp = fp.clone();
+                                    rsx! {
+                                        select {
+                                            class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
+                                            value: val_str,
+                                            onchange: move |evt| {
+                                                set_at_path(&mut form_values, &fp,
+                                                    serde_json::Value::String(evt.value()));
+                                                sync_c();
+                                            },
+                                            option { value: "", "-- select --" }
+                                            {enum_values.iter().map(|v| {
+                                                let v = v.clone();
+                                                rsx! { option { value: "{v}", "{v}" } }
+                                            })}
+                                        }
+                                    }
+                                } else {
+                                    rsx! {
+                                        input {
+                                            r#type: "text",
+                                            class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
+                                            value: val_str,
+                                            oninput: move |evt| {
+                                                let v = evt.value();
+                                                if v.is_empty() {
+                                                    remove_at_path(&mut form_values, &fp2);
+                                                } else {
+                                                    set_at_path(&mut form_values, &fp2,
+                                                        serde_json::Value::String(v));
+                                                }
+                                                sync_c();
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                        }}
+                    }
                 }
             }
         })}
     }
 }
 
-fn set_field(
+/// Get a value at a nested JSON path.
+fn get_at_path(root: &serde_json::Value, path: &[String]) -> Option<serde_json::Value> {
+    let mut current = root;
+    for key in path {
+        current = current.get(key)?;
+    }
+    Some(current.clone())
+}
+
+/// Set a value at a nested JSON path, creating intermediate objects as needed.
+fn set_at_path(
     form_values: &mut Signal<serde_json::Value>,
-    section: &str,
-    field: &str,
+    path: &[String],
     value: serde_json::Value,
 ) {
     let mut val = form_values.write();
-    if let serde_json::Value::Object(root) = &mut *val {
-        let section_obj = root
-            .entry(section)
+    let mut current = &mut *val;
+    for key in &path[..path.len() - 1] {
+        current = current
+            .as_object_mut()
+            .unwrap()
+            .entry(key)
             .or_insert(serde_json::Value::Object(serde_json::Map::new()));
-        if let serde_json::Value::Object(t) = section_obj {
-            t.insert(field.to_string(), value);
+    }
+    if let Some(last) = path.last() {
+        if let serde_json::Value::Object(obj) = current {
+            obj.insert(last.clone(), value);
         }
     }
 }
 
-fn remove_field(form_values: &mut Signal<serde_json::Value>, section: &str, field: &str) {
+/// Remove a value at a nested JSON path.
+fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: &[String]) {
     let mut val = form_values.write();
-    if let serde_json::Value::Object(root) = &mut *val {
-        if let Some(serde_json::Value::Object(t)) = root.get_mut(section) {
-            t.remove(field);
-            if t.is_empty() {
-                root.remove(section);
-            }
+    let mut current = &mut *val;
+    for key in &path[..path.len() - 1] {
+        match current.get_mut(key) {
+            Some(next) => current = next,
+            None => return,
+        }
+    }
+    if let Some(last) = path.last() {
+        if let serde_json::Value::Object(obj) = current {
+            obj.remove(last);
         }
     }
 }
