@@ -90,7 +90,7 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonSettings {
     #[schemars(description = "How often to check for updates, sync skills and MCP servers (e.g. \"30s\", \"5m\", \"1h\")")]
@@ -120,7 +120,7 @@ impl Default for DaemonSettings {
 
 // ── Notifications (daemon-only) ──────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
     #[schemars(description = "Apprise notification URLs (e.g. tgram://bot/chat, ntfy://host/topic)")]
@@ -161,7 +161,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
     #[schemars(description = "Ollama listen address")]
@@ -207,7 +207,7 @@ fn default_nexa_model() -> String {
     "ggml-org/Qwen3-1.7B-GGUF".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NexaConfig {
     #[schemars(description = "Nexa listen address")]
@@ -254,7 +254,7 @@ fn default_gateway_host() -> String {
     "127.0.0.1".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawGatewayConfig {
     #[schemars(description = "OpenClaw gateway listen port")]
@@ -265,7 +265,7 @@ pub struct OpenClawGatewayConfig {
     pub host: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawSkillsConfig {
     #[schemars(description = "Automatically update skills on the update interval")]
@@ -273,7 +273,7 @@ pub struct OpenClawSkillsConfig {
     pub auto_update: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawTelegramConfig {
     #[schemars(description = "Telegram bot token from @BotFather")]
@@ -286,7 +286,7 @@ pub struct OpenClawTelegramConfig {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
     #[schemars(description = "Gateway settings merged into ~/.openclaw/openclaw.json")]
@@ -320,7 +320,7 @@ fn default_metrics_port() -> u16 {
     9396
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     #[schemars(description = "Prometheus metrics endpoint port")]
@@ -354,7 +354,7 @@ fn default_agent_provider() -> String {
     "openclaw".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
     #[schemars(description = "LLM backend to use: ollama, nexa, or none")]
@@ -404,7 +404,7 @@ impl GlobalConfig {
 
 // ── Customer Config (what the server manages per-customer) ──────────────
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CustomerConfig {
     #[serde(default)]
@@ -460,7 +460,7 @@ impl CustomerConfig {
 
 // ── Relay ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct RelayConfig {
     #[schemars(description = "Relay server URL for remote SSH access (e.g. wss://relay.example.com)")]
     pub url: Option<String>,

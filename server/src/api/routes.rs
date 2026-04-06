@@ -415,10 +415,10 @@ pub async fn setting_config_schema(
     get,
     path = "/api/setting/config",
     tag = "Setting — Config",
-    summary = "Get customer config TOML",
+    summary = "Get customer config as JSON",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Config TOML string", body = String),
+        (status = 200, description = "Customer config JSON"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
         (status = 404, description = "No config saved"),
@@ -428,8 +428,8 @@ pub async fn setting_config_schema(
 pub async fn setting_get_config(
     auth: SettingAuth,
     pool: &State<PgPool>,
-) -> Result<String, Status> {
-    let config = sqlx::query_scalar::<_, String>(
+) -> Result<Json<serde_json::Value>, Status> {
+    let config_toml = sqlx::query_scalar::<_, String>(
         "SELECT config_toml FROM customer_configs \
          WHERE customer_id = $1 \
          ORDER BY created_at DESC \
@@ -438,31 +438,33 @@ pub async fn setting_get_config(
     .bind(auth.customer_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|_| Status::InternalServerError)?;
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::NotFound)?;
 
-    match config {
-        Some(toml) => Ok(toml),
-        None => Err(Status::NotFound),
-    }
+    let config: mac_mgmt_common::CustomerConfig =
+        toml::from_str(&config_toml).map_err(|_| Status::InternalServerError)?;
+    let json = serde_json::to_value(&config).map_err(|_| Status::InternalServerError)?;
+    Ok(Json(json))
 }
 
 #[derive(Deserialize, ToSchema)]
 pub struct SetConfigBody {
-    config_toml: String,
+    #[serde(flatten)]
+    config: serde_json::Value,
 }
 
 #[utoipa::path(
     put,
     path = "/api/setting/config",
     tag = "Setting — Config",
-    summary = "Set customer config TOML",
+    summary = "Set customer config (JSON body, stored as TOML)",
     security(("bearer" = [])),
     request_body = SetConfigBody,
     responses(
         (status = 201, description = "Config saved"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
-        (status = 422, description = "Invalid TOML config"),
+        (status = 422, description = "Invalid config"),
     ),
 )]
 #[rocket::put("/setting/config", data = "<body>")]
@@ -472,12 +474,17 @@ pub async fn setting_set_config(
     channels: &State<PushChannels>,
     body: Json<SetConfigBody>,
 ) -> Result<Status, Status> {
-    mac_mgmt_common::CustomerConfig::from_toml(&body.config_toml)
+    // Convert JSON to TOML for storage
+    let config_toml = toml::to_string_pretty(&body.config)
+        .map_err(|_| Status::UnprocessableEntity)?;
+
+    // Validate
+    mac_mgmt_common::CustomerConfig::from_toml(&config_toml)
         .map_err(|_| Status::UnprocessableEntity)?;
 
     sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
         .bind(auth.customer_id)
-        .bind(&body.config_toml)
+        .bind(&config_toml)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
