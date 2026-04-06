@@ -167,6 +167,9 @@ async fn delete_group(id: String) -> Result<(), ServerFnError> {
     let gid: Uuid = id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if gid.is_nil() {
+        return Err(ServerFnError::new("the All Customers group cannot be deleted"));
+    }
     sqlx::query("DELETE FROM rollout_groups WHERE id = $1")
         .bind(gid)
         .execute(&pool)

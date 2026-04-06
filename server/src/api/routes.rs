@@ -227,8 +227,8 @@ pub async fn get_update_target(
     let rollout_version = sqlx::query_scalar::<_, String>(
         "SELECT r.target_version FROM rollouts r \
          JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE rgm.customer_id = $1 \
+         WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE customer_id = $1)) \
            AND r.status = 'rolling' \
            AND rs.status = 'rolling' \
          ORDER BY r.created_at DESC LIMIT 1",
@@ -2185,6 +2185,7 @@ pub async fn admin_list_rollout_groups(
         "SELECT rg.id, rg.name, rg.description, COUNT(rgm.id) AS member_count \
          FROM rollout_groups rg \
          LEFT JOIN rollout_group_members rgm ON rgm.group_id = rg.id \
+         WHERE rg.id != '00000000-0000-0000-0000-000000000000'::uuid \
          GROUP BY rg.id ORDER BY rg.name"
     )
     .fetch_all(pool.inner())
@@ -2311,17 +2312,16 @@ pub async fn admin_create_rollout(
     #[derive(sqlx::FromRow)]
     struct SkippedCustomer { name: String, pinned_version: String }
 
-    let has_all = body.group_ids.is_empty(); // "all" represented as empty group_ids
     let skipped = sqlx::query_as::<_, SkippedCustomer>(
         "SELECT c.name, c.pinned_version FROM customers c \
          WHERE c.pinned_version IS NOT NULL \
            AND c.pinned_version > $1 \
-           AND ($2 OR c.id IN (\
-             SELECT rgm.customer_id FROM rollout_group_members rgm \
-             WHERE rgm.group_id = ANY($3)))",
+           AND ('00000000-0000-0000-0000-000000000000'::uuid = ANY($2) \
+                OR c.id IN (\
+                  SELECT rgm.customer_id FROM rollout_group_members rgm \
+                  WHERE rgm.group_id = ANY($2)))",
     )
     .bind(&body.target_version)
-    .bind(has_all)
     .bind(&body.group_ids)
     .fetch_all(pool.inner())
     .await
@@ -2697,7 +2697,11 @@ pub async fn admin_complete_rollout(
     sqlx::query(
         "UPDATE customers SET pinned_version = $1 WHERE id IN (\
          SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         JOIN LATERAL ( \
+           SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+           UNION ALL \
+           SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+         ) rgm ON true \
          WHERE rs.rollout_id = $2)",
     )
     .bind(&target_version)
@@ -2811,6 +2815,9 @@ pub async fn admin_delete_rollout_group(
     group_id: &str,
 ) -> Result<Status, Status> {
     let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
+    if gid.is_nil() {
+        return Err(Status::Forbidden);
+    }
     let result = sqlx::query("DELETE FROM rollout_groups WHERE id = $1")
         .bind(gid)
         .execute(pool.inner())

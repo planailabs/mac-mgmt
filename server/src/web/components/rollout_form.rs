@@ -22,10 +22,14 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
         name: String,
     }
 
-    let rows = sqlx::query_as::<_, Row>("SELECT id, name FROM rollout_groups ORDER BY name")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT id, name FROM rollout_groups \
+         WHERE id != '00000000-0000-0000-0000-000000000000'::uuid \
+         ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(rows
         .into_iter()
@@ -37,7 +41,9 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
 }
 
 /// `stage_ids` is an ordered list of group UUIDs or `"__all__"` sentinel.
-/// `"__all__"` creates an ad-hoc group containing every customer.
+/// `"__all__"` maps to the nil UUID (`00000000-…`) sentinel in `rollout_stages.group_id`;
+/// queries that resolve stage members use a subquery for all customers when
+/// the sentinel is present instead of joining through `rollout_group_members`.
 #[server]
 async fn create_rollout(
     target_version: String,
@@ -65,38 +71,12 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Resolve each stage_id to a real group UUID
+    // Resolve each stage_id to a real group UUID.
+    // "__all__" maps to the nil-UUID sentinel (no temp group created).
     let mut resolved: Vec<Uuid> = Vec::with_capacity(stage_ids.len());
     for sid in &stage_ids {
         if sid == "__all__" {
-            let group_id = Uuid::new_v4();
-            let group_name = format!("all (v{})", target_version.trim());
-            sqlx::query(
-                "INSERT INTO rollout_groups (id, name, description) VALUES ($1, $2, 'Auto-created for rollout') \
-                 ON CONFLICT (name) DO NOTHING",
-            )
-            .bind(group_id)
-            .bind(&group_name)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-            let actual_id: Uuid =
-                sqlx::query_scalar("SELECT id FROM rollout_groups WHERE name = $1")
-                    .bind(&group_name)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(|e| ServerFnError::new(e.to_string()))?;
-            sqlx::query(
-                "INSERT INTO rollout_group_members (group_id, customer_id) \
-                 SELECT $1, id FROM customers \
-                 WHERE id NOT IN (SELECT customer_id FROM rollout_group_members WHERE group_id = $1) \
-                 ON CONFLICT DO NOTHING",
-            )
-            .bind(actual_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-            resolved.push(actual_id);
+            resolved.push(Uuid::nil());
         } else {
             let gid: Uuid = sid
                 .parse()
@@ -115,11 +95,15 @@ async fn create_rollout(
 
     let downgrades = sqlx::query_as::<_, DowngradeRow>(
         "SELECT DISTINCT c.name AS customer_name, c.pinned_version, rg.name AS group_name \
-         FROM customers c \
-         JOIN rollout_group_members rgm ON rgm.customer_id = c.id \
-         JOIN rollout_groups rg ON rg.id = rgm.group_id \
-         WHERE rgm.group_id = ANY($1) \
-           AND c.pinned_version IS NOT NULL \
+         FROM unnest($1::uuid[]) AS gid \
+         JOIN rollout_groups rg ON rg.id = gid \
+         JOIN LATERAL ( \
+           SELECT customer_id FROM rollout_group_members WHERE group_id = gid \
+           UNION ALL \
+           SELECT id FROM customers WHERE gid = '00000000-0000-0000-0000-000000000000'::uuid \
+         ) rgm ON true \
+         JOIN customers c ON c.id = rgm.customer_id \
+         WHERE c.pinned_version IS NOT NULL \
            AND c.pinned_version > $2 \
          ORDER BY c.name, rg.name",
     )

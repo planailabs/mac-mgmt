@@ -40,7 +40,11 @@ pub async fn notify_global(customer_id: Uuid, msg: PushMessage) {
 pub async fn notify_rollout_customers(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
     let customer_ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         JOIN LATERAL ( \
+           SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+           UNION ALL \
+           SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+         ) rgm ON true \
          WHERE rs.rollout_id = $1 AND rs.status = 'rolling'",
     )
     .bind(rollout_id)
@@ -60,7 +64,11 @@ pub async fn notify_rollout_customers(channels: &PushChannels, pool: &PgPool, ro
 pub async fn notify_all_rollout_customers(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
     let customer_ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         JOIN LATERAL ( \
+           SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+           UNION ALL \
+           SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+         ) rgm ON true \
          WHERE rs.rollout_id = $1",
     )
     .bind(rollout_id)
