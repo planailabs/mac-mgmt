@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::table_utils::{Searchable, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutEntry {
@@ -59,6 +60,13 @@ async fn delete_rollout(id: String) -> Result<(), ServerFnError> {
     Ok(())
 }
 
+impl Searchable for RolloutEntry {
+    fn matches_search(&self, query: &str) -> bool {
+        self.id.to_string().to_lowercase().contains(query)
+            || self.status.to_lowercase().contains(query)
+    }
+}
+
 fn status_badge(status: &str) -> (&'static str, &'static str) {
     match status {
         "rolling" => ("bg-blue-100 text-blue-800", "rolling"),
@@ -94,77 +102,100 @@ pub fn RolloutList() -> Element {
                 if list.is_empty() {
                     p { class: "text-gray-500 text-sm", "No rollouts yet." }
                 } else {
-                    div { class: "bg-white rounded shadow overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200",
-                            thead { class: "bg-gray-50",
-                                tr {
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase",
-                                        "ID"
-                                    }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase",
-                                        "Status"
-                                    }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase",
-                                        "Stages"
-                                    }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase",
-                                        "Created"
-                                    }
-                                    th { class: "px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase",
-                                        ""
-                                    }
-                                }
+                    {
+                        let search = use_signal(String::new);
+                        let limit = use_signal(|| 20usize);
+
+                        let list_clone = list.clone();
+                        let filtered: Vec<&RolloutEntry> = {
+                            let q = search.read().to_lowercase();
+                            if q.is_empty() {
+                                list_clone.iter().collect()
+                            } else {
+                                list_clone.iter().filter(|e| e.matches_search(&q)).collect()
                             }
-                            tbody { class: "bg-white divide-y divide-gray-200",
-                                for r in list {
-                                    {
-                                        let rid = r.id.to_string();
-                                        let created =
-                                            r.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                        let (badge_class, badge_text) =
-                                            status_badge(&r.status);
-                                        let can_delete = r.status == "pending"
-                                            || r.status == "completed"
-                                            || r.status == "failed";
-                                        rsx! {
-                                            tr {
-                                                td { class: "px-4 py-2 text-sm",
-                                                    Link {
-                                                        to: Route::RolloutDetail {
-                                                            id: rid.clone(),
-                                                        },
-                                                        class: "text-blue-600 hover:underline font-mono text-xs",
-                                                        "{rid}"
-                                                    }
-                                                }
-                                                td { class: "px-4 py-2 text-sm",
-                                                    span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_class}",
-                                                        "{badge_text}"
-                                                    }
-                                                }
-                                                td { class: "px-4 py-2 text-sm",
-                                                    "{r.stage_count}"
-                                                }
-                                                td { class: "px-4 py-2 text-sm text-gray-500",
-                                                    "{created}"
-                                                }
-                                                td { class: "px-4 py-2 text-right",
-                                                    if can_delete {
-                                                        button {
-                                                            class: "text-red-600 hover:text-red-700 text-sm",
-                                                            onclick: {
-                                                                let rid = rid.clone();
-                                                                move |_| {
-                                                                    let rid = rid.clone();
-                                                                    async move {
-                                                                        let _ =
-                                                                            delete_rollout(rid)
-                                                                                .await;
-                                                                        rollouts.restart();
-                                                                    }
+                        };
+
+                        let total = list.len();
+                        let filtered_count = filtered.len();
+                        let limit_val = *limit.read();
+                        let shown = filtered_count.min(limit_val);
+
+                        rsx! {
+                            TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                            div { class: "bg-white rounded shadow overflow-hidden",
+                                table { class: "min-w-full divide-y divide-gray-200",
+                                    thead { class: "bg-gray-50",
+                                        tr {
+                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
+                                                "ID"
+                                            }
+                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
+                                                "Status"
+                                            }
+                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
+                                                "Stages"
+                                            }
+                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
+                                                "Created"
+                                            }
+                                            th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase",
+                                                ""
+                                            }
+                                        }
+                                    }
+                                    tbody { class: "bg-white divide-y divide-gray-200",
+                                        for r in filtered.into_iter().take(limit_val) {
+                                            {
+                                                let rid = r.id.to_string();
+                                                let created =
+                                                    r.created_at.format("%Y-%m-%d %H:%M").to_string();
+                                                let (badge_class, badge_text) =
+                                                    status_badge(&r.status);
+                                                let can_delete = r.status == "pending"
+                                                    || r.status == "completed"
+                                                    || r.status == "failed";
+                                                rsx! {
+                                                    tr {
+                                                        td { class: "px-6 py-4 text-sm",
+                                                            Link {
+                                                                to: Route::RolloutDetail {
+                                                                    id: rid.clone(),
+                                                                },
+                                                                class: "text-blue-600 hover:underline font-mono text-xs",
+                                                                "{rid}"
+                                                            }
+                                                        }
+                                                        td { class: "px-6 py-4 text-sm",
+                                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_class}",
+                                                                "{badge_text}"
+                                                            }
+                                                        }
+                                                        td { class: "px-6 py-4 text-sm",
+                                                            "{r.stage_count}"
+                                                        }
+                                                        td { class: "px-6 py-4 text-sm text-gray-500",
+                                                            "{created}"
+                                                        }
+                                                        td { class: "px-6 py-4 text-right",
+                                                            if can_delete {
+                                                                button {
+                                                                    class: "text-red-600 hover:text-red-700 text-sm",
+                                                                    onclick: {
+                                                                        let rid = rid.clone();
+                                                                        move |_| {
+                                                                            let rid = rid.clone();
+                                                                            async move {
+                                                                                let _ =
+                                                                                    delete_rollout(rid)
+                                                                                        .await;
+                                                                                rollouts.restart();
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    "Delete"
                                                                 }
-                                                            },
-                                                            "Delete"
+                                                            }
                                                         }
                                                     }
                                                 }

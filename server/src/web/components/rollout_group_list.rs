@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::table_utils::{Searchable, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupEntry {
@@ -12,6 +13,12 @@ struct GroupEntry {
     member_count: i64,
 }
 
+impl Searchable for GroupEntry {
+    fn matches_search(&self, query: &str) -> bool {
+        self.name.to_lowercase().contains(query)
+            || self.description.to_lowercase().contains(query)
+    }
+}
 
 #[server]
 async fn get_rollout_groups() -> Result<Vec<GroupEntry>, ServerFnError> {
@@ -91,29 +98,52 @@ pub fn RolloutGroupList() -> Element {
                     }
                 }
 
-                div { class: "bg-white rounded shadow overflow-hidden",
-                    table { class: "min-w-full divide-y divide-gray-200",
-                        thead { class: "bg-gray-50",
-                            tr {
-                                th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Name" }
-                                th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Description" }
-                                th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Members" }
-                            }
+                {
+                    let search = use_signal(String::new);
+                    let limit = use_signal(|| 20usize);
+
+                    let list_clone = list.clone();
+                    let filtered: Vec<&GroupEntry> = {
+                        let q = search.read().to_lowercase();
+                        if q.is_empty() {
+                            list_clone.iter().collect()
+                        } else {
+                            list_clone.iter().filter(|e| e.matches_search(&q)).collect()
                         }
-                        tbody { class: "bg-white divide-y divide-gray-200",
-                            for g in list {
-                                {
-                                    let gid = g.id.to_string();
-                                    rsx! {
-                                        tr {
-                                            td { class: "px-4 py-2 text-sm font-medium",
-                                                Link { to: Route::RolloutGroupDetail { id: gid },
-                                                    class: "text-blue-600 hover:underline",
-                                                    "{g.name}"
+                    };
+
+                    let total = list.len();
+                    let filtered_count = filtered.len();
+                    let limit_val = *limit.read();
+                    let shown = filtered_count.min(limit_val);
+
+                    rsx! {
+                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                        div { class: "bg-white rounded shadow overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200",
+                                thead { class: "bg-gray-50",
+                                    tr {
+                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Name" }
+                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Description" }
+                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Members" }
+                                    }
+                                }
+                                tbody { class: "bg-white divide-y divide-gray-200",
+                                    for g in filtered.into_iter().take(limit_val) {
+                                        {
+                                            let gid = g.id.to_string();
+                                            rsx! {
+                                                tr {
+                                                    td { class: "px-6 py-4 text-sm font-medium",
+                                                        Link { to: Route::RolloutGroupDetail { id: gid },
+                                                            class: "text-blue-600 hover:underline",
+                                                            "{g.name}"
+                                                        }
+                                                    }
+                                                    td { class: "px-6 py-4 text-sm text-gray-500", "{g.description}" }
+                                                    td { class: "px-6 py-4 text-sm", "{g.member_count}" }
                                                 }
                                             }
-                                            td { class: "px-4 py-2 text-sm text-gray-500", "{g.description}" }
-                                            td { class: "px-4 py-2 text-sm", "{g.member_count}" }
                                         }
                                     }
                                 }
