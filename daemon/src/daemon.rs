@@ -22,6 +22,25 @@ pub async fn run(
     log_buf: crate::log_buffer::LogBuffer,
     set_log_level: Box<dyn Fn(&str) + Send>,
 ) -> Result<()> {
+    // Acquire lockfile to ensure only one daemon instance runs at a time.
+    let lock_path = config::config_dir().join("daemon.lock");
+    std::fs::create_dir_all(lock_path.parent().unwrap()).ok();
+    let lock_file = std::fs::File::create(&lock_path)
+        .context("failed to create lockfile")?;
+    match lock_file.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            anyhow::bail!(
+                "another daemon instance is already running (lockfile: {})",
+                lock_path.display()
+            );
+        }
+        Err(std::fs::TryLockError::Error(e)) => {
+            return Err(e).context("failed to lock lockfile");
+        }
+    }
+    // lock_file is held for the lifetime of run(); the OS releases the lock on drop/exit.
+
     sentry_ext::set_tag("environment", ENVIRONMENT);
     sentry_ext::set_tag("target", TARGET);
     sentry_ext::breadcrumb("daemon", "daemon started", &[
