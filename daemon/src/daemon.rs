@@ -440,9 +440,13 @@ async fn send_heartbeat(
     services: Vec<serde_json::Value>,
 ) {
     let client = reqwest::Client::new();
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_default();
     let body = mac_mgmt_common::HeartbeatBody {
         instance_id: instance_id.to_string(),
         version: CURRENT_VERSION.to_string(),
+        hostname,
         services: serde_json::Value::Array(services),
     };
 

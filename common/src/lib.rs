@@ -20,6 +20,8 @@ pub enum PushEvent {
 pub struct HeartbeatBody {
     pub instance_id: String,
     pub version: String,
+    #[serde(default)]
+    pub hostname: String,
     pub services: serde_json::Value,
 }
 

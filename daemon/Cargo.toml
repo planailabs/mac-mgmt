@@ -36,6 +36,7 @@ urlencoding = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4"] }
 mac-mgmt-common = { path = "../common" }
 dirs = "6"
+hostname = "0.4"
 humantime = "2"
 notify = "7"
 strip-ansi-escapes = "0.2"

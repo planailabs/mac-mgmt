@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 struct FleetEntry {
     customer_name: String,
     instance_id: String,
+    hostname: String,
     version: String,
     services: serde_json::Value,
     reported_at: DateTime<Utc>,
@@ -19,13 +20,14 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
     struct Row {
         customer_name: String,
         instance_id: String,
+        hostname: String,
         version: String,
         services: serde_json::Value,
         reported_at: DateTime<Utc>,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.name AS customer_name, dh.instance_id, dh.version, dh.services, dh.reported_at \
+        "SELECT c.name AS customer_name, dh.instance_id, dh.hostname, dh.version, dh.services, dh.reported_at \
          FROM daemon_heartbeats dh \
          JOIN customers c ON c.id = dh.customer_id \
          ORDER BY dh.reported_at DESC",
@@ -39,6 +41,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         .map(|r| FleetEntry {
             customer_name: r.customer_name,
             instance_id: r.instance_id,
+            hostname: r.hostname,
             version: r.version,
             services: r.services,
             reported_at: r.reported_at,
@@ -62,7 +65,7 @@ pub fn FleetDashboard() -> Element {
                             thead { class: "bg-gray-50",
                                 tr {
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Customer" }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Instance" }
+                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Hostname" }
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Version" }
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Status" }
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Services" }
@@ -106,7 +109,13 @@ pub fn FleetDashboard() -> Element {
                                         rsx! {
                                             tr {
                                                 td { class: "px-4 py-2 text-sm", "{entry.customer_name}" }
-                                                td { class: "px-4 py-2 text-sm font-mono text-xs", "{entry.instance_id}" }
+                                                td { class: "px-4 py-2 text-sm",
+                                                    if entry.hostname.is_empty() {
+                                                        span { class: "text-gray-400 font-mono text-xs", "{entry.instance_id}" }
+                                                    } else {
+                                                        span { "{entry.hostname}" }
+                                                    }
+                                                }
                                                 td { class: "px-4 py-2 text-sm", "{entry.version}" }
                                                 td { class: "px-4 py-2 text-sm {status_class}", "{status_text}" }
                                                 td { class: "px-4 py-2 text-sm",
