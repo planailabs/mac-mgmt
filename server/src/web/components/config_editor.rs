@@ -375,34 +375,111 @@ fn render_section_fields(
                                 }
                             }
                             "array" => {
-                                let val_str = current_value
+                                let items: Vec<String> = current_value
                                     .as_ref()
                                     .and_then(|v| v.as_array())
                                     .map(|arr| {
                                         arr.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect::<Vec<_>>()
-                                            .join(", ")
+                                            .map(|v| match v {
+                                                serde_json::Value::String(s) => s.clone(),
+                                                other => other.to_string(),
+                                            })
+                                            .collect()
                                     })
                                     .unwrap_or_default();
-                                let fp = fp.clone();
-                                let sync_c = sync.clone();
+                                let fp_add = fp.clone();
+                                let fp_remove = fp.clone();
+                                let sync_add = sync.clone();
+                                let sync_remove = sync.clone();
                                 rsx! {
-                                    input {
-                                        r#type: "text",
-                                        class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
-                                        placeholder: "comma-separated values",
-                                        value: val_str,
-                                        oninput: move |evt| {
-                                            let arr: Vec<serde_json::Value> = evt.value()
-                                                .split(',')
-                                                .map(|s| serde_json::Value::String(s.trim().to_string()))
-                                                .filter(|v| v.as_str() != Some(""))
-                                                .collect();
-                                            set_at_path(&mut form_values, &fp,
-                                                serde_json::Value::Array(arr));
-                                            sync_c();
-                                        },
+                                    div { class: "space-y-1",
+                                        for (idx, item) in items.iter().enumerate() {
+                                            div {
+                                                key: "{idx}",
+                                                class: "flex items-center gap-1",
+                                                span { class: "flex-1 text-sm font-mono bg-gray-50 border border-gray-200 rounded px-2 py-0.5 truncate",
+                                                    "{item}"
+                                                }
+                                                button {
+                                                    class: "text-red-500 hover:text-red-700 text-xs px-1",
+                                                    r#type: "button",
+                                                    onclick: {
+                                                        let fp = fp_remove.clone();
+                                                        let sync_c = sync_remove.clone();
+                                                        move |_| {
+                                                            let mut arr = get_at_path(&form_values.read(), &fp)
+                                                                .and_then(|v| v.as_array().cloned())
+                                                                .unwrap_or_default();
+                                                            if idx < arr.len() {
+                                                                arr.remove(idx);
+                                                            }
+                                                            set_at_path(&mut form_values, &fp,
+                                                                serde_json::Value::Array(arr));
+                                                            sync_c();
+                                                        }
+                                                    },
+                                                    "x"
+                                                }
+                                            }
+                                        }
+                                        // Add new item
+                                        {
+                                            let fp = fp_add.clone();
+                                            let sync_c = sync_add.clone();
+                                            let mut new_val = use_signal(String::new);
+                                            rsx! {
+                                                div { class: "flex gap-1",
+                                                    input {
+                                                        r#type: "text",
+                                                        class: "flex-1 border border-gray-300 rounded px-2 py-0.5 text-sm",
+                                                        placeholder: "Add item...",
+                                                        value: "{new_val}",
+                                                        oninput: move |e| new_val.set(e.value()),
+                                                        onkeypress: {
+                                                            let fp = fp.clone();
+                                                            let sync_c = sync_c.clone();
+                                                            move |e: KeyboardEvent| {
+                                                                if e.key() == Key::Enter {
+                                                                    let val = new_val.read().clone();
+                                                                    if !val.trim().is_empty() {
+                                                                        let mut arr = get_at_path(&form_values.read(), &fp)
+                                                                            .and_then(|v| v.as_array().cloned())
+                                                                            .unwrap_or_default();
+                                                                        arr.push(serde_json::Value::String(val.trim().to_string()));
+                                                                        set_at_path(&mut form_values, &fp,
+                                                                            serde_json::Value::Array(arr));
+                                                                        sync_c();
+                                                                        new_val.set(String::new());
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                    }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "bg-blue-600 text-white px-2 py-0.5 rounded text-xs hover:bg-blue-700",
+                                                        onclick: {
+                                                            let fp = fp.clone();
+                                                            let sync_c = sync_c.clone();
+                                                            move |_| {
+                                                                let val = new_val.read().clone();
+                                                                if !val.trim().is_empty() {
+                                                                    let mut arr = get_at_path(&form_values.read(), &fp)
+                                                                        .and_then(|v| v.as_array().cloned())
+                                                                        .unwrap_or_default();
+                                                                    arr.push(serde_json::Value::String(val.trim().to_string()));
+                                                                    set_at_path(&mut form_values, &fp,
+                                                                        serde_json::Value::Array(arr));
+                                                                    sync_c();
+                                                                    new_val.set(String::new());
+                                                                }
+                                                            }
+                                                        },
+                                                        "+"
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
