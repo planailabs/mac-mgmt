@@ -157,7 +157,10 @@ async fn main() -> Result<()> {
         }
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]
-        Commands::Update { force } => self_update::apply(force)?,
+        Commands::Update { force } => {
+            tokio::task::spawn_blocking(move || self_update::apply(force))
+                .await??;
+        }
         #[cfg(not(feature = "self-update"))]
         Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
         Commands::EnableSsh => write_ssh_fifo("enable")?,
