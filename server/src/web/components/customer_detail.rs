@@ -24,17 +24,13 @@ async fn get_customer(id: String) -> Result<Customer, ServerFnError> {
 }
 
 #[server]
-async fn get_pinned_rollout(customer_id: String, version: String) -> Result<Option<String>, ServerFnError> {
+async fn get_pinned_rollout(version: String) -> Result<Option<String>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let rollout_id: Option<uuid::Uuid> = sqlx::query_scalar(
-        "SELECT r.id FROM rollouts r \
-         JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE rgm.customer_id = $1 AND r.target_version = $2 AND r.status = 'completed' \
-         ORDER BY r.updated_at DESC LIMIT 1",
+        "SELECT id FROM rollouts \
+         WHERE target_version = $1 \
+         ORDER BY updated_at DESC LIMIT 1",
     )
-    .bind(cid)
     .bind(&version)
     .fetch_optional(&pool)
     .await
@@ -72,7 +68,6 @@ pub fn CustomerDetail(id: String) -> Element {
             let pinned = c.pinned_version.clone();
             let cid = c.id.to_string();
             let cid2 = cid.clone();
-            let cid3 = cid.clone();
             let name = c.name.clone();
             rsx! {
                 div { class: "flex items-center gap-3 mb-2",
@@ -125,7 +120,7 @@ pub fn CustomerDetail(id: String) -> Element {
                 div { class: "text-gray-500 mb-6 flex items-center gap-4",
                     span { "Created: {created}" }
                     if let Some(ref ver) = pinned {
-                        PinnedVersion { customer_id: cid3.clone(), version: ver.clone() }
+                        PinnedVersion { version: ver.clone() }
                     }
                 }
 
@@ -167,13 +162,11 @@ pub fn CustomerDetail(id: String) -> Element {
 }
 
 #[component]
-fn PinnedVersion(customer_id: String, version: String) -> Element {
-    let cid = customer_id.clone();
+fn PinnedVersion(version: String) -> Element {
     let ver = version.clone();
     let rollout = use_server_future(move || {
-        let cid = cid.clone();
         let ver = ver.clone();
-        async move { get_pinned_rollout(cid, ver).await }
+        async move { get_pinned_rollout(ver).await }
     })?;
 
     let rollout_id = match &*rollout.read() {
