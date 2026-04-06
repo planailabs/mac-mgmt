@@ -51,6 +51,44 @@ async fn rename_customer(id: String, name: String) -> Result<(), ServerFnError> 
     Ok(())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ActiveRolloutEntry {
+    id: String,
+    target_version: String,
+    status: String,
+}
+
+#[server]
+async fn get_active_rollouts(customer_id: String) -> Result<Vec<ActiveRolloutEntry>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: uuid::Uuid,
+        target_version: String,
+        status: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT DISTINCT r.id, r.target_version, r.status FROM rollouts r \
+         JOIN rollout_stages rs ON rs.rollout_id = r.id \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rgm.customer_id = $1 AND r.status IN ('rolling', 'paused') \
+         ORDER BY r.target_version DESC",
+    )
+    .bind(cid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows.into_iter().map(|r| ActiveRolloutEntry {
+        id: r.id.to_string(),
+        target_version: r.target_version,
+        status: r.status,
+    }).collect())
+}
+
 #[component]
 pub fn CustomerDetail(id: String) -> Element {
     let id_clone = id.clone();
@@ -117,11 +155,12 @@ pub fn CustomerDetail(id: String) -> Element {
                         }
                     }
                 }
-                div { class: "text-gray-500 mb-6 flex items-center gap-4",
+                div { class: "text-gray-500 mb-6 flex items-center gap-4 flex-wrap",
                     span { "Created: {created}" }
                     if let Some(ref ver) = pinned {
                         PinnedVersion { version: ver.clone() }
                     }
+                    ActiveRollouts { customer_id: cid2.clone() }
                 }
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
@@ -158,6 +197,44 @@ pub fn CustomerDetail(id: String) -> Element {
         }
         Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
         None => rsx! { p { "Loading..." } },
+    }
+}
+
+#[component]
+fn ActiveRollouts(customer_id: String) -> Element {
+    let cid = customer_id.clone();
+    let rollouts = use_server_future(move || {
+        let cid = cid.clone();
+        async move { get_active_rollouts(cid).await }
+    })?;
+
+    let entries = match &*rollouts.read() {
+        Some(Ok(list)) => list.clone(),
+        _ => vec![],
+    };
+
+    if entries.is_empty() {
+        return rsx! {};
+    }
+
+    rsx! {
+        for entry in &entries {
+            {
+                let badge_class = match entry.status.as_str() {
+                    "rolling" => "bg-blue-100 text-blue-800",
+                    "paused" => "bg-yellow-100 text-yellow-800",
+                    _ => "bg-gray-100 text-gray-800",
+                };
+                let rid = entry.id.clone();
+                rsx! {
+                    Link {
+                        to: Route::RolloutDetail { id: rid },
+                        class: "px-2 py-0.5 rounded text-xs font-medium {badge_class} hover:opacity-80",
+                        "{entry.status} v{entry.target_version}"
+                    }
+                }
+            }
+        }
     }
 }
 
