@@ -73,6 +73,18 @@ async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnE
     Ok(())
 }
 
+#[server]
+async fn delete_customer(id: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM customers WHERE id = $1")
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ActiveRolloutEntry {
     id: String,
@@ -121,6 +133,8 @@ pub fn CustomerDetail(id: String) -> Element {
 
     let mut editing = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
+    let mut confirm_delete = use_signal(|| false);
+    let nav = navigator();
 
     match &*customer.read() {
         Some(Ok(c)) => {
@@ -174,6 +188,34 @@ pub fn CustomerDetail(id: String) -> Element {
                                 editing.set(true);
                             },
                             "Edit"
+                        }
+                        if *confirm_delete.read() {
+                            span { class: "text-red-600 text-sm", "Delete this customer?" }
+                            button {
+                                class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                                onclick: {
+                                    let cid = cid.clone();
+                                    move |_| {
+                                        let cid = cid.clone();
+                                        async move {
+                                            let _ = delete_customer(cid).await;
+                                            nav.push(Route::CustomerList {});
+                                        }
+                                    }
+                                },
+                                "Confirm"
+                            }
+                            button {
+                                class: "text-gray-500 hover:text-gray-700 text-sm",
+                                onclick: move |_| confirm_delete.set(false),
+                                "Cancel"
+                            }
+                        } else {
+                            button {
+                                class: "text-red-400 hover:text-red-600 text-sm",
+                                onclick: move |_| confirm_delete.set(true),
+                                "Delete"
+                            }
                         }
                     }
                 }
