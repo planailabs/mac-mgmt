@@ -25,6 +25,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_config_schema,
         routes::setting_get_config,
         routes::setting_set_config,
+        routes::setting_patch_config,
         // Setting — skills
         routes::setting_list_skills,
         routes::setting_add_skill,
@@ -86,6 +87,7 @@ use utoipa_swagger_ui::SwaggerUi;
     components(schemas(
         routes::SelfInfo,
         routes::SetConfigBody,
+        routes::PatchConfigBody,
         routes::AddSkillBody,
         routes::BatchSkillsBody,
         routes::CustomerBundleRow,
@@ -175,6 +177,7 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::setting_config_schema,
                 routes::setting_get_config,
                 routes::setting_set_config,
+                routes::setting_patch_config,
                 // Setting token routes — skills
                 routes::setting_list_skills,
                 routes::setting_add_skill,

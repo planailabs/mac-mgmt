@@ -493,6 +493,88 @@ pub async fn setting_set_config(
     Ok(Status::Created)
 }
 
+// -- Config partial update --
+
+#[derive(Deserialize, ToSchema)]
+pub struct PatchConfigBody {
+    section: String,
+    key: String,
+    value: serde_json::Value,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/setting/config",
+    tag = "Setting — Config",
+    summary = "Partially update customer config",
+    description = "Updates a single key within a config section. Reads the current config, merges the change, validates, and saves as a new version.",
+    security(("bearer" = [])),
+    request_body = PatchConfigBody,
+    responses(
+        (status = 200, description = "Config updated"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+        (status = 422, description = "Invalid config after merge"),
+    ),
+)]
+#[rocket::patch("/setting/config", data = "<body>")]
+pub async fn setting_patch_config(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    body: Json<PatchConfigBody>,
+) -> Result<Status, Status> {
+    // Load current config (or empty)
+    let current_toml = sqlx::query_scalar::<_, String>(
+        "SELECT config_toml FROM customer_configs \
+         WHERE customer_id = $1 \
+         ORDER BY created_at DESC \
+         LIMIT 1",
+    )
+    .bind(auth.customer_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .unwrap_or_default();
+
+    // Parse current config as JSON, merge the patch, convert back to TOML
+    let mut config: serde_json::Value = if current_toml.is_empty() {
+        serde_json::json!({})
+    } else {
+        let parsed: mac_mgmt_common::CustomerConfig =
+            toml::from_str(&current_toml).map_err(|_| Status::InternalServerError)?;
+        serde_json::to_value(&parsed).map_err(|_| Status::InternalServerError)?
+    };
+
+    // Merge: config[section][key] = value
+    let section_obj = config
+        .as_object_mut()
+        .ok_or(Status::InternalServerError)?
+        .entry(&body.section)
+        .or_insert(serde_json::json!({}));
+    let section_map = section_obj
+        .as_object_mut()
+        .ok_or(Status::UnprocessableEntity)?;
+    section_map.insert(body.key.clone(), body.value.clone());
+
+    // Convert merged JSON → TOML
+    let new_toml = toml::to_string_pretty(&config).map_err(|_| Status::UnprocessableEntity)?;
+
+    // Validate
+    mac_mgmt_common::CustomerConfig::from_toml(&new_toml)
+        .map_err(|_| Status::UnprocessableEntity)?;
+
+    sqlx::query("INSERT INTO customer_configs (customer_id, config_toml) VALUES ($1, $2)")
+        .bind(auth.customer_id)
+        .bind(&new_toml)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    push::notify(channels, auth.customer_id, PushMessage::SyncConfig).await;
+    Ok(Status::Ok)
+}
+
 // -- Skills --
 
 #[utoipa::path(
