@@ -4,16 +4,12 @@ const SENTRY_DSN: &str = "https://5e5956eb9a8c1904c961efadc1e72444@o451111058676
 
 /// Initialize Sentry and install a panic hook that reports to Sentry
 /// and attempts a self-update before aborting.
-pub fn init() -> sentry::ClientInitGuard {
-    let environment = match option_env!("ENVIRONMENT") {
-        Some(v) => Some(v.into()),
-        None => Some("dev".into()),
-    };
+pub fn init(environment: &'static str) -> sentry::ClientInitGuard {
     let guard = sentry::init((
         SENTRY_DSN,
         sentry::ClientOptions {
             release: Some(env!("CARGO_PKG_VERSION").into()),
-            environment,
+            environment: Some(environment.into()),
             ..Default::default()
         },
     ));

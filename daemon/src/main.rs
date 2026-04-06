@@ -128,7 +128,11 @@ async fn main() -> Result<()> {
         .with(log_layer::BufferLayer::new(log_buf.clone()))
         .init();
 
-    let _sentry = crash::init();
+    const ENVIRONMENT: &str = match option_env!("ENVIRONMENT") {
+        Some(v) => v,
+        None => "dev",
+    };
+    let _sentry = crash::init(ENVIRONMENT);
     let cli = Cli::parse();
 
     match cli.command {
