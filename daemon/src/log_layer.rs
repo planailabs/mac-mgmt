@@ -44,7 +44,9 @@ impl<S: Subscriber> Layer<S> for BufferLayer {
             return;
         }
 
-        let line = format!("{level} {target}: {}", visitor.message);
+        let msg = strip_ansi_escapes::strip(&visitor.message);
+        let msg = String::from_utf8(msg).unwrap_or(visitor.message);
+        let line = format!("{level} {target}: {msg}");
         self.buf.push(line);
     }
 }

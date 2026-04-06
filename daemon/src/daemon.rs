@@ -18,7 +18,10 @@ const TARGET: &str = match option_env!("TARGET") {
     None => "unknown",
 };
 
-pub async fn run(log_buf: crate::log_buffer::LogBuffer) -> Result<()> {
+pub async fn run(
+    log_buf: crate::log_buffer::LogBuffer,
+    set_log_level: Box<dyn Fn(&str) + Send>,
+) -> Result<()> {
     sentry_ext::set_tag("environment", ENVIRONMENT);
     sentry_ext::set_tag("target", TARGET);
     sentry_ext::breadcrumb("daemon", "daemon started", &[
@@ -249,10 +252,8 @@ pub async fn run(log_buf: crate::log_buffer::LogBuffer) -> Result<()> {
                                 tracing::warn!("metrics.port changed \u{2014} daemon restart required to apply");
                             }
                             if new_cfg.daemon.log_level != current_cfg.daemon.log_level {
-                                tracing::info!(
-                                    "log_level changed to {} \u{2014} runtime change requires tracing_subscriber::reload layer",
-                                    new_cfg.daemon.log_level
-                                );
+                                tracing::info!("log_level changed to {}", new_cfg.daemon.log_level);
+                                set_log_level(&new_cfg.daemon.log_level);
                             }
 
                             current_cfg = new_cfg;

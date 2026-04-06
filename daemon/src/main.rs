@@ -106,9 +106,12 @@ async fn main() -> Result<()> {
 
     let log_buf = log_buffer::LogBuffer::new();
 
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let (filter_layer, filter_handle) = tracing_subscriber::reload::Layer::new(env_filter);
+
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")))
+        .with(filter_layer)
         .with(tracing_subscriber::fmt::layer())
         .with(log_layer::BufferLayer::new(log_buf.clone()))
         .init();
@@ -132,7 +135,14 @@ async fn main() -> Result<()> {
         Commands::Start => service::start()?,
         Commands::Stop => service::stop()?,
         Commands::Restart => service::restart()?,
-        Commands::Daemon => daemon::run(log_buf).await?,
+        Commands::Daemon => {
+            let set_log_level = Box::new(move |level: &str| {
+                if let Ok(filter) = level.parse::<tracing_subscriber::EnvFilter>() {
+                    let _ = filter_handle.reload(filter);
+                }
+            });
+            daemon::run(log_buf, set_log_level).await?
+        }
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]
         Commands::Update { force } => self_update::apply(force)?,
