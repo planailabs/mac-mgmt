@@ -164,33 +164,44 @@ impl ManagedService for OpenClaw {
         }
 
         if changed {
+            // Back up the original before writing the merged version
+            let backup = contents.clone();
+
             let merged = serde_json::to_string_pretty(&existing)
                 .context("failed to serialize merged config")?;
             std::fs::write(&config_path, &merged)
                 .with_context(|| format!("failed to write {}", config_path.display()))?;
-            tracing::info!("config merged into openclaw.json");
+            tracing::info!("config merged into openclaw.json, validating...");
 
-            // Validate the merged config; if openclaw rejects it, run doctor --fix
-            // to remove unrecognized keys so we don't cause a crash loop.
-            let doctor = Command::new("openclaw")
-                .arg("doctor")
-                .output()
-                .context("failed to run openclaw doctor")?;
-            if !doctor.status.success() {
-                let stderr = String::from_utf8_lossy(&doctor.stderr);
-                tracing::warn!("openclaw config invalid after merge, running doctor --fix: {}", stderr.trim());
-                let fix = Command::new("openclaw")
-                    .args(["doctor", "--fix"])
-                    .output()
-                    .context("failed to run openclaw doctor --fix")?;
-                if fix.status.success() {
-                    tracing::info!("openclaw doctor --fix corrected the config");
-                } else {
-                    let fix_stderr = String::from_utf8_lossy(&fix.stderr);
-                    tracing::error!("openclaw doctor --fix failed: {}", fix_stderr.trim());
+            // Validate with openclaw config validate
+            let validate = Command::new("openclaw")
+                .args(["config", "validate"])
+                .output();
+
+            let valid = match validate {
+                Ok(output) if output.status.success() => {
+                    tracing::info!("openclaw config validated successfully");
+                    true
                 }
-            } else {
-                tracing::info!("config merged and validated successfully");
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    tracing::warn!("openclaw config invalid after merge: {} {}", stdout.trim(), stderr.trim());
+                    false
+                }
+                Err(e) => {
+                    tracing::warn!("failed to run openclaw config validate: {e}");
+                    // Can't validate — assume OK to avoid blocking startup
+                    true
+                }
+            };
+
+            if !valid {
+                // Rollback to the original config
+                tracing::warn!("rolling back openclaw.json to pre-merge state");
+                std::fs::write(&config_path, &backup)
+                    .with_context(|| format!("failed to rollback {}", config_path.display()))?;
+                tracing::info!("openclaw.json rolled back successfully");
             }
         }
 
