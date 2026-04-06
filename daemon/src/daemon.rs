@@ -343,6 +343,18 @@ pub async fn run(
                         #[cfg(feature = "relay")]
                         relay_mgr.sync_ssh_keys().await;
                     }
+                    crate::server_push::PushCommand::SelfUpdate => {
+                        tracing::info!("server push: self-update requested");
+                        if let (Some(url), Some(token)) = (&server_url, &server_token) {
+                            fetch_target_version(url, token).await;
+                        }
+                        if in_upgrade_window!() {
+                            #[cfg(feature = "self-update")]
+                            { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
+                        } else {
+                            tracing::info!("outside upgrade window, deferring self-update");
+                        }
+                    }
                 }
             }
         };

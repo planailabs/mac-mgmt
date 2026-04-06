@@ -11,6 +11,7 @@ pub enum PushCommand {
     SyncSkills,
     SyncMcpServers,
     SyncSshKeys,
+    SelfUpdate,
 }
 
 const MIN_BACKOFF: Duration = Duration::from_secs(1);

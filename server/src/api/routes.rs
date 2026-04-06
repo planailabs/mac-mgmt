@@ -2229,6 +2229,7 @@ pub async fn admin_get_rollout(
 pub async fn admin_start_rollout(
     _auth: AdminAuth,
     pool: &State<PgPool>,
+    channels: &State<super::push::PushChannels>,
     rollout_id: &str,
 ) -> Result<Status, Status> {
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
@@ -2259,6 +2260,7 @@ pub async fn admin_start_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
     Ok(Status::Ok)
 }
 
@@ -2278,6 +2280,7 @@ pub async fn admin_start_rollout(
 pub async fn admin_advance_rollout(
     _auth: AdminAuth,
     pool: &State<PgPool>,
+    channels: &State<super::push::PushChannels>,
     rollout_id: &str,
 ) -> Result<Status, Status> {
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
@@ -2330,6 +2333,7 @@ pub async fn admin_advance_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
     Ok(Status::Ok)
 }
 
@@ -2389,6 +2393,7 @@ pub async fn admin_pause_rollout(
 pub async fn admin_complete_rollout(
     _auth: AdminAuth,
     pool: &State<PgPool>,
+    channels: &State<super::push::PushChannels>,
     rollout_id: &str,
 ) -> Result<Status, Status> {
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
@@ -2433,6 +2438,7 @@ pub async fn admin_complete_rollout(
     .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    super::push::notify_all_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
     Ok(Status::Ok)
 }
 
@@ -2453,6 +2459,7 @@ pub async fn admin_complete_rollout(
 pub async fn admin_resume_rollout(
     _auth: AdminAuth,
     pool: &State<PgPool>,
+    channels: &State<super::push::PushChannels>,
     rollout_id: &str,
 ) -> Result<Status, Status> {
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
@@ -2478,6 +2485,7 @@ pub async fn admin_resume_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
     Ok(Status::Ok)
 }
 

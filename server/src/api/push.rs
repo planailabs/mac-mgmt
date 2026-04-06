@@ -17,6 +17,7 @@ pub enum PushMessage {
     SyncSkills,
     SyncMcpServers,
     SyncSshKeys,
+    SelfUpdate,
 }
 
 /// Per-customer broadcast channels for push notifications.
@@ -41,6 +42,62 @@ pub async fn notify(channels: &PushChannels, customer_id: Uuid, msg: PushMessage
 pub async fn notify_global(customer_id: Uuid, msg: PushMessage) {
     if let Ok(channels) = crate::push_channels() {
         notify(&channels, customer_id, msg).await;
+    }
+}
+
+/// Notify all customers targeted by a rollout's currently-rolling stages.
+pub async fn notify_rollout_customers(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
+    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rs.rollout_id = $1 AND rs.status = 'rolling'",
+    )
+    .bind(rollout_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let map = channels.read().await;
+    for cid in customer_ids {
+        if let Some(tx) = map.get(&cid) {
+            let _ = tx.send(msg.clone());
+        }
+    }
+}
+
+/// Same as notify_rollout_customers but for all stages (used on complete).
+pub async fn notify_all_rollout_customers(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
+    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rs.rollout_id = $1",
+    )
+    .bind(rollout_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let map = channels.read().await;
+    for cid in customer_ids {
+        if let Some(tx) = map.get(&cid) {
+            let _ = tx.send(msg.clone());
+        }
+    }
+}
+
+/// Dioxus server function variant: notify rollout customers using global state.
+#[cfg(feature = "webui")]
+pub async fn notify_rollout_global(rollout_id: Uuid, msg: PushMessage) {
+    if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
+        notify_rollout_customers(&channels, &pool, rollout_id, msg).await;
+    }
+}
+
+/// Dioxus server function variant: notify ALL customers in a rollout.
+#[cfg(feature = "webui")]
+pub async fn notify_all_rollout_global(rollout_id: Uuid, msg: PushMessage) {
+    if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
+        notify_all_rollout_customers(&channels, &pool, rollout_id, msg).await;
     }
 }
 

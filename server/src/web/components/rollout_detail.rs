@@ -156,6 +156,7 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
         }
         "advance" => {
             #[derive(sqlx::FromRow)]
@@ -205,6 +206,7 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
         }
         "pause" => {
             let mut tx = pool
@@ -247,6 +249,7 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
         }
         "complete" => {
             let target_version: String = sqlx::query_scalar(
@@ -287,6 +290,7 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+            crate::api::push::notify_all_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
         }
         "delete" => {
             sqlx::query("DELETE FROM rollouts WHERE id = $1")
