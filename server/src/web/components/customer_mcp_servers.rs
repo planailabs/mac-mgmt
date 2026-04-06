@@ -436,14 +436,14 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     }}
                 }
                 button {
-                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                     r#type: "submit",
                     "Add"
                 }
             }
             {match &*servers.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400", "No direct MCP server assignments." }
+                    p { class: "text-gray-500 text-sm", "No direct MCP server assignments." }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200",
@@ -452,10 +452,10 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                 let csid = cs.customer_mcp_server_id.to_string();
                                 let label = format!("{} ({})", cs.server_name, cs.server_slug);
                                 rsx! {
-                                    li { class: "py-1 flex justify-between items-center",
+                                    li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{label}" }
                                         button {
-                                            class: "text-xs text-red-600 hover:underline",
+                                            class: "text-red-600 hover:text-red-700 text-sm",
                                             onclick: move |_| {
                                                 let csid = csid.clone();
                                                 spawn(async move {
@@ -472,8 +472,8 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
-                None => rsx! { p { class: "text-xs", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
             }}
         }
 
@@ -482,7 +482,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
             h4 { class: "text-sm font-semibold text-blue-700 mb-2", "From Bundles" }
             {match &*bundle_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400", "No MCP servers from bundles." }
+                    p { class: "text-gray-500 text-sm", "No MCP servers from bundles." }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200",
@@ -492,7 +492,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                 let via = bm.bundle_slug.clone();
                                 let overwritten = bm.overwritten;
                                 rsx! {
-                                    li { class: "py-1 flex items-center gap-2",
+                                    li { class: "py-2 flex items-center gap-2",
                                         span {
                                             class: if overwritten { "text-sm font-mono text-blue-400 line-through" } else { "text-sm font-mono text-blue-700" },
                                             "{label}"
@@ -507,8 +507,8 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
-                None => rsx! { p { class: "text-xs", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
             }}
         }
 
@@ -517,7 +517,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
             h4 { class: "text-sm font-semibold text-gray-500 mb-2", "From Skills (transitive)" }
             {match &*transitive_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400", "No transitive MCP dependencies." }
+                    p { class: "text-gray-500 text-sm", "No transitive MCP dependencies." }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200",
@@ -527,7 +527,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                 let via = format!("{} / {}", tm.skill_slug, tm.channel);
                                 let overwritten = tm.overwritten;
                                 rsx! {
-                                    li { class: "py-1 flex items-center gap-2",
+                                    li { class: "py-2 flex items-center gap-2",
                                         span {
                                             class: if overwritten { "text-sm font-mono text-gray-400 line-through" } else { "text-sm font-mono text-gray-500" },
                                             "{label}"
@@ -542,8 +542,8 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
-                None => rsx! { p { class: "text-xs", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
             }}
         }
 
@@ -551,7 +551,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
         div {
             h4 { class: "text-sm font-semibold text-gray-700 mb-2", "MCP Bundles" }
             if let Some(err) = &*bundle_error.read() {
-                p { class: "text-red-600 text-xs mb-2", "{err}" }
+                p { class: "text-red-600 text-sm mb-2", "{err}" }
             }
             form {
                 class: "flex gap-2 mb-3",
@@ -593,14 +593,14 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     }}
                 }
                 button {
-                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                     r#type: "submit",
                     "Add"
                 }
             }
             {match &*bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400", "No MCP bundle assignments." }
+                    p { class: "text-gray-500 text-sm", "No MCP bundle assignments." }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200",
@@ -609,10 +609,10 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                 let cbid = cb.customer_mcp_bundle_id.to_string();
                                 let label = format!("{} ({})", cb.bundle_name, cb.bundle_slug);
                                 rsx! {
-                                    li { class: "py-1 flex justify-between items-center",
+                                    li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm", "{label}" }
                                         button {
-                                            class: "text-xs text-red-600 hover:underline",
+                                            class: "text-red-600 hover:text-red-700 text-sm",
                                             onclick: move |_| {
                                                 let cbid = cbid.clone();
                                                 spawn(async move {
@@ -629,8 +629,8 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
-                None => rsx! { p { class: "text-xs", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
             }}
         }
     }

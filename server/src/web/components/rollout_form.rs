@@ -213,7 +213,7 @@ pub fn RolloutForm() -> Element {
                                             }
                                         },
                                     }
-                                    span { class: "font-medium", "All Customers" }
+                                    span { class: "font-semibold", "All Customers" }
                                     if let Some(idx) = order {
                                         span { class: "text-xs text-gray-400",
                                             "(stage {idx})"
@@ -281,7 +281,7 @@ pub fn RolloutForm() -> Element {
                     }
 
                     button {
-                        class: "bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600",
+                        class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                         onclick: move |_| {
                             let ver = target_version.read().clone();
                             let stages = selected_stages.read().clone();
@@ -308,10 +308,10 @@ pub fn RolloutForm() -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600", "Error: {e}" }
+            p { class: "text-red-600 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { "Loading groups..." }
+            p { class: "text-gray-500 text-sm", "Loading..." }
         },
     }
 }

@@ -97,7 +97,7 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
 
     rsx! {
         if let Some(err) = &*error_msg.read() {
-            p { class: "text-red-600 text-xs mb-2", "{err}" }
+            p { class: "text-red-600 text-sm mb-2", "{err}" }
         }
         form {
             class: "flex gap-2 mb-3",
@@ -128,14 +128,14 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
                 oninput: move |e| key_input.set(e.value()),
             }
             button {
-                class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700 self-start",
+                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 self-start",
                 r#type: "submit",
                 "Add"
             }
         }
         {match &*keys.read() {
             Some(Ok(list)) if list.is_empty() => rsx! {
-                p { class: "text-xs text-gray-400", "No SSH keys." }
+                p { class: "text-gray-500 text-sm", "No SSH keys." }
             },
             Some(Ok(list)) => rsx! {
                 ul { class: "divide-y divide-gray-200",
@@ -145,7 +145,7 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
                             let fp = key.fingerprint.clone();
                             let comment = key.comment.clone();
                             rsx! {
-                                li { class: "py-1 flex justify-between items-center",
+                                li { class: "py-2 flex justify-between items-center",
                                     div {
                                         span { class: "text-sm font-mono", "{fp}" }
                                         if !comment.is_empty() {
@@ -153,7 +153,7 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
                                         }
                                     }
                                     button {
-                                        class: "text-xs text-red-600 hover:underline",
+                                        class: "text-red-600 hover:text-red-700 text-sm",
                                         onclick: move |_| {
                                             let kid = kid.clone();
                                             spawn(async move {
@@ -170,8 +170,8 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
-            None => rsx! { p { class: "text-xs", "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+            None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
         }}
     }
 }

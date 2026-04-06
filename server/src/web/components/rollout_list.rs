@@ -86,13 +86,13 @@ pub fn RolloutList() -> Element {
                         }
                         Link {
                             to: Route::RolloutForm {},
-                            class: "bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600",
+                            class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                             "New Rollout"
                         }
                     }
                 }
                 if list.is_empty() {
-                    p { class: "text-gray-500", "No rollouts yet." }
+                    p { class: "text-gray-500 text-sm", "No rollouts yet." }
                 } else {
                     div { class: "bg-white rounded shadow overflow-hidden",
                         table { class: "min-w-full divide-y divide-gray-200",
@@ -115,7 +115,7 @@ pub fn RolloutList() -> Element {
                                     }
                                 }
                             }
-                            tbody { class: "divide-y divide-gray-200",
+                            tbody { class: "bg-white divide-y divide-gray-200",
                                 for r in list {
                                     {
                                         let rid = r.id.to_string();
@@ -151,7 +151,7 @@ pub fn RolloutList() -> Element {
                                                 td { class: "px-4 py-2 text-right",
                                                     if can_delete {
                                                         button {
-                                                            class: "text-red-500 hover:text-red-700 text-sm",
+                                                            class: "text-red-600 hover:text-red-700 text-sm",
                                                             onclick: {
                                                                 let rid = rid.clone();
                                                                 move |_| {
@@ -179,10 +179,10 @@ pub fn RolloutList() -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600", "Error: {e}" }
+            p { class: "text-red-600 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { "Loading..." }
+            p { class: "text-gray-500 text-sm", "Loading..." }
         },
     }
 }

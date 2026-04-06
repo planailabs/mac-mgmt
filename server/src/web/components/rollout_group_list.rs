@@ -73,7 +73,7 @@ pub fn RolloutGroupList() -> Element {
                             oninput: move |e| desc.set(e.value()),
                         }
                         button {
-                            class: "bg-blue-500 text-white px-4 py-1 rounded hover:bg-blue-600",
+                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                             onclick: move |_| {
                                 let n = name.read().clone();
                                 let d = desc.read().clone();
@@ -100,7 +100,7 @@ pub fn RolloutGroupList() -> Element {
                                 th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Members" }
                             }
                         }
-                        tbody { class: "divide-y divide-gray-200",
+                        tbody { class: "bg-white divide-y divide-gray-200",
                             for g in list {
                                 {
                                     let gid = g.id.to_string();
@@ -123,7 +123,7 @@ pub fn RolloutGroupList() -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+        None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
     }
 }

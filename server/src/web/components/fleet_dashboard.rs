@@ -55,9 +55,9 @@ pub fn FleetDashboard() -> Element {
             rsx! {
                 h2 { class: "text-2xl font-bold mb-4", "Fleet Dashboard" }
                 if entries.is_empty() {
-                    p { class: "text-gray-500", "No daemons have reported in yet." }
+                    p { class: "text-gray-500 text-sm", "No daemons have reported in yet." }
                 } else {
-                    div { class: "overflow-x-auto",
+                    div { class: "bg-white rounded shadow overflow-hidden",
                         table { class: "min-w-full divide-y divide-gray-200",
                             thead { class: "bg-gray-50",
                                 tr {
@@ -130,10 +130,10 @@ pub fn FleetDashboard() -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600", "Error: {e}" }
+            p { class: "text-red-600 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { "Loading fleet status..." }
+            p { class: "text-gray-500 text-sm", "Loading..." }
         },
     }
 }

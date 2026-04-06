@@ -170,7 +170,7 @@ pub fn ConfigHistory(customer_id: String) -> Element {
                             }
                         }
                         button {
-                            class: "bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 disabled:opacity-50",
+                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
                             disabled: left_id.read().is_none()
                                 || right_id.read().is_none()
                                 || *diff_loading.read(),
@@ -230,7 +230,7 @@ pub fn ConfigHistory(customer_id: String) -> Element {
             p { class: "text-red-600 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { class: "text-gray-500 text-sm", "Loading history..." }
+            p { class: "text-gray-500 text-sm", "Loading..." }
         },
     }
 }

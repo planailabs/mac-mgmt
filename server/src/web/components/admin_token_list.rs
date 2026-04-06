@@ -118,14 +118,14 @@ pub fn AdminTokenList() -> Element {
                                 li { class: "py-2 flex justify-between items-center",
                                     div {
                                         span { class: "text-sm font-medium", "{display_label}" }
-                                        span { class: "text-xs text-gray-400 ml-2", "{created}" }
+                                        span { class: "text-xs text-gray-500 ml-2", "{created}" }
                                         if revoked {
-                                            span { class: "text-xs text-red-500 ml-2", "revoked" }
+                                            span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 ml-2", "revoked" }
                                         }
                                     }
                                     if !revoked {
                                         button {
-                                            class: "text-xs text-red-600 hover:underline",
+                                            class: "text-red-600 hover:text-red-700 text-sm",
                                             onclick: move |_| {
                                                 let tid = tid.clone();
                                                 spawn(async move {
@@ -144,7 +144,7 @@ pub fn AdminTokenList() -> Element {
                 }
             },
             Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-            None => rsx! { p { class: "text-sm", "Loading..." } },
+            None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
         }}
     }
 }

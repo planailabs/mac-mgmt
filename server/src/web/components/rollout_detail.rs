@@ -337,7 +337,7 @@ pub fn RolloutDetail(id: String) -> Element {
                     }
                     if info.status == "pending" || info.status == "completed" || info.status == "failed" {
                         button {
-                            class: "bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600",
+                            class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -357,7 +357,7 @@ pub fn RolloutDetail(id: String) -> Element {
                 div { class: "flex gap-2 mb-6",
                     if info.status == "pending" {
                         button {
-                            class: "bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600",
+                            class: "bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700",
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -373,7 +373,7 @@ pub fn RolloutDetail(id: String) -> Element {
                     }
                     if info.status == "rolling" {
                         button {
-                            class: "bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600",
+                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -403,7 +403,7 @@ pub fn RolloutDetail(id: String) -> Element {
                     }
                     if info.status == "paused" {
                         button {
-                            class: "bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600",
+                            class: "bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700",
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -501,10 +501,10 @@ pub fn RolloutDetail(id: String) -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600", "Error: {e}" }
+            p { class: "text-red-600 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { "Loading..." }
+            p { class: "text-gray-500 text-sm", "Loading..." }
         },
     }
 }

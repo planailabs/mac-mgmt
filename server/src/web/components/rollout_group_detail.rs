@@ -208,7 +208,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                         p { class: "text-gray-500 text-sm", "{info.description}" }
                     }
                     button {
-                        class: "bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600",
+                        class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                         onclick: {
                             let gid = gid.clone();
                             move |_| {
@@ -246,7 +246,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                         }
                     }
                     button {
-                        class: "bg-blue-500 text-white px-4 py-1 rounded hover:bg-blue-600 disabled:opacity-50",
+                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
                         disabled: selected_customer.read().is_none(),
                         onclick: {
                             let gid = gid.clone();
@@ -267,7 +267,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                     }
                     if !customers.is_empty() {
                         button {
-                            class: "bg-gray-500 text-white px-4 py-1 rounded hover:bg-gray-600 text-sm",
+                            class: "bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700",
                             onclick: {
                                 let gid = gid.clone();
                                 move |_| {
@@ -296,7 +296,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                     th { class: "px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase", "" }
                                 }
                             }
-                            tbody { class: "divide-y divide-gray-200",
+                            tbody { class: "bg-white divide-y divide-gray-200",
                                 for m in &info.members {
                                     {
                                         let mid = m.member_id.to_string();
@@ -305,7 +305,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                                 td { class: "px-4 py-2 text-sm", "{m.customer_name}" }
                                                 td { class: "px-4 py-2 text-right",
                                                     button {
-                                                        class: "text-red-500 hover:text-red-700 text-sm",
+                                                        class: "text-red-600 hover:text-red-700 text-sm",
                                                         onclick: {
                                                             let mid = mid.clone();
                                                             move |_| {
@@ -330,7 +330,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+        None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
     }
 }
