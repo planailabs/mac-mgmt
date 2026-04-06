@@ -162,8 +162,14 @@ pub fn ConfigEditor(customer_id: String) -> Element {
 /// Renders structured form sections from JSON Schema, keeping the JSON signal in sync.
 #[component]
 fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Element {
-    let form_values: Signal<serde_json::Value> = use_signal(|| {
-        serde_json::from_str(&json_text.read()).unwrap_or(serde_json::Value::Object(Default::default()))
+    let mut form_values: Signal<serde_json::Value> = use_signal(|| serde_json::Value::Object(Default::default()));
+
+    // Keep form_values in sync when json_text changes (e.g. after config loads)
+    use_effect(move || {
+        let text = json_text.read().clone();
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+            form_values.set(parsed);
+        }
     });
 
     let sync_to_json = move || {
