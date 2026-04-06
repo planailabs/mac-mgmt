@@ -25,6 +25,7 @@ struct StageInfo {
     completed_at: Option<DateTime<Utc>>,
     healthy_count: i64,
     total_count: i64,
+    upgraded_count: i64,
 }
 
 #[server]
@@ -72,18 +73,20 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Get per-group health from heartbeats
+    // Get per-group health + upgrade progress from heartbeats
     #[derive(sqlx::FromRow)]
     struct HealthRow {
         stage_order: i32,
         total: i64,
         healthy: i64,
+        upgraded: i64,
     }
 
     let health = sqlx::query_as::<_, HealthRow>(
         "SELECT rs.stage_order, \
          COUNT(DISTINCT dh.instance_id) AS total, \
-         COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.reported_at > now() - interval '5 minutes') AS healthy \
+         COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.reported_at > now() - interval '5 minutes') AS healthy, \
+         COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.version = $2 AND dh.reported_at > now() - interval '5 minutes') AS upgraded \
          FROM rollout_stages rs \
          JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
          LEFT JOIN daemon_heartbeats dh ON dh.customer_id = rgm.customer_id \
@@ -91,13 +94,14 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
          GROUP BY rs.stage_order",
     )
     .bind(rid)
+    .bind(&rollout.target_version)
     .fetch_all(&pool)
     .await
     .unwrap_or_default();
 
-    let health_map: std::collections::HashMap<i32, (i64, i64)> = health
+    let health_map: std::collections::HashMap<i32, (i64, i64, i64)> = health
         .into_iter()
-        .map(|h| (h.stage_order, (h.healthy, h.total)))
+        .map(|h| (h.stage_order, (h.healthy, h.total, h.upgraded)))
         .collect();
 
     Ok(RolloutInfo {
@@ -108,10 +112,10 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         stages: stages
             .into_iter()
             .map(|s| {
-                let (healthy, total) = health_map
+                let (healthy, total, upgraded) = health_map
                     .get(&s.stage_order)
                     .copied()
-                    .unwrap_or((0, 0));
+                    .unwrap_or((0, 0, 0));
                 StageInfo {
                     id: s.id,
                     group_name: s.group_name,
@@ -122,6 +126,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
                     completed_at: s.completed_at,
                     healthy_count: healthy,
                     total_count: total,
+                    upgraded_count: upgraded,
                 }
             })
             .collect(),
@@ -470,6 +475,20 @@ pub fn RolloutDetail(id: String) -> Element {
                             } else {
                                 "text-red-600"
                             };
+                            let upgrade_text = if stage.total_count > 0 {
+                                format!("{}/{} upgraded", stage.upgraded_count, stage.total_count)
+                            } else {
+                                String::new()
+                            };
+                            let upgrade_color = if stage.total_count == 0 {
+                                "text-gray-400"
+                            } else if stage.upgraded_count == stage.total_count {
+                                "text-green-600"
+                            } else if stage.upgraded_count > 0 {
+                                "text-blue-600"
+                            } else {
+                                "text-gray-400"
+                            };
 
                             rsx! {
                                 div { class: "p-4 bg-white rounded shadow",
@@ -483,8 +502,15 @@ pub fn RolloutDetail(id: String) -> Element {
                                                 "{stage.status}"
                                             }
                                         }
-                                        span { class: "text-sm font-medium {health_color}",
-                                            "{health_text}"
+                                        div { class: "flex gap-3",
+                                            if !upgrade_text.is_empty() {
+                                                span { class: "text-sm font-medium {upgrade_color}",
+                                                    "{upgrade_text}"
+                                                }
+                                            }
+                                            span { class: "text-sm font-medium {health_color}",
+                                                "{health_text}"
+                                            }
                                         }
                                     }
                                     div { class: "text-xs text-gray-400 flex gap-4",
