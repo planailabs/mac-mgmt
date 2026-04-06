@@ -33,13 +33,9 @@ async fn listen(
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        // Send session request to daemon
-        let control_tx = match registry.get_control_tx(instance_id) {
-            Some(tx) => tx,
-            None => {
-                tracing::warn!("daemon {instance_id} not found, dropping connection");
-                continue;
-            }
+        let Some(control_tx) = registry.get_control_tx(instance_id) else {
+            tracing::warn!("daemon {instance_id} not found, dropping connection");
+            continue;
         };
 
         if control_tx

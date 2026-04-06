@@ -13,30 +13,32 @@ pub enum PushCommand {
     SyncSshKeys,
 }
 
+const MIN_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_BACKOFF: Duration = Duration::from_secs(60);
+
 /// Connect to the server's SSE endpoint and forward push commands.
 /// Reconnects with exponential backoff on failure.
 pub fn start(
     server_url: &str,
     server_token: &str,
 ) -> (JoinHandle<()>, mpsc::Receiver<PushCommand>) {
-    let (cmd_tx, cmd_rx) = mpsc::channel::<PushCommand>(16);
+    let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let url = format!("{server_url}/api/events?token={server_token}");
 
     let handle = tokio::spawn(async move {
-        let mut backoff = Duration::from_secs(1);
-        let max_backoff = Duration::from_secs(60);
+        let mut backoff = MIN_BACKOFF;
 
         loop {
             tracing::info!("connecting to server SSE");
             match connect_sse(&url, &cmd_tx).await {
                 Ok(()) => {
                     tracing::info!("SSE connection closed, reconnecting");
-                    backoff = Duration::from_secs(1);
+                    backoff = MIN_BACKOFF;
                 }
                 Err(e) => {
                     tracing::warn!("SSE connection failed: {e:#}, reconnecting in {backoff:?}");
                     tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(max_backoff);
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
             }
         }

@@ -44,7 +44,7 @@ impl Manager {
         let ssh_allowed = Arc::new(AtomicBool::new(remote_ssh_enabled));
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
 
-        let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel::<RemoteSshCommand>(4);
+        let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move {
             if let Err(e) = fifo_watcher::watch(ssh_cmd_tx).await {
                 tracing::error!("FIFO watcher failed: {e:#}");

@@ -45,8 +45,8 @@ pub async fn run(
         "{relay_url}/api/daemon/register?instance_id={instance_id}{agent_name_param}"
     );
 
-    let (incoming_tx, mut incoming_rx) = mpsc::channel::<String>(64);
-    let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>(64);
+    let (incoming_tx, mut incoming_rx) = mpsc::channel(64);
+    let (outgoing_tx, outgoing_rx) = mpsc::channel(64);
 
     let ws_config = WsClientConfig {
         url: ws_url,

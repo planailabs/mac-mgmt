@@ -104,9 +104,7 @@ enum Commands {
 }
 
 fn write_ssh_fifo(command: &str) -> Result<()> {
-    let path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/root"))
-        .join(".config/mac-mgmt/remote-ssh");
+    let path = config::config_dir().join("remote-ssh");
     std::fs::write(&path, format!("{command}\n"))
         .map_err(|e| anyhow::anyhow!("failed to write to {}: {e}", path.display()))?;
     println!("remote SSH {command}d");
@@ -169,20 +167,15 @@ async fn main() -> Result<()> {
             logs::tail_logs(service.as_deref(), lines, follow, None).await?;
         }
         Commands::CheckConfig => {
-            let cfg = config::load().await;
-            match cfg {
-                Ok(c) => {
-                    if let Err(e) = c.daemon.validate() {
-                        eprintln!("config error: {e}");
-                        std::process::exit(1);
-                    }
-                    println!("config OK");
-                }
-                Err(e) => {
-                    eprintln!("config error: {e}");
-                    std::process::exit(1);
-                }
+            let cfg = config::load().await.map_err(|e| {
+                eprintln!("config error: {e}");
+                std::process::exit(1);
+            }).unwrap();
+            if let Err(e) = cfg.daemon.validate() {
+                eprintln!("config error: {e}");
+                std::process::exit(1);
             }
+            println!("config OK");
         }
     }
 

@@ -27,25 +27,7 @@ fn format_uptime(secs: u64) -> String {
 }
 
 pub async fn print_status(port: Option<u16>) -> Result<()> {
-    let port = match port {
-        Some(p) => p,
-        None => {
-            // Try to read port from config file
-            let config_path = crate::config::config_path();
-            if config_path.exists() {
-                let contents = std::fs::read_to_string(&config_path).unwrap_or_default();
-                let val: toml::Value = toml::from_str(&contents)
-                    .unwrap_or(toml::Value::Table(Default::default()));
-                val.get("metrics")
-                    .and_then(|m| m.get("port"))
-                    .and_then(|p| p.as_integer())
-                    .map(|p| p as u16)
-                    .unwrap_or(9396)
-            } else {
-                9396
-            }
-        }
-    };
+    let port = port.unwrap_or_else(crate::config::read_metrics_port);
     let url = format!("http://[::1]:{port}/status");
 
     let resp = reqwest::Client::builder()

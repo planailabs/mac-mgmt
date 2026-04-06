@@ -87,6 +87,24 @@ fn extract_bearer(headers: &HeaderMap) -> Option<String> {
         .map(String::from)
 }
 
+/// Authenticate a request and require a specific token kind.
+async fn require_auth(
+    headers: &HeaderMap,
+    server_api_url: &str,
+    allowed_kinds: &[&str],
+) -> Result<SelfInfo, axum::response::Response> {
+    let Some(token) = extract_bearer(headers) else {
+        return Err(StatusCode::UNAUTHORIZED.into_response());
+    };
+    let self_info = validate_token(server_api_url, &token)
+        .await
+        .map_err(|s| s.into_response())?;
+    if !allowed_kinds.contains(&self_info.token_kind.as_str()) {
+        return Err(StatusCode::FORBIDDEN.into_response());
+    }
+    Ok(self_info)
+}
+
 // ── Daemon registration WebSocket ───────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -100,24 +118,14 @@ async fn ws_daemon_register(
     headers: HeaderMap,
     Query(query): Query<RegisterQuery>,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    let token = match extract_bearer(&headers) {
-        Some(t) => t,
-        None => return StatusCode::UNAUTHORIZED.into_response(),
-    };
-
-    let self_info = match validate_token(&state.server_api_url, &token).await {
+) -> axum::response::Response {
+    let self_info = match require_auth(&headers, &state.server_api_url, &["sync"]).await {
         Ok(info) => info,
-        Err(status) => return status.into_response(),
+        Err(resp) => return resp,
     };
 
-    if self_info.token_kind != "sync" {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-
-    ws.on_upgrade(move |socket| {
-        handle_daemon_ws(socket, query, self_info, state)
-    })
+    ws.on_upgrade(move |socket| handle_daemon_ws(socket, query, self_info, state))
+        .into_response()
 }
 
 /// JSON message received from daemon on the control WebSocket.
@@ -137,14 +145,10 @@ async fn handle_daemon_ws(
     state: AppState,
 ) {
     let instance_id = query.instance_id;
-    let agent_name = query.agent_name;
 
-    let port = match state.registry.allocate_port() {
-        Some(p) => p,
-        None => {
-            tracing::error!("no available ports for {instance_id}");
-            return;
-        }
+    let Some(port) = state.registry.allocate_port() else {
+        tracing::error!("no available ports for {instance_id}");
+        return;
     };
 
     let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMsg>(16);
@@ -159,7 +163,7 @@ async fn handle_daemon_ws(
         instance_id: instance_id.clone(),
         customer_id: self_info.customer_id,
         customer_name: self_info.customer_name,
-        agent_name,
+        agent_name: query.agent_name,
         ssh_port: port,
         connected_at: Utc::now(),
         control_tx,
@@ -172,10 +176,7 @@ async fn handle_daemon_ws(
     let (mut ws_sink, mut ws_stream) = socket.split();
 
     // Send registration confirmation
-    let reg_msg = serde_json::json!({
-        "type": "registered",
-        "ssh_port": port
-    });
+    let reg_msg = serde_json::json!({ "type": "registered", "ssh_port": port });
     if ws_sink
         .send(Message::Text(reg_msg.to_string().into()))
         .await
@@ -185,49 +186,36 @@ async fn handle_daemon_ws(
         return;
     }
 
-    // Track pending metrics requests
     let mut pending_metrics: HashMap<String, tokio::sync::oneshot::Sender<MetricsResponse>> =
         HashMap::new();
 
-    // Control loop: forward control messages and handle daemon responses
     loop {
         tokio::select! {
             Some(msg) = control_rx.recv() => {
-                match msg {
+                let json = match msg {
                     ControlMsg::SessionRequest { session_id } => {
-                        let msg = serde_json::json!({
-                            "type": "session_request",
-                            "session_id": session_id
-                        });
-                        if ws_sink.send(Message::Text(msg.to_string().into())).await.is_err() {
-                            break;
-                        }
+                        serde_json::json!({ "type": "session_request", "session_id": session_id })
                     }
                     ControlMsg::MetricsRequest { request_id, path, response_tx } => {
-                        let msg = serde_json::json!({
-                            "type": "metrics_request",
-                            "request_id": request_id,
-                            "path": path
-                        });
-                        pending_metrics.insert(request_id, response_tx);
-                        if ws_sink.send(Message::Text(msg.to_string().into())).await.is_err() {
-                            break;
-                        }
+                        pending_metrics.insert(request_id.clone(), response_tx);
+                        serde_json::json!({ "type": "metrics_request", "request_id": request_id, "path": path })
                     }
+                };
+                if ws_sink.send(Message::Text(json.to_string().into())).await.is_err() {
+                    break;
                 }
             }
             msg = ws_stream.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(daemon_msg) = serde_json::from_str::<DaemonWsMessage>(&text) {
-                            if daemon_msg.r#type == "metrics_response" {
-                                if let Some(req_id) = daemon_msg.request_id {
+                        if let Ok(m) = serde_json::from_str::<DaemonWsMessage>(&text) {
+                            if m.r#type == "metrics_response" {
+                                if let Some(req_id) = m.request_id {
                                     if let Some(tx) = pending_metrics.remove(&req_id) {
                                         let _ = tx.send(MetricsResponse {
-                                            status: daemon_msg.status.unwrap_or(502),
-                                            content_type: daemon_msg.content_type
-                                                .unwrap_or_else(|| "text/plain".to_string()),
-                                            body: daemon_msg.body.unwrap_or_default(),
+                                            status: m.status.unwrap_or(502),
+                                            content_type: m.content_type.unwrap_or_else(|| "text/plain".into()),
+                                            body: m.body.unwrap_or_default(),
                                         });
                                     }
                                 }
@@ -235,13 +223,8 @@ async fn handle_daemon_ws(
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(Message::Ping(data))) => {
-                        let _ = ws_sink.send(Message::Pong(data)).await;
-                    }
-                    Some(Err(e)) => {
-                        tracing::warn!("daemon WS error: {e}");
-                        break;
-                    }
+                    Some(Ok(Message::Ping(data))) => { let _ = ws_sink.send(Message::Pong(data)).await; }
+                    Some(Err(e)) => { tracing::warn!("daemon WS error: {e}"); break; }
                     _ => {}
                 }
             }
@@ -259,31 +242,19 @@ async fn ws_daemon_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    let token = match extract_bearer(&headers) {
-        Some(t) => t,
-        None => return StatusCode::UNAUTHORIZED.into_response(),
-    };
-
-    let self_info = match validate_token(&state.server_api_url, &token).await {
-        Ok(info) => info,
-        Err(status) => return status.into_response(),
-    };
-
-    if self_info.token_kind != "sync" {
-        return StatusCode::FORBIDDEN.into_response();
+) -> axum::response::Response {
+    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["sync"]).await {
+        return resp;
     }
 
     ws.on_upgrade(move |socket| handle_data_session(socket, session_id))
+        .into_response()
 }
 
 async fn handle_data_session(socket: WebSocket, session_id: String) {
-    let tcp_stream = match bridge::take_pending_session(&session_id) {
-        Some(s) => s,
-        None => {
-            tracing::warn!("no pending session for {session_id}");
-            return;
-        }
+    let Some(tcp_stream) = bridge::take_pending_session(&session_id) else {
+        tracing::warn!("no pending session for {session_id}");
+        return;
     };
 
     tracing::info!("bridging session {session_id}");
@@ -298,22 +269,11 @@ async fn proxy_metrics(
     Path((instance_id, path)): Path<(String, String)>,
     Query(query): Query<HashMap<String, String>>,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    let token = match extract_bearer(&headers) {
-        Some(t) => t,
-        None => return StatusCode::UNAUTHORIZED.into_response(),
-    };
-
-    let self_info = match validate_token(&state.server_api_url, &token).await {
-        Ok(info) => info,
-        Err(status) => return status.into_response(),
-    };
-
-    if self_info.token_kind != "admin" && self_info.token_kind != "setting" {
-        return StatusCode::FORBIDDEN.into_response();
+) -> axum::response::Response {
+    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await {
+        return resp;
     }
 
-    // Build the local path with query string
     let full_path = if query.is_empty() {
         format!("/{path}")
     } else {
@@ -325,9 +285,8 @@ async fn proxy_metrics(
         format!("/{path}?{qs}")
     };
 
-    let control_tx = match state.registry.get_control_tx(&instance_id) {
-        Some(tx) => tx,
-        None => return StatusCode::NOT_FOUND.into_response(),
+    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
 
     let request_id = Uuid::new_v4().to_string();
@@ -350,7 +309,7 @@ async fn proxy_metrics(
             .status(resp.status)
             .header("content-type", resp.content_type)
             .body(axum::body::Body::from(resp.body))
-            .unwrap()
+            .expect("response body from string never fails")
             .into_response(),
         Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
@@ -362,21 +321,12 @@ async fn proxy_metrics(
 async fn list_tunnels(
     headers: HeaderMap,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    let token = match extract_bearer(&headers) {
-        Some(t) => t,
-        None => return StatusCode::UNAUTHORIZED.into_response(),
-    };
-
-    let self_info = match validate_token(&state.server_api_url, &token).await {
+) -> axum::response::Response {
+    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    {
         Ok(info) => info,
-        Err(status) => return status.into_response(),
+        Err(resp) => return resp,
     };
-
-    // Only admin or setting tokens can list tunnels
-    if self_info.token_kind != "admin" && self_info.token_kind != "setting" {
-        return StatusCode::FORBIDDEN.into_response();
-    }
 
     let mut tunnels = state.registry.list_tunnels();
     if self_info.token_kind == "setting" {

@@ -44,10 +44,7 @@ pub async fn run(
 
     macro_rules! in_upgrade_window {
         () => {
-            match &upgrade_window {
-                None => true,
-                Some((start, end)) => mac_mgmt_common::is_within_window(*start, *end),
-            }
+            upgrade_window.map_or(true, |(start, end)| mac_mgmt_common::is_within_window(start, end))
         };
     }
 
@@ -333,42 +330,27 @@ pub async fn run(
     }
 
     loop {
-        #[cfg(feature = "relay")]
-        {
-            tokio::select! {
-                _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
-                _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
-                _ = update_tick.tick() => { handle_update!(); },
-                Some(cmd) = relay_mgr.recv_cmd() => {
-                    relay_mgr.handle_cmd(cmd);
-                }
-                _ = health_tick.tick() => { handle_health_tick!(); }
-                _ = crate::config_watch::recv_debounced(&mut config_rx) => {
-                    handle_config_reload!();
-                }
-                Some(cmd) = async {
-                    match &mut push_rx { Some(rx) => rx.recv().await, None => std::future::pending().await }
-                } => {
-                    handle_push_cmd!(cmd);
-                }
+        tokio::select! {
+            _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
+            _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
+            _ = update_tick.tick() => { handle_update!(); }
+            _ = health_tick.tick() => { handle_health_tick!(); }
+            _ = crate::config_watch::recv_debounced(&mut config_rx) => {
+                handle_config_reload!();
             }
-        }
-
-        #[cfg(not(feature = "relay"))]
-        {
-            tokio::select! {
-                _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
-                _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
-                _ = update_tick.tick() => { handle_update!(); },
-                _ = health_tick.tick() => { handle_health_tick!(); }
-                _ = crate::config_watch::recv_debounced(&mut config_rx) => {
-                    handle_config_reload!();
-                }
-                Some(cmd) = async {
-                    match &mut push_rx { Some(rx) => rx.recv().await, None => std::future::pending().await }
-                } => {
-                    handle_push_cmd!(cmd);
-                }
+            Some(cmd) = async {
+                if let Some(rx) = &mut push_rx { rx.recv().await } else { std::future::pending().await }
+            } => {
+                handle_push_cmd!(cmd);
+            }
+            Some(cmd) = async {
+                #[cfg(feature = "relay")]
+                { relay_mgr.recv_cmd().await }
+                #[cfg(not(feature = "relay"))]
+                { std::future::pending().await }
+            } => {
+                #[cfg(feature = "relay")]
+                relay_mgr.handle_cmd(cmd);
             }
         }
     }

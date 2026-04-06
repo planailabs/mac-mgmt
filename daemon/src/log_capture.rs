@@ -8,6 +8,19 @@ fn strip_ansi(s: &str) -> String {
     String::from_utf8(stripped).unwrap_or_else(|_| s.to_string())
 }
 
+fn drain_lines(reader: impl BufRead, service_name: &str, is_stderr: bool, buf: &LogBuffer) {
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        let clean = strip_ansi(&line);
+        if is_stderr {
+            tracing::warn!(target: "service", "[{service_name}] {clean}");
+        } else {
+            tracing::info!(target: "service", "[{service_name}] {clean}");
+        }
+        buf.push(format!("[{service_name}] {clean}"));
+    }
+}
+
 /// Capture stdout/stderr from a child process and push lines to the log buffer.
 /// Lines are prefixed with the service name.
 pub fn capture(
@@ -21,39 +34,16 @@ pub fn capture(
     let buf = buf.clone();
 
     tokio::task::spawn_blocking(move || {
-        let name2 = name.clone();
-        let buf2 = buf.clone();
-
         let stderr_thread = stderr.map(|stderr| {
-            let name = name2;
-            let buf = buf2;
+            let name = name.clone();
+            let buf = buf.clone();
             std::thread::spawn(move || {
-                let reader = std::io::BufReader::new(stderr);
-                for line in reader.lines() {
-                    match line {
-                        Ok(line) => {
-                            let clean = strip_ansi(&line);
-                            tracing::warn!(target: "service", "[{name}] {clean}");
-                            buf.push(format!("[{name}] {clean}"));
-                        }
-                        Err(_) => break,
-                    }
-                }
+                drain_lines(std::io::BufReader::new(stderr), &name, true, &buf);
             })
         });
 
         if let Some(stdout) = stdout {
-            let reader = std::io::BufReader::new(stdout);
-            for line in reader.lines() {
-                match line {
-                    Ok(line) => {
-                        let clean = strip_ansi(&line);
-                        tracing::info!(target: "service", "[{name}] {clean}");
-                        buf.push(format!("[{name}] {clean}"));
-                    }
-                    Err(_) => break,
-                }
-            }
+            drain_lines(std::io::BufReader::new(stdout), &name, false, &buf);
         }
 
         if let Some(t) = stderr_thread {

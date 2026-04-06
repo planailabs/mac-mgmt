@@ -65,15 +65,12 @@ impl DaemonRegistry {
     }
 
     pub fn allocate_port(&self) -> Option<u16> {
-        let used = self.used_ports.read().unwrap();
-        for port in self.port_min..=self.port_max {
-            if !used.contains(&port) {
-                drop(used);
-                self.used_ports.write().unwrap().insert(port);
-                return Some(port);
-            }
-        }
-        None
+        let port = {
+            let used = self.used_ports.read().unwrap();
+            (self.port_min..=self.port_max).find(|p| !used.contains(p))
+        }?;
+        self.used_ports.write().unwrap().insert(port);
+        Some(port)
     }
 
     pub fn release_port(&self, port: u16) {

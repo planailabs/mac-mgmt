@@ -3,10 +3,30 @@ use std::path::PathBuf;
 
 pub use mac_mgmt_common::DaemonConfig as Config;
 
+/// Default metrics port when not configured.
+const DEFAULT_METRICS_PORT: u16 = 9396;
+
 pub fn config_path() -> PathBuf {
+    config_dir().join("config.toml")
+}
+
+/// Returns ~/.config/mac-mgmt/, falling back to /root/.config/mac-mgmt/.
+pub fn config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/root"))
-        .join(".config/mac-mgmt/config.toml")
+        .join(".config/mac-mgmt")
+}
+
+/// Read the metrics port from the config file without fully loading/merging.
+/// Used by CLI commands (status, logs) that need the port before the daemon starts.
+pub fn read_metrics_port() -> u16 {
+    let path = config_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+        .and_then(|v| v.get("metrics")?.get("port")?.as_integer())
+        .map(|p| p as u16)
+        .unwrap_or(DEFAULT_METRICS_PORT)
 }
 
 fn merge_toml(base: &mut toml::Value, overlay: &toml::Value) {
