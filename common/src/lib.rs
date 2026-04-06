@@ -22,6 +22,8 @@ pub struct HeartbeatBody {
     pub version: String,
     #[serde(default)]
     pub hostname: String,
+    #[serde(default)]
+    pub environment: String,
     pub services: serde_json::Value,
 }
 

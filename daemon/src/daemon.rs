@@ -447,6 +447,7 @@ async fn send_heartbeat(
         instance_id: instance_id.to_string(),
         version: CURRENT_VERSION.to_string(),
         hostname,
+        environment: ENVIRONMENT.to_string(),
         services: serde_json::Value::Array(services),
     };
 

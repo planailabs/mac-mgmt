@@ -2108,15 +2108,16 @@ pub async fn post_heartbeat(
     body: Json<HeartbeatBody>,
 ) -> Result<Status, Status> {
     sqlx::query(
-        "INSERT INTO daemon_heartbeats (customer_id, instance_id, version, hostname, services) \
-         VALUES ($1, $2, $3, $4, $5) \
+        "INSERT INTO daemon_heartbeats (customer_id, instance_id, version, hostname, environment, services) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
          ON CONFLICT (customer_id, instance_id) \
-         DO UPDATE SET version = $3, hostname = $4, services = $5, reported_at = now()",
+         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, reported_at = now()",
     )
     .bind(auth.customer_id)
     .bind(&body.instance_id)
     .bind(&body.version)
     .bind(&body.hostname)
+    .bind(&body.environment)
     .bind(&body.services)
     .execute(pool.inner())
     .await

@@ -7,6 +7,7 @@ struct FleetEntry {
     customer_name: String,
     instance_id: String,
     hostname: String,
+    environment: String,
     version: String,
     services: serde_json::Value,
     reported_at: DateTime<Utc>,
@@ -21,13 +22,14 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         customer_name: String,
         instance_id: String,
         hostname: String,
+        environment: String,
         version: String,
         services: serde_json::Value,
         reported_at: DateTime<Utc>,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.name AS customer_name, dh.instance_id, dh.hostname, dh.version, dh.services, dh.reported_at \
+        "SELECT c.name AS customer_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
          FROM daemon_heartbeats dh \
          JOIN customers c ON c.id = dh.customer_id \
          ORDER BY dh.reported_at DESC",
@@ -42,6 +44,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
             customer_name: r.customer_name,
             instance_id: r.instance_id,
             hostname: r.hostname,
+            environment: r.environment,
             version: r.version,
             services: r.services,
             reported_at: r.reported_at,
@@ -66,6 +69,7 @@ pub fn FleetDashboard() -> Element {
                                 tr {
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Customer" }
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Hostname" }
+                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Env" }
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Version" }
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Status" }
                                     th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Services" }
@@ -114,6 +118,13 @@ pub fn FleetDashboard() -> Element {
                                                         span { class: "text-gray-400 font-mono text-xs", "{entry.instance_id}" }
                                                     } else {
                                                         span { "{entry.hostname}" }
+                                                    }
+                                                }
+                                                td { class: "px-4 py-2 text-sm",
+                                                    if !entry.environment.is_empty() {
+                                                        span { class: "px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700",
+                                                            "{entry.environment}"
+                                                        }
                                                     }
                                                 }
                                                 td { class: "px-4 py-2 text-sm", "{entry.version}" }
