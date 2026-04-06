@@ -591,24 +591,27 @@ pub async fn setting_remove_skill(
 
 #[derive(Deserialize, ToSchema)]
 pub struct BatchSkillsBody {
-    skill_channel_ids: Vec<Uuid>,
+    #[serde(default)]
+    add: Vec<Uuid>,
+    #[serde(default)]
+    remove: Vec<Uuid>,
 }
 
 #[utoipa::path(
-    post,
+    patch,
     path = "/api/setting/skills/batch",
     tag = "Setting — Skills",
-    summary = "Add multiple direct skill assignments",
-    description = "Adds all given skill channels. Already-assigned ones are silently skipped.",
+    summary = "Batch add/remove direct skill assignments",
+    description = "Add and remove skill channels in a single request. `add` contains skill_channel_ids to assign (duplicates skipped). `remove` contains customer_skill_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchSkillsBody,
     responses(
-        (status = 200, description = "Skills added"),
+        (status = 200, description = "Skills updated"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
 )]
-#[rocket::post("/setting/skills/batch", data = "<body>")]
+#[rocket::patch("/setting/skills/batch", data = "<body>")]
 pub async fn setting_batch_skills(
     auth: SettingAuth,
     pool: &State<PgPool>,
@@ -616,7 +619,15 @@ pub async fn setting_batch_skills(
     body: Json<BatchSkillsBody>,
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for scid in &body.skill_channel_ids {
+    for id in &body.remove {
+        sqlx::query("DELETE FROM customer_skills WHERE id = $1 AND customer_id = $2")
+            .bind(id)
+            .bind(auth.customer_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    for scid in &body.add {
         sqlx::query("INSERT INTO customer_skills (customer_id, skill_channel_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(auth.customer_id)
             .bind(scid)
@@ -740,24 +751,27 @@ pub async fn setting_remove_bundle(
 
 #[derive(Deserialize, ToSchema)]
 pub struct BatchBundlesBody {
-    bundle_ids: Vec<Uuid>,
+    #[serde(default)]
+    add: Vec<Uuid>,
+    #[serde(default)]
+    remove: Vec<Uuid>,
 }
 
 #[utoipa::path(
-    post,
+    patch,
     path = "/api/setting/bundles/batch",
     tag = "Setting — Bundles",
-    summary = "Add multiple bundle assignments",
-    description = "Adds all given bundles. Already-assigned ones are silently skipped.",
+    summary = "Batch add/remove bundle assignments",
+    description = "`add` contains bundle_ids to assign (duplicates skipped). `remove` contains customer_bundle_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchBundlesBody,
     responses(
-        (status = 200, description = "Bundles added"),
+        (status = 200, description = "Bundles updated"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
 )]
-#[rocket::post("/setting/bundles/batch", data = "<body>")]
+#[rocket::patch("/setting/bundles/batch", data = "<body>")]
 pub async fn setting_batch_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
@@ -765,7 +779,15 @@ pub async fn setting_batch_bundles(
     body: Json<BatchBundlesBody>,
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for bid in &body.bundle_ids {
+    for id in &body.remove {
+        sqlx::query("DELETE FROM customer_bundles WHERE id = $1 AND customer_id = $2")
+            .bind(id)
+            .bind(auth.customer_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    for bid in &body.add {
         sqlx::query("INSERT INTO customer_bundles (customer_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(auth.customer_id)
             .bind(bid)
@@ -876,24 +898,27 @@ pub async fn setting_remove_mcp_server(
 
 #[derive(Deserialize, ToSchema)]
 pub struct BatchMcpServersBody {
-    mcp_server_ids: Vec<Uuid>,
+    #[serde(default)]
+    add: Vec<Uuid>,
+    #[serde(default)]
+    remove: Vec<Uuid>,
 }
 
 #[utoipa::path(
-    post,
+    patch,
     path = "/api/setting/mcp-servers/batch",
     tag = "Setting — MCP Servers",
-    summary = "Add multiple direct MCP server assignments",
-    description = "Adds all given MCP servers. Already-assigned ones are silently skipped.",
+    summary = "Batch add/remove direct MCP server assignments",
+    description = "`add` contains mcp_server_ids to assign (duplicates skipped). `remove` contains customer_mcp_server_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchMcpServersBody,
     responses(
-        (status = 200, description = "MCP servers added"),
+        (status = 200, description = "MCP servers updated"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
 )]
-#[rocket::post("/setting/mcp-servers/batch", data = "<body>")]
+#[rocket::patch("/setting/mcp-servers/batch", data = "<body>")]
 pub async fn setting_batch_mcp_servers(
     auth: SettingAuth,
     pool: &State<PgPool>,
@@ -901,7 +926,15 @@ pub async fn setting_batch_mcp_servers(
     body: Json<BatchMcpServersBody>,
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for msid in &body.mcp_server_ids {
+    for id in &body.remove {
+        sqlx::query("DELETE FROM customer_mcp_servers WHERE id = $1 AND customer_id = $2")
+            .bind(id)
+            .bind(auth.customer_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    for msid in &body.add {
         sqlx::query("INSERT INTO customer_mcp_servers (customer_id, mcp_server_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(auth.customer_id)
             .bind(msid)
@@ -1025,24 +1058,27 @@ pub async fn setting_remove_mcp_bundle(
 
 #[derive(Deserialize, ToSchema)]
 pub struct BatchMcpBundlesBody {
-    bundle_ids: Vec<Uuid>,
+    #[serde(default)]
+    add: Vec<Uuid>,
+    #[serde(default)]
+    remove: Vec<Uuid>,
 }
 
 #[utoipa::path(
-    post,
+    patch,
     path = "/api/setting/mcp-bundles/batch",
     tag = "Setting — MCP Bundles",
-    summary = "Add multiple MCP bundle assignments",
-    description = "Adds all given MCP bundles. Already-assigned ones are silently skipped.",
+    summary = "Batch add/remove MCP bundle assignments",
+    description = "`add` contains bundle_ids to assign (duplicates skipped). `remove` contains customer_mcp_bundle_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchMcpBundlesBody,
     responses(
-        (status = 200, description = "MCP bundles added"),
+        (status = 200, description = "MCP bundles updated"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
 )]
-#[rocket::post("/setting/mcp-bundles/batch", data = "<body>")]
+#[rocket::patch("/setting/mcp-bundles/batch", data = "<body>")]
 pub async fn setting_batch_mcp_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
@@ -1050,7 +1086,15 @@ pub async fn setting_batch_mcp_bundles(
     body: Json<BatchMcpBundlesBody>,
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for bid in &body.bundle_ids {
+    for id in &body.remove {
+        sqlx::query("DELETE FROM customer_mcp_bundles WHERE id = $1 AND customer_id = $2")
+            .bind(id)
+            .bind(auth.customer_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    for bid in &body.add {
         sqlx::query("INSERT INTO customer_mcp_bundles (customer_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(auth.customer_id)
             .bind(bid)
