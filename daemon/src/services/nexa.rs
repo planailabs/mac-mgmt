@@ -1,9 +1,5 @@
 use anyhow::{Context, Result};
-use std::io::Read;
-use std::io::Write;
-use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
-use std::time::Duration;
 
 use crate::managed_service::ManagedService;
 use crate::sentry_ext;
@@ -22,32 +18,8 @@ impl Nexa {
         format!("http://{}:{}", self.config.host, self.config.port)
     }
 
-    /// Send a simple HTTP GET request and return the response body.
-    /// Uses raw TCP to avoid adding an HTTP client dependency.
     fn http_get(&self, path: &str) -> Result<String> {
-        let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
-            .parse()
-            .context("invalid nexa address")?;
-
-        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))
-            .context("failed to connect to nexa")?;
-        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-
-        let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
-            self.config.host, self.config.port
-        );
-        stream.write_all(request.as_bytes())?;
-
-        let mut response = String::new();
-        stream.read_to_string(&mut response)?;
-
-        // Split headers from body
-        if let Some(body) = response.split_once("\r\n\r\n").map(|(_, b)| b) {
-            Ok(body.to_string())
-        } else {
-            Ok(response)
-        }
+        super::http_get(&self.config.host, self.config.port, path)
     }
 }
 

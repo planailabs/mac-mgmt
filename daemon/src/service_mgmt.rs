@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
-use crate::connectors;
+use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
 use crate::managed_service::{ManagedService, ServiceMode};
@@ -26,6 +26,8 @@ struct ServiceState {
 pub struct ServiceManager {
     states: Vec<ServiceState>,
     install_only: Vec<Box<dyn ManagedService>>,
+    connectors: Vec<Box<dyn Connector>>,
+    connectors_done: bool,
     dispatcher: Arc<Dispatcher>,
     log_buf: LogBuffer,
 }
@@ -38,6 +40,8 @@ impl ServiceManager {
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
         let nexa_cfg = std::mem::take(&mut cfg.nexa);
+
+        let connectors = connectors::build_connectors(&global_cfg, &ollama_cfg, &nexa_cfg);
 
         let services = connectors::build_services(
             &global_cfg,
@@ -89,6 +93,8 @@ impl ServiceManager {
         Ok(Self {
             states,
             install_only,
+            connectors,
+            connectors_done: false,
             dispatcher,
             log_buf,
         })
@@ -376,6 +382,22 @@ impl ServiceManager {
                 .service_busy
                 .with_label_values(&[name])
                 .set(if busy { 1 } else { 0 });
+        }
+
+        // Run connectors once all services have completed post_start
+        if !self.connectors_done && self.states.iter().all(|s| s.post_start_done) {
+            for connector in &self.connectors {
+                let name = connector.name();
+                tracing::info!("running connector: {name}");
+                if let Err(e) = connector.connect() {
+                    tracing::error!("connector {name} failed: {e}");
+                    sentry_ext::capture_error(
+                        &format!("connector {name} failed: {e}"),
+                        &[("connector", name)],
+                    );
+                }
+            }
+            self.connectors_done = true;
         }
     }
 
