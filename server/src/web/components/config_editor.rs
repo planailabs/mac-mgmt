@@ -228,20 +228,33 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
     }
 }
 
-/// Resolve a `$ref` pointer in the schema.
-fn resolve_ref<'a>(
-    schema: &'a serde_json::Value,
-    defs: &'a serde_json::Value,
-) -> std::borrow::Cow<'a, serde_json::Value> {
+/// Resolve a `$ref` pointer in the schema, including `anyOf` wrappers
+/// from `Option<T>` which schemars generates as `anyOf: [{$ref: ...}, {type: "null"}]`.
+fn resolve_ref(
+    schema: &serde_json::Value,
+    defs: &serde_json::Value,
+) -> serde_json::Value {
+    // Direct $ref
     if let Some(r) = schema.get("$ref").and_then(|r| r.as_str()) {
-        // Refs look like "#/$defs/TypeName"
         if let Some(type_name) = r.strip_prefix("#/$defs/") {
             if let Some(resolved) = defs.get(type_name) {
-                return std::borrow::Cow::Borrowed(resolved);
+                return resolved.clone();
             }
         }
     }
-    std::borrow::Cow::Borrowed(schema)
+    // anyOf wrapper (Option<T> → anyOf: [{$ref: "..."}, {type: "null"}])
+    if let Some(any_of) = schema.get("anyOf").and_then(|a| a.as_array()) {
+        for variant in any_of {
+            if variant.get("type").and_then(|t| t.as_str()) == Some("null") {
+                continue;
+            }
+            let resolved = resolve_ref(variant, defs);
+            if resolved.get("properties").is_some() || resolved.get("type").is_some() {
+                return resolved;
+            }
+        }
+    }
+    schema.clone()
 }
 
 /// Render fields for one config section, including nested subsections.
@@ -288,7 +301,6 @@ fn render_section_fields(
             if is_object {
                 // Render as a nested subsection
                 let defs_clone = defs.clone();
-                let resolved_clone = resolved.into_owned();
                 rsx! {
                     div { class: "border-l-2 border-gray-200 pl-3 mt-1",
                         key: "{key}",
@@ -297,7 +309,7 @@ fn render_section_fields(
                             p { class: "text-xs text-gray-500", "{description}" }
                         }
                         {render_section_fields(
-                            &resolved_clone,
+                            &resolved,
                             &defs_clone,
                             field_path,
                             form_values,
