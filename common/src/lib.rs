@@ -61,7 +61,7 @@ pub struct ServiceStatus {
 }
 
 const VALID_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
-const VALID_LLM_PROVIDERS: &[&str] = &["ollama", "nexa", "none"];
+const VALID_LLM_PROVIDERS: &[&str] = &["ollama", "nexa", "cloud", "none"];
 const VALID_AGENT_PROVIDERS: &[&str] = &["openclaw", "none"];
 const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
 
@@ -244,6 +244,70 @@ impl NexaConfig {
     }
 }
 
+// ── Cloud LLM providers ────────────────────────────────────────────────
+
+const VALID_CLOUD_PROVIDERS: &[&str] = &[
+    "anthropic", "openai", "google", "mistral", "groq", "xai", "deepseek",
+    "openrouter", "together", "bedrock",
+];
+
+fn default_cloud_provider() -> String {
+    "anthropic".to_string()
+}
+
+fn default_cloud_model() -> String {
+    "anthropic/claude-sonnet-4-6".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloudConfig {
+    #[schemars(description = "Cloud provider: anthropic, openai, google, mistral, groq, xai, deepseek, openrouter, together, bedrock")]
+    #[serde(default = "default_cloud_provider")]
+    pub provider: String,
+    #[schemars(description = "API key for the cloud provider")]
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[schemars(description = "Default model (e.g. anthropic/claude-sonnet-4-6, openai/gpt-5.4)")]
+    #[serde(default = "default_cloud_model")]
+    pub default_model: String,
+    #[schemars(description = "Custom base URL (for proxies, Bedrock, etc.)")]
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[schemars(description = "API type override: anthropic-messages, openai-completions, openai-responses, google-generative-ai, bedrock-converse-stream")]
+    #[serde(default)]
+    pub api: Option<String>,
+    #[schemars(description = "Auth mode: api-key (default), aws-sdk (Bedrock), oauth, token")]
+    #[serde(default)]
+    pub auth: Option<String>,
+}
+
+impl Default for CloudConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_cloud_provider(),
+            api_key: None,
+            default_model: default_cloud_model(),
+            base_url: None,
+            api: None,
+            auth: None,
+        }
+    }
+}
+
+impl CloudConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if !VALID_CLOUD_PROVIDERS.contains(&self.provider.as_str()) {
+            return Err(ValidationError(format!(
+                "invalid cloud provider '{}', must be one of: {}",
+                self.provider,
+                VALID_CLOUD_PROVIDERS.join(", ")
+            )));
+        }
+        Ok(())
+    }
+}
+
 // ── OpenClaw ────────────────────────────────────────────────────────────
 
 fn default_gateway_port() -> u16 {
@@ -420,6 +484,8 @@ pub struct CustomerConfig {
     #[serde(default)]
     pub nexa: NexaConfig,
     #[serde(default)]
+    pub cloud: CloudConfig,
+    #[serde(default)]
     pub metrics: MetricsConfig,
     #[serde(default)]
     pub relay: RelayConfig,
@@ -461,6 +527,7 @@ impl CustomerConfig {
         self.global.validate().map_err(|e| e.to_string())?;
         self.ollama.validate().map_err(|e| e.to_string())?;
         self.nexa.validate().map_err(|e| e.to_string())?;
+        self.cloud.validate().map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -492,6 +559,8 @@ pub struct DaemonConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub nexa: NexaConfig,
+    #[serde(default)]
+    pub cloud: CloudConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
     #[serde(default)]

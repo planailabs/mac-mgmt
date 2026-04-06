@@ -1,3 +1,4 @@
+pub mod cloud_openclaw;
 pub mod nexa_openclaw;
 pub mod ollama_openclaw;
 
@@ -58,6 +59,7 @@ pub fn build_connectors(
     global: &GlobalConfig,
     ollama_cfg: &OllamaConfig,
     nexa_cfg: &NexaConfig,
+    cloud_cfg: &mac_mgmt_common::CloudConfig,
 ) -> Vec<Box<dyn Connector>> {
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
@@ -73,6 +75,11 @@ pub fn build_connectors(
                     host: nexa_cfg.host.clone(),
                     port: nexa_cfg.port,
                     default_model: nexa_cfg.default_model.clone(),
+                }));
+            }
+            "cloud" => {
+                connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
+                    config: cloud_cfg.clone(),
                 }));
             }
             _ => {}

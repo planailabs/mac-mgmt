@@ -44,8 +44,9 @@ impl ServiceManager {
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
         let nexa_cfg = std::mem::take(&mut cfg.nexa);
+        let cloud_cfg = std::mem::take(&mut cfg.cloud);
 
-        let connectors = connectors::build_connectors(&global_cfg, &ollama_cfg, &nexa_cfg);
+        let connectors = connectors::build_connectors(&global_cfg, &ollama_cfg, &nexa_cfg, &cloud_cfg);
 
         let services = connectors::build_services(
             &global_cfg,
