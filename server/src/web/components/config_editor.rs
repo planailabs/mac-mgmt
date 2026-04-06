@@ -203,10 +203,10 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
 
                 let section_name_clone = section_name.clone();
                 rsx! {
-                    details { class: "border border-gray-200 rounded",
+                    details { class: "border border-gray-300 rounded shadow-sm",
                         key: "{section_name}",
                         open: form_values.read().get(&section_name).is_some(),
-                        summary { class: "px-3 py-2 bg-gray-50 cursor-pointer font-medium text-sm hover:bg-gray-100",
+                        summary { class: "px-3 py-2 bg-gray-100 cursor-pointer font-semibold text-sm hover:bg-gray-200",
                             "{section_name_clone}"
                         }
                         if !description.is_empty() {
@@ -302,9 +302,9 @@ fn render_section_fields(
                 // Render as a nested subsection
                 let defs_clone = defs.clone();
                 rsx! {
-                    div { class: "border-l-2 border-gray-200 pl-3 mt-1",
+                    div { class: "border-l-2 border-blue-300 pl-3 mt-2 mb-1",
                         key: "{key}",
-                        label { class: "text-sm font-medium text-gray-600", "{field_name}" }
+                        label { class: "text-sm font-semibold text-blue-700", "{field_name}" }
                         if !description.is_empty() {
                             p { class: "text-xs text-gray-500", "{description}" }
                         }
