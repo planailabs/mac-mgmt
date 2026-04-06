@@ -116,7 +116,7 @@ impl ManagedService for OpenClaw {
                 "enabled": tg.enabled,
             });
             if !tg.bot_token.is_empty() {
-                tg_cfg["apiKey"] = serde_json::json!(tg.bot_token);
+                tg_cfg["botToken"] = serde_json::json!(tg.bot_token);
             }
             if !tg.allowed_chat_ids.is_empty() {
                 tg_cfg["allowFrom"] = serde_json::json!(tg.allowed_chat_ids);
