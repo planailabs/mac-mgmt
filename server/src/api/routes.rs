@@ -587,6 +587,48 @@ pub async fn setting_remove_skill(
     Ok(Status::NoContent)
 }
 
+// -- Skills batch --
+
+#[derive(Deserialize, ToSchema)]
+pub struct BatchSkillsBody {
+    skill_channel_ids: Vec<Uuid>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/skills/batch",
+    tag = "Setting — Skills",
+    summary = "Add multiple direct skill assignments",
+    description = "Adds all given skill channels. Already-assigned ones are silently skipped.",
+    security(("bearer" = [])),
+    request_body = BatchSkillsBody,
+    responses(
+        (status = 200, description = "Skills added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::post("/setting/skills/batch", data = "<body>")]
+pub async fn setting_batch_skills(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    body: Json<BatchSkillsBody>,
+) -> Result<Status, Status> {
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    for scid in &body.skill_channel_ids {
+        sqlx::query("INSERT INTO customer_skills (customer_id, skill_channel_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.customer_id)
+            .bind(scid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    Ok(Status::Ok)
+}
+
 // -- Bundles --
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -694,6 +736,48 @@ pub async fn setting_remove_bundle(
     Ok(Status::NoContent)
 }
 
+// -- Bundles batch --
+
+#[derive(Deserialize, ToSchema)]
+pub struct BatchBundlesBody {
+    bundle_ids: Vec<Uuid>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/bundles/batch",
+    tag = "Setting — Bundles",
+    summary = "Add multiple bundle assignments",
+    description = "Adds all given bundles. Already-assigned ones are silently skipped.",
+    security(("bearer" = [])),
+    request_body = BatchBundlesBody,
+    responses(
+        (status = 200, description = "Bundles added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::post("/setting/bundles/batch", data = "<body>")]
+pub async fn setting_batch_bundles(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    body: Json<BatchBundlesBody>,
+) -> Result<Status, Status> {
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    for bid in &body.bundle_ids {
+        sqlx::query("INSERT INTO customer_bundles (customer_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.customer_id)
+            .bind(bid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    Ok(Status::Ok)
+}
+
 // -- MCP Servers --
 
 #[utoipa::path(
@@ -786,6 +870,48 @@ pub async fn setting_remove_mcp_server(
         .map_err(|_| Status::InternalServerError)?;
     push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
     Ok(Status::NoContent)
+}
+
+// -- MCP Servers batch --
+
+#[derive(Deserialize, ToSchema)]
+pub struct BatchMcpServersBody {
+    mcp_server_ids: Vec<Uuid>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/mcp-servers/batch",
+    tag = "Setting — MCP Servers",
+    summary = "Add multiple direct MCP server assignments",
+    description = "Adds all given MCP servers. Already-assigned ones are silently skipped.",
+    security(("bearer" = [])),
+    request_body = BatchMcpServersBody,
+    responses(
+        (status = 200, description = "MCP servers added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::post("/setting/mcp-servers/batch", data = "<body>")]
+pub async fn setting_batch_mcp_servers(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    body: Json<BatchMcpServersBody>,
+) -> Result<Status, Status> {
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    for msid in &body.mcp_server_ids {
+        sqlx::query("INSERT INTO customer_mcp_servers (customer_id, mcp_server_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.customer_id)
+            .bind(msid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    Ok(Status::Ok)
 }
 
 // -- MCP Bundles --
@@ -893,6 +1019,48 @@ pub async fn setting_remove_mcp_bundle(
         .map_err(|_| Status::InternalServerError)?;
     push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
     Ok(Status::NoContent)
+}
+
+// -- MCP Bundles batch --
+
+#[derive(Deserialize, ToSchema)]
+pub struct BatchMcpBundlesBody {
+    bundle_ids: Vec<Uuid>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/mcp-bundles/batch",
+    tag = "Setting — MCP Bundles",
+    summary = "Add multiple MCP bundle assignments",
+    description = "Adds all given MCP bundles. Already-assigned ones are silently skipped.",
+    security(("bearer" = [])),
+    request_body = BatchMcpBundlesBody,
+    responses(
+        (status = 200, description = "MCP bundles added"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Setting token required"),
+    ),
+)]
+#[rocket::post("/setting/mcp-bundles/batch", data = "<body>")]
+pub async fn setting_batch_mcp_bundles(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    body: Json<BatchMcpBundlesBody>,
+) -> Result<Status, Status> {
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    for bid in &body.bundle_ids {
+        sqlx::query("INSERT INTO customer_mcp_bundles (customer_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.customer_id)
+            .bind(bid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    Ok(Status::Ok)
 }
 
 // -- Available resources (for dropdowns) --
