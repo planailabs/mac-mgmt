@@ -91,11 +91,10 @@ in
     networking.firewall = lib.mkIf cfg.openFirewall {
       allowedTCPPorts =
         let
-          listenPort = cfg.settings.listen_addr or 8080;
           sshMin = cfg.settings.ssh_port_min or 30000;
           sshMax = cfg.settings.ssh_port_max or 40000;
         in
-        [ listenPort ] ++ lib.range sshMin sshMax;
+          lib.range sshMin sshMax;
     };
   };
 }
