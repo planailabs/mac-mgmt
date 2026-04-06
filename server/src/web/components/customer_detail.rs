@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::models::Customer;
+use crate::web::app::Route;
 
 use super::config_editor::ConfigEditor;
 use super::config_history::ConfigHistory;
@@ -20,6 +21,25 @@ async fn get_customer(id: String) -> Result<Customer, ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(customer)
+}
+
+#[server]
+async fn get_pinned_rollout(customer_id: String, version: String) -> Result<Option<String>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let rollout_id: Option<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT r.id FROM rollouts r \
+         JOIN rollout_stages rs ON rs.rollout_id = r.id \
+         JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
+         WHERE rgm.customer_id = $1 AND r.target_version = $2 AND r.status = 'completed' \
+         ORDER BY r.updated_at DESC LIMIT 1",
+    )
+    .bind(cid)
+    .bind(&version)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rollout_id.map(|id| id.to_string()))
 }
 
 #[server]
@@ -49,8 +69,10 @@ pub fn CustomerDetail(id: String) -> Element {
     match &*customer.read() {
         Some(Ok(c)) => {
             let created = c.created_at.format("%Y-%m-%d %H:%M").to_string();
+            let pinned = c.pinned_version.clone();
             let cid = c.id.to_string();
             let cid2 = cid.clone();
+            let cid3 = cid.clone();
             let name = c.name.clone();
             rsx! {
                 div { class: "flex items-center gap-3 mb-2",
@@ -100,7 +122,12 @@ pub fn CustomerDetail(id: String) -> Element {
                         }
                     }
                 }
-                p { class: "text-gray-500 mb-6", "Created: {created}" }
+                div { class: "text-gray-500 mb-6 flex items-center gap-4",
+                    span { "Created: {created}" }
+                    if let Some(ref ver) = pinned {
+                        PinnedVersion { customer_id: cid3.clone(), version: ver.clone() }
+                    }
+                }
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     div {
@@ -136,5 +163,35 @@ pub fn CustomerDetail(id: String) -> Element {
         }
         Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
         None => rsx! { p { "Loading..." } },
+    }
+}
+
+#[component]
+fn PinnedVersion(customer_id: String, version: String) -> Element {
+    let cid = customer_id.clone();
+    let ver = version.clone();
+    let rollout = use_server_future(move || {
+        let cid = cid.clone();
+        let ver = ver.clone();
+        async move { get_pinned_rollout(cid, ver).await }
+    })?;
+
+    let rollout_id = match &*rollout.read() {
+        Some(Ok(id)) => id.clone(),
+        _ => None,
+    };
+
+    rsx! {
+        span { class: "flex items-center gap-1",
+            span { "Version: " }
+            span { class: "font-mono font-medium text-gray-700", "v{version}" }
+            if let Some(rid) = rollout_id {
+                Link {
+                    to: Route::RolloutDetail { id: rid },
+                    class: "text-blue-600 hover:underline text-sm",
+                    "(rollout)"
+                }
+            }
+        }
     }
 }
