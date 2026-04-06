@@ -1,3 +1,4 @@
+pub mod apprise;
 pub mod mcporter;
 pub mod nexa;
 pub mod ollama;

@@ -4,7 +4,7 @@ pub mod ollama_openclaw;
 use anyhow::Result;
 
 use crate::managed_service::ManagedService;
-use crate::services::{mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
+use crate::services::{apprise::Apprise, mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
 use mac_mgmt_common::{GlobalConfig, NexaConfig, OllamaConfig, OpenClawConfig};
 
 /// A connector wires two services together after they are both healthy.
@@ -48,6 +48,7 @@ pub fn build_services(
     }
 
     services.push(Box::new(McPorter));
+    services.push(Box::new(Apprise));
     services
 }
 
