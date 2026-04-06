@@ -11,6 +11,7 @@
   outputs = { nixpkgs, rust-overlay, flake-utils, ... }:
     {
       nixosModules.default = import ./server/module.nix;
+      nixosModules.relay = import ./relay/module.nix;
     } //
     flake-utils.lib.eachDefaultSystem (system:
       let
