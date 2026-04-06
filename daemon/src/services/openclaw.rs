@@ -1,9 +1,67 @@
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::connectors::merge_json;
 use crate::managed_service::ManagedService;
 use crate::sentry_ext;
 pub use mac_mgmt_common::OpenClawConfig;
+
+/// Returns the path to ~/.openclaw/openclaw.json
+pub fn config_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .context("HOME not set")?
+        .join(".openclaw/openclaw.json"))
+}
+
+/// Atomically merge a JSON patch into openclaw.json with validation and rollback.
+///
+/// 1. Reads current config
+/// 2. Deep-merges the patch
+/// 3. Writes the result
+/// 4. Runs `openclaw config validate`
+/// 5. If invalid: restores the original and returns Err
+pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
+    if !config_path.exists() {
+        anyhow::bail!("openclaw config not found at {}", config_path.display());
+    }
+
+    let backup = std::fs::read_to_string(config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+    let mut existing: serde_json::Value =
+        serde_json::from_str(&backup).context("failed to parse openclaw.json")?;
+
+    merge_json(&mut existing, patch);
+
+    let merged = serde_json::to_string_pretty(&existing)
+        .context("failed to serialize merged config")?;
+    std::fs::write(config_path, &merged)
+        .with_context(|| format!("failed to write {}", config_path.display()))?;
+
+    // Validate
+    let valid = match Command::new("openclaw").args(["config", "validate"]).output() {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            tracing::warn!("openclaw config invalid: {} {}", stdout.trim(), stderr.trim());
+            false
+        }
+        Err(e) => {
+            tracing::warn!("failed to run openclaw config validate: {e}");
+            true // Can't validate — don't block
+        }
+    };
+
+    if !valid {
+        tracing::warn!("rolling back openclaw.json");
+        std::fs::write(config_path, &backup)
+            .with_context(|| format!("failed to rollback {}", config_path.display()))?;
+        anyhow::bail!("openclaw config validation failed, rolled back");
+    }
+
+    Ok(())
+}
 
 pub struct OpenClaw {
     config: OpenClawConfig,
@@ -79,129 +137,60 @@ impl ManagedService for OpenClaw {
             tracing::info!("openclaw config found at {}", config_path.display());
         }
 
-        // Merge managed config into openclaw.json
-        let contents = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("failed to read {}", config_path.display()))?;
-        let mut existing: serde_json::Value =
-            serde_json::from_str(&contents).context("failed to parse openclaw.json")?;
-        let mut changed = false;
+        // Build a patch from managed config
+        let mut patch = serde_json::json!({});
 
-        // Apply typed gateway fields
         if let Some(gw) = &self.config.gateway {
             let mut gw_cfg = serde_json::json!({ "port": gw.port });
             if gw.host != "127.0.0.1" && gw.host != "localhost" {
                 gw_cfg["bind"] = serde_json::json!("custom");
                 gw_cfg["customBindHost"] = serde_json::json!(gw.host);
             }
-            merge_json(&mut existing, &serde_json::json!({ "gateway": gw_cfg }));
-            changed = true;
+            patch["gateway"] = gw_cfg;
         }
 
-        // Apply typed skills fields
         if let Some(skills) = &self.config.skills {
-            let patch = serde_json::json!({
-                "skills": {
-                    "load": {
-                        "watch": skills.auto_update,
-                    }
-                }
-            });
-            merge_json(&mut existing, &patch);
-            changed = true;
+            patch["skills"] = serde_json::json!({ "load": { "watch": skills.auto_update } });
         }
 
-        // Apply typed telegram fields under channels.telegram
         if let Some(tg) = &self.config.telegram {
-            let mut tg_cfg = serde_json::json!({
-                "enabled": tg.enabled,
-            });
+            let mut tg_cfg = serde_json::json!({ "enabled": tg.enabled });
             if !tg.bot_token.is_empty() {
                 tg_cfg["botToken"] = serde_json::json!(tg.bot_token);
             }
             if !tg.allowed_chat_ids.is_empty() {
                 tg_cfg["allowFrom"] = serde_json::json!(tg.allowed_chat_ids);
             }
-            merge_json(&mut existing, &serde_json::json!({ "channels": { "telegram": tg_cfg } }));
-            changed = true;
+            patch["channels"] = serde_json::json!({ "telegram": tg_cfg });
         }
 
-        // Merge extra_config if configured (applied AFTER typed fields)
         if let Some(extra) = &self.config.extra_config {
-            tracing::info!("merging extra_config into openclaw.json");
-            merge_json(&mut existing, extra);
-            changed = true;
+            merge_json(&mut patch, extra);
         }
 
-        // Add skills directory to skills.load.extraDirs
+        // Add skills directory
         let skills_dir = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/root"))
+            .unwrap_or_else(|| PathBuf::from("/root"))
             .join(".plan-ai-skills");
         if skills_dir.exists() {
             let skills_dir_str = skills_dir.to_string_lossy().to_string();
-            let extra_dirs = existing
-                .pointer_mut("/skills/load/extraDirs")
-                .and_then(|v| v.as_array_mut());
-
-            match extra_dirs {
-                Some(arr) => {
-                    if !arr.iter().any(|v| v.as_str() == Some(&skills_dir_str)) {
-                        arr.push(serde_json::Value::String(skills_dir_str));
-                        changed = true;
-                    }
-                }
-                None => {
-                    let patch: serde_json::Value = serde_json::json!({
-                        "skills": {
-                            "load": {
-                                "extraDirs": [skills_dir_str]
-                            }
-                        }
-                    });
-                    merge_json(&mut existing, &patch);
-                    changed = true;
-                }
+            // Read current extraDirs to avoid duplicates
+            let current = std::fs::read_to_string(&config_path).unwrap_or_default();
+            let current_json: serde_json::Value = serde_json::from_str(&current).unwrap_or_default();
+            let already_has = current_json
+                .pointer("/skills/load/extraDirs")
+                .and_then(|v| v.as_array())
+                .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(&skills_dir_str)));
+            if !already_has {
+                patch["skills"] = serde_json::json!({ "load": { "extraDirs": [skills_dir_str] } });
             }
         }
 
-        if changed {
-            // Back up the original before writing the merged version
-            let backup = contents.clone();
-
-            let merged = serde_json::to_string_pretty(&existing)
-                .context("failed to serialize merged config")?;
-            std::fs::write(&config_path, &merged)
-                .with_context(|| format!("failed to write {}", config_path.display()))?;
-            tracing::info!("config merged into openclaw.json, validating...");
-
-            // Validate with openclaw config validate
-            let validate = Command::new("openclaw")
-                .args(["config", "validate"])
-                .output();
-
-            let valid = match validate {
-                Ok(output) if output.status.success() => {
-                    tracing::info!("openclaw config validated successfully");
-                    true
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    tracing::warn!("openclaw config invalid after merge: {} {}", stdout.trim(), stderr.trim());
-                    false
-                }
-                Err(e) => {
-                    tracing::warn!("failed to run openclaw config validate: {e}");
-                    // Can't validate — assume OK to avoid blocking startup
-                    true
-                }
-            };
-
-            if !valid {
-                // Rollback to the original config
-                tracing::warn!("rolling back openclaw.json to pre-merge state");
-                std::fs::write(&config_path, &backup)
-                    .with_context(|| format!("failed to rollback {}", config_path.display()))?;
-                tracing::info!("openclaw.json rolled back successfully");
+        // Only merge+validate if there's something to apply
+        if patch.as_object().is_some_and(|o| !o.is_empty()) {
+            match merge_and_validate(&config_path, &patch) {
+                Ok(()) => tracing::info!("openclaw config updated and validated"),
+                Err(e) => tracing::warn!("openclaw config merge failed: {e}"),
             }
         }
 
@@ -331,5 +320,3 @@ impl ManagedService for OpenClaw {
         Ok(busy)
     }
 }
-
-use crate::connectors::merge_json;

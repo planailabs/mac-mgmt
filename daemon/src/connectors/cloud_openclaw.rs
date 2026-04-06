@@ -1,13 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::Connector;
 use crate::sentry_ext;
+use crate::services::openclaw::{config_path, merge_and_validate};
 use mac_mgmt_common::CloudConfig;
 
 /// Configures OpenClaw to use a cloud LLM provider (Anthropic, OpenAI, etc.).
-///
-/// Writes the provider config into `models.providers.<name>` and sets
-/// `agents.defaults.model.primary` in `~/.openclaw/openclaw.json`.
 pub struct CloudOpenClaw {
     pub config: CloudConfig,
 }
@@ -28,39 +26,24 @@ impl Connector for CloudOpenClaw {
         sentry_ext::breadcrumb(
             "connector",
             &format!("cloud→openclaw provider={provider} model={model}"),
-            &[
-                ("connector", "cloud→openclaw"),
-                ("provider", provider),
-                ("model", model),
-            ],
+            &[("connector", "cloud→openclaw"), ("provider", provider), ("model", model)],
         );
 
-        let config_path = dirs::home_dir()
-            .context("HOME not set")?
-            .join(".openclaw/openclaw.json");
-
-        if !config_path.exists() {
-            tracing::warn!(
-                "openclaw config not found at {}, skipping cloud connector",
-                config_path.display()
-            );
+        let path = config_path()?;
+        if !path.exists() {
+            tracing::warn!("openclaw config not found, skipping cloud connector");
             return Ok(());
         }
 
-        let contents = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("failed to read {}", config_path.display()))?;
-        let mut existing: serde_json::Value =
-            serde_json::from_str(&contents).context("failed to parse openclaw.json")?;
+        let mut patch = serde_json::json!({});
 
-        // For built-in providers (anthropic, openai, google, etc.) that are in the
-        // OpenClaw catalog, we only need to set the API key env var and the default model.
-        // For custom/proxy providers, we write a full models.providers entry.
-        let needs_custom_provider = self.config.base_url.is_some()
+        // For custom providers (with base_url/api/auth), write a full models.providers entry.
+        // For built-in providers, just set the API key env var.
+        let needs_custom = self.config.base_url.is_some()
             || self.config.api.is_some()
             || self.config.auth.is_some();
 
-        if needs_custom_provider {
-            // Custom provider entry under models.providers
+        if needs_custom {
             let mut provider_cfg = serde_json::json!({});
             if let Some(ref url) = self.config.base_url {
                 provider_cfg["baseUrl"] = serde_json::json!(url);
@@ -74,52 +57,20 @@ impl Connector for CloudOpenClaw {
             if let Some(ref key) = self.config.api_key {
                 provider_cfg["apiKey"] = serde_json::json!(key);
             }
-            // Add a model entry derived from the default_model
             let model_id = model.split('/').last().unwrap_or(model);
-            provider_cfg["models"] = serde_json::json!([{
-                "id": model_id,
-                "name": model_id,
-            }]);
+            provider_cfg["models"] = serde_json::json!([{ "id": model_id, "name": model_id }]);
 
-            let patch = serde_json::json!({
-                "models": {
-                    "providers": {
-                        provider: provider_cfg,
-                    }
-                }
-            });
-            super::merge_json(&mut existing, &patch);
+            patch["models"] = serde_json::json!({ "providers": { provider: provider_cfg } });
         } else if let Some(ref key) = self.config.api_key {
-            // Built-in provider: set the API key via env.vars
             let env_var = self.config.provider.env_var();
-            let patch = serde_json::json!({
-                "env": {
-                    "vars": {
-                        env_var: key,
-                    }
-                }
-            });
-            super::merge_json(&mut existing, &patch);
+            patch["env"] = serde_json::json!({ "vars": { env_var: key } });
         }
 
         // Set default model
-        let patch = serde_json::json!({
-            "agents": {
-                "defaults": {
-                    "model": {
-                        "primary": model,
-                    }
-                }
-            }
-        });
-        super::merge_json(&mut existing, &patch);
+        patch["agents"] = serde_json::json!({ "defaults": { "model": { "primary": model } } });
 
-        let merged =
-            serde_json::to_string_pretty(&existing).context("failed to serialize config")?;
-        std::fs::write(&config_path, &merged)
-            .with_context(|| format!("failed to write {}", config_path.display()))?;
-
-        tracing::info!("cloud→openclaw connected: {provider} configured as LLM provider");
+        merge_and_validate(&path, &patch)?;
+        tracing::info!("cloud→openclaw connected: {provider} configured");
         Ok(())
     }
 }

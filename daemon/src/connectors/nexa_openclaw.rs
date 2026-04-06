@@ -1,13 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::Connector;
 use crate::sentry_ext;
+use crate::services::openclaw::{config_path, merge_and_validate};
 
 /// Configures OpenClaw to use Nexa as its LLM backend.
 ///
 /// Nexa exposes an OpenAI-compatible API at `http://host:port/v1`.
-/// This connector writes the LLM backend configuration into
-/// `~/.openclaw/openclaw.json` so OpenClaw discovers Nexa.
 pub struct NexaOpenClaw {
     pub host: String,
     pub port: u16,
@@ -25,52 +24,41 @@ impl Connector for NexaOpenClaw {
 
     fn connect(&self) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
-        tracing::info!(
-            "connecting nexa to openclaw (baseUrl={base_url}, model={})",
-            self.default_model
-        );
+        tracing::info!("connecting nexa to openclaw (baseUrl={base_url}, model={})", self.default_model);
         sentry_ext::breadcrumb(
             "connector",
             &format!("nexa→openclaw baseUrl={base_url}"),
-            &[
-                ("connector", "nexa→openclaw"),
-                ("base_url", &base_url),
-                ("model", &self.default_model),
-            ],
+            &[("connector", "nexa→openclaw"), ("base_url", &base_url), ("model", &self.default_model)],
         );
 
-        let config_path = dirs::home_dir()
-            .context("HOME not set")?
-            .join(".openclaw/openclaw.json");
-
-        if !config_path.exists() {
-            tracing::warn!(
-                "openclaw config not found at {}, skipping nexa connector",
-                config_path.display()
-            );
+        let path = config_path()?;
+        if !path.exists() {
+            tracing::warn!("openclaw config not found, skipping nexa connector");
             return Ok(());
         }
 
-        let contents = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("failed to read {}", config_path.display()))?;
-        let mut existing: serde_json::Value =
-            serde_json::from_str(&contents).context("failed to parse openclaw.json")?;
-
+        let model_id = &self.default_model;
         let patch = serde_json::json!({
-            "llm": {
-                "provider": "openai",
-                "baseUrl": base_url,
-                "model": self.default_model,
+            "models": {
+                "providers": {
+                    "nexa": {
+                        "baseUrl": base_url,
+                        "api": "openai-completions",
+                        "models": [{ "id": model_id, "name": model_id }],
+                    }
+                }
+            },
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "primary": format!("nexa/{model_id}"),
+                    }
+                }
             }
         });
-        super::merge_json(&mut existing, &patch);
 
-        let merged =
-            serde_json::to_string_pretty(&existing).context("failed to serialize config")?;
-        std::fs::write(&config_path, &merged)
-            .with_context(|| format!("failed to write {}", config_path.display()))?;
-
-        tracing::info!("nexa→openclaw connected: LLM config written to openclaw.json");
+        merge_and_validate(&path, &patch)?;
+        tracing::info!("nexa→openclaw connected");
         Ok(())
     }
 }
