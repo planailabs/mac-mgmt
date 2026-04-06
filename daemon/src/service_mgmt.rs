@@ -23,11 +23,15 @@ struct ServiceState {
     log_task: Option<JoinHandle<()>>,
 }
 
+struct ConnectorState {
+    connector: Box<dyn Connector>,
+    done: bool,
+}
+
 pub struct ServiceManager {
     states: Vec<ServiceState>,
     install_only: Vec<Box<dyn ManagedService>>,
-    connectors: Vec<Box<dyn Connector>>,
-    connectors_done: bool,
+    connectors: Vec<ConnectorState>,
     dispatcher: Arc<Dispatcher>,
     log_buf: LogBuffer,
 }
@@ -90,11 +94,15 @@ impl ServiceManager {
             });
         }
 
+        let connectors = connectors
+            .into_iter()
+            .map(|c| ConnectorState { connector: c, done: false })
+            .collect();
+
         Ok(Self {
             states,
             install_only,
             connectors,
-            connectors_done: false,
             dispatcher,
             log_buf,
         })
@@ -384,20 +392,30 @@ impl ServiceManager {
                 .set(if busy { 1 } else { 0 });
         }
 
-        // Run connectors once all services have completed post_start
-        if !self.connectors_done && self.states.iter().all(|s| s.post_start_done) {
-            for connector in &self.connectors {
-                let name = connector.name();
-                tracing::info!("running connector: {name}");
-                if let Err(e) = connector.connect() {
-                    tracing::error!("connector {name} failed: {e}");
-                    sentry_ext::capture_error(
-                        &format!("connector {name} failed: {e}"),
-                        &[("connector", name)],
-                    );
-                }
+        // Run each connector once its dependencies have completed post_start
+        for cs in &mut self.connectors {
+            if cs.done {
+                continue;
             }
-            self.connectors_done = true;
+            let deps_ready = cs.connector.depends_on().iter().all(|dep| {
+                self.states
+                    .iter()
+                    .find(|s| s.service.name() == *dep)
+                    .is_some_and(|s| s.post_start_done)
+            });
+            if !deps_ready {
+                continue;
+            }
+            let name = cs.connector.name();
+            tracing::info!("running connector: {name}");
+            if let Err(e) = cs.connector.connect() {
+                tracing::error!("connector {name} failed: {e}");
+                sentry_ext::capture_error(
+                    &format!("connector {name} failed: {e}"),
+                    &[("connector", name)],
+                );
+            }
+            cs.done = true;
         }
     }
 

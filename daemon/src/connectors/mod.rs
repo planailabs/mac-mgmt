@@ -10,6 +10,9 @@ use mac_mgmt_common::{GlobalConfig, NexaConfig, OllamaConfig, OpenClawConfig};
 /// A connector wires two services together after they are both healthy.
 pub trait Connector: Send {
     fn name(&self) -> &str;
+    /// Service names this connector depends on. It runs once all of them
+    /// have completed their `post_start`.
+    fn depends_on(&self) -> &[&str];
     fn connect(&self) -> Result<()>;
 }
 

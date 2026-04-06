@@ -17,6 +17,10 @@ impl Connector for OllamaOpenClaw {
         "ollama→openclaw"
     }
 
+    fn depends_on(&self) -> &[&str] {
+        &["ollama", "openclaw"]
+    }
+
     fn connect(&self) -> Result<()> {
         let model = &self.default_model;
         tracing::info!("connecting ollama to openclaw with model {model}");

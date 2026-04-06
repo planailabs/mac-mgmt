@@ -19,6 +19,10 @@ impl Connector for NexaOpenClaw {
         "nexa→openclaw"
     }
 
+    fn depends_on(&self) -> &[&str] {
+        &["nexa", "openclaw"]
+    }
+
     fn connect(&self) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
         tracing::info!(
