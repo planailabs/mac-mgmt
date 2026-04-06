@@ -32,8 +32,8 @@ pub fn capture(
                 for line in reader.lines() {
                     match line {
                         Ok(line) => {
-                            eprintln!("[{name}] {line}");
                             let clean = strip_ansi(&line);
+                            tracing::warn!(target: "service", "[{name}] {clean}");
                             buf.push(format!("[{name}] {clean}"));
                         }
                         Err(_) => break,
@@ -47,8 +47,8 @@ pub fn capture(
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
-                        println!("[{name}] {line}");
                         let clean = strip_ansi(&line);
+                        tracing::info!(target: "service", "[{name}] {clean}");
                         buf.push(format!("[{name}] {clean}"));
                     }
                     Err(_) => break,

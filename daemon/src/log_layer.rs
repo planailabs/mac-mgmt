@@ -39,8 +39,8 @@ impl<S: Subscriber> Layer<S> for BufferLayer {
         };
         event.record(&mut visitor);
 
-        // Skip noisy internal targets
-        if target.starts_with("rocket::") || target.starts_with("hyper::") {
+        // Skip noisy internal targets and service output (already in buffer via log_capture)
+        if target.starts_with("rocket::") || target.starts_with("hyper::") || target == "service" {
             return;
         }
 
