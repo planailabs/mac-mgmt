@@ -22,7 +22,7 @@ impl Connector for CloudOpenClaw {
     }
 
     fn connect(&self) -> Result<()> {
-        let provider = &self.config.provider;
+        let provider = self.config.provider.as_str();
         let model = &self.config.default_model;
         tracing::info!("connecting cloud provider {provider} to openclaw (model={model})");
         sentry_ext::breadcrumb(
@@ -90,20 +90,8 @@ impl Connector for CloudOpenClaw {
             });
             super::merge_json(&mut existing, &patch);
         } else if let Some(ref key) = self.config.api_key {
-            // Built-in provider: set the API key via secrets.env
-            let env_var = match provider.as_str() {
-                "anthropic" => "ANTHROPIC_API_KEY",
-                "openai" => "OPENAI_API_KEY",
-                "google" => "GEMINI_API_KEY",
-                "mistral" => "MISTRAL_API_KEY",
-                "groq" => "GROQ_API_KEY",
-                "xai" => "XAI_API_KEY",
-                "deepseek" => "DEEPSEEK_API_KEY",
-                "openrouter" => "OPENROUTER_API_KEY",
-                "together" => "TOGETHER_API_KEY",
-                "bedrock" => "AWS_ACCESS_KEY_ID", // Bedrock uses AWS SDK auth typically
-                _ => "API_KEY",
-            };
+            // Built-in provider: set the API key via env.vars
+            let env_var = self.config.provider.env_var();
             let patch = serde_json::json!({
                 "env": {
                     "vars": {

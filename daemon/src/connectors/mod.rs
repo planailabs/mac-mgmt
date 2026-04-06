@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 use crate::services::{apprise::Apprise, mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
-use mac_mgmt_common::{GlobalConfig, NexaConfig, OllamaConfig, OpenClawConfig};
+use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, NexaConfig, OllamaConfig, OpenClawConfig};
 
 /// A connector wires two services together after they are both healthy.
 pub trait Connector: Send {
@@ -26,26 +26,25 @@ pub fn build_services(
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
-    match global.agent_provider.as_str() {
-        "openclaw" => {
+    match global.agent_provider {
+        AgentProvider::Openclaw => {
             tracing::info!("agent_provider=openclaw");
             services.push(Box::new(OpenClaw::new(openclaw_cfg)));
         }
-        "none" => tracing::info!("agent_provider=none, skipping agent services"),
-        other => tracing::warn!("unknown agent_provider '{other}', skipping"),
+        AgentProvider::None => tracing::info!("agent_provider=none, skipping agent services"),
     }
 
-    match global.llm_provider.as_str() {
-        "ollama" => {
+    match global.llm_provider {
+        LlmProvider::Ollama => {
             tracing::info!("llm_provider=ollama");
             services.push(Box::new(Ollama::new(ollama_cfg)));
         }
-        "nexa" => {
+        LlmProvider::Nexa => {
             tracing::info!("llm_provider=nexa");
             services.push(Box::new(Nexa::new(nexa_cfg)));
         }
-        "none" => tracing::info!("llm_provider=none, skipping LLM services"),
-        other => tracing::warn!("unknown llm_provider '{other}', skipping"),
+        LlmProvider::Cloud => tracing::info!("llm_provider=cloud, no local LLM service"),
+        LlmProvider::None => tracing::info!("llm_provider=none, skipping LLM services"),
     }
 
     services.push(Box::new(McPorter));
@@ -59,30 +58,30 @@ pub fn build_connectors(
     global: &GlobalConfig,
     ollama_cfg: &OllamaConfig,
     nexa_cfg: &NexaConfig,
-    cloud_cfg: &mac_mgmt_common::CloudConfig,
+    cloud_cfg: &CloudConfig,
 ) -> Vec<Box<dyn Connector>> {
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
-    if global.agent_provider == "openclaw" {
-        match global.llm_provider.as_str() {
-            "ollama" => {
+    if global.agent_provider == AgentProvider::Openclaw {
+        match global.llm_provider {
+            LlmProvider::Ollama => {
                 connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
                     default_model: ollama_cfg.default_model.clone(),
                 }));
             }
-            "nexa" => {
+            LlmProvider::Nexa => {
                 connectors.push(Box::new(nexa_openclaw::NexaOpenClaw {
                     host: nexa_cfg.host.clone(),
                     port: nexa_cfg.port,
                     default_model: nexa_cfg.default_model.clone(),
                 }));
             }
-            "cloud" => {
+            LlmProvider::Cloud => {
                 connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
                     config: cloud_cfg.clone(),
                 }));
             }
-            _ => {}
+            LlmProvider::None => {}
         }
     }
 

@@ -61,9 +61,120 @@ pub struct ServiceStatus {
 }
 
 const VALID_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
-const VALID_LLM_PROVIDERS: &[&str] = &["ollama", "nexa", "cloud", "none"];
-const VALID_AGENT_PROVIDERS: &[&str] = &["openclaw", "none"];
 const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmProvider {
+    Ollama,
+    Nexa,
+    Cloud,
+    None,
+}
+
+impl Default for LlmProvider {
+    fn default() -> Self {
+        Self::Ollama
+    }
+}
+
+impl LlmProvider {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Ollama => "ollama",
+            Self::Nexa => "nexa",
+            Self::Cloud => "cloud",
+            Self::None => "none",
+        }
+    }
+}
+
+impl std::fmt::Display for LlmProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentProvider {
+    Openclaw,
+    None,
+}
+
+impl Default for AgentProvider {
+    fn default() -> Self {
+        Self::Openclaw
+    }
+}
+
+impl AgentProvider {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Openclaw => "openclaw",
+            Self::None => "none",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CloudProvider {
+    Anthropic,
+    Openai,
+    Google,
+    Mistral,
+    Groq,
+    Xai,
+    Deepseek,
+    Openrouter,
+    Together,
+    Bedrock,
+}
+
+impl Default for CloudProvider {
+    fn default() -> Self {
+        Self::Anthropic
+    }
+}
+
+impl CloudProvider {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::Openai => "openai",
+            Self::Google => "google",
+            Self::Mistral => "mistral",
+            Self::Groq => "groq",
+            Self::Xai => "xai",
+            Self::Deepseek => "deepseek",
+            Self::Openrouter => "openrouter",
+            Self::Together => "together",
+            Self::Bedrock => "bedrock",
+        }
+    }
+
+    pub fn env_var(&self) -> &str {
+        match self {
+            Self::Anthropic => "ANTHROPIC_API_KEY",
+            Self::Openai => "OPENAI_API_KEY",
+            Self::Google => "GEMINI_API_KEY",
+            Self::Mistral => "MISTRAL_API_KEY",
+            Self::Groq => "GROQ_API_KEY",
+            Self::Xai => "XAI_API_KEY",
+            Self::Deepseek => "DEEPSEEK_API_KEY",
+            Self::Openrouter => "OPENROUTER_API_KEY",
+            Self::Together => "TOGETHER_API_KEY",
+            Self::Bedrock => "AWS_ACCESS_KEY_ID",
+        }
+    }
+}
+
+impl std::fmt::Display for CloudProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Debug)]
 pub struct ValidationError(String);
@@ -246,25 +357,16 @@ impl NexaConfig {
 
 // ── Cloud LLM providers ────────────────────────────────────────────────
 
-const VALID_CLOUD_PROVIDERS: &[&str] = &[
-    "anthropic", "openai", "google", "mistral", "groq", "xai", "deepseek",
-    "openrouter", "together", "bedrock",
-];
-
-fn default_cloud_provider() -> String {
-    "anthropic".to_string()
-}
-
 fn default_cloud_model() -> String {
     "anthropic/claude-sonnet-4-6".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloudConfig {
-    #[schemars(description = "Cloud provider: anthropic, openai, google, mistral, groq, xai, deepseek, openrouter, together, bedrock")]
-    #[serde(default = "default_cloud_provider")]
-    pub provider: String,
+    #[schemars(description = "Cloud LLM provider")]
+    #[serde(default)]
+    pub provider: CloudProvider,
     #[schemars(description = "API key for the cloud provider")]
     #[serde(default)]
     pub api_key: Option<String>,
@@ -282,28 +384,8 @@ pub struct CloudConfig {
     pub auth: Option<String>,
 }
 
-impl Default for CloudConfig {
-    fn default() -> Self {
-        Self {
-            provider: default_cloud_provider(),
-            api_key: None,
-            default_model: default_cloud_model(),
-            base_url: None,
-            api: None,
-            auth: None,
-        }
-    }
-}
-
 impl CloudConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if !VALID_CLOUD_PROVIDERS.contains(&self.provider.as_str()) {
-            return Err(ValidationError(format!(
-                "invalid cloud provider '{}', must be one of: {}",
-                self.provider,
-                VALID_CLOUD_PROVIDERS.join(", ")
-            )));
-        }
         Ok(())
     }
 }
@@ -410,23 +492,15 @@ pub struct DaemonServerConfig {
 
 // ── Global ─────────────────────────────────────────────────────────────
 
-fn default_llm_provider() -> String {
-    "ollama".to_string()
-}
-
-fn default_agent_provider() -> String {
-    "openclaw".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
-    #[schemars(description = "LLM backend to use: ollama, nexa, or none")]
-    #[serde(default = "default_llm_provider")]
-    pub llm_provider: String,
-    #[schemars(description = "Agent provider to use: openclaw or none")]
-    #[serde(default = "default_agent_provider")]
-    pub agent_provider: String,
+    #[schemars(description = "LLM backend")]
+    #[serde(default)]
+    pub llm_provider: LlmProvider,
+    #[schemars(description = "Agent provider")]
+    #[serde(default)]
+    pub agent_provider: AgentProvider,
     #[schemars(description = "Display name for this agent")]
     #[serde(default)]
     pub agent_name: Option<String>,
@@ -435,33 +509,8 @@ pub struct GlobalConfig {
     pub user_name: Option<String>,
 }
 
-impl Default for GlobalConfig {
-    fn default() -> Self {
-        Self {
-            llm_provider: default_llm_provider(),
-            agent_provider: default_agent_provider(),
-            agent_name: None,
-            user_name: None,
-        }
-    }
-}
-
 impl GlobalConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if !VALID_LLM_PROVIDERS.contains(&self.llm_provider.as_str()) {
-            return Err(ValidationError(format!(
-                "invalid llm_provider '{}', must be one of: {}",
-                self.llm_provider,
-                VALID_LLM_PROVIDERS.join(", ")
-            )));
-        }
-        if !VALID_AGENT_PROVIDERS.contains(&self.agent_provider.as_str()) {
-            return Err(ValidationError(format!(
-                "invalid agent_provider '{}', must be one of: {}",
-                self.agent_provider,
-                VALID_AGENT_PROVIDERS.join(", ")
-            )));
-        }
         Ok(())
     }
 }
@@ -645,8 +694,8 @@ mod tests {
     fn valid_minimal_config() {
         let config = CustomerConfig::from_toml("").unwrap();
         assert_eq!(config.ollama.flavour, "cpu");
-        assert_eq!(config.global.llm_provider, "ollama");
-        assert_eq!(config.global.agent_provider, "openclaw");
+        assert_eq!(config.global.llm_provider, LlmProvider::Ollama);
+        assert_eq!(config.global.agent_provider, AgentProvider::Openclaw);
     }
 
     #[test]
@@ -719,7 +768,7 @@ models = []
 llm_provider = "chatgpt"
 "#;
         let err = CustomerConfig::from_toml(toml).unwrap_err();
-        assert!(err.contains("invalid llm_provider"), "got: {err}");
+        assert!(err.contains("unknown variant"), "got: {err}");
     }
 
     #[test]
@@ -729,7 +778,7 @@ llm_provider = "chatgpt"
 agent_provider = "chatgpt"
 "#;
         let err = CustomerConfig::from_toml(toml).unwrap_err();
-        assert!(err.contains("invalid agent_provider"), "got: {err}");
+        assert!(err.contains("unknown variant"), "got: {err}");
     }
 
     #[test]
@@ -842,8 +891,8 @@ log_level = "verbose"
     #[test]
     fn providers_default_to_ollama_and_openclaw() {
         let config = CustomerConfig::from_toml("").unwrap();
-        assert_eq!(config.global.llm_provider, "ollama");
-        assert_eq!(config.global.agent_provider, "openclaw");
+        assert_eq!(config.global.llm_provider, LlmProvider::Ollama);
+        assert_eq!(config.global.agent_provider, AgentProvider::Openclaw);
     }
 
     #[test]
@@ -854,8 +903,8 @@ llm_provider = "none"
 agent_provider = "none"
 "#;
         let config = CustomerConfig::from_toml(toml).unwrap();
-        assert_eq!(config.global.llm_provider, "none");
-        assert_eq!(config.global.agent_provider, "none");
+        assert_eq!(config.global.llm_provider, LlmProvider::None);
+        assert_eq!(config.global.agent_provider, AgentProvider::None);
     }
 
     // ── Notifications config tests ─────────────────────────────────────
