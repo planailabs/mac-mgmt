@@ -32,15 +32,19 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonSettings {
+    #[schemars(description = "How often to check for updates, sync skills and MCP servers (e.g. \"30s\", \"5m\", \"1h\")")]
     #[serde(default = "default_update_interval")]
     pub update_interval: String,
+    #[schemars(description = "How often to run health checks on managed services (e.g. \"1m\", \"30s\")")]
     #[serde(default = "default_health_interval")]
     pub health_interval: String,
+    #[schemars(description = "Log verbosity: error, warn, info, debug, or trace")]
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    #[schemars(description = "Time window for upgrades in HH:MM-HH:MM format (e.g. \"02:00-05:00\"). Omit to allow anytime.")]
     #[serde(default)]
     pub upgrade_window: Option<String>,
 }
@@ -58,11 +62,13 @@ impl Default for DaemonSettings {
 
 // ── Notifications (daemon-only) ──────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
+    #[schemars(description = "Apprise notification URLs (e.g. tgram://bot/chat, ntfy://host/topic)")]
     #[serde(default)]
     pub urls: Vec<String>,
+    #[schemars(description = "Which events trigger notifications (omit for all). Options: daemon_started, daemon_stopped, service_crashed, service_unhealthy, service_recovered, upgrade_installed, upgrade_failed")]
     #[serde(default)]
     pub events: Option<Vec<String>>,
 }
@@ -344,6 +350,10 @@ impl GlobalConfig {
 #[serde(deny_unknown_fields)]
 pub struct CustomerConfig {
     #[serde(default)]
+    pub daemon: DaemonSettings,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
+    #[serde(default)]
     pub global: GlobalConfig,
     #[serde(default)]
     pub openclaw: OpenClawConfig,
@@ -353,6 +363,8 @@ pub struct CustomerConfig {
     pub nexa: NexaConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    #[serde(default)]
+    pub relay: RelayConfig,
 }
 
 impl OllamaConfig {
@@ -380,6 +392,7 @@ impl CustomerConfig {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.daemon.validate().map_err(|e| e.to_string())?;
         self.global.validate().map_err(|e| e.to_string())?;
         self.ollama.validate().map_err(|e| e.to_string())?;
         self.nexa.validate().map_err(|e| e.to_string())?;
@@ -389,9 +402,11 @@ impl CustomerConfig {
 
 // ── Relay ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 pub struct RelayConfig {
+    #[schemars(description = "Relay server URL for remote SSH access (e.g. wss://relay.example.com)")]
     pub url: Option<String>,
+    #[schemars(description = "Whether remote SSH access is enabled on startup")]
     #[serde(default)]
     pub remote_ssh_enabled: bool,
 }
