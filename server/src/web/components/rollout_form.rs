@@ -105,23 +105,50 @@ async fn create_rollout(
         }
     }
 
-    // Downgrade check
-    let max_version: Option<String> = sqlx::query_scalar(
-        "SELECT MAX(c.pinned_version) FROM customers c \
+    // Downgrade check: list customers that would be downgraded, with their groups
+    #[derive(sqlx::FromRow)]
+    struct DowngradeRow {
+        customer_name: String,
+        pinned_version: String,
+        group_name: String,
+    }
+
+    let downgrades = sqlx::query_as::<_, DowngradeRow>(
+        "SELECT DISTINCT c.name AS customer_name, c.pinned_version, rg.name AS group_name \
+         FROM customers c \
          JOIN rollout_group_members rgm ON rgm.customer_id = c.id \
-         WHERE rgm.group_id = ANY($1) AND c.pinned_version IS NOT NULL",
+         JOIN rollout_groups rg ON rg.id = rgm.group_id \
+         WHERE rgm.group_id = ANY($1) \
+           AND c.pinned_version IS NOT NULL \
+           AND c.pinned_version > $2 \
+         ORDER BY c.name, rg.name",
     )
     .bind(&resolved)
-    .fetch_one(&mut *tx)
+    .bind(target_version.trim())
+    .fetch_all(&mut *tx)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if let Some(ref max_ver) = max_version {
-        if max_ver > &target_version {
-            return Err(ServerFnError::new(format!(
-                "would downgrade from {max_ver} to {target_version}"
-            )));
+    if !downgrades.is_empty() {
+        // Group by customer
+        let mut by_customer: std::collections::BTreeMap<String, (String, Vec<String>)> =
+            std::collections::BTreeMap::new();
+        for d in &downgrades {
+            by_customer
+                .entry(d.customer_name.clone())
+                .or_insert_with(|| (d.pinned_version.clone(), Vec::new()))
+                .1
+                .push(d.group_name.clone());
         }
+        let details: Vec<String> = by_customer
+            .into_iter()
+            .map(|(name, (ver, groups))| format!("{name} (v{ver}, in: {})", groups.join(", ")))
+            .collect();
+        return Err(ServerFnError::new(format!(
+            "Would downgrade to {}: {}",
+            target_version.trim(),
+            details.join("; ")
+        )));
     }
 
     let rollout_id = Uuid::new_v4();
