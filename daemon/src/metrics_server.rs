@@ -92,7 +92,7 @@ pub fn build_rocket(
 ) -> rocket::Rocket<rocket::Build> {
     let config = rocket::Config {
         port,
-        address: std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
+        address: std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
         log_level: rocket::config::LogLevel::Off,
         ..rocket::Config::default()
     };

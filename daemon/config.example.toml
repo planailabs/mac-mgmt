@@ -122,5 +122,10 @@ flavour = "cpu"
 
 # ── Relay ────────────────────────────────────────────────────────────
 # Connect to a relay server for remote SSH access to this machine.
+# The WebSocket connection to the relay is always active when a URL is
+# configured (for metrics proxying, etc.). The remote_ssh_enabled flag
+# controls whether inbound SSH sessions are accepted. This can also be
+# toggled at runtime via the FIFO (~/.config/mac-mgmt/remote-ssh).
 # [relay]
 # url = "https://relay.example.com"
+# remote_ssh_enabled = false

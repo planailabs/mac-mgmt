@@ -392,6 +392,8 @@ impl CustomerConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RelayConfig {
     pub url: Option<String>,
+    #[serde(default)]
+    pub remote_ssh_enabled: bool,
 }
 
 // ── Daemon Config (full config including server section) ────────────────

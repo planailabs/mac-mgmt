@@ -2,13 +2,26 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::RwLock;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 /// Message sent from relay to daemon over the control WebSocket.
 #[derive(Debug)]
 pub enum ControlMsg {
     SessionRequest { session_id: String },
+    MetricsRequest {
+        request_id: String,
+        path: String,
+        response_tx: oneshot::Sender<MetricsResponse>,
+    },
+}
+
+/// Response from daemon for a proxied metrics request.
+#[derive(Debug)]
+pub struct MetricsResponse {
+    pub status: u16,
+    pub content_type: String,
+    pub body: String,
 }
 
 /// A connected daemon.

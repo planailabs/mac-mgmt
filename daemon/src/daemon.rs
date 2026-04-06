@@ -131,6 +131,8 @@ pub async fn run(
         server_url.clone(),
         server_token.clone(),
         instance_id.clone(),
+        metrics_port,
+        cfg.relay.remote_ssh_enabled,
     );
 
     // Start server push WebSocket if server is configured

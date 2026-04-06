@@ -85,6 +85,10 @@ enum Commands {
         #[arg(long)]
         port: Option<u16>,
     },
+    /// Enable remote SSH access via the relay
+    EnableSsh,
+    /// Disable remote SSH access via the relay
+    DisableSsh,
     /// View service logs
     Logs {
         /// Service name (e.g., "ollama"). Shows all services if omitted.
@@ -97,6 +101,16 @@ enum Commands {
         #[arg(short, long)]
         follow: bool,
     },
+}
+
+fn write_ssh_fifo(command: &str) -> Result<()> {
+    let path = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/root"))
+        .join(".config/mac-mgmt/remote-ssh");
+    std::fs::write(&path, format!("{command}\n"))
+        .map_err(|e| anyhow::anyhow!("failed to write to {}: {e}", path.display()))?;
+    println!("remote SSH {command}d");
+    Ok(())
 }
 
 #[tokio::main]
@@ -148,6 +162,8 @@ async fn main() -> Result<()> {
         Commands::Update { force } => self_update::apply(force)?,
         #[cfg(not(feature = "self-update"))]
         Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
+        Commands::EnableSsh => write_ssh_fifo("enable")?,
+        Commands::DisableSsh => write_ssh_fifo("disable")?,
         Commands::Status { port } => status::print_status(port).await?,
         Commands::Logs { service, lines, follow } => {
             logs::tail_logs(service.as_deref(), lines, follow, None).await?;

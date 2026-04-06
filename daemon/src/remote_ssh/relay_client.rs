@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use russh::keys::PublicKey;
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 
@@ -16,6 +18,7 @@ use crate::ws_reconnect::{self, WsClientConfig};
 enum ControlMessage {
     Registered { ssh_port: u16 },
     SessionRequest { session_id: String },
+    MetricsRequest { request_id: String, path: String },
 }
 
 pub async fn run(
@@ -24,6 +27,8 @@ pub async fn run(
     instance_id: &str,
     agent_name: Option<&str>,
     server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
+    ssh_allowed: Arc<AtomicBool>,
+    metrics_port: u16,
 ) -> Result<()> {
     // Load SSH config once
     let host_key = host_keys::load_or_generate()?;
@@ -40,7 +45,8 @@ pub async fn run(
         "{relay_url}/api/daemon/register?instance_id={instance_id}{agent_name_param}"
     );
 
-    let (tx, mut rx) = mpsc::channel::<String>(64);
+    let (incoming_tx, mut incoming_rx) = mpsc::channel::<String>(64);
+    let (outgoing_tx, outgoing_rx) = mpsc::channel::<String>(64);
 
     let ws_config = WsClientConfig {
         url: ws_url,
@@ -48,9 +54,9 @@ pub async fn run(
         ..Default::default()
     };
 
-    let _ws_handle = ws_reconnect::spawn_reconnecting(ws_config, tx);
+    let _ws_handle = ws_reconnect::spawn_reconnecting(ws_config, incoming_tx, outgoing_rx);
 
-    while let Some(text) = rx.recv().await {
+    while let Some(text) = incoming_rx.recv().await {
         let control: ControlMessage = serde_json::from_str(&text)
             .with_context(|| format!("invalid control message: {text}"))?;
 
@@ -59,6 +65,10 @@ pub async fn run(
                 tracing::info!("registered with relay, SSH port: {ssh_port}");
             }
             ControlMessage::SessionRequest { session_id } => {
+                if !ssh_allowed.load(Ordering::Relaxed) {
+                    tracing::info!("session request {session_id} denied (SSH not allowed)");
+                    continue;
+                }
                 tracing::info!("session request: {session_id}");
                 let relay_url = relay_url.to_string();
                 let token = token.to_string();
@@ -70,6 +80,14 @@ pub async fn run(
                     {
                         tracing::error!("session {session_id} failed: {e:#}");
                     }
+                });
+            }
+            ControlMessage::MetricsRequest { request_id, path } => {
+                tracing::debug!("metrics request {request_id}: {path}");
+                let out_tx = outgoing_tx.clone();
+                let port = metrics_port;
+                tokio::spawn(async move {
+                    handle_metrics_request(&out_tx, &request_id, &path, port).await;
                 });
             }
         }
@@ -117,4 +135,47 @@ async fn handle_session(
     session.await.context("russh session failed")?;
 
     Ok(())
+}
+
+async fn handle_metrics_request(
+    out_tx: &mpsc::Sender<String>,
+    request_id: &str,
+    path: &str,
+    metrics_port: u16,
+) {
+    let url = format!("http://[::1]:{metrics_port}{path}");
+
+    let (status, content_type, body) = match reqwest::Client::new()
+        .get(&url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/plain")
+                .to_string();
+            let body = resp.text().await.unwrap_or_default();
+            (status, ct, body)
+        }
+        Err(e) => (
+            502,
+            "text/plain".to_string(),
+            format!("metrics fetch failed: {e}"),
+        ),
+    };
+
+    let msg = serde_json::json!({
+        "type": "metrics_response",
+        "request_id": request_id,
+        "status": status,
+        "content_type": content_type,
+        "body": body
+    });
+
+    let _ = out_tx.send(msg.to_string()).await;
 }

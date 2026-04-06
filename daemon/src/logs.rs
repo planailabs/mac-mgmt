@@ -33,11 +33,11 @@ pub async fn tail_logs(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
-        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+        .local_address(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST))
         .build()
         .context("failed to build HTTP client")?;
 
-    let mut url = format!("http://127.0.0.1:{port}/logs?n={lines}");
+    let mut url = format!("http://[::1]:{port}/logs?n={lines}");
     if let Some(svc) = service {
         url.push_str(&format!("&service={svc}"));
     }
@@ -70,7 +70,7 @@ pub async fn tail_logs(
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-        let mut poll_url = format!("http://127.0.0.1:{port}/logs?after={index}");
+        let mut poll_url = format!("http://[::1]:{port}/logs?after={index}");
         if let Some(svc) = service {
             poll_url.push_str(&format!("&service={svc}"));
         }

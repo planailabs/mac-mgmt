@@ -46,11 +46,11 @@ pub async fn print_status(port: Option<u16>) -> Result<()> {
             }
         }
     };
-    let url = format!("http://127.0.0.1:{port}/status");
+    let url = format!("http://[::1]:{port}/status");
 
     let resp = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
-        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+        .local_address(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST))
         .build()
         .context("failed to build HTTP client")?
         .get(&url)

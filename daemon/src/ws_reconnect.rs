@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -26,16 +26,21 @@ impl Default for WsClientConfig {
 
 /// Spawn a task that maintains a reconnecting WebSocket connection.
 ///
-/// Text messages received on the WebSocket are forwarded to `tx`.
+/// Text messages received on the WebSocket are forwarded to `incoming_tx`.
+/// Messages received from `outgoing_rx` are sent to the WebSocket.
 /// On clean close (Close frame), reconnects with reset backoff.
 /// On error, reconnects with exponential backoff (doubles each time, capped at max_backoff).
-pub fn spawn_reconnecting(config: WsClientConfig, tx: mpsc::Sender<String>) -> JoinHandle<()> {
+pub fn spawn_reconnecting(
+    config: WsClientConfig,
+    incoming_tx: mpsc::Sender<String>,
+    mut outgoing_rx: mpsc::Receiver<String>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut backoff = config.min_backoff;
 
         loop {
             tracing::info!("ws_reconnect: connecting to {}", config.url);
-            match connect_and_read(&config, &tx).await {
+            match connect_and_run(&config, &incoming_tx, &mut outgoing_rx).await {
                 Ok(()) => {
                     // Clean close — reset backoff and reconnect
                     tracing::info!("ws_reconnect: connection closed cleanly, reconnecting");
@@ -53,7 +58,11 @@ pub fn spawn_reconnecting(config: WsClientConfig, tx: mpsc::Sender<String>) -> J
     })
 }
 
-async fn connect_and_read(config: &WsClientConfig, tx: &mpsc::Sender<String>) -> Result<()> {
+async fn connect_and_run(
+    config: &WsClientConfig,
+    incoming_tx: &mpsc::Sender<String>,
+    outgoing_rx: &mut mpsc::Receiver<String>,
+) -> Result<()> {
     let host = extract_host(&config.url)?;
 
     let request = tokio_tungstenite::tungstenite::http::Request::builder()
@@ -69,32 +78,43 @@ async fn connect_and_read(config: &WsClientConfig, tx: &mpsc::Sender<String>) ->
         .header("Host", &host)
         .body(())?;
 
-    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+    let (ws, _) = tokio_tungstenite::connect_async(request)
         .await
         .context("WebSocket connect failed")?;
 
     tracing::info!("ws_reconnect: connected");
 
-    while let Some(msg) = ws.next().await {
-        let msg = msg.context("WS read error")?;
-        match msg {
-            Message::Text(text) => {
-                if tx.send(text.to_string()).await.is_err() {
-                    tracing::info!("ws_reconnect: receiver dropped, stopping");
-                    return Ok(());
+    let (mut ws_sink, mut ws_stream) = ws.split();
+
+    loop {
+        tokio::select! {
+            msg = ws_stream.next() => {
+                let msg = match msg {
+                    Some(Ok(m)) => m,
+                    Some(Err(e)) => anyhow::bail!("WS read error: {e}"),
+                    None => anyhow::bail!("WebSocket stream ended unexpectedly"),
+                };
+                match msg {
+                    Message::Text(text) => {
+                        if incoming_tx.send(text.to_string()).await.is_err() {
+                            tracing::info!("ws_reconnect: receiver dropped, stopping");
+                            return Ok(());
+                        }
+                    }
+                    Message::Close(_) => {
+                        tracing::info!("ws_reconnect: received close frame");
+                        return Ok(());
+                    }
+                    _ => {}
                 }
             }
-            Message::Close(_) => {
-                tracing::info!("ws_reconnect: received close frame");
-                return Ok(());
+            Some(text) = outgoing_rx.recv() => {
+                ws_sink.send(Message::Text(text.into()))
+                    .await
+                    .context("WS send error")?;
             }
-            // Ignore Binary, Ping, Pong
-            _ => {}
         }
     }
-
-    // Stream ended without a close frame — treat as error
-    anyhow::bail!("WebSocket stream ended unexpectedly")
 }
 
 pub fn extract_host(url: &str) -> Result<String> {
