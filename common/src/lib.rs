@@ -357,6 +357,26 @@ impl NexaConfig {
 
 // ── Cloud LLM providers ────────────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CloudApiType {
+    AnthropicMessages,
+    OpenaiCompletions,
+    OpenaiResponses,
+    GoogleGenerativeAi,
+    BedrockConverseStream,
+    Ollama,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CloudAuthMode {
+    ApiKey,
+    AwsSdk,
+    Oauth,
+    Token,
+}
+
 fn default_cloud_model() -> String {
     "anthropic/claude-sonnet-4-6".to_string()
 }
@@ -376,12 +396,12 @@ pub struct CloudConfig {
     #[schemars(description = "Custom base URL (for proxies, Bedrock, etc.)")]
     #[serde(default)]
     pub base_url: Option<String>,
-    #[schemars(description = "API type override: anthropic-messages, openai-completions, openai-responses, google-generative-ai, bedrock-converse-stream")]
+    #[schemars(description = "API type override for custom providers")]
     #[serde(default)]
-    pub api: Option<String>,
-    #[schemars(description = "Auth mode: api-key (default), aws-sdk (Bedrock), oauth, token")]
+    pub api: Option<CloudApiType>,
+    #[schemars(description = "Authentication mode")]
     #[serde(default)]
-    pub auth: Option<String>,
+    pub auth: Option<CloudAuthMode>,
 }
 
 impl CloudConfig {
