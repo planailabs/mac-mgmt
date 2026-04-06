@@ -26,7 +26,26 @@ impl Connector for CloudOpenClaw {
 
     fn connect(&self) -> Result<()> {
         let provider = self.config.provider.as_str();
-        let model = &self.config.default_model;
+        // Use the configured model, but fall back to the provider's default if
+        // the configured model doesn't belong to this provider (e.g. user switched
+        // provider but didn't update the model).
+        let model = if self.config.default_model.is_empty()
+            || !self.config.default_model.starts_with(provider)
+        {
+            let default = self.config.provider.default_model();
+            if self.config.default_model.is_empty() {
+                tracing::info!("no model configured, using default: {default}");
+            } else {
+                tracing::info!(
+                    "model '{}' doesn't match provider '{provider}', using default: {default}",
+                    self.config.default_model
+                );
+            }
+            default.to_string()
+        } else {
+            self.config.default_model.clone()
+        };
+        let model = &model;
         tracing::info!("connecting cloud provider {provider} to openclaw (model={model})");
         sentry_ext::breadcrumb(
             "connector",

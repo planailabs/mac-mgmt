@@ -170,6 +170,23 @@ impl CloudProvider {
     }
 }
 
+impl CloudProvider {
+    pub fn default_model(&self) -> &str {
+        match self {
+            Self::Anthropic => "anthropic/claude-sonnet-4-6",
+            Self::Openai => "openai/gpt-5.4",
+            Self::Google => "google/gemini-3-flash-preview",
+            Self::Mistral => "mistral/mistral-large-latest",
+            Self::Groq => "groq/llama-4-scout-17b-16e-instruct",
+            Self::Xai => "xai/grok-3-mini",
+            Self::Deepseek => "deepseek/deepseek-chat",
+            Self::Openrouter => "openrouter/auto",
+            Self::Together => "together/meta-llama/Llama-4-Maverick-17B-128E-Instruct-Turbo",
+            Self::Bedrock => "amazon-bedrock/us.anthropic.claude-sonnet-4-6-v1:0",
+        }
+    }
+}
+
 impl std::fmt::Display for CloudProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
