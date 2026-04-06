@@ -3650,6 +3650,7 @@ dependencies = [
  "clap",
  "dirs",
  "futures-util",
+ "hostname",
  "humantime",
  "libc",
  "mac-mgmt-common",
