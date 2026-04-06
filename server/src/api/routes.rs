@@ -72,11 +72,7 @@ struct McpServerRow {
     is_direct: bool,
 }
 
-#[derive(Serialize, ToSchema)]
-pub(crate) struct McpServerEntry {
-    config: serde_json::Value,
-    nix_packages: Vec<String>,
-}
+pub(crate) use mac_mgmt_common::McpServerEntry;
 
 #[utoipa::path(
     get,
@@ -85,7 +81,7 @@ pub(crate) struct McpServerEntry {
     summary = "List MCP servers for daemon sync",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Map of slug to MCP server entry", body = HashMap<String, McpServerEntry>),
+        (status = 200, description = "Map of slug to MCP server entry"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Sync token required"),
     ),
@@ -207,11 +203,7 @@ pub async fn get_config(
 
 // ── Update target (for daemon self-update) ──────────────────────────
 
-#[derive(Serialize, ToSchema)]
-pub(crate) struct UpdateTarget {
-    /// Version the daemon should be running. Null means no update needed.
-    target_version: Option<String>,
-}
+pub(crate) use mac_mgmt_common::UpdateTarget;
 
 #[utoipa::path(
     get,
@@ -221,7 +213,7 @@ pub(crate) struct UpdateTarget {
     description = "Returns the version the daemon should update to. If an active rollout targets this customer, returns the rollout's version; otherwise returns the customer's pinned version. Null means stay on current version.",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Update target", body = UpdateTarget),
+        (status = 200, description = "Update target"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Sync token required"),
     ),
@@ -1632,10 +1624,7 @@ pub async fn admin_remove_skill_mcp_dep(
 
 // ── SSH key routes ─────────────────────────────────────────────────────
 
-#[derive(Serialize, ToSchema)]
-pub(crate) struct SshKeySyncEntry {
-    public_key: String,
-}
+pub(crate) use mac_mgmt_common::SshKeySyncEntry;
 
 #[utoipa::path(
     get,
@@ -1644,7 +1633,7 @@ pub(crate) struct SshKeySyncEntry {
     summary = "List SSH public keys for daemon sync",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "SSH public keys", body = Vec<SshKeySyncEntry>),
+        (status = 200, description = "SSH public keys"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Sync token required"),
     ),
@@ -1813,12 +1802,7 @@ pub(crate) struct CreateRolloutGroupBody {
 
 // ── Heartbeat (sync token) ──────────────────────────────────────────
 
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct HeartbeatBody {
-    instance_id: String,
-    version: String,
-    services: serde_json::Value,
-}
+pub(crate) use mac_mgmt_common::HeartbeatBody;
 
 #[utoipa::path(
     post,
@@ -1827,7 +1811,6 @@ pub(crate) struct HeartbeatBody {
     summary = "Report daemon heartbeat",
     description = "Upserts a heartbeat record for the authenticated daemon instance.",
     security(("bearer" = [])),
-    request_body = HeartbeatBody,
     responses(
         (status = 200, description = "Heartbeat recorded"),
         (status = 401, description = "Unauthorized"),

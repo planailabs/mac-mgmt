@@ -3,22 +3,13 @@ use std::sync::Arc;
 
 use rocket::response::stream::{Event, EventStream};
 use rocket::{get, Shutdown, State};
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PushMessage {
-    SyncConfig,
-    SyncSkills,
-    SyncMcpServers,
-    SyncSshKeys,
-    SelfUpdate,
-}
+pub use mac_mgmt_common::PushEvent as PushMessage;
 
 /// Per-customer broadcast channels for push notifications.
 pub type PushChannels = Arc<RwLock<HashMap<Uuid, broadcast::Sender<PushMessage>>>>;
