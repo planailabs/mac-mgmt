@@ -107,6 +107,8 @@ async fn main() -> Result<()> {
     let log_buf = log_buffer::LogBuffer::new();
 
     tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")))
         .with(tracing_subscriber::fmt::layer())
         .with(log_layer::BufferLayer::new(log_buf.clone()))
         .init();
