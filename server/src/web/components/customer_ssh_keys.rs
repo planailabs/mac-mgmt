@@ -61,6 +61,7 @@ async fn add_ssh_key(customer_id: String, public_key: String) -> Result<(), Serv
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSshKeys).await;
     Ok(())
 }
 
@@ -68,11 +69,16 @@ async fn add_ssh_key(customer_id: String, public_key: String) -> Result<(), Serv
 async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = ssh_key_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM customer_ssh_keys WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "DELETE FROM customer_ssh_keys WHERE id = $1 RETURNING customer_id",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(cid) = cid {
+        crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSshKeys).await;
+    }
     Ok(())
 }
 

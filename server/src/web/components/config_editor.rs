@@ -33,6 +33,7 @@ async fn save_config(customer_id: String, config_toml: String) -> Result<(), Ser
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(uuid, crate::api::push::PushMessage::SyncConfig).await;
     Ok(())
 }
 

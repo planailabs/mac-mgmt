@@ -141,7 +141,7 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
-pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
+pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) -> rocket::Rocket<rocket::Build> {
     let config = Config {
         port,
         address: std::net::Ipv4Addr::UNSPECIFIED.into(),
@@ -153,8 +153,6 @@ pub fn build_rocket(pool: PgPool, port: u16) -> rocket::Rocket<rocket::Build> {
         },
         ..Config::default()
     };
-
-    let push_channels = push::new_push_channels();
 
     rocket::custom(config)
         .manage(pool)

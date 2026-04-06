@@ -17,13 +17,19 @@ mod xzar;
 
 #[cfg(all(feature = "server", feature = "webui"))]
 mod server_state {
+    use crate::api::push::PushChannels;
     use sqlx::PgPool;
     use std::sync::OnceLock;
 
     static POOL: OnceLock<PgPool> = OnceLock::new();
+    static PUSH: OnceLock<PushChannels> = OnceLock::new();
 
     pub fn set_pool(pool: PgPool) {
         POOL.set(pool).expect("pool already initialized");
+    }
+
+    pub fn set_push_channels(channels: PushChannels) {
+        PUSH.set(channels).expect("push channels already initialized");
     }
 
     pub fn server_pool() -> Result<PgPool, dioxus::prelude::ServerFnError> {
@@ -31,11 +37,22 @@ mod server_state {
             .cloned()
             .ok_or_else(|| dioxus::prelude::ServerFnError::new("database pool not initialized"))
     }
+
+    pub fn push_channels() -> Result<PushChannels, dioxus::prelude::ServerFnError> {
+        PUSH.get()
+            .cloned()
+            .ok_or_else(|| dioxus::prelude::ServerFnError::new("push channels not initialized"))
+    }
 }
 
 #[cfg(all(feature = "server", feature = "webui"))]
 pub fn server_pool() -> Result<sqlx::PgPool, dioxus::prelude::ServerFnError> {
     server_state::server_pool()
+}
+
+#[cfg(all(feature = "server", feature = "webui"))]
+pub fn push_channels() -> Result<crate::api::push::PushChannels, dioxus::prelude::ServerFnError> {
+    server_state::push_channels()
 }
 
 #[cfg(any(feature = "server", feature = "server-api-only"))]
@@ -48,10 +65,15 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
         .await
         .expect("failed to run migrations");
 
-    #[cfg(feature = "webui")]
-    server_state::set_pool(pool.clone());
+    let push_channels = api::push::new_push_channels();
 
-    let api_rocket = api::build_rocket(pool.clone(), cfg.api.port)
+    #[cfg(feature = "webui")]
+    {
+        server_state::set_pool(pool.clone());
+        server_state::set_push_channels(push_channels.clone());
+    }
+
+    let api_rocket = api::build_rocket(pool.clone(), cfg.api.port, push_channels)
         .ignite()
         .await
         .expect("failed to ignite API rocket");

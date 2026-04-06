@@ -166,6 +166,7 @@ async fn add_customer_skill(customer_id: String, skill_channel_id: String) -> Re
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSkills).await;
     Ok(())
 }
 
@@ -173,11 +174,16 @@ async fn add_customer_skill(customer_id: String, skill_channel_id: String) -> Re
 async fn remove_customer_skill(customer_skill_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = customer_skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM customer_skills WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "DELETE FROM customer_skills WHERE id = $1 RETURNING customer_id",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(cid) = cid {
+        crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSkills).await;
+    }
     Ok(())
 }
 
@@ -217,6 +223,7 @@ async fn add_customer_bundle(customer_id: String, bundle_id: String) -> Result<(
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSkills).await;
     Ok(())
 }
 
@@ -224,11 +231,16 @@ async fn add_customer_bundle(customer_id: String, bundle_id: String) -> Result<(
 async fn remove_customer_bundle(customer_bundle_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = customer_bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM customer_bundles WHERE id = $1")
-        .bind(uuid)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "DELETE FROM customer_bundles WHERE id = $1 RETURNING customer_id",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(cid) = cid {
+        crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSkills).await;
+    }
     Ok(())
 }
 

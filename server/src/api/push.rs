@@ -35,6 +35,15 @@ pub async fn notify(channels: &PushChannels, customer_id: Uuid, msg: PushMessage
     }
 }
 
+/// Send a push message using the global PushChannels (for Dioxus server functions).
+/// No-op if push channels are not initialized or no daemon is connected.
+#[cfg(feature = "webui")]
+pub async fn notify_global(customer_id: Uuid, msg: PushMessage) {
+    if let Ok(channels) = crate::push_channels() {
+        notify(&channels, customer_id, msg).await;
+    }
+}
+
 /// SSE endpoint for daemon push notifications.
 /// Auth via query param since SSE can't carry custom headers from all clients.
 #[get("/events?<token>")]
