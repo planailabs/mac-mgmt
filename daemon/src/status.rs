@@ -1,20 +1,5 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-struct StatusResponse {
-    version: String,
-    uptime_secs: u64,
-    services: Vec<ServiceStatus>,
-}
-
-#[derive(Deserialize)]
-struct ServiceStatus {
-    name: String,
-    healthy: bool,
-    upgrade_pending: bool,
-    busy: bool,
-}
+use mac_mgmt_common::StatusResponse;
 
 fn format_uptime(secs: u64) -> String {
     let hours = secs / 3600;

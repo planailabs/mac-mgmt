@@ -15,12 +15,7 @@ pub async fn sync(server_url: &str, token: &str) -> Result<Vec<PublicKey>> {
         anyhow::bail!("SSH keys API returned {status}");
     }
 
-    #[derive(serde::Deserialize)]
-    struct KeyEntry {
-        public_key: String,
-    }
-
-    let entries: Vec<KeyEntry> = resp
+    let entries: Vec<mac_mgmt_common::SshKeySyncEntry> = resp
         .json()
         .await
         .context("failed to parse SSH keys response")?;

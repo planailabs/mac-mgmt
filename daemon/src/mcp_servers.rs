@@ -1,14 +1,8 @@
 use anyhow::{Context, Result};
+use mac_mgmt_common::McpServerEntry;
 use std::collections::{HashMap, HashSet};
 
 use crate::sentry_ext;
-
-#[derive(serde::Deserialize)]
-struct McpServerEntry {
-    config: serde_json::Value,
-    #[serde(default)]
-    nix_packages: Vec<String>,
-}
 
 /// Path to the state file that tracks which nix packages were installed by MCP sync.
 fn mcp_nix_state_path() -> std::path::PathBuf {

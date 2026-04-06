@@ -1,6 +1,64 @@
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
+
+// ── Wire-format types (daemon ↔ server protocol) ─────────────────────
+
+/// Push notification sent from server to daemon via SSE.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PushEvent {
+    SyncConfig,
+    SyncSkills,
+    SyncMcpServers,
+    SyncSshKeys,
+    SelfUpdate,
+}
+
+/// Daemon → server heartbeat body (`POST /api/heartbeat`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatBody {
+    pub instance_id: String,
+    pub version: String,
+    pub services: serde_json::Value,
+}
+
+/// Server → daemon update target response (`GET /api/update`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTarget {
+    pub target_version: Option<String>,
+}
+
+/// Single MCP server entry in the sync response (`GET /api/mcp-servers`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerEntry {
+    pub config: serde_json::Value,
+    #[serde(default)]
+    pub nix_packages: Vec<String>,
+}
+
+/// Single SSH key entry in the sync response (`GET /api/ssh-keys`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshKeySyncEntry {
+    pub public_key: String,
+}
+
+/// Daemon status response from the local metrics server (`GET /status`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusResponse {
+    pub version: String,
+    pub uptime_secs: u64,
+    pub services: Vec<ServiceStatus>,
+}
+
+/// Per-service status in the status response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceStatus {
+    pub name: String,
+    pub healthy: bool,
+    pub upgrade_pending: bool,
+    pub busy: bool,
+}
 
 const VALID_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
 const VALID_LLM_PROVIDERS: &[&str] = &["ollama", "nexa", "none"];

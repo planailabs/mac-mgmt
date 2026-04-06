@@ -1,18 +1,9 @@
 use std::time::Duration;
 
-use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PushCommand {
-    SyncConfig,
-    SyncSkills,
-    SyncMcpServers,
-    SyncSshKeys,
-    SelfUpdate,
-}
+pub use mac_mgmt_common::PushEvent as PushCommand;
 
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);

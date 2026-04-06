@@ -397,11 +397,6 @@ pub async fn run(
 
 /// Fetch the target version from the server and set it for self-update.
 async fn fetch_target_version(server_url: &str, server_token: &str) {
-    #[derive(serde::Deserialize)]
-    struct UpdateTarget {
-        target_version: Option<String>,
-    }
-
     let client = reqwest::Client::new();
     let url = format!("{server_url}/api/update");
     match tokio::time::timeout(
@@ -411,7 +406,7 @@ async fn fetch_target_version(server_url: &str, server_token: &str) {
     .await
     {
         Ok(Ok(resp)) if resp.status().is_success() => {
-            if let Ok(info) = resp.json::<UpdateTarget>().await {
+            if let Ok(info) = resp.json::<mac_mgmt_common::UpdateTarget>().await {
                 if let Some(ver) = info.target_version {
                     tracing::info!("server target version: {ver}");
                     #[cfg(feature = "self-update")]
@@ -439,13 +434,12 @@ async fn send_heartbeat(
     instance_id: &str,
     services: Vec<serde_json::Value>,
 ) {
-    let version = CURRENT_VERSION;
     let client = reqwest::Client::new();
-    let body = serde_json::json!({
-        "instance_id": instance_id,
-        "version": version,
-        "services": services,
-    });
+    let body = mac_mgmt_common::HeartbeatBody {
+        instance_id: instance_id.to_string(),
+        version: CURRENT_VERSION.to_string(),
+        services: serde_json::Value::Array(services),
+    };
 
     let url = format!("{server_url}/api/heartbeat");
     match tokio::time::timeout(

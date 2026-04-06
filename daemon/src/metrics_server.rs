@@ -1,3 +1,4 @@
+use mac_mgmt_common::{ServiceStatus, StatusResponse};
 use rocket::serde::json::Json;
 use rocket::{get, routes, State};
 use serde::Serialize;
@@ -5,21 +6,6 @@ use std::sync::Arc;
 
 use crate::log_buffer::LogBuffer;
 use crate::metrics::Metrics;
-
-#[derive(Serialize)]
-struct ServiceStatus {
-    name: String,
-    healthy: bool,
-    upgrade_pending: bool,
-    busy: bool,
-}
-
-#[derive(Serialize)]
-struct StatusResponse {
-    version: String,
-    uptime_secs: u64,
-    services: Vec<ServiceStatus>,
-}
 
 #[get("/metrics")]
 fn metrics_endpoint(metrics: &State<Arc<Metrics>>) -> String {
