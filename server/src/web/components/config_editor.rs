@@ -274,8 +274,11 @@ fn render_section_fields(
     rsx! {
         {properties.into_iter().map(|(field_name, field_schema)| {
             let resolved = resolve_ref(&field_schema, defs);
-            let description = resolved
+            // Description may be on the field schema itself (for $ref fields)
+            // or on the resolved type definition
+            let description = field_schema
                 .get("description")
+                .or_else(|| resolved.get("description"))
                 .and_then(|d| d.as_str())
                 .unwrap_or("")
                 .to_string();
