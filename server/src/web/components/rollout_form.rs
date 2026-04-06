@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 
+const ALL_CUSTOMERS_SENTINEL: &str = "__all__";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupOption {
     id: Uuid,
@@ -34,11 +36,12 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
         .collect())
 }
 
+/// `stage_ids` is an ordered list of group UUIDs or `"__all__"` sentinel.
+/// `"__all__"` creates an ad-hoc group containing every customer.
 #[server]
 async fn create_rollout(
     target_version: String,
-    group_ids: Vec<String>,
-    all_customers: bool,
+    stage_ids: Vec<String>,
 ) -> Result<String, ServerFnError> {
     let pool = crate::server_pool()?;
 
@@ -46,7 +49,6 @@ async fn create_rollout(
         return Err(ServerFnError::new("target version is required"));
     }
 
-    // Validate semver
     let parts: Vec<&str> = target_version.trim().split('.').collect();
     if parts.len() < 3 || parts.iter().any(|p| p.parse::<u64>().is_err()) {
         return Err(ServerFnError::new(
@@ -54,8 +56,8 @@ async fn create_rollout(
         ));
     }
 
-    if !all_customers && group_ids.is_empty() {
-        return Err(ServerFnError::new("select at least one group or 'All Customers'"));
+    if stage_ids.is_empty() {
+        return Err(ServerFnError::new("select at least one stage"));
     }
 
     let mut tx = pool
@@ -63,41 +65,45 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Resolve the groups to use for stages
-    let stage_group_ids: Vec<Uuid> = if all_customers {
-        // Create an ad-hoc group with all customers
-        let group_id = Uuid::new_v4();
-        let group_name = format!("all (v{})", target_version.trim());
-        sqlx::query("INSERT INTO rollout_groups (id, name, description) VALUES ($1, $2, 'Auto-created for rollout') ON CONFLICT (name) DO UPDATE SET name = $2 RETURNING id")
+    // Resolve each stage_id to a real group UUID
+    let mut resolved: Vec<Uuid> = Vec::with_capacity(stage_ids.len());
+    for sid in &stage_ids {
+        if sid == "__all__" {
+            let group_id = Uuid::new_v4();
+            let group_name = format!("all (v{})", target_version.trim());
+            sqlx::query(
+                "INSERT INTO rollout_groups (id, name, description) VALUES ($1, $2, 'Auto-created for rollout') \
+                 ON CONFLICT (name) DO NOTHING",
+            )
             .bind(group_id)
             .bind(&group_name)
             .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-        // Resolve actual id (may differ if name already existed)
-        let actual_id: Uuid = sqlx::query_scalar("SELECT id FROM rollout_groups WHERE name = $1")
-            .bind(&group_name)
-            .fetch_one(&mut *tx)
+            let actual_id: Uuid =
+                sqlx::query_scalar("SELECT id FROM rollout_groups WHERE name = $1")
+                    .bind(&group_name)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query(
+                "INSERT INTO rollout_group_members (group_id, customer_id) \
+                 SELECT $1, id FROM customers \
+                 WHERE id NOT IN (SELECT customer_id FROM rollout_group_members WHERE group_id = $1) \
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(actual_id)
+            .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-        sqlx::query(
-            "INSERT INTO rollout_group_members (group_id, customer_id) \
-             SELECT $1, id FROM customers \
-             WHERE id NOT IN (SELECT customer_id FROM rollout_group_members WHERE group_id = $1) \
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(actual_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-        vec![actual_id]
-    } else {
-        group_ids
-            .iter()
-            .map(|s| s.parse::<Uuid>())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-    };
+            resolved.push(actual_id);
+        } else {
+            let gid: Uuid = sid
+                .parse()
+                .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+            resolved.push(gid);
+        }
+    }
 
     // Downgrade check
     let max_version: Option<String> = sqlx::query_scalar(
@@ -105,7 +111,7 @@ async fn create_rollout(
          JOIN rollout_group_members rgm ON rgm.customer_id = c.id \
          WHERE rgm.group_id = ANY($1) AND c.pinned_version IS NOT NULL",
     )
-    .bind(&stage_group_ids)
+    .bind(&resolved)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -126,7 +132,7 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    for (i, gid) in stage_group_ids.iter().enumerate() {
+    for (i, gid) in resolved.iter().enumerate() {
         sqlx::query(
             "INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)",
         )
@@ -148,8 +154,7 @@ async fn create_rollout(
 pub fn RolloutForm() -> Element {
     let groups = use_server_future(move || async move { get_group_options().await })?;
     let mut target_version = use_signal(String::new);
-    let mut all_customers = use_signal(|| false);
-    let mut selected_groups = use_signal(Vec::<String>::new);
+    let mut selected_stages = use_signal(Vec::<String>::new);
     let mut error = use_signal(|| Option::<String>::None);
     let nav = navigator();
 
@@ -183,76 +188,90 @@ pub fn RolloutForm() -> Element {
                     }
                     div {
                         label { class: "block text-sm font-medium text-gray-700 mb-1",
-                            "Target"
+                            "Stages (select in order)"
                         }
-                        div { class: "flex items-center gap-2 mb-2",
-                            input {
-                                r#type: "checkbox",
-                                checked: *all_customers.read(),
-                                onchange: move |_| {
-                                    let v = !*all_customers.read();
-                                    all_customers.set(v);
-                                    if v {
-                                        selected_groups.write().clear();
+
+                        // "All Customers" as a selectable stage
+                        {
+                            let key = ALL_CUSTOMERS_SENTINEL.to_string();
+                            let is_selected = selected_stages.read().contains(&key);
+                            let order = selected_stages.read().iter().position(|x| x == &key);
+                            rsx! {
+                                div { class: "flex items-center gap-2 mb-1",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: is_selected,
+                                        onchange: {
+                                            let key = key.clone();
+                                            move |_| {
+                                                let mut stages = selected_stages.write();
+                                                if let Some(pos) = stages.iter().position(|x| x == &key) {
+                                                    stages.remove(pos);
+                                                } else {
+                                                    stages.push(key.clone());
+                                                }
+                                            }
+                                        },
                                     }
-                                },
-                            }
-                            span { class: "font-medium", "All Customers" }
-                            span { class: "text-xs text-gray-400", "(creates a group with every customer)" }
-                        }
-                        if !*all_customers.read() {
-                            label { class: "block text-sm font-medium text-gray-700 mb-1",
-                                "Stages (select groups in order)"
-                            }
-                            if group_list_clone.is_empty() {
-                                p { class: "text-gray-500 text-sm",
-                                    "No groups yet. "
-                                    Link {
-                                        to: Route::RolloutGroupList {},
-                                        class: "text-blue-600 hover:underline",
-                                        "Create one first."
+                                    span { class: "font-medium", "All Customers" }
+                                    if let Some(idx) = order {
+                                        span { class: "text-xs text-gray-400",
+                                            "(stage {idx})"
+                                        }
                                     }
                                 }
-                            } else {
-                                for g in &group_list_clone {
-                                    {
-                                        let gid = g.id.to_string();
-                                        let gname = g.name.clone();
-                                        let is_selected = selected_groups.read().contains(&gid);
-                                        let order = selected_groups
-                                            .read()
-                                            .iter()
-                                            .position(|x| x == &gid);
-                                        rsx! {
-                                            div { class: "flex items-center gap-2 mb-1",
-                                                input {
-                                                    r#type: "checkbox",
-                                                    checked: is_selected,
-                                                    onchange: {
-                                                        let gid = gid.clone();
-                                                        move |_| {
-                                                            let mut groups =
-                                                                selected_groups.write();
-                                                            if let Some(pos) =
-                                                                groups.iter().position(|x| x == &gid)
-                                                            {
-                                                                groups.remove(pos);
-                                                            } else {
-                                                                groups.push(gid.clone());
-                                                            }
-                                                        }
-                                                    },
-                                                }
-                                                span { "{gname}" }
-                                                if let Some(idx) = order {
-                                                    span { class: "text-xs text-gray-400",
-                                                        "(stage {idx})"
+                            }
+                        }
+
+                        // Regular groups
+                        for g in &group_list_clone {
+                            {
+                                let gid = g.id.to_string();
+                                let gname = g.name.clone();
+                                let is_selected = selected_stages.read().contains(&gid);
+                                let order = selected_stages
+                                    .read()
+                                    .iter()
+                                    .position(|x| x == &gid);
+                                rsx! {
+                                    div { class: "flex items-center gap-2 mb-1",
+                                        input {
+                                            r#type: "checkbox",
+                                            checked: is_selected,
+                                            onchange: {
+                                                let gid = gid.clone();
+                                                move |_| {
+                                                    let mut stages =
+                                                        selected_stages.write();
+                                                    if let Some(pos) =
+                                                        stages.iter().position(|x| x == &gid)
+                                                    {
+                                                        stages.remove(pos);
+                                                    } else {
+                                                        stages.push(gid.clone());
                                                     }
                                                 }
+                                            },
+                                        }
+                                        span { "{gname}" }
+                                        if let Some(idx) = order {
+                                            span { class: "text-xs text-gray-400",
+                                                "(stage {idx})"
                                             }
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        if group_list_clone.is_empty() {
+                            p { class: "text-gray-500 text-xs mt-1",
+                                Link {
+                                    to: Route::RolloutGroupList {},
+                                    class: "text-blue-600 hover:underline",
+                                    "Create groups"
+                                }
+                                " to roll out in stages."
                             }
                         }
                     }
@@ -265,18 +284,17 @@ pub fn RolloutForm() -> Element {
                         class: "bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600",
                         onclick: move |_| {
                             let ver = target_version.read().clone();
-                            let is_all = *all_customers.read();
-                            let groups = selected_groups.read().clone();
+                            let stages = selected_stages.read().clone();
                             async move {
                                 if ver.trim().is_empty() {
                                     error.set(Some("Target version is required".into()));
                                     return;
                                 }
-                                if !is_all && groups.is_empty() {
-                                    error.set(Some("Select at least one group or 'All Customers'".into()));
+                                if stages.is_empty() {
+                                    error.set(Some("Select at least one stage".into()));
                                     return;
                                 }
-                                match create_rollout(ver, groups, is_all).await {
+                                match create_rollout(ver, stages).await {
                                     Ok(id) => {
                                         nav.push(Route::RolloutDetail { id });
                                     }
