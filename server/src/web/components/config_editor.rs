@@ -161,14 +161,15 @@ pub fn ConfigEditor(customer_id: String) -> Element {
 
 /// Renders structured form sections from JSON Schema, keeping the JSON signal in sync.
 #[component]
-fn StructuredEditor(schema: serde_json::Value, mut json_text: Signal<String>) -> Element {
+fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Element {
     let form_values: Signal<serde_json::Value> = use_signal(|| {
         serde_json::from_str(&json_text.read()).unwrap_or(serde_json::Value::Object(Default::default()))
     });
 
     let sync_to_json = move || {
         let json = form_values.read().clone();
-        json_text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+        let mut text = json_text;
+        text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
     };
 
     // Get schema properties (top-level sections)
