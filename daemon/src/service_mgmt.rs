@@ -13,7 +13,7 @@ use crate::sentry_ext;
 
 struct ServiceState {
     service: Box<dyn ManagedService>,
-    child: std::process::Child,
+    child: Option<std::process::Child>,
     upgrade_pending: bool,
     restart_pending: bool,
     skip_health_check: bool,
@@ -37,9 +37,9 @@ pub struct ServiceManager {
 }
 
 impl ServiceManager {
-    /// Create services from config, install, set up, and spawn them.
+    /// Install and set up all services. Does NOT spawn any processes.
+    /// Call `spawn_all()` after registering signal handlers.
     pub fn init(cfg: &mut crate::config::Config, dispatcher: Arc<Dispatcher>, log_buf: LogBuffer) -> Result<Self> {
-
         let global_cfg = std::mem::take(&mut cfg.global);
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
@@ -75,23 +75,21 @@ impl ServiceManager {
             }
 
             service.preflight()?;
-            let mut child = service.spawn()?;
-            let log_task = Some(crate::log_capture::capture(service.name(), &mut child, &log_buf));
             sentry_ext::breadcrumb(
                 "service",
-                &format!("{name} initialized"),
-                &[("service", &name), ("pid", &child.id().to_string())],
+                &format!("{name} installed and ready"),
+                &[("service", &name)],
             );
             states.push(ServiceState {
                 service,
-                child,
+                child: None,
                 upgrade_pending: false,
                 restart_pending: false,
                 skip_health_check: true,
                 post_start_done: false,
                 consecutive_crashes: 0,
                 was_unhealthy: false,
-                log_task,
+                log_task: None,
             });
         }
 
@@ -109,18 +107,45 @@ impl ServiceManager {
         })
     }
 
+    /// Spawn all managed services. Call after signal handlers are registered.
+    pub fn spawn_all(&mut self) {
+        for state in &mut self.states {
+            let name = state.service.name();
+            match state.service.spawn() {
+                Ok(mut child) => {
+                    let log_task = crate::log_capture::capture(name, &mut child, &self.log_buf);
+                    tracing::info!("{name} spawned (pid: {})", child.id());
+                    sentry_ext::breadcrumb(
+                        "service",
+                        &format!("{name} spawned"),
+                        &[(("service", &name)), ("pid", &child.id().to_string())],
+                    );
+                    state.child = Some(child);
+                    state.log_task = Some(log_task);
+                }
+                Err(e) => {
+                    tracing::error!("{name} spawn failed: {e}");
+                    sentry_ext::capture_error(
+                        &format!("{name} spawn failed: {e}"),
+                        &[(("service", &name))],
+                    );
+                }
+            }
+        }
+    }
+
     /// Check for upgrades on all services (called on the update interval).
     pub fn check_upgrades(&mut self) {
         for svc in &self.install_only {
             let name = svc.name();
-            sentry_ext::set_tag("service", name);
+            sentry_ext::set_tag("service", &name);
             match svc.check_and_upgrade() {
                 Ok(true) => {
                     tracing::info!("{name} upgraded (install-only)");
                     sentry_ext::breadcrumb(
                         "upgrade",
                         &format!("{name} upgraded (install-only)"),
-                        &[("service", name)],
+                        &[(("service", &name))],
                     );
                     self.dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
                         service: name.to_string(),
@@ -131,7 +156,7 @@ impl ServiceManager {
                     tracing::warn!("{name} upgrade check failed: {e}");
                     sentry_ext::capture_error(
                         &format!("{name} upgrade check failed: {e}"),
-                        &[("service", name)],
+                        &[(("service", &name))],
                     );
                     self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
                         service: name.to_string(),
@@ -144,14 +169,14 @@ impl ServiceManager {
         for state in &mut self.states {
             if !state.upgrade_pending {
                 let name = state.service.name();
-                sentry_ext::set_tag("service", name);
+                sentry_ext::set_tag("service", &name);
                 match state.service.check_and_upgrade() {
                     Ok(true) => {
                         state.upgrade_pending = true;
                         sentry_ext::breadcrumb(
                             "upgrade",
                             &format!("{name} upgrade pending"),
-                            &[("service", name)],
+                            &[(("service", &name))],
                         );
                     }
                     Ok(false) => {}
@@ -159,7 +184,7 @@ impl ServiceManager {
                         tracing::warn!("{name} upgrade check failed: {e}");
                         sentry_ext::capture_error(
                             &format!("{name} upgrade check failed: {e}"),
-                            &[("service", name)],
+                            &[(("service", &name))],
                         );
                         self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
                             service: name.to_string(),
@@ -171,14 +196,49 @@ impl ServiceManager {
         }
     }
 
+    /// Kill the current child (if any) and spawn a fresh one.
+    fn respawn(state: &mut ServiceState, log_buf: &LogBuffer) -> bool {
+        if let Some(ref mut child) = state.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(task) = state.log_task.take() {
+            task.abort();
+        }
+        let name = state.service.name();
+        match state.service.spawn() {
+            Ok(mut child) => {
+                state.log_task = Some(crate::log_capture::capture(name, &mut child, log_buf));
+                state.child = Some(child);
+                state.skip_health_check = true;
+                state.post_start_done = false;
+                true
+            }
+            Err(e) => {
+                tracing::error!("{name} spawn failed: {e}");
+                sentry_ext::capture_error(
+                    &format!("{name} spawn failed: {e}"),
+                    &[(("service", &name))],
+                );
+                false
+            }
+        }
+    }
+
     /// Run health checks, restart crashed services, apply pending upgrades.
     pub fn health_tick(&mut self, metrics: &Arc<Metrics>, in_upgrade_window: bool) {
         for state in &mut self.states {
-            let name = state.service.name();
-            sentry_ext::set_tag("service", name);
+            let name = state.service.name().to_string();
+            sentry_ext::set_tag("service", &name);
+
+            // Skip services that failed to spawn
+            if state.child.is_none() {
+                continue;
+            }
 
             // Restart if exited
-            match state.child.try_wait() {
+            let exit_status = state.child.as_mut().unwrap().try_wait();
+            match exit_status {
                 Ok(Some(status)) => {
                     state.consecutive_crashes += 1;
                     tracing::warn!(
@@ -191,7 +251,7 @@ impl ServiceManager {
                         .unwrap_or("signal".to_string());
                     sentry_ext::capture_error(
                         &format!("{name} process exited unexpectedly"),
-                        &[("service", name), ("exit_code", &code)],
+                        &[(("service", &name)), ("exit_code", &code)],
                     );
 
                     self.log_buf.push(format!("[{name}] crashed with {status} (#{crashes})", crashes = state.consecutive_crashes));
@@ -209,29 +269,13 @@ impl ServiceManager {
                             tracing::error!("{name} repair failed: {e}");
                             sentry_ext::capture_error(
                                 &format!("{name} repair failed: {e}"),
-                                &[("service", name)],
+                                &[(("service", &name))],
                             );
                         }
                     }
 
-                    match state.service.spawn() {
-                        Ok(mut child) => {
-                            if let Some(old_task) = state.log_task.take() {
-                                old_task.abort();
-                            }
-                            state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_buf));
-                            state.child = child;
-                            state.upgrade_pending = false;
-                            state.skip_health_check = true;
-                            state.post_start_done = false;
-                        }
-                        Err(e) => {
-                            tracing::error!("{name} respawn failed: {e}");
-                            sentry_ext::capture_error(
-                                &format!("{name} respawn failed: {e}"),
-                                &[("service", name)],
-                            );
-                        }
+                    if Self::respawn(state, &self.log_buf) {
+                        state.upgrade_pending = false;
                     }
                 }
                 Ok(None) => {}
@@ -243,31 +287,13 @@ impl ServiceManager {
                 match state.service.is_busy() {
                     Ok(false) => {
                         tracing::info!("{name} is idle, restarting for config change");
-                        let _ = state.child.kill();
-                        let _ = state.child.wait();
-                        match state.service.spawn() {
-                            Ok(mut child) => {
-                                if let Some(old_task) = state.log_task.take() {
-                                    old_task.abort();
-                                }
-                                state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_buf));
-                                state.child = child;
-                                state.restart_pending = false;
-                                state.upgrade_pending = false;
-                                state.skip_health_check = true;
-                                state.post_start_done = false;
-                            }
-                            Err(e) => {
-                                tracing::error!("{name} restart failed: {e}");
-                            }
+                        if Self::respawn(state, &self.log_buf) {
+                            state.restart_pending = false;
+                            state.upgrade_pending = false;
                         }
                     }
-                    Ok(true) => {
-                        tracing::info!("{name} is busy, deferring restart");
-                    }
-                    Err(e) => {
-                        tracing::warn!("{name} busy check for restart failed: {e}");
-                    }
+                    Ok(true) => tracing::info!("{name} is busy, deferring restart"),
+                    Err(e) => tracing::warn!("{name} busy check for restart failed: {e}"),
                 }
             }
 
@@ -276,34 +302,16 @@ impl ServiceManager {
                 match state.service.is_busy() {
                     Ok(false) => {
                         tracing::info!("{name} is idle, restarting to apply upgrade");
-                        let _ = state.child.kill();
-                        let _ = state.child.wait();
-                        match state.service.spawn() {
-                            Ok(mut child) => {
-                                if let Some(old_task) = state.log_task.take() {
-                                    old_task.abort();
-                                }
-                                state.log_task = Some(crate::log_capture::capture(name, &mut child, &self.log_buf));
-                                state.child = child;
-                                state.upgrade_pending = false;
-                                state.skip_health_check = true;
-                                state.post_start_done = false;
-                                sentry_ext::breadcrumb(
-                                    "upgrade",
-                                    &format!("{name} restarted for upgrade"),
-                                    &[("service", name)],
-                                );
-                                self.dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
-                                    service: name.to_string(),
-                                });
-                            }
-                            Err(e) => {
-                                tracing::error!("{name} upgrade respawn failed: {e}");
-                                sentry_ext::capture_error(
-                                    &format!("{name} upgrade respawn failed: {e}"),
-                                    &[("service", name)],
-                                );
-                            }
+                        if Self::respawn(state, &self.log_buf) {
+                            state.upgrade_pending = false;
+                            sentry_ext::breadcrumb(
+                                "upgrade",
+                                &format!("{name} restarted for upgrade"),
+                                &[(("service", &name))],
+                            );
+                            self.dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
+                                service: name.to_string(),
+                            });
                         }
                         false
                     }
@@ -342,7 +350,7 @@ impl ServiceManager {
                                 tracing::error!("{name} post_start failed: {e}");
                                 sentry_ext::capture_error(
                                     &format!("{name} post_start failed: {e}"),
-                                    &[("service", name)],
+                                    &[(("service", &name))],
                                 );
                             }
                             state.post_start_done = true;
@@ -355,7 +363,7 @@ impl ServiceManager {
                         sentry_ext::breadcrumb(
                             "health",
                             &format!("{name} unhealthy, repairing"),
-                            &[("service", name)],
+                            &[(("service", &name))],
                         );
                         if !state.was_unhealthy {
                             state.was_unhealthy = true;
@@ -367,7 +375,7 @@ impl ServiceManager {
                             tracing::error!("{name} repair failed: {e}");
                             sentry_ext::capture_error(
                                 &format!("{name} repair failed: {e}"),
-                                &[("service", name)],
+                                &[(("service", &name))],
                             );
                         }
                         false
@@ -381,15 +389,15 @@ impl ServiceManager {
 
             metrics
                 .service_healthy
-                .with_label_values(&[name])
+                .with_label_values(&[&name])
                 .set(if healthy { 1 } else { 0 });
             metrics
                 .service_upgrade_pending
-                .with_label_values(&[name])
+                .with_label_values(&[&name])
                 .set(if state.upgrade_pending { 1 } else { 0 });
             metrics
                 .service_busy
-                .with_label_values(&[name])
+                .with_label_values(&[&name])
                 .set(if busy { 1 } else { 0 });
         }
 
@@ -448,24 +456,29 @@ impl ServiceManager {
     /// Graceful shutdown: SIGTERM all services, then SIGKILL after 10 s.
     pub async fn shutdown(&mut self) {
         for state in &mut self.states {
-            let name = state.service.name();
-            let pid = state.child.id();
-            tracing::info!("sending SIGTERM to {name} (pid {pid})");
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+            if let Some(ref child) = state.child {
+                let name = state.service.name();
+                let pid = child.id();
+                tracing::info!("sending SIGTERM to {name} (pid {pid})");
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
             }
         }
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         for state in &mut self.states {
+            let Some(ref mut child) = state.child else {
+                continue;
+            };
             let name = state.service.name();
             loop {
-                match state.child.try_wait() {
+                match child.try_wait() {
                     Ok(Some(_)) => break,
                     Ok(None) if tokio::time::Instant::now() >= deadline => {
                         tracing::warn!("{name} did not exit in time, sending SIGKILL");
-                        let _ = state.child.kill();
-                        let _ = state.child.wait();
+                        let _ = child.kill();
+                        let _ = child.wait();
                         break;
                     }
                     Ok(None) => {
