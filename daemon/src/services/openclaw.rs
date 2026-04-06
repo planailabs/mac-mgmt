@@ -88,13 +88,12 @@ impl ManagedService for OpenClaw {
 
         // Apply typed gateway fields
         if let Some(gw) = &self.config.gateway {
-            let patch = serde_json::json!({
-                "gateway": {
-                    "port": gw.port,
-                    "host": gw.host,
-                }
-            });
-            merge_json(&mut existing, &patch);
+            let mut gw_cfg = serde_json::json!({ "port": gw.port });
+            if gw.host != "127.0.0.1" && gw.host != "localhost" {
+                gw_cfg["bind"] = serde_json::json!("custom");
+                gw_cfg["customBindHost"] = serde_json::json!(gw.host);
+            }
+            merge_json(&mut existing, &serde_json::json!({ "gateway": gw_cfg }));
             changed = true;
         }
 
@@ -102,28 +101,27 @@ impl ManagedService for OpenClaw {
         if let Some(skills) = &self.config.skills {
             let patch = serde_json::json!({
                 "skills": {
-                    "autoUpdate": skills.auto_update,
+                    "load": {
+                        "watch": skills.auto_update,
+                    }
                 }
             });
             merge_json(&mut existing, &patch);
             changed = true;
         }
 
-        // Apply typed telegram fields under integrations.telegram
+        // Apply typed telegram fields under channels.telegram
         if let Some(tg) = &self.config.telegram {
             let mut tg_cfg = serde_json::json!({
-                "botToken": tg.bot_token,
                 "enabled": tg.enabled,
             });
-            if !tg.allowed_chat_ids.is_empty() {
-                tg_cfg["allowedChatIds"] = serde_json::json!(tg.allowed_chat_ids);
+            if !tg.bot_token.is_empty() {
+                tg_cfg["apiKey"] = serde_json::json!(tg.bot_token);
             }
-            let integrations = serde_json::json!({
-                "integrations": {
-                    "telegram": tg_cfg,
-                }
-            });
-            merge_json(&mut existing, &integrations);
+            if !tg.allowed_chat_ids.is_empty() {
+                tg_cfg["allowFrom"] = serde_json::json!(tg.allowed_chat_ids);
+            }
+            merge_json(&mut existing, &serde_json::json!({ "channels": { "telegram": tg_cfg } }));
             changed = true;
         }
 
