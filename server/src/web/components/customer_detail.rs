@@ -51,6 +51,28 @@ async fn rename_customer(id: String, name: String) -> Result<(), ServerFnError> 
     Ok(())
 }
 
+#[server]
+async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let ver = version.trim().to_string();
+    if ver.is_empty() {
+        sqlx::query("UPDATE customers SET pinned_version = NULL WHERE id = $1")
+            .bind(uuid)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    } else {
+        sqlx::query("UPDATE customers SET pinned_version = $1 WHERE id = $2")
+            .bind(&ver)
+            .bind(uuid)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ActiveRolloutEntry {
     id: String,
@@ -157,9 +179,7 @@ pub fn CustomerDetail(id: String) -> Element {
                 }
                 div { class: "text-gray-500 mb-6 flex items-center gap-4 flex-wrap",
                     span { "Created: {created}" }
-                    if let Some(ref ver) = pinned {
-                        PinnedVersion { version: ver.clone() }
-                    }
+                    PinnedVersion { customer_id: cid2.clone(), version: pinned.clone(), on_change: move |_| customer.restart() }
                     ActiveRollouts { customer_id: cid2.clone() }
                 }
 
@@ -239,11 +259,22 @@ fn ActiveRollouts(customer_id: String) -> Element {
 }
 
 #[component]
-fn PinnedVersion(version: String) -> Element {
-    let ver = version.clone();
+fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventHandler) -> Element {
+    let mut editing = use_signal(|| false);
+    let mut draft = use_signal(String::new);
+
+    // Fetch rollout link if we have a version
+    let ver_for_query = version.clone().unwrap_or_default();
+    let has_version = version.is_some();
     let rollout = use_server_future(move || {
-        let ver = ver.clone();
-        async move { get_pinned_rollout(ver).await }
+        let ver = ver_for_query.clone();
+        async move {
+            if ver.is_empty() {
+                Ok(None)
+            } else {
+                get_pinned_rollout(ver).await
+            }
+        }
     })?;
 
     let rollout_id = match &*rollout.read() {
@@ -251,15 +282,73 @@ fn PinnedVersion(version: String) -> Element {
         _ => None,
     };
 
-    rsx! {
-        span { class: "flex items-center gap-1",
-            span { "Version: " }
-            span { class: "font-mono font-medium text-gray-700", "v{version}" }
-            if let Some(rid) = rollout_id {
-                Link {
-                    to: Route::RolloutDetail { id: rid },
-                    class: "text-blue-600 hover:underline text-sm",
-                    "(rollout)"
+    if *editing.read() {
+        let cid = customer_id.clone();
+        rsx! {
+            form {
+                class: "flex items-center gap-1",
+                onsubmit: move |evt: FormEvent| {
+                    evt.prevent_default();
+                    let cid = cid.clone();
+                    let ver = draft.read().clone();
+                    async move {
+                        let _ = set_pinned_version(cid, ver).await;
+                        editing.set(false);
+                        on_change.call(());
+                    }
+                },
+                span { "Version: " }
+                input {
+                    class: "border border-gray-300 rounded px-2 py-0.5 text-sm font-mono w-24",
+                    r#type: "text",
+                    placeholder: "0.1.6",
+                    value: "{draft}",
+                    oninput: move |e| draft.set(e.value()),
+                    autofocus: true,
+                }
+                button { class: "text-green-600 hover:text-green-800 text-sm", r#type: "submit", "Save" }
+                button {
+                    class: "text-gray-500 hover:text-gray-700 text-sm",
+                    r#type: "button",
+                    onclick: move |_| editing.set(false),
+                    "Cancel"
+                }
+            }
+        }
+    } else if has_version {
+        let ver_display = version.clone().unwrap_or_default();
+        rsx! {
+            span { class: "flex items-center gap-1",
+                span { "Version: " }
+                span { class: "font-mono font-medium text-gray-700", "v{ver_display}" }
+                if let Some(rid) = rollout_id {
+                    Link {
+                        to: Route::RolloutDetail { id: rid },
+                        class: "text-blue-600 hover:underline text-sm",
+                        "(rollout)"
+                    }
+                }
+                button {
+                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    onclick: move |_| {
+                        draft.set(ver_display.clone());
+                        editing.set(true);
+                    },
+                    "Edit"
+                }
+            }
+        }
+    } else {
+        rsx! {
+            span { class: "flex items-center gap-1",
+                span { class: "text-gray-400", "No version pinned" }
+                button {
+                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    onclick: move |_| {
+                        draft.set(String::new());
+                        editing.set(true);
+                    },
+                    "Set"
                 }
             }
         }

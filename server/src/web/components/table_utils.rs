@@ -115,6 +115,12 @@ impl GetRowData<CreatedAtData> for Customer {
     }
 }
 
+impl GetRowData<VersionData> for Customer {
+    fn get(&self) -> VersionData {
+        VersionData(self.pinned_version.clone())
+    }
+}
+
 // ── GetRowData: Skill (Link by slug + Name text + CreatedAt) ────────
 
 impl GetRowData<LinkData> for Skill {
@@ -344,6 +350,56 @@ impl<R: Row + GetRowData<CreatedAtData>> TableColumn<R> for CreatedAtColumn {
     fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
         let a: CreatedAtData = a.get();
         let b: CreatedAtData = b.get();
+        a.0.cmp(&b.0)
+    }
+}
+
+// ── Version column ──────────────────────────────────────────────────
+
+#[derive(Clone, PartialEq)]
+pub struct VersionData(pub Option<String>);
+
+#[derive(Clone, PartialEq)]
+pub struct VersionColumn;
+
+impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
+    fn column_name(&self) -> String {
+        "version".into()
+    }
+
+    fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
+        let indicator = sort_indicator(context);
+        rsx! {
+            th {
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                onclick: move |_| toggle_sort(context),
+                "Version {indicator}"
+            }
+        }
+    }
+
+    fn render_cell(
+        &self,
+        _context: ColumnContext,
+        row: &R,
+        _attributes: Vec<Attribute>,
+    ) -> Element {
+        let data: VersionData = row.get();
+        match data.0 {
+            Some(ver) => rsx! {
+                td { class: "px-6 py-4",
+                    span { class: "font-mono text-sm text-gray-700", "v{ver}" }
+                }
+            },
+            None => rsx! {
+                td { class: "px-6 py-4 text-gray-400 text-sm", "-" }
+            },
+        }
+    }
+
+    fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
+        let a: VersionData = a.get();
+        let b: VersionData = b.get();
         a.0.cmp(&b.0)
     }
 }
