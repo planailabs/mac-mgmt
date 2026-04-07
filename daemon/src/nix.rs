@@ -70,6 +70,41 @@ fn nix_current_system() -> Result<&'static str> {
 /// Cached result of whether `nix profile upgrade --dry-run` is supported.
 static DRY_RUN_SUPPORTED: OnceLock<bool> = OnceLock::new();
 
+/// Cached result of whether `nix profile replace` is supported (only present
+/// in this project's nix fork). Falls back to remove+add when absent.
+static REPLACE_SUPPORTED: OnceLock<bool> = OnceLock::new();
+
+/// Detect if `nix profile replace` is supported by probing with a non-existent
+/// element. If nix doesn't recognise the subcommand, the error mentions an
+/// unknown command; otherwise the error is about the element being missing.
+fn has_replace_support() -> bool {
+    *REPLACE_SUPPORTED.get_or_init(|| {
+        let output = Command::new("nix")
+            .args(["profile", "replace", "__nonexistent_probe__", "__nonexistent_probe__"])
+            .output();
+
+        match output {
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let unsupported = stderr.contains("unknown subcommand")
+                    || stderr.contains("unrecognised subcommand")
+                    || stderr.contains("unrecognized subcommand")
+                    || stderr.contains("unknown command");
+                if unsupported {
+                    tracing::info!("nix profile replace is NOT supported, will fall back to remove+add");
+                } else {
+                    tracing::info!("nix profile replace is supported");
+                }
+                !unsupported
+            }
+            Err(_) => {
+                tracing::warn!("failed to probe for nix profile replace support, assuming unsupported");
+                false
+            }
+        }
+    })
+}
+
 /// Check if a package is installed via `nix profile list --json`.
 pub fn is_installed(pkg: &str) -> Result<bool> {
     let output = Command::new("nix")
@@ -393,44 +428,18 @@ fn profile_original_urls() -> Result<HashMap<String, String>> {
     Ok(result)
 }
 
-/// Install or upgrade a package via `nix profile`, using the given nix binary path.
-/// When `upgrade` is set and the installed flake URL differs from the desired
-/// one (i.e. the customer's nixpkgs pin moved), use `nix profile replace` (a
-/// verb available in this project's nix fork) to swap the package over.
-fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<()> {
-    let desired = desired_flake_ref(pkg)?;
-    let desired_base = desired_flake_base()?;
-
-    let mut cmd = Command::new(nix_bin);
-    cmd.env("NIXPKGS_ALLOW_UNFREE", "1")
-        .env("NIXPKGS_ALLOW_INSECURE", "1")
-        .arg("profile");
-
-    let action = if upgrade {
-        let installed_url = profile_original_urls()
-            .ok()
-            .and_then(|m| m.get(pkg).cloned());
-        if installed_url.as_deref() != Some(desired_base.as_str()) {
-            // Pin moved (or installed under a different URL) → replace
-            // atomically using the fork's `nix profile replace` verb.
-            cmd.args(["replace", pkg, &desired]);
-            "replace"
-        } else {
-            // Same URL → in-place upgrade.
-            cmd.args(["upgrade", pkg]);
-            "upgrade"
-        }
-    } else {
-        cmd.args(["add", &desired]);
-        "install"
-    };
-
-    // --impure is needed when NIXPKGS_ALLOW_UNFREE is set
-    cmd.arg("--impure");
-
+/// Run a single `nix profile <args...>` invocation with the standard env +
+/// `--impure` flag. Logs/breadcrumbs and bails on non-zero exit.
+fn run_profile_cmd(nix_bin: &str, action: &str, pkg: &str, args: &[&str]) -> Result<()> {
     tracing::info!("running nix profile {action} {pkg}");
-
-    let status = cmd.status().with_context(|| format!("failed to run nix profile {action}"))?;
+    let status = Command::new(nix_bin)
+        .env("NIXPKGS_ALLOW_UNFREE", "1")
+        .env("NIXPKGS_ALLOW_INSECURE", "1")
+        .arg("profile")
+        .args(args)
+        .arg("--impure")
+        .status()
+        .with_context(|| format!("failed to run nix profile {action}"))?;
 
     if !status.success() {
         sentry_ext::capture_cmd_failure(
@@ -444,6 +453,40 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
     tracing::info!("nix profile {action} {pkg} succeeded");
     sentry_ext::breadcrumb("nix", &format!("nix profile {action} {pkg} succeeded"), &[("package", pkg)]);
     Ok(())
+}
+
+/// Install or upgrade a package via `nix profile`, using the given nix binary path.
+/// When `upgrade` is set and the installed flake URL differs from the desired
+/// one (i.e. the customer's nixpkgs pin moved), use `nix profile replace` if the
+/// fork's verb is available, otherwise fall back to `remove` + `add`.
+fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<()> {
+    let desired = desired_flake_ref(pkg)?;
+    let desired_base = desired_flake_base()?;
+
+    if !upgrade {
+        return run_profile_cmd(nix_bin, "install", pkg, &["add", &desired]);
+    }
+
+    let installed_url = profile_original_urls()
+        .ok()
+        .and_then(|m| m.get(pkg).cloned());
+
+    if installed_url.as_deref() == Some(desired_base.as_str()) {
+        // Same URL → in-place upgrade.
+        return run_profile_cmd(nix_bin, "upgrade", pkg, &["upgrade", pkg]);
+    }
+
+    // Pin moved (or installed under a different URL) → swap the package over.
+    if has_replace_support() {
+        // Atomic via the fork's verb.
+        run_profile_cmd(nix_bin, "replace", pkg, &["replace", pkg, &desired])
+    } else {
+        // Fallback: remove + add. Non-atomic — if `add` fails the package is
+        // left uninstalled and recovers on the next ensure_installed cycle.
+        tracing::info!("nix profile replace unsupported, falling back to remove+add for {pkg}");
+        run_profile_cmd(nix_bin, "remove", pkg, &["remove", pkg])?;
+        run_profile_cmd(nix_bin, "add", pkg, &["add", &desired])
+    }
 }
 
 /// Resolve the absolute path to the nix binary.
