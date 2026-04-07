@@ -64,9 +64,10 @@ async fn connect_and_run(
     outgoing_rx: &mut mpsc::Receiver<String>,
 ) -> Result<()> {
     let host = extract_host(&config.url)?;
+    let ws_url = to_ws_scheme(&config.url);
 
     let request = tokio_tungstenite::tungstenite::http::Request::builder()
-        .uri(config.url.parse::<Uri>()?)
+        .uri(ws_url.parse::<Uri>()?)
         .header("Authorization", format!("Bearer {}", config.auth_token))
         .header(
             "Sec-WebSocket-Key",
@@ -114,6 +115,18 @@ async fn connect_and_run(
                     .context("WS send error")?;
             }
         }
+    }
+}
+
+/// Normalize a URL to use a WebSocket scheme. `https://` → `wss://`,
+/// `http://` → `ws://`, existing `ws(s)://` are left untouched.
+pub fn to_ws_scheme(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        url.to_string()
     }
 }
 
