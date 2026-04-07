@@ -167,6 +167,10 @@ pub fn restart() -> Result<()> {
 
     let _ = sudo(&["launchctl", "bootout", &service_target()]);
 
+    // launchd needs a moment to fully tear down the previous instance
+    // before bootstrap will succeed cleanly.
+    std::thread::sleep(std::time::Duration::from_secs(10));
+
     let output = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()])
         .context("failed to run launchctl bootstrap")?;
 

@@ -39,6 +39,7 @@ async fn get_mcp_bundle(id: String) -> Result<McpServerBundle, ServerFnError> {
 async fn delete_mcp_bundle(id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_mcp_bundle_global(uuid).await;
     sqlx::query("DELETE FROM mcp_server_bundles WHERE id = $1")
         .bind(uuid)
         .execute(&pool)
@@ -58,6 +59,7 @@ async fn update_mcp_bundle(id: String, name: String, description: String) -> Res
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_mcp_bundle_global(uuid).await;
     Ok(())
 }
 
@@ -102,6 +104,7 @@ async fn add_mcp_bundle_item(bundle_id: String, mcp_server_id: String) -> Result
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_mcp_bundle_global(bid).await;
     Ok(())
 }
 
@@ -109,11 +112,21 @@ async fn add_mcp_bundle_item(bundle_id: String, mcp_server_id: String) -> Result
 async fn remove_mcp_bundle_item(bundle_item_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = bundle_item_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let bundle_id: Option<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT bundle_id FROM mcp_server_bundle_items WHERE id = $1",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
     sqlx::query("DELETE FROM mcp_server_bundle_items WHERE id = $1")
         .bind(uuid)
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(bid) = bundle_id {
+        crate::api::push::notify_mcp_bundle_global(bid).await;
+    }
     Ok(())
 }
 

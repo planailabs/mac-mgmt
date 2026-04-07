@@ -141,6 +141,16 @@ pub async fn save_generated_name_desc(
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    match entity_kind {
+        EntityKind::Bundle => {
+            crate::api::push::notify_skill_bundle_global(uuid).await;
+        }
+        EntityKind::McpBundle => {
+            crate::api::push::notify_mcp_bundle_global(uuid).await;
+        }
+        _ => {}
+    }
     Ok(())
 }
 

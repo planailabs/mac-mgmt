@@ -100,6 +100,66 @@ pub async fn notify_all_rollout_global(rollout_id: Uuid, msg: PushMessage) {
     }
 }
 
+/// Notify all customers that have a given skill bundle assigned.
+pub async fn notify_skill_bundle_customers(
+    channels: &PushChannels,
+    pool: &PgPool,
+    bundle_id: Uuid,
+) {
+    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT customer_id FROM customer_bundles WHERE bundle_id = $1",
+    )
+    .bind(bundle_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let map = channels.read().await;
+    for cid in customer_ids {
+        if let Some(tx) = map.get(&cid) {
+            let _ = tx.send(PushMessage::SyncSkills);
+        }
+    }
+}
+
+/// Notify all customers that have a given MCP server bundle assigned.
+pub async fn notify_mcp_bundle_customers(
+    channels: &PushChannels,
+    pool: &PgPool,
+    bundle_id: Uuid,
+) {
+    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT customer_id FROM customer_mcp_bundles WHERE bundle_id = $1",
+    )
+    .bind(bundle_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let map = channels.read().await;
+    for cid in customer_ids {
+        if let Some(tx) = map.get(&cid) {
+            let _ = tx.send(PushMessage::SyncMcpServers);
+        }
+    }
+}
+
+/// Dioxus server function variant: notify all customers using a skill bundle.
+#[cfg(feature = "webui")]
+pub async fn notify_skill_bundle_global(bundle_id: Uuid) {
+    if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
+        notify_skill_bundle_customers(&channels, &pool, bundle_id).await;
+    }
+}
+
+/// Dioxus server function variant: notify all customers using an MCP bundle.
+#[cfg(feature = "webui")]
+pub async fn notify_mcp_bundle_global(bundle_id: Uuid) {
+    if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
+        notify_mcp_bundle_customers(&channels, &pool, bundle_id).await;
+    }
+}
+
 /// SSE endpoint for daemon push notifications.
 /// Auth via query param since SSE can't carry custom headers from all clients.
 #[get("/events?<token>")]
