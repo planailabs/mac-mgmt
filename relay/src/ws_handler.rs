@@ -111,6 +111,7 @@ async fn require_auth(
 struct RegisterQuery {
     instance_id: String,
     agent_name: Option<String>,
+    hostname: Option<String>,
 }
 
 async fn ws_daemon_register(
@@ -146,9 +147,10 @@ async fn handle_daemon_ws(
 ) {
     let instance_id = query.instance_id;
     tracing::info!(
-        "daemon WS connected: instance={instance_id} customer={:?} agent={:?}",
+        "daemon WS connected: instance={instance_id} customer={:?} agent={:?} hostname={:?}",
         self_info.customer_name,
         query.agent_name,
+        query.hostname,
     );
 
     let Some(port) = state.registry.allocate_port() else {
@@ -169,6 +171,7 @@ async fn handle_daemon_ws(
         customer_id: self_info.customer_id,
         customer_name: self_info.customer_name,
         agent_name: query.agent_name,
+        hostname: query.hostname,
         ssh_port: port,
         connected_at: Utc::now(),
         control_tx,

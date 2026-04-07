@@ -41,8 +41,14 @@ pub async fn run(
         .map(|n| format!("&agent_name={}", urlencoding::encode(n)))
         .unwrap_or_default();
 
+    let hostname_param = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .map(|h| format!("&hostname={}", urlencoding::encode(&h)))
+        .unwrap_or_default();
+
     let ws_url = format!(
-        "{relay_url}/api/daemon/register?instance_id={instance_id}{agent_name_param}"
+        "{relay_url}/api/daemon/register?instance_id={instance_id}{agent_name_param}{hostname_param}"
     );
     tracing::info!("relay client connecting to {relay_url} as {instance_id}");
 

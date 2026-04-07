@@ -38,6 +38,7 @@ struct TunnelInfo {
     instance_id: String,
     customer_name: Option<String>,
     agent_name: Option<String>,
+    hostname: Option<String>,
     ssh_port: u16,
 }
 
@@ -176,14 +177,15 @@ async fn fetch_tunnels(relay_url: &str, token: &str) -> Result<Vec<TunnelInfo>> 
 
 fn print_tunnels(tunnels: &[TunnelInfo]) {
     println!(
-        "{:<14} {:<24} {:<16} {}",
-        "INSTANCE", "AGENT", "CUSTOMER", "PORT"
+        "{:<14} {:<24} {:<24} {:<16} {}",
+        "INSTANCE", "AGENT", "HOSTNAME", "CUSTOMER", "PORT"
     );
     for t in tunnels {
         println!(
-            "{:<14} {:<24} {:<16} {}",
+            "{:<14} {:<24} {:<24} {:<16} {}",
             &t.instance_id[..12.min(t.instance_id.len())],
             t.agent_name.as_deref().unwrap_or("-"),
+            t.hostname.as_deref().unwrap_or("-"),
             t.customer_name.as_deref().unwrap_or("-"),
             t.ssh_port,
         );

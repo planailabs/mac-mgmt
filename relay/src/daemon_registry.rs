@@ -30,6 +30,7 @@ pub struct DaemonConn {
     pub customer_id: Option<Uuid>,
     pub customer_name: Option<String>,
     pub agent_name: Option<String>,
+    pub hostname: Option<String>,
     pub ssh_port: u16,
     pub connected_at: DateTime<Utc>,
     pub control_tx: mpsc::Sender<ControlMsg>,
@@ -43,6 +44,7 @@ pub struct TunnelInfo {
     pub customer_id: Option<Uuid>,
     pub customer_name: Option<String>,
     pub agent_name: Option<String>,
+    pub hostname: Option<String>,
     pub ssh_port: u16,
     pub connected_at: DateTime<Utc>,
 }
@@ -127,6 +129,7 @@ impl DaemonRegistry {
                 customer_id: d.customer_id,
                 customer_name: d.customer_name.clone(),
                 agent_name: d.agent_name.clone(),
+                hostname: d.hostname.clone(),
                 ssh_port: d.ssh_port,
                 connected_at: d.connected_at,
             })
