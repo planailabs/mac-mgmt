@@ -68,41 +68,54 @@ fn nix_current_system() -> Result<&'static str> {
 }
 
 /// Cached result of whether `nix profile upgrade --dry-run` is supported.
-static DRY_RUN_SUPPORTED: OnceLock<bool> = OnceLock::new();
+/// `RwLock<Option<bool>>` (rather than `OnceLock<bool>`) so it can be
+/// invalidated after `upgrade_nix` swaps the binary under us.
+static DRY_RUN_SUPPORTED: RwLock<Option<bool>> = RwLock::new(None);
 
 /// Cached result of whether `nix profile replace` is supported (only present
 /// in this project's nix fork). Falls back to remove+add when absent.
-static REPLACE_SUPPORTED: OnceLock<bool> = OnceLock::new();
+static REPLACE_SUPPORTED: RwLock<Option<bool>> = RwLock::new(None);
+
+/// Clear the cached `nix profile` capability probes. Call after upgrading nix
+/// itself, since the new binary may support more (or fewer) verbs/flags.
+pub fn invalidate_capability_cache() {
+    *DRY_RUN_SUPPORTED.write().unwrap() = None;
+    *REPLACE_SUPPORTED.write().unwrap() = None;
+    tracing::info!("nix capability cache invalidated");
+}
 
 /// Detect if `nix profile replace` is supported by probing with a non-existent
 /// element. If nix doesn't recognise the subcommand, the error mentions an
 /// unknown command; otherwise the error is about the element being missing.
 fn has_replace_support() -> bool {
-    *REPLACE_SUPPORTED.get_or_init(|| {
-        let output = Command::new("nix")
-            .args(["profile", "replace", "__nonexistent_probe__", "__nonexistent_probe__"])
-            .output();
+    if let Some(v) = *REPLACE_SUPPORTED.read().unwrap() {
+        return v;
+    }
+    let output = Command::new("nix")
+        .args(["profile", "replace", "__nonexistent_probe__", "__nonexistent_probe__"])
+        .output();
 
-        match output {
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                let unsupported = stderr.contains("unknown subcommand")
-                    || stderr.contains("unrecognised subcommand")
-                    || stderr.contains("unrecognized subcommand")
-                    || stderr.contains("unknown command");
-                if unsupported {
-                    tracing::info!("nix profile replace is NOT supported, will fall back to remove+add");
-                } else {
-                    tracing::info!("nix profile replace is supported");
-                }
-                !unsupported
+    let supported = match output {
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let unsupported = stderr.contains("unknown subcommand")
+                || stderr.contains("unrecognised subcommand")
+                || stderr.contains("unrecognized subcommand")
+                || stderr.contains("unknown command");
+            if unsupported {
+                tracing::info!("nix profile replace is NOT supported, will fall back to remove+add");
+            } else {
+                tracing::info!("nix profile replace is supported");
             }
-            Err(_) => {
-                tracing::warn!("failed to probe for nix profile replace support, assuming unsupported");
-                false
-            }
+            !unsupported
         }
-    })
+        Err(_) => {
+            tracing::warn!("failed to probe for nix profile replace support, assuming unsupported");
+            false
+        }
+    };
+    *REPLACE_SUPPORTED.write().unwrap() = Some(supported);
+    supported
 }
 
 /// Check if a package is installed via `nix profile list --json`.
@@ -147,32 +160,35 @@ pub fn is_installed(pkg: &str) -> Result<bool> {
 /// accepted.
 /// See: https://github.com/NixOS/nix/pull/15545
 fn has_dry_run_support() -> bool {
-    *DRY_RUN_SUPPORTED.get_or_init(|| {
-        let output = Command::new("nix")
-            .args(["profile", "upgrade", "--dry-run", "__nonexistent_probe__"])
-            .output();
+    if let Some(v) = *DRY_RUN_SUPPORTED.read().unwrap() {
+        return v;
+    }
+    let output = Command::new("nix")
+        .args(["profile", "upgrade", "--dry-run", "__nonexistent_probe__"])
+        .output();
 
-        match output {
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                // If nix doesn't recognize --dry-run, the error message will mention
-                // the unrecognized flag. Otherwise the error will be about the element.
-                let unsupported = stderr.contains("unrecognised flag")
-                    || stderr.contains("unrecognized flag")
-                    || stderr.contains("unknown flag");
-                if unsupported {
-                    tracing::info!("nix profile upgrade --dry-run is NOT supported");
-                } else {
-                    tracing::info!("nix profile upgrade --dry-run is supported");
-                }
-                !unsupported
+    let supported = match output {
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // If nix doesn't recognize --dry-run, the error message will mention
+            // the unrecognized flag. Otherwise the error will be about the element.
+            let unsupported = stderr.contains("unrecognised flag")
+                || stderr.contains("unrecognized flag")
+                || stderr.contains("unknown flag");
+            if unsupported {
+                tracing::info!("nix profile upgrade --dry-run is NOT supported");
+            } else {
+                tracing::info!("nix profile upgrade --dry-run is supported");
             }
-            Err(_) => {
-                tracing::warn!("failed to probe for --dry-run support, assuming unsupported");
-                false
-            }
+            !unsupported
         }
-    })
+        Err(_) => {
+            tracing::warn!("failed to probe for --dry-run support, assuming unsupported");
+            false
+        }
+    };
+    *DRY_RUN_SUPPORTED.write().unwrap() = Some(supported);
+    supported
 }
 
 /// Check which packages have upgrades available via `nix profile upgrade --dry-run`.
@@ -516,7 +532,18 @@ fn resolve_nix_binary() -> Result<PathBuf> {
 /// 1. `nix upgrade-nix` (preferred, works for non-profile installs)
 /// 2. `nix profile upgrade nix` (for profile-managed installs)
 /// 3. Remove + reinstall from profile (if nix wasn't added from a flake)
+///
+/// On success, invalidates the cached `nix profile` capability probes since
+/// the new binary may support more (or fewer) verbs/flags than the old one.
 pub fn upgrade_nix() -> Result<()> {
+    let result = upgrade_nix_inner();
+    if result.is_ok() {
+        invalidate_capability_cache();
+    }
+    result
+}
+
+fn upgrade_nix_inner() -> Result<()> {
     // Resolve nix binary path upfront, before any removal
     let nix_bin = resolve_nix_binary()?;
     let nix_bin_str = nix_bin.to_str().context("nix binary path is not valid UTF-8")?;
