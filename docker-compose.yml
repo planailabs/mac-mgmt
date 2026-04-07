@@ -13,4 +13,4 @@ services:
       - postgres_planai_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_planai_data
+  postgres_planai_data:
