@@ -52,6 +52,29 @@ pub fn current_version() -> &'static str {
     CURRENT_VERSION
 }
 
+/// File next to the current binary that records the last applied
+/// store path. Used to detect "same version, different store path"
+/// (e.g. someone re-uploaded the same version with a fix) so we
+/// re-apply instead of skipping.
+fn applied_marker_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let parent = exe.parent()?;
+    Some(parent.join(".mac-mgmt.store_path"))
+}
+
+fn read_last_store_path() -> Option<String> {
+    let p = applied_marker_path()?;
+    std::fs::read_to_string(&p).ok().map(|s| s.trim().to_string())
+}
+
+fn write_last_store_path(store_path: &str) {
+    if let Some(p) = applied_marker_path() {
+        if let Err(e) = std::fs::write(&p, store_path) {
+            tracing::warn!("failed to write applied marker {}: {e}", p.display());
+        }
+    }
+}
+
 /// Check if the server has assigned a target and apply it.
 pub fn check_and_apply() {
     let t = target();
@@ -59,11 +82,6 @@ pub fn check_and_apply() {
         tracing::debug!("no target version set, skipping self-update");
         return;
     };
-
-    if version == CURRENT_VERSION {
-        tracing::info!("already at target version {CURRENT_VERSION}");
-        return;
-    }
 
     if version_cmp(&version) < 0 {
         tracing::warn!(
@@ -73,12 +91,38 @@ pub fn check_and_apply() {
     }
 
     let Some(store_path) = t.store_path else {
-        tracing::warn!(
-            "target version {version} set but server did not provide a store path; \
-             update skipped (sync daemon versions on the server)"
-        );
+        if version != CURRENT_VERSION {
+            tracing::warn!(
+                "target version {version} set but server did not provide a store path; \
+                 update skipped (sync daemon versions on the server)"
+            );
+        } else {
+            tracing::debug!("already at target version {CURRENT_VERSION}");
+        }
         return;
     };
+
+    // If we are already on the target version *and* the store path
+    // matches what we last applied, nothing to do. If the store path
+    // changed (re-upload of the same version), fall through and apply.
+    if version == CURRENT_VERSION {
+        match read_last_store_path() {
+            Some(last) if last == store_path => {
+                tracing::info!("already at target version {CURRENT_VERSION} ({store_path})");
+                return;
+            }
+            Some(last) => {
+                tracing::info!(
+                    "version {version} unchanged but store path changed: {last} -> {store_path}, reapplying"
+                );
+            }
+            None => {
+                tracing::info!(
+                    "version {version} unchanged, no applied marker found, applying {store_path}"
+                );
+            }
+        }
+    }
 
     tracing::info!("updating: {CURRENT_VERSION} -> {version} (store {store_path})");
     sentry_ext::breadcrumb("self-update", "updating", &[
@@ -146,10 +190,13 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
             .context("failed to rename new binary over current")?;
     }
 
+    write_last_store_path(store_path);
+
     tracing::info!("binary updated to {version}");
     sentry_ext::breadcrumb("self-update", "binary updated", &[
         ("from", CURRENT_VERSION),
         ("to", version),
+        ("store_path", store_path),
     ]);
     Ok(())
 }
