@@ -71,22 +71,44 @@ impl OpenClaw {
     pub fn new(config: OpenClawConfig) -> Self {
         Self { config }
     }
-}
 
-impl ManagedService for OpenClaw {
-    fn name(&self) -> &str {
-        "openclaw"
+    /// Uninstall any preexisting openclaw daemon service so it doesn't race ours.
+    fn uninstall_existing_daemon(phase: &str) {
+        tracing::info!("uninstalling preexisting openclaw daemon service");
+        sentry_ext::breadcrumb(
+            phase,
+            "running openclaw daemon uninstall",
+            &[("service", "openclaw")],
+        );
+        match Command::new("openclaw").args(["daemon", "uninstall"]).output() {
+            Ok(o) if o.status.success() => {
+                tracing::info!("openclaw daemon uninstall completed");
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                tracing::debug!(
+                    "openclaw daemon uninstall exited with status {}: {}",
+                    o.status,
+                    stderr.trim()
+                );
+            }
+            Err(e) => {
+                tracing::debug!("openclaw daemon uninstall not available: {e}");
+            }
+        }
     }
 
-    fn preflight(&self) -> Result<()> {
-        // Stop any existing openclaw gateway so we don't conflict on ports.
-        let output = Command::new("openclaw")
-            .args(["gateway", "stop"])
-            .output();
+    /// Stop any existing openclaw gateway so we don't conflict on ports.
+    fn stop_existing_gateway(phase: &str) {
+        let output = Command::new("openclaw").args(["gateway", "stop"]).output();
         match output {
             Ok(o) if o.status.success() => {
                 tracing::info!("stopped existing openclaw gateway");
-                sentry_ext::breadcrumb("preflight", "stopped existing openclaw gateway", &[("service", "openclaw")]);
+                sentry_ext::breadcrumb(
+                    phase,
+                    "stopped existing openclaw gateway",
+                    &[("service", "openclaw")],
+                );
             }
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
@@ -96,6 +118,17 @@ impl ManagedService for OpenClaw {
                 tracing::debug!("openclaw gateway stop not available: {e}");
             }
         }
+    }
+}
+
+impl ManagedService for OpenClaw {
+    fn name(&self) -> &str {
+        "openclaw"
+    }
+
+    fn preflight(&self) -> Result<()> {
+        Self::stop_existing_gateway("preflight");
+        Self::uninstall_existing_daemon("preflight");
         Ok(())
     }
 
@@ -239,6 +272,9 @@ impl ManagedService for OpenClaw {
     }
 
     fn repair(&self) -> Result<()> {
+        Self::stop_existing_gateway("repair");
+        Self::uninstall_existing_daemon("repair");
+
         tracing::info!("running openclaw doctor --fix");
         sentry_ext::breadcrumb("repair", "running openclaw doctor --fix", &[("service", "openclaw")]);
 
