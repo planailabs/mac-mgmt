@@ -1,0 +1,16 @@
+services:
+  postgres_planai:
+    image: postgres:16
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: planai
+      POSTGRES_PASSWORD: changeme123
+      POSTGRES_DB: planai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_planai_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_planai_data
