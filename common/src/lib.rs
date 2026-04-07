@@ -32,6 +32,11 @@ pub struct HeartbeatBody {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTarget {
     pub target_version: Option<String>,
+    /// Nix store path containing `bin/mac-mgmt` for the daemon's system,
+    /// resolved by the server from `daemon_versions`. The daemon realises
+    /// it via `nix-store --realise` and self-replaces from `bin/mac-mgmt`.
+    #[serde(default)]
+    pub store_path: Option<String>,
 }
 
 /// Server → daemon nixpkgs pin response (`GET /api/nixpkgs`).

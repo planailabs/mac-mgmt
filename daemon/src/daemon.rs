@@ -410,7 +410,8 @@ pub async fn run(
 /// Fetch the target version from the server and set it for self-update.
 async fn fetch_target_version(server_url: &str, server_token: &str) {
     let client = reqwest::Client::new();
-    let url = format!("{server_url}/api/update");
+    let system = crate::nix::current_system().unwrap_or("");
+    let url = format!("{server_url}/api/update?system={system}");
     match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         client.get(&url).bearer_auth(server_token).send(),
@@ -420,9 +421,12 @@ async fn fetch_target_version(server_url: &str, server_token: &str) {
         Ok(Ok(resp)) if resp.status().is_success() => {
             if let Ok(info) = resp.json::<mac_mgmt_common::UpdateTarget>().await {
                 if let Some(ver) = info.target_version {
-                    tracing::info!("server target version: {ver}");
+                    tracing::info!(
+                        "server target version: {ver} (store_path: {:?})",
+                        info.store_path
+                    );
                     #[cfg(feature = "self-update")]
-                    crate::self_update::set_target_version(ver);
+                    crate::self_update::set_target(ver, info.store_path);
                 } else {
                     tracing::debug!("no target version set by server");
                 }

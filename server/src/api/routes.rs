@@ -218,10 +218,11 @@ pub(crate) use mac_mgmt_common::{NixpkgsPin, UpdateTarget};
         (status = 403, description = "Sync token required"),
     ),
 )]
-#[rocket::get("/update")]
+#[rocket::get("/update?<system>")]
 pub async fn get_update_target(
     auth: SyncAuth,
     pool: &State<PgPool>,
+    system: Option<String>,
 ) -> Result<Json<UpdateTarget>, Status> {
     // Check for active rollout targeting this customer. The outer Option is
     // "rollout row found?", inner is the nullable column (a rollout may carry
@@ -240,23 +241,42 @@ pub async fn get_update_target(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    if let Some(Some(ver)) = rollout_version {
-        return Ok(Json(UpdateTarget {
-            target_version: Some(ver),
-        }));
-    }
+    let chosen: Option<String> = if let Some(Some(ver)) = rollout_version {
+        Some(ver)
+    } else {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT pinned_version FROM customers WHERE id = $1",
+        )
+        .bind(auth.customer_id)
+        .fetch_one(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+    };
 
-    // Fall back to customer's pinned version
-    let pinned = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT pinned_version FROM customers WHERE id = $1",
-    )
-    .bind(auth.customer_id)
-    .fetch_one(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    // Resolve nix store path live from xzar (mirrors the skills flow):
+    // look up the `daemon/{version}/{system}` pin for the daemon's system.
+    let store_path = match (&chosen, system.as_deref()) {
+        (Some(ver), Some(sys)) => {
+            let cfg = crate::config::config();
+            match cfg.xzar.as_ref() {
+                Some(xzar) => {
+                    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("xzar fetch failed: {e}");
+                            Status::InternalServerError
+                        })?;
+                    crate::xzar::store_path_for_pin(&pins, &format!("daemon/{ver}/{sys}"))
+                }
+                None => None,
+            }
+        }
+        _ => None,
+    };
 
     Ok(Json(UpdateTarget {
-        target_version: pinned,
+        target_version: chosen,
+        store_path,
     }))
 }
 

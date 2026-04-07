@@ -21,6 +21,8 @@ use super::components::rollout_group_list::RolloutGroupList;
 use super::components::rollout_list::RolloutList;
 use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
+use super::components::daemon_version_list::DaemonVersionList;
+use super::components::daemon_version_detail::DaemonVersionDetail;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 pub enum Route {
@@ -69,6 +71,10 @@ pub enum Route {
     RolloutGroupList {},
     #[route("/rollout-groups/:id")]
     RolloutGroupDetail { id: String },
+    #[route("/daemon-versions")]
+    DaemonVersionList {},
+    #[route("/daemon-versions/:version")]
+    DaemonVersionDetail { version: String },
 }
 
 #[component]

@@ -1,69 +1,97 @@
 use anyhow::{Context, Result};
-use std::io::Write;
+use std::path::Path;
+use std::process::Command;
 
 use crate::sentry_ext;
 
 const UPDATE_BASE: &str = env!("UPDATE_BASE_URL");
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+#[allow(dead_code)]
 const ENVIRONMENT: &str = env!("ENVIRONMENT");
+#[allow(dead_code)]
 const TARGET: &str = env!("TARGET");
 
 /// Effective update base URL: runtime `MAC_MGMT_UPDATE_URL` overrides the
-/// compile-time default.  This lets integration tests point at a local server.
+/// compile-time default. Used by the legacy CLI `apply` path.
 fn update_base() -> String {
     std::env::var("MAC_MGMT_UPDATE_URL").unwrap_or_else(|_| UPDATE_BASE.to_string())
 }
 
-/// The version the server wants us to run. Set by the daemon after
-/// fetching from the server's `/api/update` endpoint.
-static TARGET_VERSION: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+/// Target the server has assigned: a version, and the nix store path that
+/// contains the binary for our system (resolved by the server from
+/// `daemon_versions`). Set by the daemon after fetching `/api/update`.
+#[derive(Clone, Default)]
+struct Target {
+    version: Option<String>,
+    store_path: Option<String>,
+}
 
+static TARGET_STATE: std::sync::RwLock<Target> = std::sync::RwLock::new(Target {
+    version: None,
+    store_path: None,
+});
+
+pub fn set_target(version: String, store_path: Option<String>) {
+    let mut t = TARGET_STATE.write().unwrap();
+    t.version = Some(version);
+    t.store_path = store_path;
+}
+
+/// Back-compat shim retained for callers that only know the version.
+#[allow(dead_code)]
 pub fn set_target_version(ver: String) {
-    *TARGET_VERSION.write().unwrap() = Some(ver);
+    set_target(ver, None);
 }
 
-fn target_version() -> Option<String> {
-    TARGET_VERSION.read().unwrap().clone()
+fn target() -> Target {
+    TARGET_STATE.read().unwrap().clone()
 }
 
+#[allow(dead_code)]
 pub fn current_version() -> &'static str {
     CURRENT_VERSION
 }
 
-/// Check if the server has assigned a target version and apply it.
+/// Check if the server has assigned a target and apply it.
 pub fn check_and_apply() {
-    let target = match target_version() {
-        Some(v) => v,
-        None => {
-            tracing::debug!("no target version set, skipping self-update");
-            return;
-        }
+    let t = target();
+    let Some(version) = t.version else {
+        tracing::debug!("no target version set, skipping self-update");
+        return;
     };
 
-    if target == CURRENT_VERSION {
+    if version == CURRENT_VERSION {
         tracing::info!("already at target version {CURRENT_VERSION}");
         return;
     }
 
-    // Prevent downgrades
-    if version_cmp(&target) < 0 {
+    if version_cmp(&version) < 0 {
         tracing::warn!(
-            "target version {target} is older than current {CURRENT_VERSION}, refusing downgrade"
+            "target version {version} is older than current {CURRENT_VERSION}, refusing downgrade"
         );
         return;
     }
 
-    tracing::info!("updating: {CURRENT_VERSION} -> {target}");
+    let Some(store_path) = t.store_path else {
+        tracing::warn!(
+            "target version {version} set but server did not provide a store path; \
+             update skipped (sync daemon versions on the server)"
+        );
+        return;
+    };
+
+    tracing::info!("updating: {CURRENT_VERSION} -> {version} (store {store_path})");
     sentry_ext::breadcrumb("self-update", "updating", &[
         ("from", CURRENT_VERSION),
-        ("to", &target),
+        ("to", &version),
+        ("store_path", &store_path),
     ]);
 
-    if let Err(e) = apply_version(&target) {
-        tracing::warn!("update to {target} failed: {e}");
+    if let Err(e) = apply_store_path(&version, &store_path) {
+        tracing::warn!("update to {version} failed: {e}");
         sentry_ext::capture_error(
-            &format!("self-update to {target} failed: {e}"),
-            &[("from", CURRENT_VERSION), ("to", &target)],
+            &format!("self-update to {version} failed: {e}"),
+            &[("from", CURRENT_VERSION), ("to", &version)],
         );
     }
 }
@@ -79,35 +107,24 @@ fn version_cmp(ver: &str) -> i32 {
     a.cmp(&b) as i32
 }
 
-/// Download `{UPDATE_BASE}/{ENVIRONMENT}/{version}/mac-mgmt.tar.gz` and replace the binary.
-fn apply_version(version: &str) -> Result<()> {
-    let base = update_base();
-    let url = format!("{base}/{ENVIRONMENT}/{version}/mac-mgmt.tar.gz");
+/// Realise `store_path` via `nix-store --realise` (which substitutes from
+/// configured binary caches such as xzar.plan.ai) and self-replace from
+/// `{store_path}/bin/mac-mgmt`.
+fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
+    tracing::info!("realising {store_path}");
+    let output = Command::new("nix-store")
+        .args(["--realise", store_path])
+        .output()
+        .context("failed to run nix-store --realise")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("nix-store --realise failed: {stderr}");
+    }
 
-    let mut tmp_archive = tempfile::Builder::new()
-        .suffix(".tar.gz")
-        .tempfile()
-        .context("failed to create temp file")?;
-
-    tracing::info!("downloading {url}");
-    let mut download = self_update::Download::from_url(&url);
-    download.show_progress(false);
-    let mut body = Vec::new();
-    download.download_to(&mut body)?;
-    tmp_archive.write_all(&body)?;
-    tmp_archive.flush()?;
-
-    let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
-    self_update::Extract::from_source(tmp_archive.path())
-        .archive(self_update::ArchiveKind::Tar(Some(
-            self_update::Compression::Gz,
-        )))
-        .extract_into(tmp_dir.path())?;
-
-    let bin_name = format!("mac-mgmt-{TARGET}");
-    let new_bin = tmp_dir.path().join(&bin_name);
+    let realised: &Path = Path::new(store_path);
+    let new_bin = realised.join("bin").join("mac-mgmt");
     if !new_bin.exists() {
-        anyhow::bail!("binary '{bin_name}' not found in archive");
+        anyhow::bail!("binary not found at {}", new_bin.display());
     }
 
     if let Err(e) = self_replace::self_replace(&new_bin) {
@@ -137,30 +154,22 @@ fn apply_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// CLI: force-apply from the default update channel (no server needed).
-pub fn apply(force: bool) -> Result<()> {
-    let base = update_base();
-    let url = format!("{base}/{ENVIRONMENT}/mac-mgmt.version");
-    let mut body = Vec::new();
-    let mut download = self_update::Download::from_url(&url);
-    download.show_progress(false);
-    download.download_to(&mut body)?;
-    let remote_version = String::from_utf8(body)
-        .context("invalid UTF-8 in version file")?
-        .trim()
-        .to_string();
-
-    if !force && remote_version == CURRENT_VERSION {
-        println!("already up to date ({CURRENT_VERSION})");
+/// CLI entrypoint kept for backwards compatibility. Updates are now
+/// driven by the server (`/api/update` returns the version + nix store
+/// path), so this command just triggers an immediate apply against
+/// whatever target the in-process state holds — useful when the daemon
+/// is running and has already fetched a target.
+pub fn apply(_force: bool) -> Result<()> {
+    let _ = update_base; // silence dead-code warning for retired path
+    let t = target();
+    if t.version.is_none() {
+        println!(
+            "no target version known in this process; updates are driven by the server"
+        );
         return Ok(());
     }
-
-    if !force && version_cmp(&remote_version) < 0 {
-        anyhow::bail!("remote version {remote_version} < current {CURRENT_VERSION}, use --force to downgrade");
-    }
-
-    println!("updating: {CURRENT_VERSION} -> {remote_version}");
-    apply_version(&remote_version)
+    check_and_apply();
+    Ok(())
 }
 
 #[cfg(test)]

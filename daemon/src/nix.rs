@@ -47,6 +47,10 @@ pub fn desired_flake_ref(pkg: &str) -> Result<String> {
     Ok(format!("{}#{pkg}", desired_flake_base()?))
 }
 
+pub fn current_system() -> Result<&'static str> {
+    nix_current_system()
+}
+
 fn nix_current_system() -> Result<&'static str> {
     static CACHED: OnceLock<Result<String, String>> = OnceLock::new();
     let result = CACHED.get_or_init(|| {

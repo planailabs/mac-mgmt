@@ -13,6 +13,18 @@ struct GroupOption {
 }
 
 #[server]
+async fn get_available_versions() -> Result<Vec<String>, ServerFnError> {
+    let pool = crate::server_pool()?;
+    let versions = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT version FROM daemon_versions ORDER BY version DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(versions)
+}
+
+#[server]
 async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
     let pool = crate::server_pool()?;
 
@@ -186,6 +198,7 @@ async fn create_rollout(
 #[component]
 pub fn RolloutForm() -> Element {
     let groups = use_server_future(move || async move { get_group_options().await })?;
+    let versions = use_server_future(move || async move { get_available_versions().await })?;
     let mut target_version = use_signal(String::new);
     let mut nixpkgs_commit = use_signal(String::new);
     let mut selected_stages = use_signal(Vec::<String>::new);
@@ -210,14 +223,30 @@ pub fn RolloutForm() -> Element {
                         label { class: "block text-sm font-medium text-gray-700 mb-1",
                             "Target Version"
                         }
-                        input {
-                            class: "w-full border rounded px-3 py-2 text-sm font-mono",
-                            placeholder: "e.g. 0.1.6",
-                            value: "{target_version}",
-                            oninput: move |e| target_version.set(e.value()),
+                        {
+                            let version_list: Vec<String> = match &*versions.read() {
+                                Some(Ok(v)) => v.clone(),
+                                _ => Vec::new(),
+                            };
+                            rsx! {
+                                select {
+                                    class: "w-full border rounded px-3 py-2 text-sm font-mono",
+                                    value: "{target_version}",
+                                    onchange: move |e| target_version.set(e.value()),
+                                    option { value: "", "— none (nixpkgs only) —" }
+                                    for v in version_list.iter() {
+                                        option { value: "{v}", "{v}" }
+                                    }
+                                }
+                                if version_list.is_empty() {
+                                    p { class: "text-xs text-amber-600 mt-1",
+                                        "No daemon versions available. Sync them on the Daemon Versions page."
+                                    }
+                                }
+                            }
                         }
                         p { class: "text-xs text-gray-400 mt-1",
-                            "Semver version to roll out. Downgrades are blocked."
+                            "Pick a version uploaded via xzar. Downgrades are blocked."
                         }
                     }
                     div {

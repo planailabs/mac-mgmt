@@ -21,6 +21,7 @@ pub fn Layout() -> Element {
                             Link { to: Route::AdminTokens {}, class: "text-gray-600 hover:text-gray-900", "Admin Tokens" }
                             Link { to: Route::FleetDashboard {}, class: "text-gray-600 hover:text-gray-900", "Fleet" }
                             Link { to: Route::RolloutList {}, class: "text-gray-600 hover:text-gray-900", "Rollouts" }
+                            Link { to: Route::DaemonVersionList {}, class: "text-gray-600 hover:text-gray-900", "Daemon Versions" }
                         }
                     }
                 }
