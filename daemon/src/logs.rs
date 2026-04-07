@@ -69,6 +69,37 @@ pub async fn tail_logs(
     }
 }
 
+pub async fn trigger_sync(port_override: Option<u16>) -> Result<()> {
+    let port = port_override.unwrap_or_else(crate::config::read_metrics_port);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .local_address(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST))
+        .build()
+        .context("failed to build HTTP client")?;
+
+    let url = format!("http://[::1]:{port}/sync");
+
+    let resp = client
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_connect() {
+                anyhow::anyhow!("daemon not running or metrics port differs")
+            } else {
+                anyhow::anyhow!("{e}")
+            }
+        })?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("sync request failed: {}", resp.status());
+    }
+
+    println!("sync triggered");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

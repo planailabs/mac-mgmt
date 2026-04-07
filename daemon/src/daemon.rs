@@ -102,11 +102,16 @@ pub async fn run(
 
     let metrics = Arc::new(Metrics::new());
 
+    // Channel for local sync requests (e.g. from `mac-mgmt sync` via /sync)
+    let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
+    let _sync_tx_keepalive = sync_tx.clone();
+
     // Spawn the metrics server
     let metrics_clone = Arc::clone(&metrics);
     let log_buf_clone = log_buf.clone();
+    let sync_tx_clone = sync_tx.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::metrics_server::build_rocket(metrics_clone, log_buf_clone, metrics_port).launch().await {
+        if let Err(e) = crate::metrics_server::build_rocket(metrics_clone, log_buf_clone, sync_tx_clone, metrics_port).launch().await {
             tracing::error!("metrics server failed: {e}");
             sentry_ext::capture_error(&format!("metrics server failed: {e}"), &[]);
         }
@@ -372,6 +377,24 @@ pub async fn run(
         };
     }
 
+    macro_rules! handle_local_sync {
+        () => {
+            {
+                tracing::info!("local sync requested");
+                if let (Some(url), Some(token)) = (&server_url, &server_token) {
+                    if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
+                        tracing::warn!("local skills sync failed: {e}");
+                    }
+                    if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
+                        tracing::warn!("local MCP servers sync failed: {e}");
+                    }
+                }
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys().await;
+            }
+        };
+    }
+
     loop {
         tokio::select! {
             _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
@@ -385,6 +408,9 @@ pub async fn run(
                 if let Some(rx) = &mut push_rx { rx.recv().await } else { std::future::pending().await }
             } => {
                 handle_push_cmd!(cmd);
+            }
+            Some(()) = sync_rx.recv() => {
+                handle_local_sync!();
             }
             Some(cmd) = async {
                 #[cfg(feature = "relay")]

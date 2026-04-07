@@ -1,11 +1,14 @@
 use mac_mgmt_common::{ServiceStatus, StatusResponse};
 use rocket::serde::json::Json;
-use rocket::{get, routes, State};
+use rocket::{get, post, routes, State};
 use serde::Serialize;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::log_buffer::LogBuffer;
 use crate::metrics::Metrics;
+
+pub type SyncTrigger = mpsc::Sender<()>;
 
 #[get("/metrics")]
 fn metrics_endpoint(metrics: &State<Arc<Metrics>>) -> String {
@@ -71,9 +74,21 @@ fn logs_endpoint(
     Json(LogsResponse { lines, index })
 }
 
+#[derive(Serialize)]
+struct SyncResponse {
+    triggered: bool,
+}
+
+#[post("/sync")]
+async fn sync_endpoint(trigger: &State<SyncTrigger>) -> Json<SyncResponse> {
+    let triggered = trigger.send(()).await.is_ok();
+    Json(SyncResponse { triggered })
+}
+
 pub fn build_rocket(
     metrics: Arc<Metrics>,
     log_buf: LogBuffer,
+    sync_trigger: SyncTrigger,
     port: u16,
 ) -> rocket::Rocket<rocket::Build> {
     let config = rocket::Config {
@@ -86,8 +101,9 @@ pub fn build_rocket(
     rocket::custom(config)
         .manage(metrics)
         .manage(log_buf)
+        .manage(sync_trigger)
         .mount(
             "/",
-            routes![metrics_endpoint, status_endpoint, logs_endpoint],
+            routes![metrics_endpoint, status_endpoint, logs_endpoint, sync_endpoint],
         )
 }

@@ -98,6 +98,8 @@ enum Commands {
     EnableSsh,
     /// Disable remote SSH access via the relay
     DisableSsh,
+    /// Trigger an immediate sync of skills, MCP servers, and SSH keys
+    Sync,
     /// View service logs
     Logs {
         /// Service name (e.g., "ollama"). Shows all services if omitted.
@@ -184,6 +186,9 @@ async fn main() -> Result<()> {
         Commands::Status { port } => status::print_status(port).await?,
         Commands::Logs { service, lines, follow } => {
             logs::tail_logs(service.as_deref(), lines, follow, None).await?;
+        }
+        Commands::Sync => {
+            logs::trigger_sync(None).await?;
         }
         Commands::CheckConfig => {
             let cfg = config::load().await.map_err(|e| {
