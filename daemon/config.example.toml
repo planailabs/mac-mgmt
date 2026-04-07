@@ -127,5 +127,5 @@ flavour = "cpu"
 # controls whether inbound SSH sessions are accepted. This can also be
 # toggled at runtime via the FIFO (~/.config/mac-mgmt/remote-ssh).
 # [relay]
-# url = "https://relay.example.com"
+# url = "wss://relay.example.com"
 # remote_ssh_enabled = false

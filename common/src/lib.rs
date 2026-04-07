@@ -646,6 +646,19 @@ pub struct RelayConfig {
     pub remote_ssh_enabled: bool,
 }
 
+impl RelayConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(url) = &self.url {
+            if !url.starts_with("ws://") && !url.starts_with("wss://") {
+                return Err(ValidationError(format!(
+                    "relay.url must start with ws:// or wss:// (got '{url}')"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 // ── Daemon Config (full config including server section) ────────────────
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -710,6 +723,7 @@ impl DaemonConfig {
         config.global.validate().map_err(|e| e.to_string())?;
         config.ollama.validate().map_err(|e| e.to_string())?;
         config.nexa.validate().map_err(|e| e.to_string())?;
+        config.relay.validate().map_err(|e| e.to_string())?;
         Ok(config)
     }
 }

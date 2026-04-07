@@ -64,10 +64,9 @@ async fn connect_and_run(
     outgoing_rx: &mut mpsc::Receiver<String>,
 ) -> Result<()> {
     let host = extract_host(&config.url)?;
-    let ws_url = to_ws_scheme(&config.url);
 
     let request = tokio_tungstenite::tungstenite::http::Request::builder()
-        .uri(ws_url.parse::<Uri>()?)
+        .uri(config.url.parse::<Uri>()?)
         .header("Authorization", format!("Bearer {}", config.auth_token))
         .header(
             "Sec-WebSocket-Key",
@@ -118,24 +117,10 @@ async fn connect_and_run(
     }
 }
 
-/// Normalize a URL to use a WebSocket scheme. `https://` → `wss://`,
-/// `http://` → `ws://`, existing `ws(s)://` are left untouched.
-pub fn to_ws_scheme(url: &str) -> String {
-    if let Some(rest) = url.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else if let Some(rest) = url.strip_prefix("http://") {
-        format!("ws://{rest}")
-    } else {
-        url.to_string()
-    }
-}
-
 pub fn extract_host(url: &str) -> Result<String> {
     let url = url
         .strip_prefix("wss://")
         .or_else(|| url.strip_prefix("ws://"))
-        .or_else(|| url.strip_prefix("https://"))
-        .or_else(|| url.strip_prefix("http://"))
         .unwrap_or(url);
     let host = url.split('/').next().unwrap_or(url);
     Ok(host.to_string())
@@ -187,18 +172,6 @@ mod tests {
         assert_eq!(
             extract_host("ws://localhost:8080/ws").unwrap(),
             "localhost:8080"
-        );
-        assert_eq!(
-            extract_host("https://api.example.com").unwrap(),
-            "api.example.com"
-        );
-        assert_eq!(
-            extract_host("http://127.0.0.1:3000").unwrap(),
-            "127.0.0.1:3000"
-        );
-        assert_eq!(
-            extract_host("bare.host.com/path").unwrap(),
-            "bare.host.com"
         );
     }
 }
