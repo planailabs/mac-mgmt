@@ -42,6 +42,19 @@
         mac-mgmt-server = pkgs.callPackage ./server/package.nix { };
         mac-mgmt-relay = pkgs.callPackage ./relay/package.nix { };
         relay-ssh = pkgs.callPackage ./relay-ssh/package.nix { };
+
+        # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
+        # `-framework CoreFoundation` etc when cross-compiling Apple targets
+        # from Linux. We pull the .src out of nixpkgs' darwin.apple_sdk_11_0
+        # (a plain fetchurl FOD) and extract it with a Linux runCommand —
+        # this avoids needing to build any darwin stdenv on the host.
+        macosx-sdk = let
+          darwinPkgs = import nixpkgs { system = "aarch64-darwin"; };
+          sdkSrc = darwinPkgs.darwin.apple_sdk_11_0.MacOSX-SDK.src;
+        in pkgs.runCommand "MacOSX-SDK" {} ''
+          mkdir -p $out
+          tar -xf ${sdkSrc} -C $out --strip-components=1
+        '';
       in
       {
         devShells.default = pkgs.mkShell {
@@ -74,6 +87,7 @@
         packages.server = mac-mgmt-server;
         packages.relay = mac-mgmt-relay;
         packages.relay-ssh = relay-ssh;
+        packages.macosx-sdk = macosx-sdk;
 
         checks = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           relay-integration = pkgs.callPackage ./tests/relay.nix {

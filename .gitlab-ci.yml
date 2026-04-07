@@ -1,6 +1,5 @@
 stages:
   - build
-  - upload
 
 build:
   stage: build
@@ -9,29 +8,6 @@ build:
   only:
     - trunk
   script:
-    - nix develop -c bash daemon/build.sh
-  artifacts:
-    paths:
-      - mac-mgmt.tar.gz
+    - bash xzar-install.sh
+    - nix develop -c bash xzar.sh
 
-upload_dev:
-  stage: upload
-  tags:
-    - nix
-  only:
-    - trunk
-  needs:
-    - build
-  script:
-    - nix develop -c bash daemon/upload.sh dev
-
-upload_prod:
-  stage: upload
-  tags:
-    - nix
-  only:
-    - prod
-  needs:
-    - build
-  script:
-    - nix develop -c bash daemon/upload.sh prod
