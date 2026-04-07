@@ -203,7 +203,7 @@ pub async fn get_config(
 
 // ── Update target (for daemon self-update) ──────────────────────────
 
-pub(crate) use mac_mgmt_common::UpdateTarget;
+pub(crate) use mac_mgmt_common::{NixpkgsPin, UpdateTarget};
 
 #[utoipa::path(
     get,
@@ -256,6 +256,56 @@ pub async fn get_update_target(
     Ok(Json(UpdateTarget {
         target_version: pinned,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/nixpkgs",
+    tag = "Sync",
+    summary = "Get the target nixpkgs commit for this daemon",
+    description = "Returns the commit the daemon should pin nixpkgs to. If an active rollout targeting this customer carries a nixpkgs_commit, that wins; otherwise returns the customer's persistent pin. Null means use the rolling default source.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Nixpkgs pin"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
+#[rocket::get("/nixpkgs")]
+pub async fn get_nixpkgs_pin(
+    auth: SyncAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<NixpkgsPin>, Status> {
+    // Active rollout for this customer (mirrors get_update_target).
+    // Outer Option = "rollout row found?", inner Option = nullable column.
+    let rollout_commit: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT r.nixpkgs_commit FROM rollouts r \
+         JOIN rollout_stages rs ON rs.rollout_id = r.id \
+         WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE customer_id = $1)) \
+           AND r.status = 'rolling' \
+           AND rs.status = 'rolling' \
+         ORDER BY r.created_at DESC LIMIT 1",
+    )
+    .bind(auth.customer_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if let Some(Some(commit)) = rollout_commit {
+        return Ok(Json(NixpkgsPin { commit: Some(commit) }));
+    }
+
+    // Fall back to customer's persistent pin.
+    let pinned = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT nixpkgs_commit FROM customers WHERE id = $1",
+    )
+    .bind(auth.customer_id)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(NixpkgsPin { commit: pinned }))
 }
 
 #[derive(sqlx::FromRow)]
@@ -2272,6 +2322,10 @@ pub(crate) struct CreateRolloutBody {
     target_version: String,
     /// Ordered list of group IDs for the rollout stages
     group_ids: Vec<Uuid>,
+    /// Optional nixpkgs commit SHA to pin alongside the version. Null leaves
+    /// each customer's existing nixpkgs pin untouched.
+    #[serde(default)]
+    nixpkgs_commit: Option<String>,
 }
 
 #[utoipa::path(
@@ -2308,6 +2362,16 @@ pub async fn admin_create_rollout(
         return Err(Status::BadRequest);
     }
 
+    // Validate nixpkgs_commit if present: 7-40 hex chars.
+    if let Some(commit) = &body.nixpkgs_commit {
+        let trimmed = commit.trim();
+        let valid = (7..=40).contains(&trimmed.len())
+            && trimmed.chars().all(|c| c.is_ascii_hexdigit());
+        if !valid {
+            return Err(Status::BadRequest);
+        }
+    }
+
     // Check which customers would be skipped (already at higher version)
     #[derive(sqlx::FromRow)]
     struct SkippedCustomer { name: String, pinned_version: String }
@@ -2335,9 +2399,10 @@ pub async fn admin_create_rollout(
 
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
 
-    sqlx::query("INSERT INTO rollouts (id, target_version) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO rollouts (id, target_version, nixpkgs_commit) VALUES ($1, $2, $3)")
         .bind(rollout_id)
         .bind(&body.target_version)
+        .bind(body.nixpkgs_commit.as_ref().map(|s| s.trim().to_string()))
         .execute(&mut *tx)
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -2411,6 +2476,7 @@ pub async fn admin_list_rollouts(
 pub(crate) struct RolloutDetail {
     id: Uuid,
     target_version: String,
+    nixpkgs_commit: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -2447,9 +2513,9 @@ pub async fn admin_get_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct RolloutRow2 { id: Uuid, target_version: String, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
+    struct RolloutRow2 { id: Uuid, target_version: String, nixpkgs_commit: Option<String>, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
 
-    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, status, created_at, updated_at FROM rollouts WHERE id = $1")
+    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, nixpkgs_commit, status, created_at, updated_at FROM rollouts WHERE id = $1")
         .bind(rid)
         .fetch_optional(pool.inner())
         .await
@@ -2472,6 +2538,7 @@ pub async fn admin_get_rollout(
     Ok(Json(RolloutDetail {
         id: rollout.id,
         target_version: rollout.target_version,
+        nixpkgs_commit: rollout.nixpkgs_commit,
         status: rollout.status,
         created_at: rollout.created_at,
         updated_at: rollout.updated_at,
@@ -2530,6 +2597,7 @@ pub async fn admin_start_rollout(
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
     Ok(Status::Ok)
 }
 
@@ -2603,6 +2671,7 @@ pub async fn admin_advance_rollout(
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
     Ok(Status::Ok)
 }
 
@@ -2668,8 +2737,8 @@ pub async fn admin_complete_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     // Get rollout target
-    let target_version: String = sqlx::query_scalar(
-        "SELECT target_version FROM rollouts WHERE id = $1",
+    let (target_version, nixpkgs_commit): (String, Option<String>) = sqlx::query_as(
+        "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
     )
     .bind(rid)
     .fetch_optional(pool.inner())
@@ -2710,8 +2779,30 @@ pub async fn admin_complete_rollout(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
+    // Persist nixpkgs commit (if the rollout carried one) to the same customers.
+    if let Some(commit) = &nixpkgs_commit {
+        sqlx::query(
+            "UPDATE customers SET nixpkgs_commit = $1 WHERE id IN (\
+             SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+             JOIN LATERAL ( \
+               SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+               UNION ALL \
+               SELECT id AS customer_id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+             ) rgm ON true \
+             WHERE rs.rollout_id = $2)",
+        )
+        .bind(commit)
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    }
+
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     super::push::notify_all_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    if nixpkgs_commit.is_some() {
+        super::push::notify_all_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
+    }
     Ok(Status::Ok)
 }
 

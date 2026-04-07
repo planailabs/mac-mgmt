@@ -1,11 +1,51 @@
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use crate::sentry_ext;
 
 const NIX_SOURCE_BASE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
+
+/// In-process pin: when set, all nix profile operations target this commit's
+/// GitLab archive tarball instead of the rolling CI-artifact source.
+static NIXPKGS_PIN: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+
+fn pin_cell() -> &'static RwLock<Option<String>> {
+    NIXPKGS_PIN.get_or_init(|| RwLock::new(None))
+}
+
+pub fn set_nixpkgs_commit(commit: Option<String>) {
+    *pin_cell().write().unwrap() = commit;
+}
+
+pub fn current_nixpkgs_commit() -> Option<String> {
+    pin_cell().read().unwrap().clone()
+}
+
+/// Standard GitLab repo archive tarball for a commit. System-agnostic;
+/// served by git.plan.ai without auth.
+fn nixpkgs_tarball_url(commit: &str) -> String {
+    format!(
+        "https://git.plan.ai/plan-ai/nixpkgs/-/archive/{commit}/nixpkgs-{commit}.tar.bz2"
+    )
+}
+
+/// Base flake URL (no `#attr`) for the desired state. Honours the per-customer
+/// pin if set, otherwise falls back to the legacy CI-artifact URL (which still
+/// carries the `_<system>` suffix).
+fn desired_flake_base() -> Result<String> {
+    if let Some(sha) = current_nixpkgs_commit() {
+        return Ok(nixpkgs_tarball_url(&sha));
+    }
+    let system = nix_current_system()?;
+    Ok(format!("{NIX_SOURCE_BASE}_{system}"))
+}
+
+pub fn desired_flake_ref(pkg: &str) -> Result<String> {
+    Ok(format!("{}#{pkg}", desired_flake_base()?))
+}
 
 fn nix_current_system() -> Result<&'static str> {
     static CACHED: OnceLock<Result<String, String>> = OnceLock::new();
@@ -25,11 +65,6 @@ fn nix_current_system() -> Result<&'static str> {
         Ok(s) => Ok(s.as_str()),
         Err(e) => anyhow::bail!("{e}"),
     }
-}
-
-fn nix_source() -> Result<String> {
-    let system = nix_current_system()?;
-    Ok(format!("{NIX_SOURCE_BASE}_{system}"))
 }
 
 /// Cached result of whether `nix profile upgrade --dry-run` is supported.
@@ -249,14 +284,31 @@ fn packages_with_upgrades_temp_profile() -> Result<Vec<String>> {
 
 /// Check which packages have upgrades available.
 /// Uses --dry-run if supported, otherwise falls back to temp profile comparison.
+/// Also unions in any installed packages whose flake URL has drifted from the
+/// desired one (e.g. the customer's nixpkgs pin moved) — those would not be
+/// caught by `nix profile upgrade --dry-run` since the flake ref itself changed.
 pub fn packages_with_upgrades() -> Result<Vec<String>> {
-    if has_dry_run_support() {
+    let mut result: Vec<String> = if has_dry_run_support() {
         tracing::debug!("using --dry-run for upgrade check");
-        packages_with_upgrades_dry_run()
+        packages_with_upgrades_dry_run()?
     } else {
         tracing::debug!("using temp profile for upgrade check");
-        packages_with_upgrades_temp_profile()
+        packages_with_upgrades_temp_profile()?
+    };
+
+    // Add packages whose installed flake URL no longer matches the desired one.
+    if let Ok(installed_urls) = profile_original_urls() {
+        if let Ok(desired_base) = desired_flake_base() {
+            for (name, url) in installed_urls {
+                if url != desired_base && !result.contains(&name) {
+                    tracing::info!("flake URL drift detected for {name}: {url} -> {desired_base}");
+                    result.push(name);
+                }
+            }
+        }
     }
+
+    Ok(result)
 }
 
 /// Remove a package from the nix profile by element name.
@@ -310,47 +362,10 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
     profile_install_with_nix("nix", pkg, upgrade)
 }
 
-/// Install or upgrade a package via `nix profile`, using the given nix binary path.
-fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<()> {
-    let source = nix_source()?;
-    let flake_ref = format!("{source}#{pkg}");
-    let action = if upgrade { "upgrade" } else { "install" };
-    tracing::info!("running nix profile {action} {pkg}");
-
-    let mut cmd = Command::new(nix_bin);
-    cmd.env("NIXPKGS_ALLOW_UNFREE", "1")
-        .env("NIXPKGS_ALLOW_INSECURE", "1")
-        .arg("profile");
-
-    if upgrade {
-        // nix profile upgrade uses the installed element name (part after #)
-        cmd.args(["upgrade", pkg]);
-    } else {
-        cmd.args(["add", &flake_ref]);
-    }
-
-    // --impure is needed when NIXPKGS_ALLOW_UNFREE is set
-    cmd.arg("--impure");
-
-    let status = cmd.status().with_context(|| format!("failed to run nix profile {action}"))?;
-
-    if !status.success() {
-        sentry_ext::capture_cmd_failure(
-            &format!("nix profile {action} {pkg}"),
-            status.code(),
-            "",
-        );
-        anyhow::bail!("nix profile {action} {pkg} failed");
-    }
-
-    tracing::info!("nix profile {action} {pkg} succeeded");
-    sentry_ext::breadcrumb("nix", &format!("nix profile {action} {pkg} succeeded"), &[("package", pkg)]);
-    Ok(())
-}
-
-/// Remove packages installed from the old NIX_SOURCE (without system suffix in the job name).
-/// The old source ended with `?job=build#pkg` while the new one ends with `?job=build_<system>#pkg`.
-pub fn remove_old_source_packages() -> Result<()> {
+/// Read `originalUrl` per element from `nix profile list --json`. Used to
+/// detect drift between the installed flake URL and the desired one (which
+/// may have moved if the customer's nixpkgs pin changed).
+fn profile_original_urls() -> Result<HashMap<String, String>> {
     let output = Command::new("nix")
         .args(["profile", "list", "--json"])
         .output()
@@ -366,25 +381,68 @@ pub fn remove_old_source_packages() -> Result<()> {
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
 
-    let Some(elements) = json.get("elements").and_then(|e| e.as_object()) else {
-        return Ok(());
-    };
-
-    for (name, element) in elements {
-        let url = element
-            .get("originalUrl")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        // Old source has originalUrl exactly equal to NIX_SOURCE_BASE (ending in ?job=build).
-        // New source will have ?job=build_<system> so won't match.
-        if url == NIX_SOURCE_BASE {
-            tracing::info!("removing package {name} from old nix source: {url}");
-            if let Err(e) = profile_remove(name) {
-                tracing::warn!("failed to remove old-source package {name}: {e}");
+    let mut result = HashMap::new();
+    if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
+        for (name, element) in elements {
+            if let Some(url) = element.get("originalUrl").and_then(|v| v.as_str()) {
+                result.insert(name.clone(), url.to_string());
             }
         }
     }
 
+    Ok(result)
+}
+
+/// Install or upgrade a package via `nix profile`, using the given nix binary path.
+/// When `upgrade` is set and the installed flake URL differs from the desired
+/// one (i.e. the customer's nixpkgs pin moved), use `nix profile replace` (a
+/// verb available in this project's nix fork) to swap the package over.
+fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<()> {
+    let desired = desired_flake_ref(pkg)?;
+    let desired_base = desired_flake_base()?;
+
+    let mut cmd = Command::new(nix_bin);
+    cmd.env("NIXPKGS_ALLOW_UNFREE", "1")
+        .env("NIXPKGS_ALLOW_INSECURE", "1")
+        .arg("profile");
+
+    let action = if upgrade {
+        let installed_url = profile_original_urls()
+            .ok()
+            .and_then(|m| m.get(pkg).cloned());
+        if installed_url.as_deref() != Some(desired_base.as_str()) {
+            // Pin moved (or installed under a different URL) → replace
+            // atomically using the fork's `nix profile replace` verb.
+            cmd.args(["replace", pkg, &desired]);
+            "replace"
+        } else {
+            // Same URL → in-place upgrade.
+            cmd.args(["upgrade", pkg]);
+            "upgrade"
+        }
+    } else {
+        cmd.args(["add", &desired]);
+        "install"
+    };
+
+    // --impure is needed when NIXPKGS_ALLOW_UNFREE is set
+    cmd.arg("--impure");
+
+    tracing::info!("running nix profile {action} {pkg}");
+
+    let status = cmd.status().with_context(|| format!("failed to run nix profile {action}"))?;
+
+    if !status.success() {
+        sentry_ext::capture_cmd_failure(
+            &format!("nix profile {action} {pkg}"),
+            status.code(),
+            "",
+        );
+        anyhow::bail!("nix profile {action} {pkg} failed");
+    }
+
+    tracing::info!("nix profile {action} {pkg} succeeded");
+    sentry_ext::breadcrumb("nix", &format!("nix profile {action} {pkg} succeeded"), &[("package", pkg)]);
     Ok(())
 }
 

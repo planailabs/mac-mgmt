@@ -9,6 +9,7 @@ use crate::web::app::Route;
 struct RolloutInfo {
     id: Uuid,
     target_version: String,
+    nixpkgs_commit: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
     stages: Vec<StageInfo>,
@@ -39,12 +40,13 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     struct RRow {
         id: Uuid,
         target_version: String,
+        nixpkgs_commit: Option<String>,
         status: String,
         created_at: DateTime<Utc>,
     }
 
     let rollout = sqlx::query_as::<_, RRow>(
-        "SELECT id, target_version, status, created_at FROM rollouts WHERE id = $1",
+        "SELECT id, target_version, nixpkgs_commit, status, created_at FROM rollouts WHERE id = $1",
     )
     .bind(rid)
     .fetch_one(&pool)
@@ -111,6 +113,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     Ok(RolloutInfo {
         id: rollout.id,
         target_version: rollout.target_version,
+        nixpkgs_commit: rollout.nixpkgs_commit,
         status: rollout.status,
         created_at: rollout.created_at,
         stages: stages
@@ -166,6 +169,7 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
         }
         "advance" => {
             #[derive(sqlx::FromRow)]
@@ -216,6 +220,7 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
         }
         "pause" => {
             let mut tx = pool
@@ -259,10 +264,11 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
         }
         "complete" => {
-            let target_version: String = sqlx::query_scalar(
-                "SELECT target_version FROM rollouts WHERE id = $1",
+            let (target_version, nixpkgs_commit): (String, Option<String>) = sqlx::query_as(
+                "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
             )
             .bind(rid)
             .fetch_one(&pool)
@@ -300,10 +306,30 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
+            if let Some(commit) = &nixpkgs_commit {
+                sqlx::query(
+                    "UPDATE customers SET nixpkgs_commit = $1 WHERE id IN (\
+                     SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+                     JOIN LATERAL ( \
+                       SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+                       UNION ALL \
+                       SELECT id AS customer_id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                     ) rgm ON true \
+                     WHERE rs.rollout_id = $2)",
+                )
+                .bind(commit)
+                .bind(rid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            }
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             crate::api::push::notify_all_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
+            if nixpkgs_commit.is_some() {
+                crate::api::push::notify_all_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
+            }
         }
         "delete" => {
             sqlx::query("DELETE FROM rollouts WHERE id = $1")
@@ -535,6 +561,9 @@ pub fn RolloutDetail(id: String) -> Element {
                 h3 { class: "text-lg font-semibold mb-2", "Target" }
                 div { class: "bg-gray-100 p-4 rounded text-sm space-y-1",
                     p { span { class: "font-medium", "Version: " } "{info.target_version}" }
+                    if let Some(commit) = &info.nixpkgs_commit {
+                        p { span { class: "font-medium", "Nixpkgs commit: " } code { class: "font-mono", "{commit}" } }
+                    }
                 }
             }
         }

@@ -88,12 +88,10 @@ pub async fn run(
 
     dispatcher.dispatch(&DaemonEvent::DaemonStarted);
 
-    // Remove packages installed from the old nix source (before per-system job names).
-    // Must run before ServiceManager::init which calls ensure_installed().
-    match tokio::task::spawn_blocking(crate::nix::remove_old_source_packages).await {
-        Ok(Err(e)) => tracing::warn!("old nix source cleanup failed: {e}"),
-        Err(e) => tracing::warn!("old nix source cleanup task panicked: {e}"),
-        _ => {}
+    // Fetch the customer's nixpkgs pin (if any) before ServiceManager::init runs
+    // ensure_installed(), so the very first install uses the pinned URL.
+    if let (Some(url), Some(token)) = (&server_url, &server_token) {
+        fetch_nixpkgs_pin(url, token).await;
     }
 
     #[cfg(feature = "services")]
@@ -193,6 +191,7 @@ pub async fn run(
                 // Fetch environment from server before self-update
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
                     fetch_target_version(url, token).await;
+                    fetch_nixpkgs_pin(url, token).await;
                 }
 
                 if in_upgrade_window!() {
@@ -360,6 +359,14 @@ pub async fn run(
                             tracing::info!("outside upgrade window, deferring self-update");
                         }
                     }
+                    crate::server_push::PushCommand::SyncNixpkgs => {
+                        tracing::info!("server push: sync nixpkgs pin");
+                        if let (Some(url), Some(token)) = (&server_url, &server_token) {
+                            fetch_nixpkgs_pin(url, token).await;
+                        }
+                        #[cfg(feature = "services")]
+                        svc_mgr.check_upgrades();
+                    }
                 }
             }
         };
@@ -429,6 +436,36 @@ async fn fetch_target_version(server_url: &str, server_token: &str) {
         }
         Err(_) => {
             tracing::debug!("update target fetch timed out");
+        }
+    }
+}
+
+/// Fetch the customer's nixpkgs commit pin from the server and apply it
+/// in-process. Subsequent `nix profile` operations will use this commit's
+/// GitLab archive tarball as the flake source.
+async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
+    let client = reqwest::Client::new();
+    let url = format!("{server_url}/api/nixpkgs");
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.get(&url).bearer_auth(server_token).send(),
+    )
+    .await
+    {
+        Ok(Ok(resp)) if resp.status().is_success() => {
+            if let Ok(pin) = resp.json::<mac_mgmt_common::NixpkgsPin>().await {
+                tracing::info!("server nixpkgs pin: {:?}", pin.commit);
+                crate::nix::set_nixpkgs_commit(pin.commit);
+            }
+        }
+        Ok(Ok(resp)) => {
+            tracing::debug!("nixpkgs pin fetch returned {}", resp.status());
+        }
+        Ok(Err(e)) => {
+            tracing::debug!("nixpkgs pin fetch failed: {e}");
+        }
+        Err(_) => {
+            tracing::debug!("nixpkgs pin fetch timed out");
         }
     }
 }

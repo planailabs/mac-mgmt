@@ -13,6 +13,7 @@ pub enum PushEvent {
     SyncMcpServers,
     SyncSshKeys,
     SelfUpdate,
+    SyncNixpkgs,
 }
 
 /// Daemon → server heartbeat body (`POST /api/heartbeat`).
@@ -31,6 +32,13 @@ pub struct HeartbeatBody {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTarget {
     pub target_version: Option<String>,
+}
+
+/// Server → daemon nixpkgs pin response (`GET /api/nixpkgs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NixpkgsPin {
+    /// Full git commit SHA. None means "use the rolling default source".
+    pub commit: Option<String>,
 }
 
 /// Single MCP server entry in the sync response (`GET /api/mcp-servers`).

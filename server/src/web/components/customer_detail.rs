@@ -74,6 +74,33 @@ async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnE
 }
 
 #[server]
+async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnError> {
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let c = commit.trim().to_string();
+    if c.is_empty() {
+        sqlx::query("UPDATE customers SET nixpkgs_commit = NULL WHERE id = $1")
+            .bind(uuid)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    } else {
+        let valid = (7..=40).contains(&c.len()) && c.chars().all(|ch| ch.is_ascii_hexdigit());
+        if !valid {
+            return Err(ServerFnError::new("commit must be 7-40 hex chars"));
+        }
+        sqlx::query("UPDATE customers SET nixpkgs_commit = $1 WHERE id = $2")
+            .bind(&c)
+            .bind(uuid)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    }
+    crate::api::push::notify_global(uuid, crate::api::push::PushMessage::SyncNixpkgs).await;
+    Ok(())
+}
+
+#[server]
 async fn delete_customer(id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
@@ -140,6 +167,7 @@ pub fn CustomerDetail(id: String) -> Element {
         Some(Ok(c)) => {
             let created = c.created_at.format("%Y-%m-%d %H:%M").to_string();
             let pinned = c.pinned_version.clone();
+            let nix_commit = c.nixpkgs_commit.clone();
             let cid = c.id.to_string();
             let cid2 = cid.clone();
             let name = c.name.clone();
@@ -222,6 +250,7 @@ pub fn CustomerDetail(id: String) -> Element {
                 div { class: "text-gray-500 mb-6 flex items-center gap-4 flex-wrap",
                     span { "Created: {created}" }
                     PinnedVersion { customer_id: cid2.clone(), version: pinned.clone(), on_change: move |_| customer.restart() }
+                    NixpkgsCommit { customer_id: cid2.clone(), commit: nix_commit.clone(), on_change: move |_| customer.restart() }
                     ActiveRollouts { customer_id: cid2.clone() }
                 }
 
@@ -384,6 +413,78 @@ fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventH
         rsx! {
             span { class: "flex items-center gap-1",
                 span { class: "text-gray-400", "No version pinned" }
+                button {
+                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    onclick: move |_| {
+                        draft.set(String::new());
+                        editing.set(true);
+                    },
+                    "Set"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn NixpkgsCommit(customer_id: String, commit: Option<String>, on_change: EventHandler) -> Element {
+    let mut editing = use_signal(|| false);
+    let mut draft = use_signal(String::new);
+
+    if *editing.read() {
+        let cid = customer_id.clone();
+        rsx! {
+            form {
+                class: "flex items-center gap-1",
+                onsubmit: move |evt: FormEvent| {
+                    evt.prevent_default();
+                    let cid = cid.clone();
+                    let val = draft.read().clone();
+                    async move {
+                        let _ = set_nixpkgs_commit(cid, val).await;
+                        editing.set(false);
+                        on_change.call(());
+                    }
+                },
+                span { "Nixpkgs: " }
+                input {
+                    class: "border border-gray-300 rounded px-2 py-0.5 text-sm font-mono w-64",
+                    r#type: "text",
+                    placeholder: "commit sha",
+                    value: "{draft}",
+                    oninput: move |e| draft.set(e.value()),
+                    autofocus: true,
+                }
+                button { class: "text-green-600 hover:text-green-800 text-sm", r#type: "submit", "Save" }
+                button {
+                    class: "text-gray-500 hover:text-gray-700 text-sm",
+                    r#type: "button",
+                    onclick: move |_| editing.set(false),
+                    "Cancel"
+                }
+            }
+        }
+    } else if let Some(c) = commit {
+        let display = c.clone();
+        let short: String = display.chars().take(12).collect();
+        rsx! {
+            span { class: "flex items-center gap-1",
+                span { "Nixpkgs: " }
+                span { class: "font-mono font-medium text-gray-700", title: "{display}", "{short}" }
+                button {
+                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    onclick: move |_| {
+                        draft.set(display.clone());
+                        editing.set(true);
+                    },
+                    "Edit"
+                }
+            }
+        }
+    } else {
+        rsx! {
+            span { class: "flex items-center gap-1",
+                span { class: "text-gray-400", "No nixpkgs pin" }
                 button {
                     class: "text-gray-400 hover:text-gray-600 text-sm",
                     onclick: move |_| {

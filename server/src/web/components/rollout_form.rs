@@ -48,6 +48,7 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
 async fn create_rollout(
     target_version: String,
     stage_ids: Vec<String>,
+    nixpkgs_commit: Option<String>,
 ) -> Result<String, ServerFnError> {
     let pool = crate::server_pool()?;
 
@@ -64,6 +65,19 @@ async fn create_rollout(
 
     if stage_ids.is_empty() {
         return Err(ServerFnError::new("select at least one stage"));
+    }
+
+    let nixpkgs_commit = nixpkgs_commit.and_then(|c| {
+        let t = c.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    });
+    if let Some(c) = &nixpkgs_commit {
+        let valid = (7..=40).contains(&c.len()) && c.chars().all(|ch| ch.is_ascii_hexdigit());
+        if !valid {
+            return Err(ServerFnError::new(
+                "nixpkgs commit must be 7-40 hex chars",
+            ));
+        }
     }
 
     let mut tx = pool
@@ -136,9 +150,10 @@ async fn create_rollout(
     }
 
     let rollout_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO rollouts (id, target_version) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO rollouts (id, target_version, nixpkgs_commit) VALUES ($1, $2, $3)")
         .bind(rollout_id)
         .bind(&target_version)
+        .bind(&nixpkgs_commit)
         .execute(&mut *tx)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -165,6 +180,7 @@ async fn create_rollout(
 pub fn RolloutForm() -> Element {
     let groups = use_server_future(move || async move { get_group_options().await })?;
     let mut target_version = use_signal(String::new);
+    let mut nixpkgs_commit = use_signal(String::new);
     let mut selected_stages = use_signal(Vec::<String>::new);
     let mut error = use_signal(|| Option::<String>::None);
     let nav = navigator();
@@ -195,6 +211,20 @@ pub fn RolloutForm() -> Element {
                         }
                         p { class: "text-xs text-gray-400 mt-1",
                             "Semver version to roll out. Downgrades are blocked."
+                        }
+                    }
+                    div {
+                        label { class: "block text-sm font-medium text-gray-700 mb-1",
+                            "Nixpkgs Commit (optional)"
+                        }
+                        input {
+                            class: "w-full border rounded px-3 py-2 text-sm font-mono",
+                            placeholder: "e.g. 170a4b510ad7ee95dde01adf2fe21704498dbb5c",
+                            value: "{nixpkgs_commit}",
+                            oninput: move |e| nixpkgs_commit.set(e.value()),
+                        }
+                        p { class: "text-xs text-gray-400 mt-1",
+                            "Pin the nixpkgs source to this commit. Leave blank to leave each customer's existing pin untouched."
                         }
                     }
                     div {
@@ -296,6 +326,10 @@ pub fn RolloutForm() -> Element {
                         onclick: move |_| {
                             let ver = target_version.read().clone();
                             let stages = selected_stages.read().clone();
+                            let commit = {
+                                let c = nixpkgs_commit.read().trim().to_string();
+                                if c.is_empty() { None } else { Some(c) }
+                            };
                             async move {
                                 if ver.trim().is_empty() {
                                     error.set(Some("Target version is required".into()));
@@ -305,7 +339,7 @@ pub fn RolloutForm() -> Element {
                                     error.set(Some("Select at least one stage".into()));
                                     return;
                                 }
-                                match create_rollout(ver, stages).await {
+                                match create_rollout(ver, stages, commit).await {
                                     Ok(id) => {
                                         nav.push(Route::RolloutDetail { id });
                                     }
