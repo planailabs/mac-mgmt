@@ -76,6 +76,14 @@ enum Commands {
         /// Force update even if already on the latest version
         #[arg(long)]
         force: bool,
+        /// Override the target version (used by integration tests).
+        #[arg(long)]
+        version: Option<String>,
+        /// Override the nix store path containing `bin/mac-mgmt` for the
+        /// override version. Used by integration tests to exercise the
+        /// `nix-store --realise` + self-replace flow without a server.
+        #[arg(long)]
+        store_path: Option<String>,
     },
     /// Validate the config file and exit
     CheckConfig,
@@ -161,7 +169,10 @@ async fn main() -> Result<()> {
         }
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]
-        Commands::Update { force } => {
+        Commands::Update { force, version, store_path } => {
+            if let Some(v) = version {
+                self_update::set_target(v, store_path);
+            }
             tokio::task::spawn_blocking(move || self_update::apply(force))
                 .await??;
         }

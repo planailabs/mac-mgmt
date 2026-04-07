@@ -210,15 +210,24 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
 /// path), so this command just triggers an immediate apply against
 /// whatever target the in-process state holds — useful when the daemon
 /// is running and has already fetched a target.
-pub fn apply(_force: bool) -> Result<()> {
+pub fn apply(force: bool) -> Result<()> {
     let _ = update_base; // silence dead-code warning for retired path
     let t = target();
-    if t.version.is_none() {
+    let Some(version) = t.version else {
         println!(
             "no target version known in this process; updates are driven by the server"
         );
         return Ok(());
+    };
+
+    if force {
+        let store_path = t.store_path.context(
+            "--force requires a store path; pass --store-path or rely on the server",
+        )?;
+        apply_store_path(&version, &store_path)?;
+        return Ok(());
     }
+
     check_and_apply();
     Ok(())
 }
