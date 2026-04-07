@@ -1,0 +1,9 @@
+# Address to listen on for WebSocket + REST API
+listen_addr = "0.0.0.0:8080"
+
+# Port range for dynamically allocated SSH tunnels
+ssh_port_min = 30000
+ssh_port_max = 40000
+
+# mac-mgmt server API URL, used to validate tokens
+server_api_url = "http://localhost:7378"

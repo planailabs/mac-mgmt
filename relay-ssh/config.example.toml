@@ -1,0 +1,6 @@
+# Default location: ~/.config/relay-ssh/config.toml
+# Both fields can be overridden by --relay/--token CLI flags
+# or the RELAY_URL / RELAY_TOKEN environment variables.
+
+relay_url = "https://relay.example.com"
+token = "replace-with-admin-or-setting-token"
