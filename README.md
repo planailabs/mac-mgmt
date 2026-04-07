@@ -108,20 +108,31 @@ The server (`mac-mgmt-server`) is a Dioxus fullstack application that provides:
 
 ### Running the server
 
+From the repo root inside `nix develop` (which provides `dx`, `node`,
+`cargo`, and the wasm toolchain):
+
 ```bash
-# Enter the dev shell (provides dx, node, wasm tooling)
+# 1. Enter the dev shell
 nix develop
 
-# Set database URL
-export DATABASE_URL="postgres://user:pass@localhost/mac_mgmt"
+# 2. Create config.toml from the example (edit as needed)
+cp server/config.example.toml server/config.toml
 
-# Development mode (hot-reload)
-cd server
-dx serve
+# 3. (Optional) If you don't have Postgres, start one via docker compose.
+#    The connection URL is already wired up in the example config.
+docker compose up -d
 
-# Production build
-dx build --release
+# 4. Install JS deps and build the Tailwind stylesheet
+#    (re-run npm run tailwind whenever styles change; or leave it running)
+cd server && npm install && npm run tailwind
+
+# 5. Start the Dioxus fullstack dev server
+#    (web UI on :3000, daemon API on :8080, hot-reload enabled,
+#     migrations run automatically on startup)
+cd server && dx serve
 ```
+
+For a production build, use `dx build --release` instead of `dx serve`.
 
 Migrations run automatically on startup. The server creates three tables: `customers`, `tokens`, and `customer_configs`.
 
