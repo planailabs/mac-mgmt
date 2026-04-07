@@ -121,6 +121,12 @@ impl GetRowData<VersionData> for Customer {
     }
 }
 
+impl GetRowData<NixpkgsCommitData> for Customer {
+    fn get(&self) -> NixpkgsCommitData {
+        NixpkgsCommitData(self.nixpkgs_commit.clone())
+    }
+}
+
 // ── GetRowData: Skill (Link by slug + Name text + CreatedAt) ────────
 
 impl GetRowData<LinkData> for Skill {
@@ -400,6 +406,59 @@ impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
     fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
         let a: VersionData = a.get();
         let b: VersionData = b.get();
+        a.0.cmp(&b.0)
+    }
+}
+
+// ── Nixpkgs commit column ───────────────────────────────────────────
+
+#[derive(Clone, PartialEq)]
+pub struct NixpkgsCommitData(pub Option<String>);
+
+#[derive(Clone, PartialEq)]
+pub struct NixpkgsCommitColumn;
+
+impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitColumn {
+    fn column_name(&self) -> String {
+        "nixpkgs".into()
+    }
+
+    fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
+        let indicator = sort_indicator(context);
+        rsx! {
+            th {
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                onclick: move |_| toggle_sort(context),
+                "Nixpkgs {indicator}"
+            }
+        }
+    }
+
+    fn render_cell(
+        &self,
+        _context: ColumnContext,
+        row: &R,
+        _attributes: Vec<Attribute>,
+    ) -> Element {
+        let data: NixpkgsCommitData = row.get();
+        match data.0 {
+            Some(commit) => {
+                let short = commit.chars().take(7).collect::<String>();
+                rsx! {
+                    td { class: "px-6 py-4",
+                        span { class: "font-mono text-sm text-gray-700", "{short}" }
+                    }
+                }
+            }
+            None => rsx! {
+                td { class: "px-6 py-4 text-gray-400 text-sm", "-" }
+            },
+        }
+    }
+
+    fn compare(&self, a: &R, b: &R) -> std::cmp::Ordering {
+        let a: NixpkgsCommitData = a.get();
+        let b: NixpkgsCommitData = b.get();
         a.0.cmp(&b.0)
     }
 }

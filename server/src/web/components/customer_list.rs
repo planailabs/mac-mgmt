@@ -45,7 +45,7 @@ pub fn CustomerList() -> Element {
 
                 let total = list.len();
                 let data = use_tabular(
-                    (LinkColumn { header: "Name" }, VersionColumn, CreatedAtColumn),
+                    (LinkColumn { header: "Name" }, VersionColumn, NixpkgsCommitColumn, CreatedAtColumn),
                     filtered.into(),
                 );
                 let all_rows: Vec<_> = data.rows().collect();
