@@ -180,7 +180,7 @@ pub struct RolloutGroupMember {
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct Rollout {
     pub id: Uuid,
-    pub target_version: String,
+    pub target_version: Option<String>,
     pub nixpkgs_commit: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,

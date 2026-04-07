@@ -29,6 +29,11 @@ async fn get_group_detail(id: String) -> Result<GroupInfo, ServerFnError> {
     let gid: Uuid = id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if gid == Uuid::nil() {
+        return Err(ServerFnError::new(
+            "the all-customers group is implicit and has no detail page",
+        ));
+    }
 
     #[derive(sqlx::FromRow)]
     struct GRow {

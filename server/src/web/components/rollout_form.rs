@@ -46,21 +46,21 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
 /// the sentinel is present instead of joining through `rollout_group_members`.
 #[server]
 async fn create_rollout(
-    target_version: String,
+    target_version: Option<String>,
     stage_ids: Vec<String>,
     nixpkgs_commit: Option<String>,
 ) -> Result<String, ServerFnError> {
     let pool = crate::server_pool()?;
 
-    if target_version.trim().is_empty() {
-        return Err(ServerFnError::new("target version is required"));
-    }
-
-    let parts: Vec<&str> = target_version.trim().split('.').collect();
-    if parts.len() < 3 || parts.iter().any(|p| p.parse::<u64>().is_err()) {
-        return Err(ServerFnError::new(
-            "version must be semver (e.g., 0.1.6)",
-        ));
+    let target_version = target_version.and_then(|v| {
+        let t = v.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    });
+    if let Some(v) = &target_version {
+        let parts: Vec<&str> = v.split('.').collect();
+        if parts.len() < 3 || parts.iter().any(|p| p.parse::<u64>().is_err()) {
+            return Err(ServerFnError::new("version must be semver (e.g., 0.1.6)"));
+        }
     }
 
     if stage_ids.is_empty() {
@@ -78,6 +78,12 @@ async fn create_rollout(
                 "nixpkgs commit must be 7-40 hex chars",
             ));
         }
+    }
+
+    if target_version.is_none() && nixpkgs_commit.is_none() {
+        return Err(ServerFnError::new(
+            "set at least one of target version or nixpkgs commit",
+        ));
     }
 
     let mut tx = pool
@@ -99,54 +105,55 @@ async fn create_rollout(
         }
     }
 
-    // Downgrade check: list customers that would be downgraded, with their groups
-    #[derive(sqlx::FromRow)]
-    struct DowngradeRow {
-        customer_name: String,
-        pinned_version: String,
-        group_name: String,
-    }
-
-    let downgrades = sqlx::query_as::<_, DowngradeRow>(
-        "SELECT DISTINCT c.name AS customer_name, c.pinned_version, rg.name AS group_name \
-         FROM unnest($1::uuid[]) AS gid \
-         JOIN rollout_groups rg ON rg.id = gid \
-         JOIN LATERAL ( \
-           SELECT customer_id FROM rollout_group_members WHERE group_id = gid \
-           UNION ALL \
-           SELECT id FROM customers WHERE gid = '00000000-0000-0000-0000-000000000000'::uuid \
-         ) rgm ON true \
-         JOIN customers c ON c.id = rgm.customer_id \
-         WHERE c.pinned_version IS NOT NULL \
-           AND c.pinned_version > $2 \
-         ORDER BY c.name, rg.name",
-    )
-    .bind(&resolved)
-    .bind(target_version.trim())
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if !downgrades.is_empty() {
-        // Group by customer
-        let mut by_customer: std::collections::BTreeMap<String, (String, Vec<String>)> =
-            std::collections::BTreeMap::new();
-        for d in &downgrades {
-            by_customer
-                .entry(d.customer_name.clone())
-                .or_insert_with(|| (d.pinned_version.clone(), Vec::new()))
-                .1
-                .push(d.group_name.clone());
+    // Downgrade check: only meaningful when a target_version is set.
+    if let Some(ver) = &target_version {
+        #[derive(sqlx::FromRow)]
+        struct DowngradeRow {
+            customer_name: String,
+            pinned_version: String,
+            group_name: String,
         }
-        let details: Vec<String> = by_customer
-            .into_iter()
-            .map(|(name, (ver, groups))| format!("{name} (v{ver}, in: {})", groups.join(", ")))
-            .collect();
-        return Err(ServerFnError::new(format!(
-            "Would downgrade to {}: {}",
-            target_version.trim(),
-            details.join("; ")
-        )));
+
+        let downgrades = sqlx::query_as::<_, DowngradeRow>(
+            "SELECT DISTINCT c.name AS customer_name, c.pinned_version, rg.name AS group_name \
+             FROM unnest($1::uuid[]) AS gid \
+             JOIN rollout_groups rg ON rg.id = gid \
+             JOIN LATERAL ( \
+               SELECT customer_id FROM rollout_group_members WHERE group_id = gid \
+               UNION ALL \
+               SELECT id FROM customers WHERE gid = '00000000-0000-0000-0000-000000000000'::uuid \
+             ) rgm ON true \
+             JOIN customers c ON c.id = rgm.customer_id \
+             WHERE c.pinned_version IS NOT NULL \
+               AND c.pinned_version > $2 \
+             ORDER BY c.name, rg.name",
+        )
+        .bind(&resolved)
+        .bind(ver)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        if !downgrades.is_empty() {
+            // Group by customer
+            let mut by_customer: std::collections::BTreeMap<String, (String, Vec<String>)> =
+                std::collections::BTreeMap::new();
+            for d in &downgrades {
+                by_customer
+                    .entry(d.customer_name.clone())
+                    .or_insert_with(|| (d.pinned_version.clone(), Vec::new()))
+                    .1
+                    .push(d.group_name.clone());
+            }
+            let details: Vec<String> = by_customer
+                .into_iter()
+                .map(|(name, (cur, groups))| format!("{name} (v{cur}, in: {})", groups.join(", ")))
+                .collect();
+            return Err(ServerFnError::new(format!(
+                "Would downgrade to {ver}: {}",
+                details.join("; ")
+            )));
+        }
     }
 
     let rollout_id = Uuid::new_v4();
@@ -324,15 +331,18 @@ pub fn RolloutForm() -> Element {
                     button {
                         class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                         onclick: move |_| {
-                            let ver = target_version.read().clone();
+                            let ver = {
+                                let v = target_version.read().trim().to_string();
+                                if v.is_empty() { None } else { Some(v) }
+                            };
                             let stages = selected_stages.read().clone();
                             let commit = {
                                 let c = nixpkgs_commit.read().trim().to_string();
                                 if c.is_empty() { None } else { Some(c) }
                             };
                             async move {
-                                if ver.trim().is_empty() {
-                                    error.set(Some("Target version is required".into()));
+                                if ver.is_none() && commit.is_none() {
+                                    error.set(Some("Set at least one of target version or nixpkgs commit".into()));
                                     return;
                                 }
                                 if stages.is_empty() {

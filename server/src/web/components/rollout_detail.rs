@@ -8,7 +8,7 @@ use crate::web::app::Route;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutInfo {
     id: Uuid,
-    target_version: String,
+    target_version: Option<String>,
     nixpkgs_commit: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
@@ -39,7 +39,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     #[derive(sqlx::FromRow)]
     struct RRow {
         id: Uuid,
-        target_version: String,
+        target_version: Option<String>,
         nixpkgs_commit: Option<String>,
         status: String,
         created_at: DateTime<Utc>,
@@ -100,7 +100,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
          GROUP BY rs.stage_order",
     )
     .bind(rid)
-    .bind(&rollout.target_version)
+    .bind(rollout.target_version.as_deref().unwrap_or(""))
     .fetch_all(&pool)
     .await
     .unwrap_or_default();
@@ -267,7 +267,7 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
         }
         "complete" => {
-            let (target_version, nixpkgs_commit): (String, Option<String>) = sqlx::query_as(
+            let (target_version, nixpkgs_commit): (Option<String>, Option<String>) = sqlx::query_as(
                 "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
             )
             .bind(rid)
@@ -291,21 +291,23 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
-            sqlx::query(
-                "UPDATE customers SET pinned_version = $1 WHERE id IN (\
-                 SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-                 JOIN LATERAL ( \
-                   SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
-                   UNION ALL \
-                   SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                 ) rgm ON true \
-                 WHERE rs.rollout_id = $2)",
-            )
-            .bind(&target_version)
-            .bind(rid)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            if let Some(version) = &target_version {
+                sqlx::query(
+                    "UPDATE customers SET pinned_version = $1 WHERE id IN (\
+                     SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+                     JOIN LATERAL ( \
+                       SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+                       UNION ALL \
+                       SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                     ) rgm ON true \
+                     WHERE rs.rollout_id = $2)",
+                )
+                .bind(version)
+                .bind(rid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            }
             if let Some(commit) = &nixpkgs_commit {
                 sqlx::query(
                     "UPDATE customers SET nixpkgs_commit = $1 WHERE id IN (\
@@ -560,7 +562,9 @@ pub fn RolloutDetail(id: String) -> Element {
                 // Target
                 h3 { class: "text-lg font-semibold mb-2", "Target" }
                 div { class: "bg-gray-100 p-4 rounded text-sm space-y-1",
-                    p { span { class: "font-medium", "Version: " } "{info.target_version}" }
+                    if let Some(ver) = &info.target_version {
+                        p { span { class: "font-medium", "Version: " } "{ver}" }
+                    }
                     if let Some(commit) = &info.nixpkgs_commit {
                         p { span { class: "font-medium", "Nixpkgs commit: " } code { class: "font-mono", "{commit}" } }
                     }

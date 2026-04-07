@@ -30,6 +30,7 @@ async fn get_rollout_groups() -> Result<Vec<GroupEntry>, ServerFnError> {
     let rows = sqlx::query_as::<_, Row>(
         "SELECT rg.id, rg.name, rg.description, COUNT(rgm.id) AS member_count \
          FROM rollout_groups rg LEFT JOIN rollout_group_members rgm ON rgm.group_id = rg.id \
+         WHERE rg.id != '00000000-0000-0000-0000-000000000000'::uuid \
          GROUP BY rg.id ORDER BY rg.name"
     )
     .fetch_all(&pool)

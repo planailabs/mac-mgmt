@@ -115,7 +115,7 @@ async fn delete_customer(id: String) -> Result<(), ServerFnError> {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ActiveRolloutEntry {
     id: String,
-    target_version: String,
+    target_version: Option<String>,
     status: String,
 }
 
@@ -127,7 +127,7 @@ async fn get_active_rollouts(customer_id: String) -> Result<Vec<ActiveRolloutEnt
     #[derive(sqlx::FromRow)]
     struct Row {
         id: uuid::Uuid,
-        target_version: String,
+        target_version: Option<String>,
         status: String,
     }
 
@@ -317,11 +317,15 @@ fn ActiveRollouts(customer_id: String) -> Element {
                     _ => "bg-gray-100 text-gray-800",
                 };
                 let rid = entry.id.clone();
+                let label = match &entry.target_version {
+                    Some(v) => format!("{} v{v}", entry.status),
+                    None => format!("{} (nixpkgs)", entry.status),
+                };
                 rsx! {
                     Link {
                         to: Route::RolloutDetail { id: rid },
                         class: "px-2 py-0.5 rounded text-xs font-medium {badge_class} hover:opacity-80",
-                        "{entry.status} v{entry.target_version}"
+                        "{label}"
                     }
                 }
             }

@@ -223,8 +223,10 @@ pub async fn get_update_target(
     auth: SyncAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<UpdateTarget>, Status> {
-    // Check for active rollout targeting this customer
-    let rollout_version = sqlx::query_scalar::<_, String>(
+    // Check for active rollout targeting this customer. The outer Option is
+    // "rollout row found?", inner is the nullable column (a rollout may carry
+    // only nixpkgs_commit and leave target_version unset).
+    let rollout_version: Option<Option<String>> = sqlx::query_scalar(
         "SELECT r.target_version FROM rollouts r \
          JOIN rollout_stages rs ON rs.rollout_id = r.id \
          WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
@@ -238,7 +240,7 @@ pub async fn get_update_target(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    if let Some(ver) = rollout_version {
+    if let Some(Some(ver)) = rollout_version {
         return Ok(Json(UpdateTarget {
             target_version: Some(ver),
         }));
@@ -2271,6 +2273,12 @@ pub async fn admin_add_group_member(
     body: Json<AddGroupMemberBody>,
 ) -> Result<Status, Status> {
     let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
+    if gid == Uuid::nil() {
+        // The "All Customers" sentinel group is implicit — every customer is
+        // a member by virtue of existing. Adding rows would be meaningless and
+        // confuses the resolver, which special-cases the nil UUID.
+        return Err(Status::Forbidden);
+    }
     sqlx::query("INSERT INTO rollout_group_members (group_id, customer_id) VALUES ($1, $2)")
         .bind(gid)
         .bind(body.customer_id)
@@ -2318,8 +2326,10 @@ pub async fn admin_remove_group_member(
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CreateRolloutBody {
-    /// Target version to roll out (semver, e.g., "0.1.6")
-    target_version: String,
+    /// Optional target version to roll out (semver, e.g., "0.1.6"). If null,
+    /// the rollout only changes the nixpkgs pin.
+    #[serde(default)]
+    target_version: Option<String>,
     /// Ordered list of group IDs for the rollout stages
     group_ids: Vec<Uuid>,
     /// Optional nixpkgs commit SHA to pin alongside the version. Null leaves
@@ -2348,52 +2358,65 @@ pub async fn admin_create_rollout(
     pool: &State<PgPool>,
     body: Json<CreateRolloutBody>,
 ) -> Result<Json<serde_json::Value>, Status> {
-    if body.target_version.trim().is_empty() {
-        return Err(Status::BadRequest);
-    }
-
-    // Validate semver
-    let target_parts: Vec<u64> = body
+    // Normalize target_version to None if empty/whitespace.
+    let target_version: Option<String> = body
         .target_version
-        .split('.')
-        .filter_map(|p| p.parse().ok())
-        .collect();
-    if target_parts.len() < 3 {
-        return Err(Status::BadRequest);
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    // Validate semver if a target version is given.
+    if let Some(ver) = &target_version {
+        let target_parts: Vec<u64> = ver.split('.').filter_map(|p| p.parse().ok()).collect();
+        if target_parts.len() < 3 {
+            return Err(Status::BadRequest);
+        }
     }
 
-    // Validate nixpkgs_commit if present: 7-40 hex chars.
-    if let Some(commit) = &body.nixpkgs_commit {
-        let trimmed = commit.trim();
-        let valid = (7..=40).contains(&trimmed.len())
-            && trimmed.chars().all(|c| c.is_ascii_hexdigit());
+    // Normalize + validate nixpkgs_commit if present: 7-40 hex chars.
+    let nixpkgs_commit: Option<String> = body
+        .nixpkgs_commit
+        .as_ref()
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty());
+    if let Some(commit) = &nixpkgs_commit {
+        let valid = (7..=40).contains(&commit.len())
+            && commit.chars().all(|c| c.is_ascii_hexdigit());
         if !valid {
             return Err(Status::BadRequest);
         }
     }
 
-    // Check which customers would be skipped (already at higher version)
-    #[derive(sqlx::FromRow)]
-    struct SkippedCustomer { name: String, pinned_version: String }
+    // Require at least one of target_version or nixpkgs_commit.
+    if target_version.is_none() && nixpkgs_commit.is_none() {
+        return Err(Status::BadRequest);
+    }
 
-    let skipped = sqlx::query_as::<_, SkippedCustomer>(
-        "SELECT c.name, c.pinned_version FROM customers c \
-         WHERE c.pinned_version IS NOT NULL \
-           AND c.pinned_version > $1 \
-           AND ('00000000-0000-0000-0000-000000000000'::uuid = ANY($2) \
-                OR c.id IN (\
-                  SELECT rgm.customer_id FROM rollout_group_members rgm \
-                  WHERE rgm.group_id = ANY($2)))",
-    )
-    .bind(&body.target_version)
-    .bind(&body.group_ids)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    // Check which customers would be skipped (already at higher version).
+    // Only meaningful when a target_version is given.
+    let skipped_names: Vec<String> = if let Some(ver) = &target_version {
+        #[derive(sqlx::FromRow)]
+        struct SkippedCustomer { name: String, pinned_version: String }
 
-    let skipped_names: Vec<String> = skipped.iter().map(|s| {
-        format!("{} (v{})", s.name, s.pinned_version)
-    }).collect();
+        let skipped = sqlx::query_as::<_, SkippedCustomer>(
+            "SELECT c.name, c.pinned_version FROM customers c \
+             WHERE c.pinned_version IS NOT NULL \
+               AND c.pinned_version > $1 \
+               AND ('00000000-0000-0000-0000-000000000000'::uuid = ANY($2) \
+                    OR c.id IN (\
+                      SELECT rgm.customer_id FROM rollout_group_members rgm \
+                      WHERE rgm.group_id = ANY($2)))",
+        )
+        .bind(ver)
+        .bind(&body.group_ids)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+        skipped.iter().map(|s| format!("{} (v{})", s.name, s.pinned_version)).collect()
+    } else {
+        Vec::new()
+    };
 
     let rollout_id = Uuid::new_v4();
 
@@ -2401,8 +2424,8 @@ pub async fn admin_create_rollout(
 
     sqlx::query("INSERT INTO rollouts (id, target_version, nixpkgs_commit) VALUES ($1, $2, $3)")
         .bind(rollout_id)
-        .bind(&body.target_version)
-        .bind(body.nixpkgs_commit.as_ref().map(|s| s.trim().to_string()))
+        .bind(&target_version)
+        .bind(&nixpkgs_commit)
         .execute(&mut *tx)
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -2475,7 +2498,7 @@ pub async fn admin_list_rollouts(
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RolloutDetail {
     id: Uuid,
-    target_version: String,
+    target_version: Option<String>,
     nixpkgs_commit: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
@@ -2513,7 +2536,7 @@ pub async fn admin_get_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct RolloutRow2 { id: Uuid, target_version: String, nixpkgs_commit: Option<String>, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
+    struct RolloutRow2 { id: Uuid, target_version: Option<String>, nixpkgs_commit: Option<String>, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
 
     let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, nixpkgs_commit, status, created_at, updated_at FROM rollouts WHERE id = $1")
         .bind(rid)
@@ -2737,7 +2760,7 @@ pub async fn admin_complete_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     // Get rollout target
-    let (target_version, nixpkgs_commit): (String, Option<String>) = sqlx::query_as(
+    let (target_version, nixpkgs_commit): (Option<String>, Option<String>) = sqlx::query_as(
         "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
     )
     .bind(rid)
@@ -2762,22 +2785,24 @@ pub async fn admin_complete_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    // Pin version for all targeted customers.
-    sqlx::query(
-        "UPDATE customers SET pinned_version = $1 WHERE id IN (\
-         SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
-         JOIN LATERAL ( \
-           SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
-           UNION ALL \
-           SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-         ) rgm ON true \
-         WHERE rs.rollout_id = $2)",
-    )
-    .bind(&target_version)
-    .bind(rid)
-    .execute(&mut *tx)
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    // Pin version for all targeted customers (only if the rollout carried one).
+    if let Some(version) = &target_version {
+        sqlx::query(
+            "UPDATE customers SET pinned_version = $1 WHERE id IN (\
+             SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+             JOIN LATERAL ( \
+               SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+               UNION ALL \
+               SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+             ) rgm ON true \
+             WHERE rs.rollout_id = $2)",
+        )
+        .bind(version)
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    }
 
     // Persist nixpkgs commit (if the rollout carried one) to the same customers.
     if let Some(commit) = &nixpkgs_commit {
