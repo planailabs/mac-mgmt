@@ -1,5 +1,6 @@
 [database]
-url = "postgres:///planai?host=/run/postgresql" 
+# url = "postgres:///planai?host=/run/postgresql" 
+url = "postgresql://planai:changeme123@localhost:5432/planai"
 
 [api]
 port = 7378
