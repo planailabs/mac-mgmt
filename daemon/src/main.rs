@@ -33,6 +33,7 @@ mod service;
 mod server_push;
 mod status;
 mod ws_reconnect;
+#[cfg(feature = "services")]
 mod services;
 
 #[derive(Parser)]

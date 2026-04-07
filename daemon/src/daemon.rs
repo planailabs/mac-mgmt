@@ -390,7 +390,7 @@ pub async fn run(
                 #[cfg(feature = "relay")]
                 { relay_mgr.recv_cmd().await }
                 #[cfg(not(feature = "relay"))]
-                { std::future::pending().await }
+                { std::future::pending::<Option<()>>().await }
             } => {
                 #[cfg(feature = "relay")]
                 relay_mgr.handle_cmd(cmd);
