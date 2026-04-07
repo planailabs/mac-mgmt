@@ -3,22 +3,19 @@ use russh::keys::{decode_secret_key, encode_pkcs8_pem, Algorithm, PrivateKey};
 use std::fs;
 use std::path::PathBuf;
 
-fn ssh_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/root"))
-        .join(".config/mac-mgmt/ssh")
-}
+use crate::config;
 
 fn host_key_path() -> PathBuf {
-    ssh_dir().join("host_ed25519_key")
+    config::config_dir().join("host_ed25519_key")
 }
 
 pub fn authorized_keys_path() -> PathBuf {
-    ssh_dir().join("authorized_keys")
+    config::config_dir().join("authorized_keys")
 }
 
 pub fn load_or_generate() -> Result<PrivateKey> {
     let path = host_key_path();
+    let dir = config::config_dir();
 
     if path.exists() {
         tracing::info!("loading host key from {}", path.display());
@@ -29,8 +26,7 @@ pub fn load_or_generate() -> Result<PrivateKey> {
         return Ok(key);
     }
 
-    tracing::info!("generating new Ed25519 host key");
-    let dir = ssh_dir();
+    tracing::info!("generating new Ed25519 host key at {}", path.display());
     fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create {}", dir.display()))?;
 
