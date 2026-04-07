@@ -77,13 +77,15 @@ pub fn BundleList() -> Element {
 
                 rsx! {
                     TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                    table { class: "min-w-full divide-y divide-gray-200",
-                        thead { class: "bg-gray-50",
-                            tr { TableHeaders { data } }
-                        }
-                        tbody { class: "bg-white divide-y divide-gray-200",
-                            for row in all_rows.into_iter().take(limit_val) {
-                                tr { key: "{row.key()}", TableCells { row } }
+                    div { class: "bg-white rounded shadow overflow-hidden",
+                        table { class: "min-w-full divide-y divide-gray-200",
+                            thead { class: "bg-gray-50",
+                                tr { TableHeaders { data } }
+                            }
+                            tbody { class: "bg-white divide-y divide-gray-200",
+                                for row in all_rows.into_iter().take(limit_val) {
+                                    tr { key: "{row.key()}", TableCells { row } }
+                                }
                             }
                         }
                     }

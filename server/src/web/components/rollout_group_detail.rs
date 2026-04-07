@@ -2,6 +2,8 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::web::components::table_utils::{SortableTh, TableToolbar};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupInfo {
     id: Uuid,
@@ -295,17 +297,45 @@ pub fn RolloutGroupDetail(id: String) -> Element {
 
                 if info.members.is_empty() {
                     p { class: "text-gray-500 text-sm", "No members yet." }
-                } else {
-                    div { class: "bg-white rounded shadow overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200",
-                            thead { class: "bg-gray-50",
-                                tr {
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Customer" }
-                                    th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase", "" }
+                } else {{
+                    let search = use_signal(String::new);
+                    let limit = use_signal(|| 20usize);
+                    let sort = use_signal(|| ("customer".to_string(), true));
+
+                    let mut filtered: Vec<MemberEntry> = {
+                        let q = search.read().to_lowercase();
+                        if q.is_empty() {
+                            info.members.clone()
+                        } else {
+                            info.members.iter()
+                                .filter(|m| m.customer_name.to_lowercase().contains(&q))
+                                .cloned().collect()
+                        }
+                    };
+                    {
+                        let (_key, asc) = sort.read().clone();
+                        filtered.sort_by(|a, b| {
+                            let ord = a.customer_name.to_lowercase().cmp(&b.customer_name.to_lowercase());
+                            if asc { ord } else { ord.reverse() }
+                        });
+                    }
+                    let total = info.members.len();
+                    let filtered_count = filtered.len();
+                    let limit_val = *limit.read();
+                    let shown = filtered_count.min(limit_val);
+
+                    rsx! {
+                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                        div { class: "bg-white rounded shadow overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200",
+                                thead { class: "bg-gray-50",
+                                    tr {
+                                        SortableTh { label: "Customer".to_string(), sort_key: "customer".to_string(), sort }
+                                        th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase", "" }
+                                    }
                                 }
-                            }
-                            tbody { class: "bg-white divide-y divide-gray-200",
-                                for m in &info.members {
+                                tbody { class: "bg-white divide-y divide-gray-200",
+                                    for m in filtered.into_iter().take(limit_val) {
                                     {
                                         let mid = m.member_id.to_string();
                                         rsx! {
@@ -335,6 +365,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                             }
                         }
                     }
+                }}
                 }
             }
         }

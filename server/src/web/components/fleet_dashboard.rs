@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::web::components::table_utils::{Searchable, TableToolbar};
+use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FleetEntry {
@@ -72,16 +72,31 @@ pub fn FleetDashboard() -> Element {
         Some(Ok(entries)) => {
             let search = use_signal(String::new);
             let limit = use_signal(|| 20usize);
+            let sort = use_signal(|| ("last_seen".to_string(), false));
 
             let entries_clone = entries.clone();
-            let filtered: Vec<&FleetEntry> = {
+            let mut filtered: Vec<FleetEntry> = {
                 let q = search.read().to_lowercase();
                 if q.is_empty() {
-                    entries_clone.iter().collect()
+                    entries_clone.clone()
                 } else {
-                    entries_clone.iter().filter(|e| e.matches_search(&q)).collect()
+                    entries_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
                 }
             };
+
+            {
+                let (key, asc) = sort.read().clone();
+                filtered.sort_by(|a, b| {
+                    let ord = match key.as_str() {
+                        "customer" => a.customer_name.to_lowercase().cmp(&b.customer_name.to_lowercase()),
+                        "hostname" => a.hostname.to_lowercase().cmp(&b.hostname.to_lowercase()),
+                        "env" => a.environment.to_lowercase().cmp(&b.environment.to_lowercase()),
+                        "version" => a.version.cmp(&b.version),
+                        _ => a.reported_at.cmp(&b.reported_at),
+                    };
+                    if asc { ord } else { ord.reverse() }
+                });
+            }
 
             let total = entries.len();
             let filtered_count = filtered.len();
@@ -98,13 +113,13 @@ pub fn FleetDashboard() -> Element {
                         table { class: "min-w-full divide-y divide-gray-200",
                             thead { class: "bg-gray-50",
                                 tr {
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Customer" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Hostname" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Env" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Version" }
+                                    SortableTh { label: "Customer".to_string(), sort_key: "customer".to_string(), sort }
+                                    SortableTh { label: "Hostname".to_string(), sort_key: "hostname".to_string(), sort }
+                                    SortableTh { label: "Env".to_string(), sort_key: "env".to_string(), sort }
+                                    SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Status" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Services" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Last Seen" }
+                                    SortableTh { label: "Last Seen".to_string(), sort_key: "last_seen".to_string(), sort }
                                 }
                             }
                             tbody { class: "bg-white divide-y divide-gray-200",

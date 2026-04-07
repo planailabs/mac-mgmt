@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::table_utils::{SortableTh, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionCustomer {
@@ -207,28 +208,59 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             "No store paths found in xzar for this version."
                         }
                     }
-                } else {
+                } else {{
+                    let search = use_signal(String::new);
+                    let limit = use_signal(|| 20usize);
+                    let sort = use_signal(|| ("system".to_string(), true));
+                    let list_clone = list.clone();
+                    let mut filtered: Vec<DaemonStorePath> = {
+                        let q = search.read().to_lowercase();
+                        if q.is_empty() {
+                            list_clone.clone()
+                        } else {
+                            list_clone.iter()
+                                .filter(|p| p.system.to_lowercase().contains(&q) || p.store_path.to_lowercase().contains(&q))
+                                .cloned().collect()
+                        }
+                    };
+                    {
+                        let (key, asc) = sort.read().clone();
+                        filtered.sort_by(|a, b| {
+                            let ord = match key.as_str() {
+                                "store_path" => a.store_path.cmp(&b.store_path),
+                                _ => a.system.cmp(&b.system),
+                            };
+                            if asc { ord } else { ord.reverse() }
+                        });
+                    }
+                    let total = list.len();
+                    let filtered_count = filtered.len();
+                    let limit_val = *limit.read();
+                    let shown = filtered_count.min(limit_val);
                     rsx! {
-                        table { class: "min-w-full divide-y divide-gray-200",
-                            thead { class: "bg-gray-50",
-                                tr {
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "System" }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Store Path" }
+                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                        div { class: "bg-white rounded shadow overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200",
+                                thead { class: "bg-gray-50",
+                                    tr {
+                                        SortableTh { label: "System".to_string(), sort_key: "system".to_string(), sort }
+                                        SortableTh { label: "Store Path".to_string(), sort_key: "store_path".to_string(), sort }
+                                    }
                                 }
-                            }
-                            tbody { class: "bg-white divide-y divide-gray-200",
-                                for p in list.iter() {
-                                    tr { key: "{p.system}",
-                                        td { class: "px-4 py-2 font-mono text-sm", "{p.system}" }
-                                        td { class: "px-4 py-2 font-mono text-xs text-gray-600 break-all",
-                                            "{p.store_path}"
+                                tbody { class: "bg-white divide-y divide-gray-200",
+                                    for p in filtered.into_iter().take(limit_val) {
+                                        tr { key: "{p.system}",
+                                            td { class: "px-6 py-4 font-mono text-sm", "{p.system}" }
+                                            td { class: "px-6 py-4 font-mono text-xs text-gray-600 break-all",
+                                                "{p.store_path}"
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
+                }}
             }
             Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
@@ -243,32 +275,63 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             "No daemons reporting this version."
                         }
                     }
-                } else {
+                } else {{
+                    let search = use_signal(String::new);
+                    let limit = use_signal(|| 20usize);
+                    let sort = use_signal(|| ("customer".to_string(), true));
+                    let list_clone = list.clone();
+                    let mut filtered: Vec<VersionCustomer> = {
+                        let q = search.read().to_lowercase();
+                        if q.is_empty() {
+                            list_clone.clone()
+                        } else {
+                            list_clone.iter()
+                                .filter(|c| c.name.to_lowercase().contains(&q))
+                                .cloned().collect()
+                        }
+                    };
+                    {
+                        let (key, asc) = sort.read().clone();
+                        filtered.sort_by(|a, b| {
+                            let ord = match key.as_str() {
+                                "instances" => a.instances.cmp(&b.instances),
+                                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                            };
+                            if asc { ord } else { ord.reverse() }
+                        });
+                    }
+                    let total = list.len();
+                    let filtered_count = filtered.len();
+                    let limit_val = *limit.read();
+                    let shown = filtered_count.min(limit_val);
                     rsx! {
-                        table { class: "min-w-full divide-y divide-gray-200",
-                            thead { class: "bg-gray-50",
-                                tr {
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Customer" }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Instances" }
+                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                        div { class: "bg-white rounded shadow overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200",
+                                thead { class: "bg-gray-50",
+                                    tr {
+                                        SortableTh { label: "Customer".to_string(), sort_key: "customer".to_string(), sort }
+                                        SortableTh { label: "Instances".to_string(), sort_key: "instances".to_string(), sort }
+                                    }
                                 }
-                            }
-                            tbody { class: "bg-white divide-y divide-gray-200",
-                                for c in list.iter() {
-                                    tr { key: "{c.id}",
-                                        td { class: "px-4 py-2 text-sm",
-                                            Link {
-                                                to: Route::CustomerDetail { id: c.id.to_string() },
-                                                class: "text-blue-600 hover:underline",
-                                                "{c.name}"
+                                tbody { class: "bg-white divide-y divide-gray-200",
+                                    for c in filtered.into_iter().take(limit_val) {
+                                        tr { key: "{c.id}",
+                                            td { class: "px-6 py-4 text-sm",
+                                                Link {
+                                                    to: Route::CustomerDetail { id: c.id.to_string() },
+                                                    class: "text-blue-600 hover:underline",
+                                                    "{c.name}"
+                                                }
                                             }
+                                            td { class: "px-6 py-4 text-sm text-gray-600", "{c.instances}" }
                                         }
-                                        td { class: "px-4 py-2 text-sm text-gray-600", "{c.instances}" }
                                     }
                                 }
                             }
                         }
                     }
-                }
+                }}
             }
             Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
@@ -281,32 +344,64 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     rsx! {
                         p { class: "text-gray-500 text-sm", "No rollouts target this version." }
                     }
-                } else {
+                } else {{
+                    let search = use_signal(String::new);
+                    let limit = use_signal(|| 20usize);
+                    let sort = use_signal(|| ("created".to_string(), false));
+                    let list_clone = list.clone();
+                    let mut filtered: Vec<VersionRollout> = {
+                        let q = search.read().to_lowercase();
+                        if q.is_empty() {
+                            list_clone.clone()
+                        } else {
+                            list_clone.iter()
+                                .filter(|r| r.id.to_string().to_lowercase().contains(&q) || r.status.to_lowercase().contains(&q))
+                                .cloned().collect()
+                        }
+                    };
+                    {
+                        let (key, asc) = sort.read().clone();
+                        filtered.sort_by(|a, b| {
+                            let ord = match key.as_str() {
+                                "rollout" => a.id.to_string().cmp(&b.id.to_string()),
+                                "status" => a.status.cmp(&b.status),
+                                _ => a.created_at.cmp(&b.created_at),
+                            };
+                            if asc { ord } else { ord.reverse() }
+                        });
+                    }
+                    let total = list.len();
+                    let filtered_count = filtered.len();
+                    let limit_val = *limit.read();
+                    let shown = filtered_count.min(limit_val);
                     rsx! {
-                        table { class: "min-w-full divide-y divide-gray-200",
-                            thead { class: "bg-gray-50",
-                                tr {
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Rollout" }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Status" }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Created" }
+                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                        div { class: "bg-white rounded shadow overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200",
+                                thead { class: "bg-gray-50",
+                                    tr {
+                                        SortableTh { label: "Rollout".to_string(), sort_key: "rollout".to_string(), sort }
+                                        SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
+                                        SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
+                                    }
                                 }
-                            }
-                            tbody { class: "bg-white divide-y divide-gray-200",
-                                for r in list.iter() {
-                                    {
-                                        let ts = r.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                        let short = r.id.to_string()[..8].to_string();
-                                        rsx! {
-                                            tr { key: "{r.id}",
-                                                td { class: "px-4 py-2 text-sm font-mono",
-                                                    Link {
-                                                        to: Route::RolloutDetail { id: r.id.to_string() },
-                                                        class: "text-blue-600 hover:underline",
-                                                        "{short}"
+                                tbody { class: "bg-white divide-y divide-gray-200",
+                                    for r in filtered.into_iter().take(limit_val) {
+                                        {
+                                            let ts = r.created_at.format("%Y-%m-%d %H:%M").to_string();
+                                            let short = r.id.to_string()[..8].to_string();
+                                            rsx! {
+                                                tr { key: "{r.id}",
+                                                    td { class: "px-6 py-4 text-sm font-mono",
+                                                        Link {
+                                                            to: Route::RolloutDetail { id: r.id.to_string() },
+                                                            class: "text-blue-600 hover:underline",
+                                                            "{short}"
+                                                        }
                                                     }
+                                                    td { class: "px-6 py-4 text-sm", "{r.status}" }
+                                                    td { class: "px-6 py-4 text-xs text-gray-500", "{ts}" }
                                                 }
-                                                td { class: "px-4 py-2 text-sm", "{r.status}" }
-                                                td { class: "px-4 py-2 text-xs text-gray-500", "{ts}" }
                                             }
                                         }
                                     }
@@ -314,7 +409,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             }
                         }
                     }
-                }
+                }}
             }
             Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },

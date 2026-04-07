@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, TableToolbar};
+use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupEntry {
@@ -102,16 +102,29 @@ pub fn RolloutGroupList() -> Element {
                 {
                     let search = use_signal(String::new);
                     let limit = use_signal(|| 20usize);
+                    let sort = use_signal(|| ("name".to_string(), true));
 
                     let list_clone = list.clone();
-                    let filtered: Vec<&GroupEntry> = {
+                    let mut filtered: Vec<GroupEntry> = {
                         let q = search.read().to_lowercase();
                         if q.is_empty() {
-                            list_clone.iter().collect()
+                            list_clone.clone()
                         } else {
-                            list_clone.iter().filter(|e| e.matches_search(&q)).collect()
+                            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
                         }
                     };
+
+                    {
+                        let (key, asc) = sort.read().clone();
+                        filtered.sort_by(|a, b| {
+                            let ord = match key.as_str() {
+                                "description" => a.description.to_lowercase().cmp(&b.description.to_lowercase()),
+                                "members" => a.member_count.cmp(&b.member_count),
+                                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                            };
+                            if asc { ord } else { ord.reverse() }
+                        });
+                    }
 
                     let total = list.len();
                     let filtered_count = filtered.len();
@@ -124,9 +137,9 @@ pub fn RolloutGroupList() -> Element {
                             table { class: "min-w-full divide-y divide-gray-200",
                                 thead { class: "bg-gray-50",
                                     tr {
-                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Name" }
-                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Description" }
-                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase", "Members" }
+                                        SortableTh { label: "Name".to_string(), sort_key: "name".to_string(), sort }
+                                        SortableTh { label: "Description".to_string(), sort_key: "description".to_string(), sort }
+                                        SortableTh { label: "Members".to_string(), sort_key: "members".to_string(), sort }
                                     }
                                 }
                                 tbody { class: "bg-white divide-y divide-gray-200",

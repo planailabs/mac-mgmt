@@ -3,11 +3,18 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonVersionRow {
     pub version: String,
     pub created_at: DateTime<Utc>,
+}
+
+impl Searchable for DaemonVersionRow {
+    fn matches_search(&self, query: &str) -> bool {
+        self.version.to_lowercase().contains(query)
+    }
 }
 
 #[server]
@@ -159,28 +166,59 @@ pub fn DaemonVersionList() -> Element {
                         }
                     }
                 } else {
+                    let search = use_signal(String::new);
+                    let limit = use_signal(|| 20usize);
+                    let sort = use_signal(|| ("version".to_string(), false));
+
+                    let list_clone = list.clone();
+                    let mut filtered: Vec<DaemonVersionRow> = {
+                        let q = search.read().to_lowercase();
+                        if q.is_empty() {
+                            list_clone.clone()
+                        } else {
+                            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+                        }
+                    };
+                    {
+                        let (key, asc) = sort.read().clone();
+                        filtered.sort_by(|a, b| {
+                            let ord = match key.as_str() {
+                                "added" => a.created_at.cmp(&b.created_at),
+                                _ => a.version.cmp(&b.version),
+                            };
+                            if asc { ord } else { ord.reverse() }
+                        });
+                    }
+                    let total = list.len();
+                    let filtered_count = filtered.len();
+                    let limit_val = *limit.read();
+                    let shown = filtered_count.min(limit_val);
+
                     rsx! {
-                        table { class: "min-w-full divide-y divide-gray-200",
-                            thead { class: "bg-gray-50",
-                                tr {
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Version" }
-                                    th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase", "Added" }
+                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                        div { class: "bg-white rounded shadow overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200",
+                                thead { class: "bg-gray-50",
+                                    tr {
+                                        SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
+                                        SortableTh { label: "Added".to_string(), sort_key: "added".to_string(), sort }
+                                    }
                                 }
-                            }
-                            tbody { class: "bg-white divide-y divide-gray-200",
-                                for v in list.iter() {
-                                    {
-                                        let ts = v.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                        rsx! {
-                                            tr { key: "{v.version}",
-                                                td { class: "px-4 py-2 font-mono text-sm",
-                                                    Link {
-                                                        to: Route::DaemonVersionDetail { version: v.version.clone() },
-                                                        class: "text-blue-600 hover:underline",
-                                                        "{v.version}"
+                                tbody { class: "bg-white divide-y divide-gray-200",
+                                    for v in filtered.into_iter().take(limit_val) {
+                                        {
+                                            let ts = v.created_at.format("%Y-%m-%d %H:%M").to_string();
+                                            rsx! {
+                                                tr { key: "{v.version}",
+                                                    td { class: "px-6 py-4 font-mono text-sm",
+                                                        Link {
+                                                            to: Route::DaemonVersionDetail { version: v.version.clone() },
+                                                            class: "text-blue-600 hover:underline",
+                                                            "{v.version}"
+                                                        }
                                                     }
+                                                    td { class: "px-6 py-4 text-sm text-gray-500", "{ts}" }
                                                 }
-                                                td { class: "px-4 py-2 text-xs text-gray-500", "{ts}" }
                                             }
                                         }
                                     }

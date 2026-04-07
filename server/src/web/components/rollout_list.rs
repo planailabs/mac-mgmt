@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, TableToolbar};
+use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutEntry {
@@ -105,16 +105,30 @@ pub fn RolloutList() -> Element {
                     {
                         let search = use_signal(String::new);
                         let limit = use_signal(|| 20usize);
+                        let sort = use_signal(|| ("created".to_string(), false));
 
                         let list_clone = list.clone();
-                        let filtered: Vec<&RolloutEntry> = {
+                        let mut filtered: Vec<RolloutEntry> = {
                             let q = search.read().to_lowercase();
                             if q.is_empty() {
-                                list_clone.iter().collect()
+                                list_clone.clone()
                             } else {
-                                list_clone.iter().filter(|e| e.matches_search(&q)).collect()
+                                list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
                             }
                         };
+
+                        {
+                            let (key, asc) = sort.read().clone();
+                            filtered.sort_by(|a, b| {
+                                let ord = match key.as_str() {
+                                    "id" => a.id.to_string().cmp(&b.id.to_string()),
+                                    "status" => a.status.cmp(&b.status),
+                                    "stages" => a.stage_count.cmp(&b.stage_count),
+                                    _ => a.created_at.cmp(&b.created_at),
+                                };
+                                if asc { ord } else { ord.reverse() }
+                            });
+                        }
 
                         let total = list.len();
                         let filtered_count = filtered.len();
@@ -127,18 +141,10 @@ pub fn RolloutList() -> Element {
                                 table { class: "min-w-full divide-y divide-gray-200",
                                     thead { class: "bg-gray-50",
                                         tr {
-                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
-                                                "ID"
-                                            }
-                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
-                                                "Status"
-                                            }
-                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
-                                                "Stages"
-                                            }
-                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase",
-                                                "Created"
-                                            }
+                                            SortableTh { label: "ID".to_string(), sort_key: "id".to_string(), sort }
+                                            SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
+                                            SortableTh { label: "Stages".to_string(), sort_key: "stages".to_string(), sort }
+                                            SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
                                             th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase",
                                                 ""
                                             }

@@ -489,6 +489,36 @@ fn toggle_sort(context: ColumnContext) {
     }
 }
 
+// ── SortableTh: shared sortable header for non-tabular tables ───────
+
+/// Sort state: (column key, ascending). Empty key = unsorted.
+pub type SortState = (String, bool);
+
+#[component]
+pub fn SortableTh(label: String, sort_key: String, sort: Signal<SortState>) -> Element {
+    let cur = sort.read().clone();
+    let arrow = if cur.0 == sort_key {
+        if cur.1 { " \u{2191}" } else { " \u{2193}" }
+    } else {
+        ""
+    };
+    let key_click = sort_key.clone();
+    rsx! {
+        th {
+            class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+            onclick: move |_| {
+                let (k, a) = sort.read().clone();
+                if k == key_click {
+                    sort.set((k, !a));
+                } else {
+                    sort.set((key_click.clone(), true));
+                }
+            },
+            "{label}{arrow}"
+        }
+    }
+}
+
 // ── TableToolbar component ──────────────────────────────────────────
 
 #[component]
