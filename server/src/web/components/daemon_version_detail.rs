@@ -191,7 +191,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
     })?;
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        div { class: "flex items-center justify-between mb-6",
             h2 { class: "text-2xl font-bold", "Daemon {version}" }
             Link {
                 to: Route::DaemonVersionList {},
@@ -234,7 +234,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             None => rsx! { p { "Loading..." } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-8 mb-2", "Customers on this version" }
+        h3 { class: "text-lg font-semibold mt-10 mb-3", "Customers on this version" }
         {match &*customers.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
@@ -274,7 +274,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             None => rsx! { p { "Loading..." } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-8 mb-2", "Rollouts targeting this version" }
+        h3 { class: "text-lg font-semibold mt-10 mb-3", "Rollouts targeting this version" }
         {match &*rollouts.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
@@ -320,7 +320,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             None => rsx! { p { "Loading..." } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-8 mb-2", "Customers pinned to this version" }
+        h3 { class: "text-lg font-semibold mt-10 mb-3", "Customers pinned to this version" }
         {match &*pinned.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
