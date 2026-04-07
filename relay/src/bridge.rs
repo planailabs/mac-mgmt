@@ -11,61 +11,90 @@ static PENDING_SESSIONS: LazyLock<Mutex<HashMap<String, TcpStream>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn register_pending_session(session_id: String, stream: TcpStream) {
-    PENDING_SESSIONS
-        .lock()
-        .unwrap()
-        .insert(session_id, stream);
+    let count = {
+        let mut sessions = PENDING_SESSIONS.lock().unwrap();
+        sessions.insert(session_id.clone(), stream);
+        sessions.len()
+    };
+    tracing::debug!("registered pending session {session_id} (pending now: {count})");
 }
 
 pub fn take_pending_session(session_id: &str) -> Option<TcpStream> {
-    PENDING_SESSIONS
-        .lock()
-        .unwrap()
-        .remove(session_id)
+    let result = PENDING_SESSIONS.lock().unwrap().remove(session_id);
+    if result.is_some() {
+        tracing::debug!("claimed pending session {session_id}");
+    } else {
+        tracing::warn!("no pending session found for {session_id}");
+    }
+    result
 }
 
 /// Bridge bidirectional data between a TCP stream and a WebSocket.
 pub async fn bridge_tcp_ws(mut tcp: TcpStream, ws: WebSocket) {
     let (mut ws_sink, mut ws_stream) = ws.split();
     let (mut tcp_read, mut tcp_write) = tcp.split();
+    let mut ws_to_tcp_bytes: u64 = 0;
+    let mut tcp_to_ws_bytes: u64 = 0;
 
     let ws_to_tcp = async {
-        while let Some(Ok(msg)) = ws_stream.next().await {
+        let mut bytes: u64 = 0;
+        while let Some(msg) = ws_stream.next().await {
             match msg {
-                Message::Binary(data) => {
-                    if tcp_write.write_all(&data).await.is_err() {
+                Ok(Message::Binary(data)) => {
+                    if let Err(e) = tcp_write.write_all(&data).await {
+                        tracing::debug!("ws→tcp write failed: {e}");
                         break;
                     }
+                    bytes += data.len() as u64;
                 }
-                Message::Close(_) => break,
+                Ok(Message::Close(_)) => {
+                    tracing::debug!("ws closed by peer");
+                    break;
+                }
+                Err(e) => {
+                    tracing::debug!("ws read error: {e}");
+                    break;
+                }
                 _ => {}
             }
         }
+        bytes
     };
 
     let tcp_to_ws = async {
         let mut buf = [0u8; 8192];
+        let mut bytes: u64 = 0;
         loop {
             match tcp_read.read(&mut buf).await {
-                Ok(0) => break,
+                Ok(0) => {
+                    tracing::debug!("tcp closed by peer");
+                    break;
+                }
                 Ok(n) => {
-                    if ws_sink
+                    if let Err(e) = ws_sink
                         .send(Message::Binary(buf[..n].to_vec().into()))
                         .await
-                        .is_err()
                     {
+                        tracing::debug!("tcp→ws send failed: {e}");
                         break;
                     }
+                    bytes += n as u64;
                 }
-                Err(_) => break,
+                Err(e) => {
+                    tracing::debug!("tcp read error: {e}");
+                    break;
+                }
             }
         }
+        bytes
     };
 
     tokio::select! {
-        _ = ws_to_tcp => {}
-        _ = tcp_to_ws => {}
+        n = ws_to_tcp => { ws_to_tcp_bytes = n; }
+        n = tcp_to_ws => { tcp_to_ws_bytes = n; }
     }
 
-    tracing::debug!("bridge closed");
+    tracing::info!(
+        "bridge closed (ws→tcp: {ws_to_tcp_bytes}B, tcp→ws: {tcp_to_ws_bytes}B)"
+    );
 }

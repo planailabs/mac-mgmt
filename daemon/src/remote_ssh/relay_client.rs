@@ -44,6 +44,7 @@ pub async fn run(
     let ws_url = format!(
         "{relay_url}/api/daemon/register?instance_id={instance_id}{agent_name_param}"
     );
+    tracing::info!("relay client connecting to {relay_url} as {instance_id}");
 
     let (incoming_tx, mut incoming_rx) = mpsc::channel(64);
     let (outgoing_tx, outgoing_rx) = mpsc::channel(64);
@@ -57,28 +58,34 @@ pub async fn run(
     let _ws_handle = ws_reconnect::spawn_reconnecting(ws_config, incoming_tx, outgoing_rx);
 
     while let Some(text) = incoming_rx.recv().await {
-        let control: ControlMessage = serde_json::from_str(&text)
-            .with_context(|| format!("invalid control message: {text}"))?;
+        let control: ControlMessage = match serde_json::from_str(&text) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("invalid relay control message ({e}): {text}");
+                continue;
+            }
+        };
 
         match control {
             ControlMessage::Registered { ssh_port } => {
-                tracing::info!("registered with relay, SSH port: {ssh_port}");
+                tracing::info!(
+                    "relay registered: instance={instance_id} ssh_port={ssh_port}"
+                );
             }
             ControlMessage::SessionRequest { session_id } => {
                 if !ssh_allowed.load(Ordering::Relaxed) {
-                    tracing::info!("session request {session_id} denied (SSH not allowed)");
+                    tracing::info!("session request {session_id} denied (remote SSH disabled)");
                     continue;
                 }
-                tracing::info!("session request: {session_id}");
+                tracing::info!("session request {session_id} accepted, opening data WS");
                 let relay_url = relay_url.to_string();
                 let token = token.to_string();
                 let config = Arc::clone(&russh_config);
                 let ssh_keys = Arc::clone(&server_ssh_keys);
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        handle_session(&relay_url, &token, &session_id, config, ssh_keys).await
-                    {
-                        tracing::error!("session {session_id} failed: {e:#}");
+                    match handle_session(&relay_url, &token, &session_id, config, ssh_keys).await {
+                        Ok(()) => tracing::info!("session {session_id} completed"),
+                        Err(e) => tracing::error!("session {session_id} failed: {e:#}"),
                     }
                 });
             }
@@ -93,6 +100,7 @@ pub async fn run(
         }
     }
 
+    tracing::warn!("relay control channel closed");
     Ok(())
 }
 
@@ -122,10 +130,17 @@ async fn handle_session(
     let (ws, _) = tokio_tungstenite::connect_async(request)
         .await
         .context("session WS connect failed")?;
+    tracing::debug!("session {session_id} data WS connected");
 
     let stream = WsStream::new(ws);
     let mut authorized_keys = server_ssh_keys.read().await.clone();
+    let local_count = ssh_server::load_authorized_keys().len();
     authorized_keys.extend(ssh_server::load_authorized_keys());
+    tracing::debug!(
+        "session {session_id} authorized keys: {} server + {} local",
+        authorized_keys.len() - local_count,
+        local_count
+    );
     let handler = SshSession::new(authorized_keys);
 
     let session = russh::server::run_stream(config, stream, handler)
@@ -162,12 +177,16 @@ async fn handle_metrics_request(
             let body = resp.text().await.unwrap_or_default();
             (status, ct, body)
         }
-        Err(e) => (
-            502,
-            "text/plain".to_string(),
-            format!("metrics fetch failed: {e}"),
-        ),
+        Err(e) => {
+            tracing::warn!("metrics fetch from local port {metrics_port} failed: {e}");
+            (
+                502,
+                "text/plain".to_string(),
+                format!("metrics fetch failed: {e}"),
+            )
+        }
     };
+    tracing::debug!("metrics response {request_id} status={status} ({} bytes)", body.len());
 
     let msg = serde_json::json!({
         "type": "metrics_response",

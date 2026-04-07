@@ -29,12 +29,15 @@ async fn listen(
 
     loop {
         let (tcp_stream, peer_addr) = listener.accept().await?;
-        tracing::info!("SSH client connected from {peer_addr} on port {port}");
-
         let session_id = uuid::Uuid::new_v4().to_string();
+        tracing::info!(
+            "SSH client {peer_addr} → {instance_id} (port {port}), session {session_id}"
+        );
 
         let Some(control_tx) = registry.get_control_tx(instance_id) else {
-            tracing::warn!("daemon {instance_id} not found, dropping connection");
+            tracing::warn!(
+                "daemon {instance_id} not in registry, dropping client {peer_addr}"
+            );
             continue;
         };
 
@@ -45,9 +48,12 @@ async fn listen(
             .await
             .is_err()
         {
-            tracing::warn!("failed to send session request to daemon {instance_id}");
+            tracing::warn!(
+                "control channel closed for daemon {instance_id}, dropping {peer_addr}"
+            );
             continue;
         }
+        tracing::debug!("session request {session_id} sent to daemon {instance_id}");
 
         // Register pending session and spawn bridge when data channel arrives
         bridge::register_pending_session(session_id, tcp_stream);

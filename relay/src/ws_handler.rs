@@ -145,9 +145,14 @@ async fn handle_daemon_ws(
     state: AppState,
 ) {
     let instance_id = query.instance_id;
+    tracing::info!(
+        "daemon WS connected: instance={instance_id} customer={:?} agent={:?}",
+        self_info.customer_name,
+        query.agent_name,
+    );
 
     let Some(port) = state.registry.allocate_port() else {
-        tracing::error!("no available ports for {instance_id}");
+        tracing::error!("no available ports for {instance_id}, rejecting");
         return;
     };
 
@@ -177,14 +182,15 @@ async fn handle_daemon_ws(
 
     // Send registration confirmation
     let reg_msg = serde_json::json!({ "type": "registered", "ssh_port": port });
-    if ws_sink
+    if let Err(e) = ws_sink
         .send(Message::Text(reg_msg.to_string().into()))
         .await
-        .is_err()
     {
+        tracing::warn!("failed to send registration ack to {instance_id}: {e}");
         state.registry.unregister(&instance_id);
         return;
     }
+    tracing::debug!("sent registration ack to {instance_id} (port {port})");
 
     let mut pending_metrics: HashMap<String, tokio::sync::oneshot::Sender<MetricsResponse>> =
         HashMap::new();
@@ -197,6 +203,7 @@ async fn handle_daemon_ws(
                         serde_json::json!({ "type": "session_request", "session_id": session_id })
                     }
                     ControlMsg::MetricsRequest { request_id, path, response_tx } => {
+                        tracing::debug!("forwarding metrics request {request_id} ({path}) to {instance_id}");
                         pending_metrics.insert(request_id.clone(), response_tx);
                         serde_json::json!({ "type": "metrics_request", "request_id": request_id, "path": path })
                     }
@@ -212,13 +219,19 @@ async fn handle_daemon_ws(
                             if m.r#type == "metrics_response" {
                                 if let Some(req_id) = m.request_id {
                                     if let Some(tx) = pending_metrics.remove(&req_id) {
+                                        let status = m.status.unwrap_or(502);
+                                        tracing::debug!("metrics response {req_id} status={status}");
                                         let _ = tx.send(MetricsResponse {
-                                            status: m.status.unwrap_or(502),
+                                            status,
                                             content_type: m.content_type.unwrap_or_else(|| "text/plain".into()),
                                             body: m.body.unwrap_or_default(),
                                         });
+                                    } else {
+                                        tracing::warn!("metrics response for unknown request {req_id}");
                                     }
                                 }
+                            } else {
+                                tracing::debug!("unknown daemon msg type: {}", m.r#type);
                             }
                         }
                     }
@@ -252,8 +265,9 @@ async fn ws_daemon_session(
 }
 
 async fn handle_data_session(socket: WebSocket, session_id: String) {
+    tracing::debug!("daemon data WS upgraded for session {session_id}");
     let Some(tcp_stream) = bridge::take_pending_session(&session_id) else {
-        tracing::warn!("no pending session for {session_id}");
+        tracing::warn!("daemon connected for session {session_id} but no SSH client waiting");
         return;
     };
 
@@ -271,8 +285,10 @@ async fn proxy_metrics(
     State(state): State<AppState>,
 ) -> axum::response::Response {
     if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await {
+        tracing::debug!("metrics proxy auth failed for {instance_id}");
         return resp;
     }
+    tracing::debug!("metrics proxy: instance={instance_id} path={path}");
 
     let full_path = if query.is_empty() {
         format!("/{path}")
@@ -286,6 +302,7 @@ async fn proxy_metrics(
     };
 
     let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+        tracing::warn!("metrics proxy: daemon {instance_id} not connected");
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -311,8 +328,14 @@ async fn proxy_metrics(
             .body(axum::body::Body::from(resp.body))
             .expect("response body from string never fails")
             .into_response(),
-        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
-        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+        Ok(Err(_)) => {
+            tracing::warn!("metrics proxy: daemon {instance_id} dropped response channel");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
+        Err(_) => {
+            tracing::warn!("metrics proxy: daemon {instance_id} timed out");
+            StatusCode::GATEWAY_TIMEOUT.into_response()
+        }
     }
 }
 

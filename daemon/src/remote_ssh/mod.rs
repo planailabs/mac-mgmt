@@ -53,6 +53,9 @@ impl Manager {
 
         // Always spawn relay client if relay URL and token are configured
         if let (Some(url), Some(token)) = (&relay_url, &server_token) {
+            tracing::info!(
+                "relay configured: url={url} instance={instance_id} ssh_initially_allowed={remote_ssh_enabled}"
+            );
             let url = url.clone();
             let token = token.clone();
             let iid = instance_id.clone();
@@ -65,6 +68,8 @@ impl Manager {
                     tracing::error!("relay client exited: {e:#}");
                 }
             });
+        } else {
+            tracing::debug!("relay not configured (url or token missing), relay client not spawned");
         }
 
         Self {
@@ -80,7 +85,10 @@ impl Manager {
     pub async fn sync_ssh_keys(&self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
             match ssh_keys::sync(url, token).await {
-                Ok(keys) => *self.server_ssh_keys.write().await = keys,
+                Ok(keys) => {
+                    tracing::debug!("synced {} SSH key(s) from server", keys.len());
+                    *self.server_ssh_keys.write().await = keys;
+                }
                 Err(e) => tracing::warn!("SSH keys sync failed: {e}"),
             }
         }

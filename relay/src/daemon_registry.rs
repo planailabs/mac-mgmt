@@ -68,23 +68,43 @@ impl DaemonRegistry {
         let port = {
             let used = self.used_ports.read().unwrap();
             (self.port_min..=self.port_max).find(|p| !used.contains(p))
-        }?;
-        self.used_ports.write().unwrap().insert(port);
-        Some(port)
+        };
+        match port {
+            Some(p) => {
+                self.used_ports.write().unwrap().insert(p);
+                tracing::debug!("allocated port {p}");
+                Some(p)
+            }
+            None => {
+                tracing::error!(
+                    "no free ports in range {}-{}",
+                    self.port_min,
+                    self.port_max
+                );
+                None
+            }
+        }
     }
 
     pub fn release_port(&self, port: u16) {
         self.used_ports.write().unwrap().remove(&port);
+        tracing::debug!("released port {port}");
     }
 
     pub fn register(&self, conn: DaemonConn) {
         let id = conn.instance_id.clone();
+        let port = conn.ssh_port;
         let mut daemons = self.daemons.write().unwrap();
         if let Some(old) = daemons.remove(&id) {
+            tracing::info!(
+                "replacing existing registration for {id} (old port {})",
+                old.ssh_port
+            );
             old.listener_handle.abort();
             self.release_port(old.ssh_port);
         }
-        daemons.insert(id, conn);
+        daemons.insert(id.clone(), conn);
+        tracing::info!("registered daemon {id} on port {port} (total: {})", daemons.len());
     }
 
     pub fn unregister(&self, instance_id: &str) {
@@ -92,6 +112,9 @@ impl DaemonRegistry {
         if let Some(conn) = daemons.remove(instance_id) {
             conn.listener_handle.abort();
             self.release_port(conn.ssh_port);
+            tracing::info!("unregistered daemon {instance_id} (remaining: {})", daemons.len());
+        } else {
+            tracing::debug!("unregister called for unknown daemon {instance_id}");
         }
     }
 
