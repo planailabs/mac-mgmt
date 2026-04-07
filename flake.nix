@@ -50,7 +50,7 @@
         # this avoids needing to build any darwin stdenv on the host.
         macosx-sdk = let
           darwinPkgs = import nixpkgs { system = "aarch64-darwin"; };
-          sdkSrc = darwinPkgs.darwin.apple_sdk_26.MacOSX-SDK.src;
+          sdkSrc = darwinPkgs.darwin.apple-sdk_26.src;
         in pkgs.runCommand "MacOSX-SDK" {} ''
           mkdir -p $out
           tar -xf ${sdkSrc} -C $out --strip-components=1
