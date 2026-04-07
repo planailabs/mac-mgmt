@@ -582,6 +582,37 @@ fn upgrade_nix_inner() -> Result<()> {
     tracing::info!("nix is profile-managed, trying nix profile upgrade nix");
     sentry_ext::breadcrumb("nix", "nix is profile-managed, trying profile upgrade", &[]);
 
+    // Pre-build the new nix derivation before swapping the profile, so a
+    // build failure doesn't leave the profile half-upgraded / the old binary
+    // briefly unusable. Best-effort: if we can't determine the flake URL or
+    // the build fails, fall through and let `profile upgrade` surface the
+    // real error.
+    match profile_original_urls() {
+        Ok(urls) => match urls.get("nix") {
+            Some(url) => {
+                tracing::info!("pre-building new nix from {url}");
+                let build = Command::new(nix_bin_str)
+                    .env("NIXPKGS_ALLOW_UNFREE", "1")
+                    .env("NIXPKGS_ALLOW_INSECURE", "1")
+                    .args(["build", "--no-link", "--impure", url])
+                    .output()
+                    .context("failed to run nix build for new nix")?;
+                if !build.status.success() {
+                    let stderr = String::from_utf8_lossy(&build.stderr);
+                    sentry_ext::capture_cmd_failure(
+                        "nix build (pre-upgrade nix)",
+                        build.status.code(),
+                        stderr.trim(),
+                    );
+                    anyhow::bail!("nix build for new nix failed: {}", stderr.trim());
+                }
+                tracing::info!("pre-build of new nix succeeded");
+            }
+            None => tracing::warn!("no originalUrl for nix element, skipping pre-build"),
+        },
+        Err(e) => tracing::warn!("could not list profile to pre-build nix: {e}"),
+    }
+
     let output = Command::new(nix_bin_str)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
