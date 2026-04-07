@@ -100,46 +100,28 @@ pub async fn notify_all_rollout_global(rollout_id: Uuid, msg: PushMessage) {
     }
 }
 
-/// Notify all customers that have a given skill bundle assigned.
-pub async fn notify_skill_bundle_customers(
+/// Notify all customers that have a given bundle assigned via `assignment_table`
+/// (which must have `customer_id` and `bundle_id` columns).
+pub async fn notify_bundle_customers(
     channels: &PushChannels,
     pool: &PgPool,
+    assignment_table: &str,
     bundle_id: Uuid,
+    msg: PushMessage,
 ) {
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT customer_id FROM customer_bundles WHERE bundle_id = $1",
-    )
-    .bind(bundle_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let query = format!(
+        "SELECT DISTINCT customer_id FROM {assignment_table} WHERE bundle_id = $1"
+    );
+    let customer_ids: Vec<Uuid> = sqlx::query_scalar(&query)
+        .bind(bundle_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     let map = channels.read().await;
     for cid in customer_ids {
         if let Some(tx) = map.get(&cid) {
-            let _ = tx.send(PushMessage::SyncSkills);
-        }
-    }
-}
-
-/// Notify all customers that have a given MCP server bundle assigned.
-pub async fn notify_mcp_bundle_customers(
-    channels: &PushChannels,
-    pool: &PgPool,
-    bundle_id: Uuid,
-) {
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT customer_id FROM customer_mcp_bundles WHERE bundle_id = $1",
-    )
-    .bind(bundle_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    let map = channels.read().await;
-    for cid in customer_ids {
-        if let Some(tx) = map.get(&cid) {
-            let _ = tx.send(PushMessage::SyncMcpServers);
+            let _ = tx.send(msg.clone());
         }
     }
 }
@@ -148,7 +130,14 @@ pub async fn notify_mcp_bundle_customers(
 #[cfg(feature = "webui")]
 pub async fn notify_skill_bundle_global(bundle_id: Uuid) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_skill_bundle_customers(&channels, &pool, bundle_id).await;
+        notify_bundle_customers(
+            &channels,
+            &pool,
+            "customer_bundles",
+            bundle_id,
+            PushMessage::SyncSkills,
+        )
+        .await;
     }
 }
 
@@ -156,7 +145,14 @@ pub async fn notify_skill_bundle_global(bundle_id: Uuid) {
 #[cfg(feature = "webui")]
 pub async fn notify_mcp_bundle_global(bundle_id: Uuid) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_mcp_bundle_customers(&channels, &pool, bundle_id).await;
+        notify_bundle_customers(
+            &channels,
+            &pool,
+            "customer_mcp_bundles",
+            bundle_id,
+            PushMessage::SyncMcpServers,
+        )
+        .await;
     }
 }
 
