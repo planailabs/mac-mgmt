@@ -52,14 +52,13 @@ pub fn current_version() -> &'static str {
     CURRENT_VERSION
 }
 
-/// File next to the current binary that records the last applied
-/// store path. Used to detect "same version, different store path"
-/// (e.g. someone re-uploaded the same version with a fix) so we
+/// `${config_dir}/mac-mgmt/.mac-mgmt.store-path` records the last
+/// applied store path. Used to detect "same version, different store
+/// path" (e.g. someone re-uploaded the same version with a fix) so we
 /// re-apply instead of skipping.
 fn applied_marker_path() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let parent = exe.parent()?;
-    Some(parent.join(".mac-mgmt.store_path"))
+    let dir = dirs::config_dir()?.join("mac-mgmt");
+    Some(dir.join(".mac-mgmt.store-path"))
 }
 
 fn read_last_store_path() -> Option<String> {
@@ -68,10 +67,15 @@ fn read_last_store_path() -> Option<String> {
 }
 
 fn write_last_store_path(store_path: &str) {
-    if let Some(p) = applied_marker_path() {
-        if let Err(e) = std::fs::write(&p, store_path) {
-            tracing::warn!("failed to write applied marker {}: {e}", p.display());
+    let Some(p) = applied_marker_path() else { return };
+    if let Some(parent) = p.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::warn!("failed to create config dir {}: {e}", parent.display());
+            return;
         }
+    }
+    if let Err(e) = std::fs::write(&p, store_path) {
+        tracing::warn!("failed to write applied marker {}: {e}", p.display());
     }
 }
 
