@@ -85,6 +85,7 @@ const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
 pub enum LlmProvider {
     Ollama,
     Nexa,
+    Lms,
     Cloud,
     None,
 }
@@ -100,6 +101,7 @@ impl LlmProvider {
         match self {
             Self::Ollama => "ollama",
             Self::Nexa => "nexa",
+            Self::Lms => "lms",
             Self::Cloud => "cloud",
             Self::None => "none",
         }
@@ -389,6 +391,54 @@ impl NexaConfig {
     }
 }
 
+// ── LM Studio (lms) ────────────────────────────────────────────────────
+
+fn default_lms_port() -> u16 {
+    1234
+}
+
+fn default_lms_models() -> Vec<String> {
+    Vec::new()
+}
+
+fn default_lms_model() -> String {
+    "qwen2.5-coder-7b-instruct".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LmsConfig {
+    #[schemars(description = "LM Studio listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(description = "LM Studio listen port")]
+    #[serde(default = "default_lms_port")]
+    pub port: u16,
+    #[schemars(description = "Model identifiers to load on startup via `lms load`")]
+    #[serde(default = "default_lms_models")]
+    pub models: Vec<String>,
+    #[schemars(description = "Default model identifier for OpenClaw to use")]
+    #[serde(default = "default_lms_model")]
+    pub default_model: String,
+}
+
+impl Default for LmsConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_lms_port(),
+            models: default_lms_models(),
+            default_model: default_lms_model(),
+        }
+    }
+}
+
+impl LmsConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
 // ── Cloud LLM providers ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -587,6 +637,8 @@ pub struct CustomerConfig {
     #[serde(default)]
     pub nexa: NexaConfig,
     #[serde(default)]
+    pub lms: LmsConfig,
+    #[serde(default)]
     pub cloud: CloudConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
@@ -630,6 +682,7 @@ impl CustomerConfig {
         self.global.validate().map_err(|e| e.to_string())?;
         self.ollama.validate().map_err(|e| e.to_string())?;
         self.nexa.validate().map_err(|e| e.to_string())?;
+        self.lms.validate().map_err(|e| e.to_string())?;
         self.cloud.validate().map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -675,6 +728,8 @@ pub struct DaemonConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub nexa: NexaConfig,
+    #[serde(default)]
+    pub lms: LmsConfig,
     #[serde(default)]
     pub cloud: CloudConfig,
     #[serde(default)]

@@ -1,5 +1,6 @@
 pub mod apprise;
 pub mod mcporter;
+pub mod lms;
 pub mod nexa;
 pub mod ollama;
 pub mod openclaw;
