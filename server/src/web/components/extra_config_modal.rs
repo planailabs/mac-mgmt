@@ -729,9 +729,14 @@ fn render_node(
 
     let is_set = current.is_some();
     let reset_path = path.clone();
+    let wrapper_class = if sensitive {
+        "flex flex-col gap-0.5 border-l-4 border-purple-500 pl-2"
+    } else {
+        "flex flex-col gap-0.5"
+    };
 
     rsx! {
-        div { class: "flex flex-col gap-0.5",
+        div { class: wrapper_class,
             key: "{key}",
             div { class: "flex items-center justify-between gap-2",
                 label { class: "text-sm font-medium text-gray-700",
