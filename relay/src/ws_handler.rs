@@ -198,8 +198,19 @@ async fn handle_daemon_ws(
     let mut pending_metrics: HashMap<String, tokio::sync::oneshot::Sender<MetricsResponse>> =
         HashMap::new();
 
+    // Send periodic WS pings so middleboxes (e.g. nginx proxy_read_timeout)
+    // don't silently drop idle control connections.
+    let mut ping_tick = tokio::time::interval(Duration::from_secs(30));
+    ping_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping_tick.tick().await; // consume the immediate first tick
+
     loop {
         tokio::select! {
+            _ = ping_tick.tick() => {
+                if ws_sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+            }
             Some(msg) = control_rx.recv() => {
                 let json = match msg {
                     ControlMsg::SessionRequest { session_id } => {
