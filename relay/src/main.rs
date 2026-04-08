@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 mod bridge;
 mod config;
 mod daemon_registry;
+mod metrics_federation;
 mod ssh_listener;
 mod ws_handler;
 

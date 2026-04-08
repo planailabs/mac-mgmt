@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 use crate::bridge;
 use crate::daemon_registry::{ControlMsg, DaemonConn, DaemonRegistry, MetricsResponse};
+use crate::metrics_federation::{
+    PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
+};
 use crate::ssh_listener;
 
 #[derive(Clone)]
@@ -36,6 +39,7 @@ pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String) -> Router {
             get(proxy_metrics),
         )
         .route("/api/tunnels", get(list_tunnels))
+        .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
         .with_state(state)
 }
@@ -371,4 +375,238 @@ async fn list_tunnels(
         tunnels.retain(|t| t.customer_id == cid);
     }
     Json(tunnels).into_response()
+}
+
+// ── Federated metrics endpoint ──────────────────────────────────────────
+
+const FEDERATION_SCRAPE_TIMEOUT: Duration = Duration::from_secs(5);
+const FEDERATION_CONCURRENCY: usize = 32;
+
+/// One per-target scrape result, ready to be folded into the merged exposition.
+struct ScrapeOutcome {
+    instance_id: String,
+    hostname: String,
+    customer_id: String,
+    families: Vec<prometheus::proto::MetricFamily>,
+    up: bool,
+    duration_secs: f64,
+}
+
+async fn federated_metrics(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    {
+        Ok(info) => info,
+        Err(resp) => return resp,
+    };
+
+    let mut tunnels = state.registry.list_tunnels();
+    if self_info.token_kind == "setting" {
+        let cid = self_info.customer_id;
+        tunnels.retain(|t| t.customer_id == cid);
+    }
+
+    let registry = state.registry.clone();
+    let outcomes: Vec<ScrapeOutcome> = futures_util::stream::iter(tunnels.into_iter().map(
+        move |tunnel| {
+            let registry = registry.clone();
+            async move { scrape_one(&registry, tunnel).await }
+        },
+    ))
+    .buffer_unordered(FEDERATION_CONCURRENCY)
+    .collect()
+    .await;
+
+    let target_count = outcomes.len();
+
+    // Assemble all families into a single ordered map so families with the
+    // same name (which can happen across daemons) are merged into one
+    // MetricFamily — the encoder requires that.
+    let mut families: std::collections::BTreeMap<String, prometheus::proto::MetricFamily> =
+        std::collections::BTreeMap::new();
+
+    for outcome in outcomes {
+        let labels: [(&str, &str); 3] = [
+            ("instance_id", outcome.instance_id.as_str()),
+            ("hostname", outcome.hostname.as_str()),
+            ("customer_id", outcome.customer_id.as_str()),
+        ];
+        push_gauge_strs(
+            &mut families,
+            "mac_mgmt_relay_scrape_up",
+            &labels,
+            if outcome.up { 1.0 } else { 0.0 },
+        );
+        push_gauge_strs(
+            &mut families,
+            "mac_mgmt_relay_scrape_duration_seconds",
+            &labels,
+            outcome.duration_secs,
+        );
+        for fam in outcome.families {
+            merge_family(&mut families, fam);
+        }
+    }
+
+    push_gauge_strs(
+        &mut families,
+        "mac_mgmt_relay_scrape_targets",
+        &[],
+        target_count as f64,
+    );
+
+    let families_vec: Vec<_> = families.into_values().collect();
+    match encode_families(&families_vec) {
+        Ok(buf) => axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", PROMETHEUS_CONTENT_TYPE)
+            .body(axum::body::Body::from(buf))
+            .expect("response builder")
+            .into_response(),
+        Err(e) => {
+            tracing::error!("federated metrics encode failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn scrape_one(
+    registry: &Arc<DaemonRegistry>,
+    tunnel: crate::daemon_registry::TunnelInfo,
+) -> ScrapeOutcome {
+    let started = std::time::Instant::now();
+    let instance_id = tunnel.instance_id.clone();
+    let hostname = tunnel.hostname.clone().unwrap_or_default();
+    let customer_id = tunnel
+        .customer_id
+        .map(|c| c.to_string())
+        .unwrap_or_default();
+
+    let Some(control_tx) = registry.get_control_tx(&instance_id) else {
+        tracing::debug!("federated metrics: {instance_id} has no control channel");
+        return ScrapeOutcome {
+            instance_id,
+            hostname,
+            customer_id,
+            families: Vec::new(),
+            up: false,
+            duration_secs: started.elapsed().as_secs_f64(),
+        };
+    };
+
+    let request_id = Uuid::new_v4().to_string();
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+    if control_tx
+        .send(ControlMsg::MetricsRequest {
+            request_id,
+            path: "/metrics".to_string(),
+            response_tx,
+        })
+        .await
+        .is_err()
+    {
+        return ScrapeOutcome {
+            instance_id,
+            hostname,
+            customer_id,
+            families: Vec::new(),
+            up: false,
+            duration_secs: started.elapsed().as_secs_f64(),
+        };
+    }
+
+    let result = tokio::time::timeout(FEDERATION_SCRAPE_TIMEOUT, response_rx).await;
+
+    match result {
+        Ok(Ok(resp)) if resp.status == 200 => {
+            match parse_and_relabel(&resp.body, &instance_id, &hostname, &customer_id) {
+                Ok(families) => ScrapeOutcome {
+                    instance_id,
+                    hostname,
+                    customer_id,
+                    families,
+                    up: true,
+                    duration_secs: started.elapsed().as_secs_f64(),
+                },
+                Err(e) => {
+                    tracing::warn!("federated metrics: parse error from {instance_id}: {e}");
+                    ScrapeOutcome {
+                        instance_id,
+                        hostname,
+                        customer_id,
+                        families: Vec::new(),
+                        up: false,
+                        duration_secs: started.elapsed().as_secs_f64(),
+                    }
+                }
+            }
+        }
+        Ok(Ok(resp)) => {
+            tracing::warn!(
+                "federated metrics: {instance_id} returned status {}",
+                resp.status
+            );
+            ScrapeOutcome {
+                instance_id,
+                hostname,
+                customer_id,
+                families: Vec::new(),
+                up: false,
+                duration_secs: started.elapsed().as_secs_f64(),
+            }
+        }
+        Ok(Err(_)) => {
+            tracing::warn!("federated metrics: {instance_id} dropped response channel");
+            ScrapeOutcome {
+                instance_id,
+                hostname,
+                customer_id,
+                families: Vec::new(),
+                up: false,
+                duration_secs: started.elapsed().as_secs_f64(),
+            }
+        }
+        Err(_) => {
+            tracing::warn!("federated metrics: {instance_id} timed out");
+            ScrapeOutcome {
+                instance_id,
+                hostname,
+                customer_id,
+                families: Vec::new(),
+                up: false,
+                duration_secs: started.elapsed().as_secs_f64(),
+            }
+        }
+    }
+}
+
+/// Merge a parsed family into the accumulator. Families with the same name
+/// have their `Metric` rows concatenated; the merged family keeps the type
+/// of the first occurrence (which is consistent across daemons because they
+/// all run the same exporter).
+fn merge_family(
+    families: &mut std::collections::BTreeMap<String, prometheus::proto::MetricFamily>,
+    incoming: prometheus::proto::MetricFamily,
+) {
+    use prometheus::proto::MetricFamily;
+    let name = incoming.name().to_string();
+    match families.get_mut(&name) {
+        Some(existing) => {
+            for m in incoming.metric {
+                existing.mut_metric().push(m);
+            }
+        }
+        None => {
+            let mut fam = MetricFamily::default();
+            fam.set_name(name.clone());
+            fam.set_field_type(incoming.type_());
+            for m in incoming.metric {
+                fam.mut_metric().push(m);
+            }
+            families.insert(name, fam);
+        }
+    }
 }
