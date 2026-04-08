@@ -1,7 +1,7 @@
 use anyhow::Result;
 use russh::keys::{parse_public_key_base64, PublicKey};
 use russh::server::{Auth, Handler, Msg, Session};
-use russh::{Channel, ChannelId};
+use russh::{Channel, ChannelId, MethodKind, MethodSet};
 use std::collections::HashMap;
 use std::os::unix::io::FromRawFd;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ impl SshSession {
 
 fn reject_with_pubkey() -> Auth {
     Auth::Reject {
-        proceed_with_methods: None,
+        proceed_with_methods: Some(MethodSet::from(&[MethodKind::PublicKey][..])),
         partial_success: false,
     }
 }

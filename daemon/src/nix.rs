@@ -594,7 +594,7 @@ fn upgrade_nix_inner() -> Result<()> {
                 let build = Command::new(nix_bin_str)
                     .env("NIXPKGS_ALLOW_UNFREE", "1")
                     .env("NIXPKGS_ALLOW_INSECURE", "1")
-                    .args(["build", "--no-link", "--impure", url])
+                    .args(["build", "--no-link", "--impure", format!("{url}#nix")])
                     .output()
                     .context("failed to run nix build for new nix")?;
                 if !build.status.success() {

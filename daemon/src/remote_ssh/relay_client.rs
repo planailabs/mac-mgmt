@@ -34,6 +34,9 @@ pub async fn run(
     let host_key = host_keys::load_or_generate()?;
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
+        // Only advertise public-key auth; password / keyboard-interactive
+        // are explicitly disabled at the protocol level.
+        methods: russh::MethodSet::from(&[russh::MethodKind::PublicKey][..]),
         ..Default::default()
     });
 
