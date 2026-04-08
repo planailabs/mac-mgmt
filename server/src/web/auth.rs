@@ -48,7 +48,13 @@ pub async fn build_auth_layer(
         .with_private_cookie_key(&cfg.cookie_secret)
         .with_scopes(vec!["openid", "email", "profile"])
         .with_post_logout_redirect_uri("/auth/login")
-        .with_session_max_age(480) // 8 hours in minutes
+        // axum-oidc-client 0.3.0 has a units bug: handle_default calls
+        // extend_auth_session(id, session_max_age) which treats the value as
+        // seconds, while with_session_max_age is documented as minutes. We pass
+        // 21600 so the server-side cache row lives for 6h sliding (21600 sec).
+        // The cookie max_age becomes Duration::minutes(21600) ≈ 15 days, but
+        // the cache row is the real gate.
+        .with_session_max_age(21600)
         .build()
         .expect("failed to build OIDC configuration");
 
