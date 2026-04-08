@@ -1273,6 +1273,7 @@ async fn build_skill_channel_rows(
          LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
          LEFT JOIN bundle_items bi ON bi.skill_channel_id = sc.id \
               AND bi.bundle_id IN (SELECT bundle_id FROM customer_bundles WHERE customer_id = $1) \
+         WHERE NOT s.hide_from_public_catalog \
          ORDER BY s.slug, sc.channel",
     )
     .bind(customer_id)
@@ -1333,6 +1334,7 @@ async fn build_bundle_rows(
                 (cb.id IS NOT NULL) as installed \
          FROM bundles b \
          LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
+         WHERE NOT b.hide_from_public_catalog \
          ORDER BY b.slug",
     )
     .bind(customer_id)
@@ -1407,6 +1409,7 @@ async fn build_mcp_server_options(
          LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
          LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
               AND msbi.bundle_id IN (SELECT bundle_id FROM customer_mcp_bundles WHERE customer_id = $1) \
+         WHERE NOT ms.hide_from_public_catalog \
          ORDER BY ms.slug",
     )
     .bind(customer_id)
@@ -1465,6 +1468,7 @@ async fn build_mcp_bundle_rows(
                 (cmb.id IS NOT NULL) as installed \
          FROM mcp_server_bundles msb \
          LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
+         WHERE NOT msb.hide_from_public_catalog \
          ORDER BY msb.slug",
     )
     .bind(customer_id)

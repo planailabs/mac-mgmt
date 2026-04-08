@@ -4,6 +4,7 @@ use crate::anthropic::{BundleItemContext, GenerateContext, GeneratedNameDesc};
 use crate::models::Bundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
+use crate::web::components::hidden_badge::HiddenBadge;
 
 /// A skill channel with its skill slug for display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -50,12 +51,18 @@ async fn delete_bundle(id: String) -> Result<(), ServerFnError> {
 }
 
 #[server]
-async fn update_bundle(id: String, name: String, description: String) -> Result<(), ServerFnError> {
+async fn update_bundle(
+    id: String,
+    name: String,
+    description: String,
+    hide_from_public_catalog: bool,
+) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("UPDATE bundles SET name = $1, description = $2 WHERE id = $3")
+    sqlx::query("UPDATE bundles SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
         .bind(&name)
         .bind(&description)
+        .bind(hide_from_public_catalog)
         .bind(uuid)
         .execute(&pool)
         .await
@@ -155,6 +162,7 @@ pub fn BundleDetail(id: String) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
     let mut draft_desc = use_signal(String::new);
+    let mut draft_hide = use_signal(|| false);
     let mut selected_sc = use_signal(String::new);
 
     match &*bundle.read() {
@@ -166,6 +174,7 @@ pub fn BundleDetail(id: String) -> Element {
             let name = b.name.clone();
             let desc = b.description.clone();
             let slug = b.slug.clone();
+            let hide_flag = b.hide_from_public_catalog;
 
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
@@ -177,9 +186,10 @@ pub fn BundleDetail(id: String) -> Element {
                                 let id = bid.clone();
                                 let new_name = draft_name.read().clone();
                                 let new_desc = draft_desc.read().clone();
+                                let new_hide = *draft_hide.read();
                                 spawn(async move {
                                     if !new_name.trim().is_empty() {
-                                        let _ = update_bundle(id, new_name, new_desc).await;
+                                        let _ = update_bundle(id, new_name, new_desc, new_hide).await;
                                         bundle.restart();
                                     }
                                     editing.set(false);
@@ -197,6 +207,14 @@ pub fn BundleDetail(id: String) -> Element {
                                 rows: "2",
                                 value: "{draft_desc}",
                                 oninput: move |e| draft_desc.set(e.value()),
+                            }
+                            label { class: "flex items-center gap-2 text-sm text-gray-700",
+                                input {
+                                    r#type: "checkbox",
+                                    checked: "{draft_hide}",
+                                    oninput: move |e| draft_hide.set(e.value() == "true"),
+                                }
+                                "Hide from public catalog"
                             }
                             div { class: "flex gap-2",
                                 button { class: "text-green-600 hover:text-green-800", r#type: "submit", "Save" }
@@ -231,11 +249,13 @@ pub fn BundleDetail(id: String) -> Element {
                     } else {
                         h2 { class: "text-2xl font-bold", "{name}" }
                         span { class: "text-gray-400 font-mono text-sm", "({slug})" }
+                        HiddenBadge { hidden: hide_flag }
                         button {
                             class: "text-gray-400 hover:text-gray-600",
                             onclick: move |_| {
                                 draft_name.set(name.clone());
                                 draft_desc.set(desc.clone());
+                                draft_hide.set(hide_flag);
                                 editing.set(true);
                             },
                             "Edit"

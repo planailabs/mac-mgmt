@@ -8,6 +8,7 @@ pub mod config_editor;
 pub mod config_history;
 pub mod generate_all_button;
 pub mod generate_button;
+pub mod hidden_badge;
 pub mod customer_detail;
 pub mod customer_form;
 pub mod customer_list;

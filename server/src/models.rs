@@ -41,6 +41,7 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub created_at: DateTime<Utc>,
+    pub hide_from_public_catalog: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,6 +61,7 @@ pub struct Bundle {
     pub name: String,
     pub description: String,
     pub created_at: DateTime<Utc>,
+    pub hide_from_public_catalog: bool,
 }
 
 #[allow(dead_code)]
@@ -103,6 +105,7 @@ pub struct McpServer {
     pub config_json: serde_json::Value,
     pub nix_packages: Vec<String>,
     pub created_at: DateTime<Utc>,
+    pub hide_from_public_catalog: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,6 +116,7 @@ pub struct McpServerBundle {
     pub name: String,
     pub description: String,
     pub created_at: DateTime<Utc>,
+    pub hide_from_public_catalog: bool,
 }
 
 #[allow(dead_code)]

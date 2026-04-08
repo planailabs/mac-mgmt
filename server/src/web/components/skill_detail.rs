@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::{Skill, SkillChannel};
 use crate::web::components::generate_button::GenerateButton;
+use crate::web::components::hidden_badge::HiddenBadge;
 
 #[server]
 async fn get_skill(id: String) -> Result<Skill, ServerFnError> {
@@ -20,12 +21,18 @@ async fn get_skill(id: String) -> Result<Skill, ServerFnError> {
 }
 
 #[server]
-async fn update_skill(id: String, name: String, description: String) -> Result<(), ServerFnError> {
+async fn update_skill(
+    id: String,
+    name: String,
+    description: String,
+    hide_from_public_catalog: bool,
+) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("UPDATE skills SET name = $1, description = $2 WHERE id = $3")
+    sqlx::query("UPDATE skills SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
         .bind(&name)
         .bind(&description)
+        .bind(hide_from_public_catalog)
         .bind(uuid)
         .execute(&pool)
         .await
@@ -221,6 +228,7 @@ pub fn SkillDetail(id: String) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
     let mut draft_desc = use_signal(String::new);
+    let mut draft_hide = use_signal(|| false);
 
     match &*skill.read() {
         Some(Ok(s)) => {
@@ -229,6 +237,7 @@ pub fn SkillDetail(id: String) -> Element {
             let name = s.name.clone();
             let desc = s.description.clone();
             let slug = s.slug.clone();
+            let hide_flag = s.hide_from_public_catalog;
 
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
@@ -240,9 +249,10 @@ pub fn SkillDetail(id: String) -> Element {
                                 let id = sid.clone();
                                 let new_name = draft_name.read().clone();
                                 let new_desc = draft_desc.read().clone();
+                                let new_hide = *draft_hide.read();
                                 spawn(async move {
                                     if !new_name.trim().is_empty() {
-                                        let _ = update_skill(id, new_name, new_desc).await;
+                                        let _ = update_skill(id, new_name, new_desc, new_hide).await;
                                         skill.restart();
                                     }
                                     editing.set(false);
@@ -260,6 +270,14 @@ pub fn SkillDetail(id: String) -> Element {
                                 rows: "2",
                                 value: "{draft_desc}",
                                 oninput: move |e| draft_desc.set(e.value()),
+                            }
+                            label { class: "flex items-center gap-2 text-sm text-gray-700",
+                                input {
+                                    r#type: "checkbox",
+                                    checked: "{draft_hide}",
+                                    oninput: move |e| draft_hide.set(e.value() == "true"),
+                                }
+                                "Hide from public catalog"
                             }
                             div { class: "flex gap-2",
                                 button { class: "text-green-600 hover:text-green-800", r#type: "submit", "Save" }
@@ -283,11 +301,13 @@ pub fn SkillDetail(id: String) -> Element {
                     } else {
                         h2 { class: "text-2xl font-bold", "{name}" }
                         span { class: "text-gray-400 font-mono text-sm", "({slug})" }
+                        HiddenBadge { hidden: hide_flag }
                         button {
                             class: "text-gray-400 hover:text-gray-600",
                             onclick: move |_| {
                                 draft_name.set(name.clone());
                                 draft_desc.set(desc.clone());
+                                draft_hide.set(hide_flag);
                                 editing.set(true);
                             },
                             "Edit"

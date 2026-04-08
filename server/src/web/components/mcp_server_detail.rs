@@ -5,6 +5,7 @@ use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::McpServer;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
+use crate::web::components::hidden_badge::HiddenBadge;
 
 // ── Server functions ─────────────────────────────────────────────────
 
@@ -26,6 +27,7 @@ async fn upsert_mcp_server(
     name: String,
     description: String,
     config_json: String,
+    hide_from_public_catalog: bool,
 ) -> Result<McpServer, ServerFnError> {
     let pool = crate::server_pool()?;
     let parsed: serde_json::Value = serde_json::from_str(&config_json)
@@ -36,23 +38,25 @@ async fn upsert_mcp_server(
     if let Some(id) = id {
         let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
         sqlx::query_as::<_, McpServer>(
-            "UPDATE mcp_servers SET name = $1, description = $2, config_json = $3 WHERE id = $4 RETURNING *",
+            "UPDATE mcp_servers SET name = $1, description = $2, config_json = $3, hide_from_public_catalog = $4 WHERE id = $5 RETURNING *",
         )
         .bind(&name)
         .bind(&description)
         .bind(&parsed)
+        .bind(hide_from_public_catalog)
         .bind(uuid)
         .fetch_one(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
     } else {
         sqlx::query_as::<_, McpServer>(
-            "INSERT INTO mcp_servers (slug, name, description, config_json) VALUES ($1, $2, $3, $4) RETURNING *",
+            "INSERT INTO mcp_servers (slug, name, description, config_json, hide_from_public_catalog) VALUES ($1, $2, $3, $4, $5) RETURNING *",
         )
         .bind(&slug)
         .bind(&name)
         .bind(&description)
         .bind(&parsed)
+        .bind(hide_from_public_catalog)
         .fetch_one(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
@@ -153,6 +157,7 @@ fn McpServerFormFields(
     name: Signal<String>,
     description: Signal<String>,
     config_json: Signal<String>,
+    hide_from_public_catalog: Signal<bool>,
     slug_readonly: bool,
 ) -> Element {
     rsx! {
@@ -198,6 +203,16 @@ fn McpServerFormFields(
                 oninput: move |evt| config_json.set(evt.value()),
             }
         }
+        div { class: "mb-4",
+            label { class: "flex items-center gap-2 text-sm text-gray-700",
+                input {
+                    r#type: "checkbox",
+                    checked: "{hide_from_public_catalog}",
+                    oninput: move |evt| hide_from_public_catalog.set(evt.value() == "true"),
+                }
+                "Hide from public catalog"
+            }
+        }
     }
 }
 
@@ -230,11 +245,13 @@ pub fn McpServerDetail(id: String) -> Element {
             let slug = s.slug.clone();
             let config_str = serde_json::to_string_pretty(&s.config_json).unwrap_or_default();
             let packages = s.nix_packages.clone();
+            let hide_flag = s.hide_from_public_catalog;
 
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
                     h2 { class: "text-2xl font-bold", "{name}" }
                     span { class: "text-gray-400 font-mono text-sm", "({slug})" }
+                    HiddenBadge { hidden: hide_flag }
                     Link {
                         to: Route::McpServerEdit { id: sid },
                         class: "text-gray-400 hover:text-gray-600",
@@ -378,6 +395,7 @@ pub fn McpServerForm() -> Element {
     let mut name = use_signal(String::new);
     let mut description = use_signal(String::new);
     let config_json = use_signal(|| r#"{"command": "", "args": []}"#.to_string());
+    let hide_from_public_catalog = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
     rsx! {
@@ -393,8 +411,9 @@ pub fn McpServerForm() -> Element {
                 let n = name.read().clone();
                 let d = description.read().clone();
                 let c = config_json.read().clone();
+                let h = *hide_from_public_catalog.read();
                 spawn(async move {
-                    match upsert_mcp_server(None, s, n, d, c).await {
+                    match upsert_mcp_server(None, s, n, d, c, h).await {
                         Ok(server) => { nav.push(Route::McpServerDetail { id: server.id.to_string() }); }
                         Err(e) => error.set(Some(e.to_string())),
                     }
@@ -405,6 +424,7 @@ pub fn McpServerForm() -> Element {
                 name,
                 description,
                 config_json,
+                hide_from_public_catalog,
                 slug_readonly: false,
             }
             div { class: "flex gap-3 items-center",
@@ -442,6 +462,7 @@ pub fn McpServerEdit(id: String) -> Element {
     let mut name = use_signal(String::new);
     let mut description = use_signal(String::new);
     let mut config_json = use_signal(String::new);
+    let mut hide_from_public_catalog = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut loaded = use_signal(|| false);
 
@@ -452,6 +473,7 @@ pub fn McpServerEdit(id: String) -> Element {
             name.set(s.name.clone());
             description.set(s.description.clone());
             config_json.set(serde_json::to_string_pretty(&s.config_json).unwrap_or_default());
+            hide_from_public_catalog.set(s.hide_from_public_catalog);
             loaded.set(true);
         }
     }
@@ -475,8 +497,9 @@ pub fn McpServerEdit(id: String) -> Element {
                         let n = name.read().clone();
                         let d = description.read().clone();
                         let c = config_json.read().clone();
+                        let h = *hide_from_public_catalog.read();
                         spawn(async move {
-                            match upsert_mcp_server(Some(eid), s, n, d, c).await {
+                            match upsert_mcp_server(Some(eid), s, n, d, c, h).await {
                                 Ok(_) => { nav.push(Route::McpServerDetail { id: nid }); }
                                 Err(e) => error.set(Some(e.to_string())),
                             }
@@ -487,6 +510,7 @@ pub fn McpServerEdit(id: String) -> Element {
                         name,
                         description,
                         config_json,
+                        hide_from_public_catalog,
                         slug_readonly: true,
                     }
                     div { class: "flex gap-3 items-center",

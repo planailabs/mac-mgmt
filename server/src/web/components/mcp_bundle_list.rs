@@ -5,6 +5,7 @@ use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::models::McpServerBundle;
 use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
+use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
 
 #[server]
@@ -67,7 +68,7 @@ pub fn McpBundleList() -> Element {
 
                 let total = list.len();
                 let data = use_tabular(
-                    (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, CreatedAtColumn),
+                    (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, HiddenColumn, CreatedAtColumn),
                     filtered.into(),
                 );
                 let all_rows: Vec<_> = data.rows().collect();

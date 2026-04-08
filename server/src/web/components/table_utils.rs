@@ -465,7 +465,7 @@ impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitCol
 
 // ── Sort helpers ────────────────────────────────────────────────────
 
-fn sort_indicator(context: ColumnContext) -> &'static str {
+pub fn sort_indicator(context: ColumnContext) -> &'static str {
     match context.sort_info() {
         Some(info) => match info.direction {
             SortDirection::Ascending => "\u{2191}",
@@ -475,7 +475,7 @@ fn sort_indicator(context: ColumnContext) -> &'static str {
     }
 }
 
-fn toggle_sort(context: ColumnContext) {
+pub fn toggle_sort(context: ColumnContext) {
     match context.sort_info() {
         None => context.request_sort(SortGesture::AddFirst(Sort {
             direction: SortDirection::Ascending,
