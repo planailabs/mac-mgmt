@@ -6,6 +6,7 @@ pub mod bundle_form;
 pub mod bundle_list;
 pub mod config_editor;
 pub mod config_history;
+pub mod extra_config_modal;
 pub mod generate_all_button;
 pub mod generate_button;
 pub mod hidden_badge;

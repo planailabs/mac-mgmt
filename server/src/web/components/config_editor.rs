@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::models::CustomerConfig;
+use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 
 #[server]
 async fn get_current_config(customer_id: String) -> Result<Option<CustomerConfig>, ServerFnError> {
@@ -71,8 +72,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
     }
 
     let cid_save = customer_id.clone();
-    let on_save = move |evt: FormEvent| {
-        evt.prevent_default();
+    let do_save = move || {
         let cid = cid_save.clone();
         let text = editor_text.read().clone();
         spawn(async move {
@@ -104,7 +104,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
             }
         }
 
-        form { onsubmit: on_save,
+        div {
             if *raw_mode.read() {
                 textarea {
                     class: "w-full h-64 font-mono text-sm border border-gray-300 rounded p-2 mb-2",
@@ -136,7 +136,12 @@ pub fn ConfigEditor(customer_id: String) -> Element {
             }
             button {
                 class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                r#type: "submit",
+                r#type: "button",
+                onclick: move |evt| {
+                    evt.prevent_default();
+                    evt.stop_propagation();
+                    do_save();
+                },
                 "Save Config"
             }
         }
@@ -163,6 +168,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
 #[component]
 fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Element {
     let mut form_values: Signal<serde_json::Value> = use_signal(|| serde_json::Value::Object(Default::default()));
+    let extra_config_open = use_signal(|| false);
 
     // Keep form_values in sync when json_text changes (e.g. after config loads)
     use_effect(move || {
@@ -192,6 +198,11 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
     rsx! {
+        ExtraConfigModalHost {
+            open: extra_config_open,
+            form_values,
+            json_text,
+        }
         div { class: "space-y-3 mb-3",
             {properties.into_iter().map(|(section_name, section_schema)| {
                 let resolved = resolve_ref(&section_schema, &defs);
@@ -218,6 +229,8 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                                 &defs,
                                 vec![section_name.clone()],
                                 form_values,
+                                json_text,
+                                extra_config_open,
                                 sync_to_json,
                             )}
                         }
@@ -263,6 +276,8 @@ fn render_section_fields(
     defs: &serde_json::Value,
     path: Vec<String>,
     mut form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+    extra_config_open: Signal<bool>,
     sync_to_json: impl Fn() + Clone + 'static,
 ) -> Element {
     let properties = section_schema
@@ -273,6 +288,17 @@ fn render_section_fields(
 
     rsx! {
         {properties.into_iter().map(|(field_name, field_schema)| {
+            // Special-case: extra_config under openclaw is rendered via the
+            // openclaw-baseline-driven modal, not the schemars schema.
+            if field_name == "extra_config" && path.last().map(|s| s.as_str()) == Some("openclaw") {
+                return rsx! {
+                    ExtraConfigField {
+                        key: "{field_name}",
+                        form_values,
+                        open: extra_config_open,
+                    }
+                };
+            }
             let resolved = resolve_ref(&field_schema, defs);
             // Description may be on the field schema itself (for $ref fields)
             // or on the resolved type definition
@@ -316,6 +342,8 @@ fn render_section_fields(
                             &defs_clone,
                             field_path,
                             form_values,
+                            json_text,
+                            extra_config_open,
                             sync,
                         )}
                     }
@@ -542,7 +570,7 @@ fn render_section_fields(
 }
 
 /// Get a value at a nested JSON path.
-fn get_at_path(root: &serde_json::Value, path: &[String]) -> Option<serde_json::Value> {
+pub(super) fn get_at_path(root: &serde_json::Value, path: &[String]) -> Option<serde_json::Value> {
     let mut current = root;
     for key in path {
         current = current.get(key)?;
@@ -551,7 +579,7 @@ fn get_at_path(root: &serde_json::Value, path: &[String]) -> Option<serde_json::
 }
 
 /// Set a value at a nested JSON path, creating intermediate objects as needed.
-fn set_at_path(
+pub(super) fn set_at_path(
     form_values: &mut Signal<serde_json::Value>,
     path: &[String],
     value: serde_json::Value,
@@ -573,7 +601,7 @@ fn set_at_path(
 }
 
 /// Remove a value at a nested JSON path.
-fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: &[String]) {
+pub(super) fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: &[String]) {
     let mut val = form_values.write();
     let mut current = &mut *val;
     for key in &path[..path.len() - 1] {
