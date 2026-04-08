@@ -547,6 +547,36 @@ fn render_node(
     let path = json_path;
     let key = node.full_path.clone();
 
+    // Object map: object/empty parent whose only child is a wildcard `*`
+    // (i.e. a string-keyed map<K, V> in the openclaw schema).
+    if node.children.is_empty()
+        && node.array_item.is_some()
+        && (entry_ty == "object" || entry_ty.is_empty() || entry_ty == "any")
+    {
+        let template = node.array_item.clone().unwrap();
+        let has_value = get_at(&working.read(), &path)
+            .map(|v| !is_empty(&v))
+            .unwrap_or(false);
+        let map_path = path.clone();
+        let filter_owned = filter.to_string();
+        return rsx! {
+            details { class: "border border-gray-200 rounded",
+                key: "{key}",
+                open: !filter.is_empty() || has_value,
+                summary { class: "px-2 py-1 bg-gray-50 cursor-pointer text-sm font-semibold hover:bg-gray-100",
+                    "{title} "
+                    span { class: "text-gray-400 font-normal text-xs", "({node.name})" }
+                }
+                if !help.is_empty() {
+                    p { class: "px-2 pt-1 text-xs text-gray-500", "{help}" }
+                }
+                div { class: "px-2 py-2 space-y-2",
+                    {render_object_map(template, map_path, working, &filter_owned)}
+                }
+            }
+        };
+    }
+
     // Object / branch with children: collapsible group
     if !node.children.is_empty() && (entry_ty == "object" || entry_ty.is_empty() || entry_ty == "any") {
         let filter_owned = filter.to_string();
@@ -711,6 +741,122 @@ fn render_node(
                 p { class: "text-xs text-gray-500", "{help}" }
             }
             {field}
+        }
+    }
+}
+
+/// Render a string-keyed map (openclaw `object` parent whose only child
+/// is a wildcard `*`). Each existing key becomes a removable collapsible
+/// group rendering the `*` template's children at `[…path, key]`. A key
+/// input + "add" button inserts new entries.
+fn render_object_map(
+    template: Box<Node>,
+    path: Vec<String>,
+    mut working: Signal<serde_json::Value>,
+    filter: &str,
+) -> Element {
+    let keys: Vec<String> = get_at(&working.read(), &path)
+        .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect()))
+        .unwrap_or_default();
+    let mut new_key = use_signal(String::new);
+    let path_for_add = path.clone();
+    let template_for_add = template.clone();
+    let filter_outer = filter.to_string();
+
+    rsx! {
+        div { class: "space-y-2 border-l-2 border-amber-300 pl-2",
+            for k in keys {
+                {
+                    let mut entry_path = path.clone();
+                    entry_path.push(k.clone());
+                    let entry_path_for_remove = entry_path.clone();
+                    let template_node = (*template).clone();
+                    let leaf_filter = filter_outer.clone();
+                    let branch_filter_a = filter_outer.clone();
+                    let branch_filter_b = filter_outer.clone();
+                    let parent_path = entry_path.clone();
+                    let dom_key = format!("{}.{}", path.join("."), k);
+                    let label = k.clone();
+                    rsx! {
+                        details {
+                            key: "{dom_key}",
+                            class: "border border-gray-200 rounded",
+                            open: true,
+                            summary { class: "px-2 py-1 bg-gray-50 cursor-pointer text-sm font-semibold flex items-center justify-between",
+                                span { "{label}" }
+                                button {
+                                    r#type: "button",
+                                    class: "text-red-500 hover:text-red-700 text-xs",
+                                    onclick: move |evt| {
+                                        evt.prevent_default();
+                                        evt.stop_propagation();
+                                        remove_at(&mut working, &entry_path_for_remove);
+                                    },
+                                    "remove"
+                                }
+                            }
+                            div { class: "px-2 py-2 space-y-2",
+                                if template_node.children.is_empty() {
+                                    {render_node(template_node, parent_path, working, &leaf_filter)}
+                                } else {
+                                    {
+                                        template_node.children
+                                            .into_iter()
+                                            .filter(move |c| node_matches(c, &branch_filter_a))
+                                            .map(move |c| {
+                                                let mut p = parent_path.clone();
+                                                p.push(c.name.clone());
+                                                render_node(c, p, working, &branch_filter_b)
+                                            })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            div { class: "flex gap-1",
+                input {
+                    r#type: "text",
+                    class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm",
+                    placeholder: "key",
+                    value: "{new_key}",
+                    oninput: move |e| new_key.set(e.value()),
+                }
+                button {
+                    r#type: "button",
+                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                    onclick: move |evt| {
+                        evt.prevent_default();
+                        evt.stop_propagation();
+                        let k = new_key.read().trim().to_string();
+                        if k.is_empty() {
+                            return;
+                        }
+                        let mut entry_path = path_for_add.clone();
+                        entry_path.push(k);
+                        let init = if template_for_add.children.is_empty() {
+                            match template_for_add
+                                .entry
+                                .as_ref()
+                                .map(|e| e.ty.as_str())
+                                .unwrap_or("")
+                            {
+                                "string" => serde_json::Value::String(String::new()),
+                                "boolean" => serde_json::Value::Bool(false),
+                                "integer" | "number" => serde_json::json!(0),
+                                "array" => serde_json::Value::Array(vec![]),
+                                _ => serde_json::Value::Null,
+                            }
+                        } else {
+                            serde_json::Value::Object(Default::default())
+                        };
+                        set_at(&mut working, &entry_path, init);
+                        new_key.set(String::new());
+                    },
+                    "+ add"
+                }
+            }
         }
     }
 }
