@@ -697,8 +697,11 @@ fn render_node(
                 item.as_ref().map(|n| !n.children.is_empty()).unwrap_or(false);
             if item_has_children || item_ty == "object" {
                 render_object_array(item.unwrap(), path.clone(), working, filter)
-            } else if item_ty == "string" {
-                render_string_array(path.clone(), current.clone(), working)
+            } else if matches!(
+                item_ty.as_str(),
+                "string" | "number" | "integer" | "boolean" | ""
+            ) {
+                render_primitive_array(path.clone(), current.clone(), working, &item_ty)
             } else {
                 render_json_textarea(path.clone(), current.clone(), working)
             }
@@ -941,10 +944,38 @@ fn render_object_array(
     }
 }
 
-fn render_string_array(
+/// Parse a free-text input into a JSON value matching `item_ty`. For
+/// integer/number we try to parse and fall back to a string if the input
+/// isn't numeric — this matches openclaw union types like
+/// `["number", "string"]` for fields such as `allowFrom`.
+fn parse_primitive(input: &str, item_ty: &str) -> serde_json::Value {
+    match item_ty {
+        "boolean" => match input.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "1" => serde_json::Value::Bool(true),
+            "false" | "no" | "0" => serde_json::Value::Bool(false),
+            _ => serde_json::Value::String(input.to_string()),
+        },
+        "integer" => input
+            .trim()
+            .parse::<i64>()
+            .map(|n| serde_json::json!(n))
+            .unwrap_or_else(|_| serde_json::Value::String(input.to_string())),
+        "number" => input
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(input.to_string())),
+        _ => serde_json::Value::String(input.to_string()),
+    }
+}
+
+fn render_primitive_array(
     path: Vec<String>,
     current: Option<serde_json::Value>,
     mut working: Signal<serde_json::Value>,
+    item_ty: &str,
 ) -> Element {
     let items: Vec<String> = current
         .as_ref()
@@ -959,8 +990,10 @@ fn render_string_array(
         })
         .unwrap_or_default();
     let mut new_val = use_signal(String::new);
+    let item_ty_owned = item_ty.to_string();
 
     let add_path = path.clone();
+    let add_ty = item_ty_owned.clone();
     let add = move |_| {
         let val = new_val.read().trim().to_string();
         if val.is_empty() {
@@ -969,7 +1002,7 @@ fn render_string_array(
         let mut arr = get_at(&working.read(), &add_path)
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
-        arr.push(serde_json::Value::String(val));
+        arr.push(parse_primitive(&val, &add_ty));
         set_at(&mut working, &add_path, serde_json::Value::Array(arr));
         new_val.set(String::new());
     };
@@ -1115,6 +1148,18 @@ mod tests {
         assert_eq!(item.entry.as_ref().unwrap().ty, "object");
         let names: Vec<_> = item.children.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["apiKey", "region"]);
+    }
+
+    #[test]
+    fn parse_primitive_handles_union_fallback() {
+        // integer with numeric input → number
+        assert_eq!(parse_primitive("42", "integer"), json!(42));
+        // integer with non-numeric input → falls back to string (matches
+        // ["number","string"] union semantics for fields like allowFrom)
+        assert_eq!(parse_primitive("@user", "integer"), json!("@user"));
+        assert_eq!(parse_primitive("3.14", "number"), json!(3.14));
+        assert_eq!(parse_primitive("true", "boolean"), json!(true));
+        assert_eq!(parse_primitive("hello", "string"), json!("hello"));
     }
 
     #[test]
