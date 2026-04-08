@@ -8,6 +8,7 @@ build:
   only:
     - trunk
   script:
+    - nix flake check -L
     - bash xzar-install.sh
     - nix develop -c bash xzar.sh
 
