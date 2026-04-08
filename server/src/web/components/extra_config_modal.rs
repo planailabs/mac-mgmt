@@ -733,52 +733,35 @@ fn render_node(
         _ => render_json_textarea(path.clone(), current.clone(), working),
     };
 
-    let is_default = current.is_none();
-    let default_path = path.clone();
-    let default_ty = entry_ty.to_string();
+    let is_set = current.is_some();
+    let reset_path = path.clone();
 
     rsx! {
         div { class: "flex flex-col gap-0.5",
             key: "{key}",
-            label { class: "text-sm font-medium text-gray-700",
-                "{title} "
-                span { class: "text-gray-400 font-normal text-xs", "({node.name})" }
+            div { class: "flex items-center justify-between gap-2",
+                label { class: "text-sm font-medium text-gray-700",
+                    "{title} "
+                    span { class: "text-gray-400 font-normal text-xs", "({node.name})" }
+                }
+                if is_set {
+                    button {
+                        r#type: "button",
+                        class: "text-xs text-gray-500 hover:text-red-600 underline",
+                        onclick: move |evt| {
+                            evt.prevent_default();
+                            evt.stop_propagation();
+                            remove_at(&mut working, &reset_path);
+                        },
+                        "reset to default"
+                    }
+                }
             }
             if !help.is_empty() {
                 p { class: "text-xs text-gray-500", "{help}" }
             }
-            div { class: "flex items-center gap-2",
-                label { class: "text-xs text-gray-500 flex items-center gap-1 cursor-pointer whitespace-nowrap",
-                    input {
-                        r#type: "checkbox",
-                        class: "h-3 w-3",
-                        checked: is_default,
-                        onchange: move |e| {
-                            if e.checked() {
-                                remove_at(&mut working, &default_path);
-                            } else {
-                                set_at(&mut working, &default_path, default_value_for(&default_ty));
-                            }
-                        },
-                    }
-                    "use default"
-                }
-                if !is_default {
-                    div { class: "flex-1", {field} }
-                }
-            }
+            {field}
         }
-    }
-}
-
-fn default_value_for(ty: &str) -> serde_json::Value {
-    match ty {
-        "string" => serde_json::Value::String(String::new()),
-        "boolean" => serde_json::Value::Bool(false),
-        "integer" | "number" => serde_json::json!(0),
-        "array" => serde_json::Value::Array(vec![]),
-        "object" => serde_json::Value::Object(Default::default()),
-        _ => serde_json::Value::Null,
     }
 }
 
