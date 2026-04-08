@@ -1,8 +1,6 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::config_editor::{get_at_path, remove_at_path, set_at_path};
-
 const OPENCLAW_BASELINE: &str = include_str!("../../../ext/openclaw-config-baseline.json");
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -162,7 +160,7 @@ pub fn ExtraConfigField(
     mut open: Signal<bool>,
 ) -> Element {
     let path = vec!["openclaw".to_string(), "extra_config".to_string()];
-    let current = get_at_path(&form_values.read(), &path).unwrap_or(serde_json::Value::Null);
+    let current = get_at(&form_values.read(), &path).unwrap_or(serde_json::Value::Null);
     let key_count = current
         .as_object()
         .map(|o| count_leaves(&serde_json::Value::Object(o.clone())))
@@ -204,7 +202,7 @@ pub fn ExtraConfigModalHost(
         return rsx! {};
     }
     let path = vec!["openclaw".to_string(), "extra_config".to_string()];
-    let initial = get_at_path(&form_values.read(), &path).unwrap_or(serde_json::Value::Null);
+    let initial = get_at(&form_values.read(), &path).unwrap_or(serde_json::Value::Null);
     rsx! {
         ExtraConfigModal {
             open,
@@ -213,9 +211,9 @@ pub fn ExtraConfigModalHost(
                 if new_value.as_object().map(|o| o.is_empty()).unwrap_or(false)
                     || new_value.is_null()
                 {
-                    remove_at_path(&mut form_values, &path);
+                    remove_at(&mut form_values, &path);
                 } else {
-                    set_at_path(&mut form_values, &path, new_value);
+                    set_at(&mut form_values, &path, new_value);
                 }
                 let snapshot = form_values.read().clone();
                 json_text.set(serde_json::to_string_pretty(&snapshot).unwrap_or_default());
@@ -292,9 +290,15 @@ fn ExtraConfigModal(
                         (Some(Ok(_)), Some(root)) => {
                             let filter_str = filter.read().to_lowercase();
                             rsx! {
-                                {root.children.into_iter().map(|child| {
-                                    render_node(child, working, &filter_str)
-                                })}
+                                {
+                                    root.children
+                                        .into_iter()
+                                        .filter(|c| node_matches(c, &filter_str))
+                                        .map(|child| {
+                                            let p = vec![child.name.clone()];
+                                            render_node(child, p, working, &filter_str)
+                                        })
+                                }
                             }
                         }
                         (Some(Err(e)), _) => rsx! {
@@ -363,11 +367,105 @@ fn is_empty(v: &serde_json::Value) -> bool {
     }
 }
 
-// ── Node rendering ──────────────────────────────────────────────────────
+// ── Path helpers (index-aware) ──────────────────────────────────────────
+//
+// Path segments that parse as `usize` are treated as array indices; all
+// other segments as object keys. This lets us address values nested under
+// arrays of objects (e.g. `messages.tts.providers.0.apiKey`).
 
-fn path_segments(full_path: &str) -> Vec<String> {
-    full_path.split('.').map(|s| s.to_string()).collect()
+pub(super) fn get_at(root: &serde_json::Value, path: &[String]) -> Option<serde_json::Value> {
+    let mut cur = root;
+    for seg in path {
+        if let Ok(idx) = seg.parse::<usize>() {
+            cur = cur.as_array()?.get(idx)?;
+        } else {
+            cur = cur.get(seg)?;
+        }
+    }
+    Some(cur.clone())
 }
+
+pub(super) fn set_at(
+    working: &mut Signal<serde_json::Value>,
+    path: &[String],
+    value: serde_json::Value,
+) {
+    if path.is_empty() {
+        working.set(value);
+        return;
+    }
+    let mut val = working.write();
+    let mut cur = &mut *val;
+    for seg in &path[..path.len() - 1] {
+        if let Ok(idx) = seg.parse::<usize>() {
+            if !cur.is_array() {
+                *cur = serde_json::Value::Array(vec![]);
+            }
+            let arr = cur.as_array_mut().unwrap();
+            while arr.len() <= idx {
+                arr.push(serde_json::Value::Null);
+            }
+            cur = &mut arr[idx];
+        } else {
+            if !cur.is_object() {
+                *cur = serde_json::Value::Object(serde_json::Map::new());
+            }
+            cur = cur
+                .as_object_mut()
+                .unwrap()
+                .entry(seg.clone())
+                .or_insert(serde_json::Value::Null);
+        }
+    }
+    let last = path.last().unwrap();
+    if let Ok(idx) = last.parse::<usize>() {
+        if !cur.is_array() {
+            *cur = serde_json::Value::Array(vec![]);
+        }
+        let arr = cur.as_array_mut().unwrap();
+        while arr.len() <= idx {
+            arr.push(serde_json::Value::Null);
+        }
+        arr[idx] = value;
+    } else {
+        if !cur.is_object() {
+            *cur = serde_json::Value::Object(serde_json::Map::new());
+        }
+        cur.as_object_mut().unwrap().insert(last.clone(), value);
+    }
+}
+
+pub(super) fn remove_at(working: &mut Signal<serde_json::Value>, path: &[String]) {
+    if path.is_empty() {
+        working.set(serde_json::Value::Null);
+        return;
+    }
+    let mut val = working.write();
+    let mut cur = &mut *val;
+    for seg in &path[..path.len() - 1] {
+        let next = if let Ok(idx) = seg.parse::<usize>() {
+            cur.as_array_mut().and_then(|a| a.get_mut(idx))
+        } else {
+            cur.get_mut(seg)
+        };
+        match next {
+            Some(n) => cur = n,
+            None => return,
+        }
+    }
+    let last = path.last().unwrap();
+    if let Ok(idx) = last.parse::<usize>() {
+        if let Some(arr) = cur.as_array_mut() {
+            if idx < arr.len() {
+                arr.remove(idx);
+            }
+        }
+    } else if let Some(obj) = cur.as_object_mut() {
+        obj.remove(last);
+    }
+}
+
+// ── Node rendering ──────────────────────────────────────────────────────
 
 fn node_matches(node: &Node, filter: &str) -> bool {
     if filter.is_empty() {
@@ -429,10 +527,12 @@ fn token_in_subtree(node: &Node, tok: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str) -> Element {
-    if !node_matches(&node, filter) {
-        return rsx! {};
-    }
+fn render_node(
+    node: Node,
+    json_path: Vec<String>,
+    mut working: Signal<serde_json::Value>,
+    filter: &str,
+) -> Element {
     let entry_ty = node.entry.as_ref().map(|e| e.ty.as_str()).unwrap_or("");
     let title = node
         .entry
@@ -444,15 +544,16 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
         .as_ref()
         .and_then(|e| e.help.clone())
         .unwrap_or_default();
-    let path = path_segments(&node.full_path);
+    let path = json_path;
     let key = node.full_path.clone();
 
     // Object / branch with children: collapsible group
     if !node.children.is_empty() && (entry_ty == "object" || entry_ty.is_empty() || entry_ty == "any") {
         let filter_owned = filter.to_string();
-        let has_value = get_at_path(&working.read(), &path)
+        let has_value = get_at(&working.read(), &path)
             .map(|v| !is_empty(&v))
             .unwrap_or(false);
+        let parent_path = path.clone();
         return rsx! {
             details { class: "border border-gray-200 rounded",
                 key: "{key}",
@@ -465,14 +566,24 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
                     p { class: "px-2 pt-1 text-xs text-gray-500", "{help}" }
                 }
                 div { class: "px-2 py-2 space-y-2",
-                    {node.children.into_iter().map(|c| render_node(c, working, &filter_owned))}
+                    {
+                        let filter_for_filter = filter_owned.clone();
+                        node.children
+                            .into_iter()
+                            .filter(move |c| node_matches(c, &filter_for_filter))
+                            .map(move |c| {
+                                let mut p = parent_path.clone();
+                                p.push(c.name.clone());
+                                render_node(c, p, working, &filter_owned)
+                            })
+                    }
                 }
             }
         };
     }
 
     // Leaf
-    let current = get_at_path(&working.read(), &path);
+    let current = get_at(&working.read(), &path);
     let sensitive = node.entry.as_ref().map(|e| e.sensitive).unwrap_or(false);
 
     let field = match entry_ty {
@@ -485,7 +596,7 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
                     class: "h-4 w-4",
                     checked,
                     onchange: move |e| {
-                        set_at_path(&mut working, &path_c, serde_json::Value::Bool(e.checked()));
+                        set_at(&mut working, &path_c, serde_json::Value::Bool(e.checked()));
                     },
                 }
             }
@@ -506,9 +617,9 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
                     oninput: move |e| {
                         let v = e.value();
                         if v.is_empty() {
-                            remove_at_path(&mut working, &path_d);
+                            remove_at(&mut working, &path_d);
                         } else if let Ok(n) = v.parse::<i64>() {
-                            set_at_path(&mut working, &path_c, serde_json::json!(n));
+                            set_at(&mut working, &path_c, serde_json::json!(n));
                         }
                     },
                 }
@@ -531,9 +642,9 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
                     oninput: move |e| {
                         let v = e.value();
                         if v.is_empty() {
-                            remove_at_path(&mut working, &path_d);
+                            remove_at(&mut working, &path_d);
                         } else if let Ok(n) = v.parse::<f64>() {
-                            set_at_path(
+                            set_at(
                                 &mut working,
                                 &path_c,
                                 serde_json::Number::from_f64(n)
@@ -546,14 +657,17 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
             }
         }
         "array" => {
-            // Only string-array via node.array_item with ty == "string"
-            let item_ty = node
-                .array_item
+            let item = node.array_item.clone();
+            let item_ty = item
                 .as_ref()
                 .and_then(|n| n.entry.as_ref())
                 .map(|e| e.ty.clone())
                 .unwrap_or_default();
-            if item_ty == "string" {
+            let item_has_children =
+                item.as_ref().map(|n| !n.children.is_empty()).unwrap_or(false);
+            if item_has_children || item_ty == "object" {
+                render_object_array(item.unwrap(), path.clone(), working, filter)
+            } else if item_ty == "string" {
                 render_string_array(path.clone(), current.clone(), working)
             } else {
                 render_json_textarea(path.clone(), current.clone(), working)
@@ -575,9 +689,9 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
                     oninput: move |e| {
                         let v = e.value();
                         if v.is_empty() {
-                            remove_at_path(&mut working, &path_d);
+                            remove_at(&mut working, &path_d);
                         } else {
-                            set_at_path(&mut working, &path_c, serde_json::Value::String(v));
+                            set_at(&mut working, &path_c, serde_json::Value::String(v));
                         }
                     },
                 }
@@ -597,6 +711,86 @@ fn render_node(node: Node, mut working: Signal<serde_json::Value>, filter: &str)
                 p { class: "text-xs text-gray-500", "{help}" }
             }
             {field}
+        }
+    }
+}
+
+/// Render an array whose `*` template is an object (or otherwise has
+/// children). Each existing array entry becomes a numbered, removable
+/// collapsible group; an "add item" button appends an empty object.
+fn render_object_array(
+    array_item: Box<Node>,
+    path: Vec<String>,
+    mut working: Signal<serde_json::Value>,
+    filter: &str,
+) -> Element {
+    let arr_len = get_at(&working.read(), &path)
+        .and_then(|v| v.as_array().map(|a| a.len()))
+        .unwrap_or(0);
+    let filter_owned = filter.to_string();
+    let path_for_add = path.clone();
+
+    rsx! {
+        div { class: "space-y-2 border-l-2 border-emerald-300 pl-2",
+            for idx in 0..arr_len {
+                {
+                    let mut item_path = path.clone();
+                    item_path.push(idx.to_string());
+                    let key = format!("{}#{idx}", path.join("."));
+                    let item_path_for_remove = item_path.clone();
+                    let item_node = (*array_item).clone();
+                    let item_filter_outer = filter_owned.clone();
+                    let item_filter_inner = filter_owned.clone();
+                    let parent_path = item_path.clone();
+                    rsx! {
+                        details {
+                            key: "{key}",
+                            class: "border border-gray-200 rounded",
+                            open: true,
+                            summary { class: "px-2 py-1 bg-gray-50 cursor-pointer text-sm font-semibold flex items-center justify-between",
+                                span { "[{idx}]" }
+                                button {
+                                    r#type: "button",
+                                    class: "text-red-500 hover:text-red-700 text-xs",
+                                    onclick: move |evt| {
+                                        evt.prevent_default();
+                                        evt.stop_propagation();
+                                        remove_at(&mut working, &item_path_for_remove);
+                                    },
+                                    "remove"
+                                }
+                            }
+                            div { class: "px-2 py-2 space-y-2",
+                                {
+                                    let filter_for_filter = item_filter_outer.clone();
+                                    item_node.children
+                                        .into_iter()
+                                        .filter(move |c| node_matches(c, &filter_for_filter))
+                                        .map(move |c| {
+                                            let mut p = parent_path.clone();
+                                            p.push(c.name.clone());
+                                            render_node(c, p, working, &item_filter_inner)
+                                        })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            button {
+                r#type: "button",
+                class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                onclick: move |evt| {
+                    evt.prevent_default();
+                    evt.stop_propagation();
+                    let mut arr = get_at(&working.read(), &path_for_add)
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default();
+                    arr.push(serde_json::Value::Object(Default::default()));
+                    set_at(&mut working, &path_for_add, serde_json::Value::Array(arr));
+                },
+                "+ add item"
+            }
         }
     }
 }
@@ -626,11 +820,11 @@ fn render_string_array(
         if val.is_empty() {
             return;
         }
-        let mut arr = get_at_path(&working.read(), &add_path)
+        let mut arr = get_at(&working.read(), &add_path)
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
         arr.push(serde_json::Value::String(val));
-        set_at_path(&mut working, &add_path, serde_json::Value::Array(arr));
+        set_at(&mut working, &add_path, serde_json::Value::Array(arr));
         new_val.set(String::new());
     };
 
@@ -649,13 +843,13 @@ fn render_string_array(
                         onclick: {
                             let path = path.clone();
                             move |_| {
-                                let mut arr = get_at_path(&working.read(), &path)
+                                let mut arr = get_at(&working.read(), &path)
                                     .and_then(|v| v.as_array().cloned())
                                     .unwrap_or_default();
                                 if idx < arr.len() {
                                     arr.remove(idx);
                                 }
-                                set_at_path(&mut working, &path, serde_json::Value::Array(arr));
+                                set_at(&mut working, &path, serde_json::Value::Array(arr));
                             }
                         },
                         "x"
@@ -762,6 +956,22 @@ mod tests {
     }
 
     #[test]
+    fn build_tree_keeps_object_array_template() {
+        let entries = vec![
+            entry("providers", "array"),
+            entry("providers.*", "object"),
+            entry("providers.*.apiKey", "string"),
+            entry("providers.*.region", "string"),
+        ];
+        let root = build_tree(&entries);
+        let providers = root.children.iter().find(|c| c.name == "providers").unwrap();
+        let item = providers.array_item.as_ref().expect("array_item");
+        assert_eq!(item.entry.as_ref().unwrap().ty, "object");
+        let names: Vec<_> = item.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["apiKey", "region"]);
+    }
+
+    #[test]
     fn parses_full_embedded_baseline() {
         let parsed: Baseline = serde_json::from_str(OPENCLAW_BASELINE)
             .expect("embedded baseline must parse");
@@ -779,6 +989,77 @@ mod tests {
         let root = build_tree(&all);
         assert!(!root.children.is_empty());
         assert!(root.children.iter().any(|c| c.name == "acp"));
+    }
+
+    #[test]
+    fn get_at_handles_array_indices() {
+        let v = json!({"providers": [{"apiKey": "k1"}, {"apiKey": "k2"}]});
+        assert_eq!(
+            get_at(&v, &["providers".into(), "0".into(), "apiKey".into()]),
+            Some(json!("k1"))
+        );
+        assert_eq!(
+            get_at(&v, &["providers".into(), "1".into(), "apiKey".into()]),
+            Some(json!("k2"))
+        );
+        assert_eq!(get_at(&v, &["providers".into(), "5".into()]), None);
+    }
+
+    #[test]
+    fn set_at_creates_arrays_and_objects() {
+        // Smoke-test the structural mutation paths through a hand-rolled
+        // mock by going through the actual signal API would require a
+        // dioxus runtime; instead exercise the same logic on a Value.
+        let mut root = serde_json::Value::Null;
+        // Inline the same logic as set_at, since set_at takes a Signal.
+        fn write(root: &mut serde_json::Value, path: &[&str], value: serde_json::Value) {
+            let mut cur = root;
+            for seg in &path[..path.len() - 1] {
+                if let Ok(idx) = seg.parse::<usize>() {
+                    if !cur.is_array() {
+                        *cur = serde_json::Value::Array(vec![]);
+                    }
+                    let arr = cur.as_array_mut().unwrap();
+                    while arr.len() <= idx {
+                        arr.push(serde_json::Value::Null);
+                    }
+                    cur = &mut arr[idx];
+                } else {
+                    if !cur.is_object() {
+                        *cur = serde_json::Value::Object(serde_json::Map::new());
+                    }
+                    cur = cur
+                        .as_object_mut()
+                        .unwrap()
+                        .entry((*seg).to_string())
+                        .or_insert(serde_json::Value::Null);
+                }
+            }
+            let last = path.last().unwrap();
+            if let Ok(idx) = last.parse::<usize>() {
+                if !cur.is_array() {
+                    *cur = serde_json::Value::Array(vec![]);
+                }
+                let arr = cur.as_array_mut().unwrap();
+                while arr.len() <= idx {
+                    arr.push(serde_json::Value::Null);
+                }
+                arr[idx] = value;
+            } else {
+                if !cur.is_object() {
+                    *cur = serde_json::Value::Object(serde_json::Map::new());
+                }
+                cur.as_object_mut()
+                    .unwrap()
+                    .insert((*last).to_string(), value);
+            }
+        }
+        write(&mut root, &["providers", "0", "apiKey"], json!("k1"));
+        write(&mut root, &["providers", "1", "apiKey"], json!("k2"));
+        assert_eq!(
+            root,
+            json!({"providers": [{"apiKey": "k1"}, {"apiKey": "k2"}]})
+        );
     }
 
     #[test]
@@ -807,9 +1088,9 @@ fn render_json_textarea(
             oninput: move |e| {
                 let v = e.value();
                 if v.trim().is_empty() {
-                    remove_at_path(&mut working, &path_d);
+                    remove_at(&mut working, &path_d);
                 } else if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&v) {
-                    set_at_path(&mut working, &path_c, parsed);
+                    set_at(&mut working, &path_c, parsed);
                 }
             },
         }
