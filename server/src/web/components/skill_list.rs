@@ -109,21 +109,36 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
         }
     }
 
+    // Resolve which customers are affected BEFORE deleting — the cascade
+    // will wipe customer_skills/bundle_items rows and we'd otherwise lose
+    // the ability to push them a sync.
+    let slugs_vec: Vec<String> = valid_pairs.iter().map(|(s, _)| s.clone()).collect();
+    let channels_vec: Vec<String> = valid_pairs.iter().map(|(_, c)| c.clone()).collect();
+    let to_remove_channel_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT sc.id FROM skill_channels sc \
+         JOIN skills s ON sc.skill_id = s.id \
+         WHERE NOT EXISTS ( \
+             SELECT 1 FROM unnest($1::text[], $2::text[]) AS v(slug, channel) \
+             WHERE v.slug = s.slug AND v.channel = sc.channel \
+         )",
+    )
+    .bind(&slugs_vec)
+    .bind(&channels_vec)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if !to_remove_channel_ids.is_empty() {
+        crate::api::push::notify_skill_channels_global(&to_remove_channel_ids).await;
+    }
+
     // Remove channels that no longer exist in xzar
     let removed_channels = sqlx::query_scalar::<_, i64>(
         "WITH deleted AS ( \
-             DELETE FROM skill_channels sc \
-             USING skills s \
-             WHERE sc.skill_id = s.id \
-             AND NOT EXISTS ( \
-                 SELECT 1 FROM unnest($1::text[], $2::text[]) AS v(slug, channel) \
-                 WHERE v.slug = s.slug AND v.channel = sc.channel \
-             ) \
-             RETURNING sc.id \
+             DELETE FROM skill_channels WHERE id = ANY($1) RETURNING id \
          ) SELECT count(*) FROM deleted",
     )
-    .bind(&valid_pairs.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>())
-    .bind(&valid_pairs.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>())
+    .bind(&to_remove_channel_ids)
     .fetch_one(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;

@@ -1,8 +1,17 @@
 use anyhow::{Context, Result};
 use mac_mgmt_common::McpServerEntry;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
 
 use crate::sentry_ext;
+
+/// Serializes the read-modify-write cycle of the MCP nix state file so
+/// concurrent `sync_mcp_servers` calls cannot lose updates.
+fn nix_state_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 /// Path to the state file that tracks which nix packages were installed by MCP sync.
 fn mcp_nix_state_path() -> std::path::PathBuf {
@@ -61,7 +70,12 @@ pub async fn sync_mcp_servers(server_url: &str, token: &str) -> Result<()> {
         .context("failed to parse MCP servers response")?;
 
     sync_mcporter_config(&servers)?;
-    sync_nix_packages(&servers);
+    {
+        // Hold the lock for the entire read-modify-write of the nix state
+        // file so concurrent syncs can't lose updates.
+        let _guard = nix_state_lock().lock().await;
+        sync_nix_packages(&servers);
+    }
 
     tracing::info!("MCP server sync complete ({} servers)", servers.len());
     Ok(())
