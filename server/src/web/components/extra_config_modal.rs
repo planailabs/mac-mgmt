@@ -283,13 +283,32 @@ fn ExtraConfigModal(
                     }
                 }
 
-                div { class: "px-4 py-2 border-b",
+                div { class: "px-4 py-2 border-b space-y-2",
                     input {
                         r#type: "text",
                         class: "w-full border border-gray-300 rounded px-2 py-1 text-sm",
-                        placeholder: "Filter by path…",
+                        placeholder: "Filter by path… (space-separated tokens match in order)",
                         value: "{filter}",
                         oninput: move |e| filter.set(e.value()),
+                    }
+                    div { class: "flex flex-wrap items-center gap-3 text-xs text-gray-500",
+                        span { "legend:" }
+                        span { class: "flex items-center gap-1",
+                            span { class: "inline-block w-2 h-3 bg-purple-500 rounded-sm" }
+                            "sensitive"
+                        }
+                        span { class: "flex items-center gap-1",
+                            span { class: "inline-block w-2 h-3 bg-emerald-300 rounded-sm" }
+                            "array of objects"
+                        }
+                        span { class: "flex items-center gap-1",
+                            span { class: "inline-block w-2 h-3 bg-amber-300 rounded-sm" }
+                            "string-keyed map"
+                        }
+                        span { class: "flex items-center gap-1",
+                            span { class: "px-1 rounded bg-blue-600 text-white", "type" }
+                            "active union mode"
+                        }
                     }
                 }
 
