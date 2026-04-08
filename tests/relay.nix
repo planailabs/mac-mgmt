@@ -27,7 +27,7 @@ let
     version = "0.1.0";
     src = ./..;
     cargoLock.lockFile = ../Cargo.lock;
-    cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" ];
+    cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" "--features" "relay" ];
     doCheck = false;
   };
 
@@ -59,20 +59,13 @@ let
     [metrics]
     port = 9396
 
-    [openclaw]
-    provider = "ollama"
-
-    [ollama]
-    flavour = "cpu"
-    models = []
-    default_model = ""
-
     [server]
     url = "http://127.0.0.1:7378"
     token = "${syncToken}"
 
     [relay]
     url = "ws://127.0.0.1:8080"
+    remote_ssh_enabled = true
   '';
 
   # Seed script — inserts customer + hashed token into PostgreSQL
@@ -170,9 +163,9 @@ pkgs.testers.nixosTest {
 
     # Set up the daemon environment
     machine.succeed(
-        "mkdir -p /root/.config/mac-mgmt/ssh && "
+        "mkdir -p /root/.config/mac-mgmt && "
         "cp ${daemonConfig} /root/.config/mac-mgmt/config.toml && "
-        "cp ${testKeyDir}/id_ed25519.pub /root/.config/mac-mgmt/ssh/authorized_keys"
+        "cp ${testKeyDir}/id_ed25519.pub /root/.config/mac-mgmt/authorized_keys"
     )
 
     # Start the daemon (built without services feature — no ollama/openclaw needed)
@@ -180,15 +173,12 @@ pkgs.testers.nixosTest {
         "mac-mgmt daemon >/tmp/daemon.log 2>&1 &"
     )
 
-    # Wait for the daemon's metrics server (indicates main loop is running)
-    machine.wait_for_open_port(9396)
-    machine.log("Daemon started, metrics server on port 9396")
-
-    # Enable remote SSH via FIFO
-    # Wait for the FIFO to be created by the daemon
+    # Remote SSH is enabled in daemon config (remote_ssh_enabled = true) so
+    # the FIFO toggle is not needed. We wait for the FIFO file as a "daemon
+    # main loop is running" signal — wait_for_open_port(9396) is unreliable
+    # because the daemon's metrics server binds to ::1 only.
     machine.wait_for_file("/root/.config/mac-mgmt/remote-ssh")
-    machine.succeed("echo enable > /root/.config/mac-mgmt/remote-ssh")
-    machine.log("Sent 'enable' to remote SSH FIFO")
+    machine.log("Daemon main loop reached (FIFO created)")
 
     # Wait for the daemon to register with the relay (port file isn't written,
     # so we poll the tunnel list API instead)
@@ -225,21 +215,44 @@ pkgs.testers.nixosTest {
     machine.wait_for_open_port(relay_port)
     time.sleep(1)
 
-    result = machine.succeed(
+    # Spawn two SSH sessions in parallel and wait for both to finish.
+    # This exercises session multiplexing through the relay.
+    parallel_cmd = (
+        f"set -e; "
         f"ssh -p {relay_port} -i /tmp/test_key "
         f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
-        f"root@127.0.0.1 'echo RELAY_TEST_OK'"
+        f"-o ConnectTimeout=10 "
+        f"root@127.0.0.1 'echo SESSION_A_OK' >/tmp/ssh-a.out 2>/tmp/ssh-a.err & "
+        f"PID_A=$!; "
+        f"ssh -p {relay_port} -i /tmp/test_key "
+        f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
+        f"-o ConnectTimeout=10 "
+        f"root@127.0.0.1 'echo SESSION_B_OK' >/tmp/ssh-b.out 2>/tmp/ssh-b.err & "
+        f"PID_B=$!; "
+        f"wait $PID_A; RC_A=$?; "
+        f"wait $PID_B; RC_B=$?; "
+        f"echo \"RC_A=$RC_A RC_B=$RC_B\"; "
+        f"exit $((RC_A + RC_B))"
     )
-    assert "RELAY_TEST_OK" in result, f"SSH command output: {result}"
-    machine.log("SSH through relay to daemon succeeded!")
+    rc, out = machine.execute(parallel_cmd, timeout=60)
+    machine.log(f"Parallel SSH exit code: {rc}")
+    machine.log(f"Parallel SSH summary: {out.strip()}")
+    if rc != 0:
+        machine.log("--- /tmp/ssh-a.err ---")
+        machine.log(machine.succeed("cat /tmp/ssh-a.err || true"))
+        machine.log("--- /tmp/ssh-b.err ---")
+        machine.log(machine.succeed("cat /tmp/ssh-b.err || true"))
+        machine.log("--- /tmp/relay.log ---")
+        machine.log(machine.succeed("cat /tmp/relay.log || true"))
+        machine.log("--- /tmp/daemon.log ---")
+        machine.log(machine.succeed("cat /tmp/daemon.log || true"))
+    assert rc == 0, f"parallel SSH sessions failed (rc={rc}): {out!r}"
 
-    # Verify a second session works (tests session multiplexing)
-    result2 = machine.succeed(
-        f"ssh -p {relay_port} -i /tmp/test_key "
-        f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
-        f"root@127.0.0.1 'hostname'"
-    )
-    machine.log(f"Second SSH session returned: {result2.strip()}")
+    out_a = machine.succeed("cat /tmp/ssh-a.out")
+    out_b = machine.succeed("cat /tmp/ssh-b.out")
+    assert "SESSION_A_OK" in out_a, f"session A output: {out_a!r}"
+    assert "SESSION_B_OK" in out_b, f"session B output: {out_b!r}"
+    machine.log("Both parallel SSH sessions through relay succeeded")
 
     machine.log("All relay integration tests passed!")
   '';
