@@ -90,6 +90,9 @@
           relay-integration = pkgs.callPackage ./tests/relay.nix {
             inherit mac-mgmt-relay;
           };
+          metrics-federation = pkgs.callPackage ./tests/metrics.nix {
+            inherit mac-mgmt-relay;
+          };
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
