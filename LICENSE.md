@@ -1,12 +1,12 @@
-# Functional Source License, Version 1.1, Apache 2.0 Future License
+# Functional Source License, Version 1.1, ALv2 Future License
 
 ## Abbreviation
 
-FSL-1.1-Apache-2.0
+FSL-1.1-ALv2
 
 ## Notice
 
-Copyright 2008-2024 Functional Software, Inc. dba Sentry
+Copyright 2026 plan.ai
 
 ## Terms and Conditions
 
