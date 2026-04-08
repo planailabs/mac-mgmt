@@ -467,64 +467,58 @@ pub(super) fn remove_at(working: &mut Signal<serde_json::Value>, path: &[String]
 
 // ── Node rendering ──────────────────────────────────────────────────────
 
+/// Whitespace-separated tokens must each appear *in order* in the
+/// node's haystack (path/label/help). A parent matches if any descendant
+/// matches, so the user can drill in by typing successive parts: e.g.
+/// "acp dispatch" matches `acp.dispatch.enabled` but not
+/// `acp.allowedAgents` (which lacks "dispatch").
 fn node_matches(node: &Node, filter: &str) -> bool {
-    if filter.is_empty() {
-        return true;
-    }
-    let hay_path = node.full_path.to_lowercase();
-    let hay_name = node.name.to_lowercase();
-    let hay_label = node
-        .entry
-        .as_ref()
-        .and_then(|e| e.label.as_deref())
+    let tokens: Vec<String> = filter
+        .split_whitespace()
         .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-    let hay_help = node
-        .entry
-        .as_ref()
-        .and_then(|e| e.help.as_deref())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-    // Tokenize filter on whitespace; every token must hit somewhere in the
-    // node OR in a descendant subtree.
-    filter.split_whitespace().all(|tok| {
-        hay_path.contains(tok)
-            || hay_name.contains(tok)
-            || hay_label.contains(tok)
-            || hay_help.contains(tok)
-            || node.children.iter().any(|c| token_in_subtree(c, tok))
-            || node
-                .array_item
-                .as_ref()
-                .map(|a| token_in_subtree(a, tok))
-                .unwrap_or(false)
-    })
+        .collect();
+    node_matches_tokens(node, &tokens)
 }
 
-fn token_in_subtree(node: &Node, tok: &str) -> bool {
-    if node.full_path.to_lowercase().contains(tok)
-        || node.name.to_lowercase().contains(tok)
-        || node
-            .entry
-            .as_ref()
-            .and_then(|e| e.label.as_deref())
-            .map(|s| s.to_lowercase().contains(tok))
-            .unwrap_or(false)
-        || node
-            .entry
-            .as_ref()
-            .and_then(|e| e.help.as_deref())
-            .map(|s| s.to_lowercase().contains(tok))
-            .unwrap_or(false)
-    {
+fn node_matches_tokens(node: &Node, tokens: &[String]) -> bool {
+    if tokens.is_empty() {
         return true;
     }
-    node.children.iter().any(|c| token_in_subtree(c, tok))
+    if ordered_contains(&node_haystack(node), tokens) {
+        return true;
+    }
+    node.children.iter().any(|c| node_matches_tokens(c, tokens))
         || node
             .array_item
             .as_ref()
-            .map(|a| token_in_subtree(a, tok))
+            .map(|a| node_matches_tokens(a, tokens))
             .unwrap_or(false)
+}
+
+fn node_haystack(node: &Node) -> String {
+    let mut s = node.full_path.replace('.', " ").to_lowercase();
+    if let Some(e) = &node.entry {
+        if let Some(l) = &e.label {
+            s.push(' ');
+            s.push_str(&l.to_lowercase());
+        }
+        if let Some(h) = &e.help {
+            s.push(' ');
+            s.push_str(&h.to_lowercase());
+        }
+    }
+    s
+}
+
+fn ordered_contains(hay: &str, tokens: &[String]) -> bool {
+    let mut pos = 0;
+    for t in tokens {
+        match hay[pos..].find(t.as_str()) {
+            Some(i) => pos += i + t.len(),
+            None => return false,
+        }
+    }
+    true
 }
 
 fn render_node(
@@ -1177,6 +1171,47 @@ mod tests {
         assert_eq!(parse_primitive("3.14", "number"), json!(3.14));
         assert_eq!(parse_primitive("true", "boolean"), json!(true));
         assert_eq!(parse_primitive("hello", "string"), json!("hello"));
+    }
+
+    #[test]
+    fn search_tokens_match_in_path_order() {
+        let entries = vec![
+            entry("acp", "object"),
+            entry("acp.dispatch", "object"),
+            entry("acp.dispatch.enabled", "boolean"),
+            entry("acp.allowedAgents", "array"),
+            entry("acp.allowedAgents.*", "string"),
+            entry("messages.dispatch", "object"),
+        ];
+        let root = build_tree(&entries);
+        let acp = root.children.iter().find(|c| c.name == "acp").unwrap();
+        let messages = root.children.iter().find(|c| c.name == "messages").unwrap();
+
+        // ordered tokens drill into the matching subtree
+        assert!(node_matches(acp, "acp dispatch"));
+        // dispatch alone matches both subtrees
+        assert!(node_matches(acp, "dispatch"));
+        assert!(node_matches(messages, "dispatch"));
+        // ordered: "acp dispatch" must NOT match messages.dispatch
+        assert!(!node_matches(messages, "acp dispatch"));
+        // ordered: "dispatch acp" doesn't match anywhere
+        assert!(!node_matches(acp, "dispatch acp"));
+        // descendants of acp.dispatch still pass through "acp dispatch"
+        let dispatch = acp.children.iter().find(|c| c.name == "dispatch").unwrap();
+        assert!(node_matches(dispatch, "acp dispatch"));
+        let enabled = dispatch
+            .children
+            .iter()
+            .find(|c| c.name == "enabled")
+            .unwrap();
+        assert!(node_matches(enabled, "acp dispatch enabled"));
+        // sibling of dispatch (allowedAgents) does NOT match "acp dispatch"
+        let allowed = acp
+            .children
+            .iter()
+            .find(|c| c.name == "allowedAgents")
+            .unwrap();
+        assert!(!node_matches(allowed, "acp dispatch"));
     }
 
     #[test]
