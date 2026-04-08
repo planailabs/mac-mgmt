@@ -9,8 +9,8 @@ pub struct OpenClawEntry {
     pub path: String,
     #[serde(default)]
     pub kind: String,
-    #[serde(default, rename = "type", deserialize_with = "deserialize_type")]
-    pub ty: String,
+    #[serde(default, rename = "type", deserialize_with = "deserialize_types")]
+    pub tys: Vec<String>,
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
@@ -28,22 +28,30 @@ pub struct OpenClawEntry {
 }
 
 /// Accept `"type": "string"`, `"type": ["integer","string"]`, or missing.
-/// For unions we pick the first concrete type — good enough for picking a
-/// renderer.
-fn deserialize_type<'de, D>(d: D) -> Result<String, D::Error>
+/// Always returns the full list (filtered to concrete types) so callers
+/// can render union toggles.
+fn deserialize_types<'de, D>(d: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     use serde::de::Error;
     let v = serde_json::Value::deserialize(d)?;
     match v {
-        serde_json::Value::String(s) => Ok(s),
+        serde_json::Value::String(s) => Ok(vec![s]),
         serde_json::Value::Array(arr) => Ok(arr
             .into_iter()
-            .find_map(|v| v.as_str().map(String::from))
-            .unwrap_or_default()),
-        serde_json::Value::Null => Ok(String::new()),
+            .filter_map(|v| v.as_str().map(String::from))
+            .filter(|s| s != "null")
+            .collect()),
+        serde_json::Value::Null => Ok(vec![]),
         other => Err(D::Error::custom(format!("unexpected type field: {other}"))),
+    }
+}
+
+impl OpenClawEntry {
+    /// Primary type (first non-empty entry, or "" if missing).
+    pub fn ty(&self) -> &str {
+        self.tys.first().map(String::as_str).unwrap_or("")
     }
 }
 
@@ -524,10 +532,30 @@ fn ordered_contains(hay: &str, tokens: &[String]) -> bool {
 fn render_node(
     node: Node,
     json_path: Vec<String>,
-    mut working: Signal<serde_json::Value>,
+    working: Signal<serde_json::Value>,
     filter: &str,
 ) -> Element {
-    let entry_ty = node.entry.as_ref().map(|e| e.ty.as_str()).unwrap_or("");
+    let tys: Vec<String> = node
+        .entry
+        .as_ref()
+        .map(|e| e.tys.clone())
+        .unwrap_or_default();
+    if tys.len() > 1 {
+        return render_union_node(node, json_path, working, filter, tys);
+    }
+    let primary = tys.into_iter().next().unwrap_or_default();
+    render_node_inner(node, json_path, working, filter, primary, false)
+}
+
+fn render_node_inner(
+    node: Node,
+    json_path: Vec<String>,
+    mut working: Signal<serde_json::Value>,
+    filter: &str,
+    forced_ty: String,
+    in_union: bool,
+) -> Element {
+    let entry_ty = forced_ty.as_str();
     let title = node
         .entry
         .as_ref()
@@ -553,6 +581,14 @@ fn render_node(
             .unwrap_or(false);
         let map_path = path.clone();
         let filter_owned = filter.to_string();
+        let body = rsx! {
+            div { class: "px-2 py-2 space-y-2",
+                {render_object_map(template, map_path, working, &filter_owned)}
+            }
+        };
+        if in_union {
+            return body;
+        }
         return rsx! {
             details { class: "border border-gray-200 rounded",
                 key: "{key}",
@@ -564,9 +600,7 @@ fn render_node(
                 if !help.is_empty() {
                     p { class: "px-2 pt-1 text-xs text-gray-500", "{help}" }
                 }
-                div { class: "px-2 py-2 space-y-2",
-                    {render_object_map(template, map_path, working, &filter_owned)}
-                }
+                {body}
             }
         };
     }
@@ -578,6 +612,24 @@ fn render_node(
             .map(|v| !is_empty(&v))
             .unwrap_or(false);
         let parent_path = path.clone();
+        let body = rsx! {
+            div { class: "px-2 py-2 space-y-2",
+                {
+                    let filter_for_filter = filter_owned.clone();
+                    node.children
+                        .into_iter()
+                        .filter(move |c| node_matches(c, &filter_for_filter))
+                        .map(move |c| {
+                            let mut p = parent_path.clone();
+                            p.push(c.name.clone());
+                            render_node(c, p, working, &filter_owned)
+                        })
+                }
+            }
+        };
+        if in_union {
+            return body;
+        }
         return rsx! {
             details { class: "border border-gray-200 rounded",
                 key: "{key}",
@@ -589,19 +641,7 @@ fn render_node(
                 if !help.is_empty() {
                     p { class: "px-2 pt-1 text-xs text-gray-500", "{help}" }
                 }
-                div { class: "px-2 py-2 space-y-2",
-                    {
-                        let filter_for_filter = filter_owned.clone();
-                        node.children
-                            .into_iter()
-                            .filter(move |c| node_matches(c, &filter_for_filter))
-                            .map(move |c| {
-                                let mut p = parent_path.clone();
-                                p.push(c.name.clone());
-                                render_node(c, p, working, &filter_owned)
-                            })
-                    }
-                }
+                {body}
             }
         };
     }
@@ -641,7 +681,11 @@ fn render_node(
                     oninput: move |e| {
                         let v = e.value();
                         if v.is_empty() {
-                            remove_at(&mut working, &path_d);
+                            if in_union {
+                                set_at(&mut working, &path_c, serde_json::json!(0));
+                            } else {
+                                remove_at(&mut working, &path_d);
+                            }
                         } else if let Ok(n) = v.parse::<i64>() {
                             set_at(&mut working, &path_c, serde_json::json!(n));
                         }
@@ -666,7 +710,11 @@ fn render_node(
                     oninput: move |e| {
                         let v = e.value();
                         if v.is_empty() {
-                            remove_at(&mut working, &path_d);
+                            if in_union {
+                                set_at(&mut working, &path_c, serde_json::json!(0));
+                            } else {
+                                remove_at(&mut working, &path_d);
+                            }
                         } else if let Ok(n) = v.parse::<f64>() {
                             set_at(
                                 &mut working,
@@ -685,7 +733,7 @@ fn render_node(
             let item_ty = item
                 .as_ref()
                 .and_then(|n| n.entry.as_ref())
-                .map(|e| e.ty.clone())
+                .map(|e| e.ty().to_string())
                 .unwrap_or_default();
             let item_has_children =
                 item.as_ref().map(|n| !n.children.is_empty()).unwrap_or(false);
@@ -715,7 +763,7 @@ fn render_node(
                     value: val_str,
                     oninput: move |e| {
                         let v = e.value();
-                        if v.is_empty() {
+                        if v.is_empty() && !in_union {
                             remove_at(&mut working, &path_d);
                         } else {
                             set_at(&mut working, &path_c, serde_json::Value::String(v));
@@ -726,6 +774,10 @@ fn render_node(
         }
         _ => render_json_textarea(path.clone(), current.clone(), working),
     };
+
+    if in_union {
+        return rsx! { div { key: "{key}", {field} } };
+    }
 
     let is_set = current.is_some();
     let reset_path = path.clone();
@@ -761,6 +813,126 @@ fn render_node(
             }
             {field}
         }
+    }
+}
+
+/// Render a union-typed node: schema declares multiple possible JSON
+/// types (e.g. botToken can be `object | string`). Adds a small toggle
+/// row that lets the user pick which form to edit; the active mode is
+/// derived from the current value's actual JSON type and switching
+/// modes overwrites the path with a typed empty default.
+fn render_union_node(
+    node: Node,
+    json_path: Vec<String>,
+    mut working: Signal<serde_json::Value>,
+    filter: &str,
+    tys: Vec<String>,
+) -> Element {
+    let cur = get_at(&working.read(), &json_path);
+    let active = union_active_mode(cur.as_ref(), &tys);
+    let title = node
+        .entry
+        .as_ref()
+        .and_then(|e| e.label.clone())
+        .unwrap_or_else(|| node.name.clone());
+    let help = node
+        .entry
+        .as_ref()
+        .and_then(|e| e.help.clone())
+        .unwrap_or_default();
+    let sensitive = node.entry.as_ref().map(|e| e.sensitive).unwrap_or(false);
+    let key = node.full_path.clone();
+    let wrapper_class = if sensitive {
+        "flex flex-col gap-1 border-l-4 border-purple-500 pl-2"
+    } else {
+        "flex flex-col gap-1"
+    };
+
+    rsx! {
+        div { class: wrapper_class,
+            key: "{key}",
+            label { class: "text-sm font-medium text-gray-700",
+                "{title} "
+                span { class: "text-gray-400 font-normal text-xs", "({node.name})" }
+            }
+            if !help.is_empty() {
+                p { class: "text-xs text-gray-500", "{help}" }
+            }
+            div { class: "flex items-center gap-1 flex-wrap",
+                span { class: "text-xs text-gray-500", "as:" }
+                {tys.iter().enumerate().map(|(i, ty)| {
+                    let is_active = ty == &active;
+                    let ty_clone = ty.clone();
+                    let path_clone = json_path.clone();
+                    let class = if is_active {
+                        "px-2 py-0.5 text-xs rounded bg-blue-600 text-white"
+                    } else {
+                        "px-2 py-0.5 text-xs rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    };
+                    rsx! {
+                        button {
+                            key: "{i}",
+                            r#type: "button",
+                            class,
+                            onclick: move |evt| {
+                                evt.prevent_default();
+                                evt.stop_propagation();
+                                set_at(
+                                    &mut working,
+                                    &path_clone,
+                                    default_value_for(&ty_clone),
+                                );
+                            },
+                            "{ty}"
+                        }
+                    }
+                })}
+            }
+            {render_node_inner(node, json_path, working, filter, active, true)}
+        }
+    }
+}
+
+fn union_active_mode(cur: Option<&serde_json::Value>, tys: &[String]) -> String {
+    let detected = match cur {
+        Some(serde_json::Value::String(_)) => Some("string"),
+        Some(serde_json::Value::Bool(_)) => Some("boolean"),
+        Some(serde_json::Value::Number(n)) => {
+            if n.is_i64() {
+                Some("integer")
+            } else {
+                Some("number")
+            }
+        }
+        Some(serde_json::Value::Object(_)) => Some("object"),
+        Some(serde_json::Value::Array(_)) => Some("array"),
+        _ => None,
+    };
+    if let Some(d) = detected {
+        // Prefer the detected type if it (or a compatible synonym) is in
+        // the schema's union. integer falls back to number when only
+        // number is allowed.
+        if tys.iter().any(|t| t == d) {
+            return d.to_string();
+        }
+        if d == "integer" && tys.iter().any(|t| t == "number") {
+            return "number".to_string();
+        }
+        if d == "number" && tys.iter().any(|t| t == "integer") {
+            return "integer".to_string();
+        }
+    }
+    tys.first().cloned().unwrap_or_default()
+}
+
+fn default_value_for(ty: &str) -> serde_json::Value {
+    match ty {
+        "string" => serde_json::Value::String(String::new()),
+        "boolean" => serde_json::Value::Bool(false),
+        "integer" | "number" => serde_json::json!(0),
+        "array" => serde_json::Value::Array(vec![]),
+        "object" => serde_json::Value::Object(Default::default()),
+        _ => serde_json::Value::Null,
     }
 }
 
@@ -858,7 +1030,7 @@ fn render_object_map(
                             match template_for_add
                                 .entry
                                 .as_ref()
-                                .map(|e| e.ty.as_str())
+                                .map(|e| e.ty())
                                 .unwrap_or("")
                             {
                                 "string" => serde_json::Value::String(String::new()),
@@ -1079,7 +1251,11 @@ mod tests {
         OpenClawEntry {
             path: path.to_string(),
             kind: "core".into(),
-            ty: ty.to_string(),
+            tys: if ty.is_empty() {
+                vec![]
+            } else {
+                vec![ty.to_string()]
+            },
             required: false,
             deprecated: false,
             sensitive: false,
@@ -1103,14 +1279,14 @@ mod tests {
         let root = build_tree(&entries);
         assert_eq!(root.children.len(), 2);
         let acp = root.children.iter().find(|c| c.name == "acp").unwrap();
-        assert_eq!(acp.entry.as_ref().unwrap().ty, "object");
+        assert_eq!(acp.entry.as_ref().unwrap().ty(), "object");
         // children are sorted alphabetically
         let names: Vec<_> = acp.children.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["allowedAgents", "backend", "enabled"]);
         let allowed = acp.children.iter().find(|c| c.name == "allowedAgents").unwrap();
-        assert_eq!(allowed.entry.as_ref().unwrap().ty, "array");
+        assert_eq!(allowed.entry.as_ref().unwrap().ty(), "array");
         let item = allowed.array_item.as_ref().expect("* child");
-        assert_eq!(item.entry.as_ref().unwrap().ty, "string");
+        assert_eq!(item.entry.as_ref().unwrap().ty(), "string");
         assert_eq!(item.full_path, "acp.allowedAgents.*");
     }
 
@@ -1161,7 +1337,7 @@ mod tests {
         let root = build_tree(&entries);
         let providers = root.children.iter().find(|c| c.name == "providers").unwrap();
         let item = providers.array_item.as_ref().expect("array_item");
-        assert_eq!(item.entry.as_ref().unwrap().ty, "object");
+        assert_eq!(item.entry.as_ref().unwrap().ty(), "object");
         let names: Vec<_> = item.children.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["apiKey", "region"]);
     }
@@ -1176,6 +1352,26 @@ mod tests {
         assert_eq!(parse_primitive("3.14", "number"), json!(3.14));
         assert_eq!(parse_primitive("true", "boolean"), json!(true));
         assert_eq!(parse_primitive("hello", "string"), json!("hello"));
+    }
+
+    #[test]
+    fn union_active_mode_picks_current_then_first() {
+        let tys = vec!["object".to_string(), "string".to_string()];
+        // Current value is a string → string mode
+        assert_eq!(
+            union_active_mode(Some(&json!("token")), &tys),
+            "string"
+        );
+        // Current value is an object → object mode
+        assert_eq!(
+            union_active_mode(Some(&json!({"id": "x"})), &tys),
+            "object"
+        );
+        // Unset → first declared type
+        assert_eq!(union_active_mode(None, &tys), "object");
+        // integer falls back to number when only number declared
+        let nums = vec!["number".to_string(), "string".to_string()];
+        assert_eq!(union_active_mode(Some(&json!(42)), &nums), "number");
     }
 
     #[test]
