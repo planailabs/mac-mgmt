@@ -733,6 +733,10 @@ fn render_node(
         _ => render_json_textarea(path.clone(), current.clone(), working),
     };
 
+    let is_default = current.is_none();
+    let default_path = path.clone();
+    let default_ty = entry_ty.to_string();
+
     rsx! {
         div { class: "flex flex-col gap-0.5",
             key: "{key}",
@@ -743,8 +747,38 @@ fn render_node(
             if !help.is_empty() {
                 p { class: "text-xs text-gray-500", "{help}" }
             }
-            {field}
+            div { class: "flex items-center gap-2",
+                label { class: "text-xs text-gray-500 flex items-center gap-1 cursor-pointer whitespace-nowrap",
+                    input {
+                        r#type: "checkbox",
+                        class: "h-3 w-3",
+                        checked: is_default,
+                        onchange: move |e| {
+                            if e.checked() {
+                                remove_at(&mut working, &default_path);
+                            } else {
+                                set_at(&mut working, &default_path, default_value_for(&default_ty));
+                            }
+                        },
+                    }
+                    "use default"
+                }
+                if !is_default {
+                    div { class: "flex-1", {field} }
+                }
+            }
         }
+    }
+}
+
+fn default_value_for(ty: &str) -> serde_json::Value {
+    match ty {
+        "string" => serde_json::Value::String(String::new()),
+        "boolean" => serde_json::Value::Bool(false),
+        "integer" | "number" => serde_json::json!(0),
+        "array" => serde_json::Value::Array(vec![]),
+        "object" => serde_json::Value::Object(Default::default()),
+        _ => serde_json::Value::Null,
     }
 }
 
