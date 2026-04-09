@@ -145,22 +145,12 @@ pub async fn run(
         }
     };
 
-    // Derive instance ID from the SSH host key fingerprint when relay is
-    // enabled (cryptographically tied to this machine's identity), otherwise
-    // fall back to the persisted UUID.
-    #[cfg(feature = "relay")]
-    let (instance_id, host_key) = {
-        let key = crate::remote_ssh::host_keys::load_or_generate()
-            .context("failed to load/generate SSH host key")?;
-        let id = crate::remote_ssh::host_keys::fingerprint_hex(&key);
-        tracing::info!("instance ID (host key fingerprint): {id}");
-        (id, key)
-    };
-    #[cfg(not(feature = "relay"))]
-    let instance_id = crate::instance_id::get_or_create()
-        .context("failed to get/create instance ID")?;
-    #[cfg(not(feature = "relay"))]
-    tracing::info!("instance ID: {instance_id}");
+    // Derive a stable instance ID from the ed25519 host key fingerprint.
+    #[allow(unused_variables)]
+    let host_key = crate::host_keys::load_or_generate()
+        .context("failed to load/generate SSH host key")?;
+    let instance_id = crate::host_keys::fingerprint_hex(&host_key);
+    tracing::info!("instance ID (host key fingerprint): {instance_id}");
 
     #[cfg(feature = "relay")]
     let mut relay_mgr = crate::remote_ssh::Manager::new(
