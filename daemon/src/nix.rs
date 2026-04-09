@@ -197,11 +197,15 @@ fn has_dry_run_support() -> bool {
 
 /// Check which packages have upgrades available via `nix profile upgrade --dry-run`.
 /// Requires nix with https://github.com/NixOS/nix/pull/15545
-fn packages_with_upgrades_dry_run() -> Result<Vec<String>> {
-    let output = Command::new("nix")
-        .env("NIXPKGS_ALLOW_UNFREE", "1")
+fn packages_with_upgrades_dry_run(packages: &[&str]) -> Result<Vec<String>> {
+    let mut cmd = Command::new("nix");
+    cmd.env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
-        .args(["profile", "upgrade", "--dry-run", "--impure", "--all"])
+        .args(["profile", "upgrade", "--dry-run", "--impure"]);
+    for pkg in packages {
+        cmd.arg(*pkg);
+    }
+    let output = cmd
         .output()
         .context("failed to run nix profile upgrade --dry-run")?;
 
@@ -268,7 +272,7 @@ fn profile_store_paths(profile: Option<&str>) -> Result<std::collections::HashMa
 /// Check which packages have upgrades available by upgrading a temporary
 /// profile copy and comparing store paths against the current profile.
 /// Fallback for nix versions without --dry-run support.
-fn packages_with_upgrades_temp_profile() -> Result<Vec<String>> {
+fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let tmp_profile = tmp_dir.path().join("profile");
 
@@ -300,16 +304,17 @@ fn packages_with_upgrades_temp_profile() -> Result<Vec<String>> {
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args([
-            "profile", "upgrade", "--all", "--impure",
+            "profile", "upgrade", "--impure",
             "--profile", tmp_profile.to_str().unwrap(),
         ])
+        .args(packages)
         .output()
         .context("failed to run nix profile upgrade on temp profile")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         sentry_ext::capture_cmd_failure(
-            "nix profile upgrade --all (temp profile)",
+            "nix profile upgrade (temp profile)",
             output.status.code(),
             stderr.trim(),
         );
@@ -337,25 +342,40 @@ fn packages_with_upgrades_temp_profile() -> Result<Vec<String>> {
     Ok(upgradable)
 }
 
-/// Check which packages have upgrades available.
+/// Check which of the given packages have upgrades available.
 /// Uses --dry-run if supported, otherwise falls back to temp profile comparison.
 /// Also unions in any installed packages whose flake URL has drifted from the
 /// desired one (e.g. the customer's nixpkgs pin moved) — those would not be
 /// caught by `nix profile upgrade --dry-run` since the flake ref itself changed.
-pub fn packages_with_upgrades() -> Result<Vec<String>> {
-    let mut result: Vec<String> = if has_dry_run_support() {
+///
+/// If the upgrade dry-run itself fails (e.g. because a drifted flake ref is no
+/// longer resolvable), the error is logged and drift detection still runs so that
+/// the package can be reinstalled from the correct flake URL.
+pub fn packages_with_upgrades(packages: &[&str]) -> Result<Vec<String>> {
+    let upgrade_result = if has_dry_run_support() {
         tracing::debug!("using --dry-run for upgrade check");
-        packages_with_upgrades_dry_run()?
+        packages_with_upgrades_dry_run(packages)
     } else {
         tracing::debug!("using temp profile for upgrade check");
-        packages_with_upgrades_temp_profile()?
+        packages_with_upgrades_temp_profile(packages)
+    };
+
+    let mut result: Vec<String> = match upgrade_result {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("upgrade dry-run failed, continuing with drift detection: {e}");
+            Vec::new()
+        }
     };
 
     // Add packages whose installed flake URL no longer matches the desired one.
     if let Ok(installed_urls) = profile_original_urls() {
         if let Ok(desired_base) = desired_flake_base() {
             for (name, url) in installed_urls {
-                if url != desired_base && !result.contains(&name) {
+                if packages.contains(&name.as_str())
+                    && url != desired_base
+                    && !result.contains(&name)
+                {
                     tracing::info!("flake URL drift detected for {name}: {url} -> {desired_base}");
                     result.push(name);
                 }

@@ -158,7 +158,7 @@ impl ManagedService for Ollama {
 
     fn check_and_upgrade(&self) -> Result<bool> {
         let pkg = pkg_for_flavour(&self.config.flavour);
-        let upgradable = crate::nix::packages_with_upgrades()?;
+        let upgradable = crate::nix::packages_with_upgrades(&[&pkg])?;
 
         if !upgradable.iter().any(|name| name == &pkg) {
             return Ok(false);

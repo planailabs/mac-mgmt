@@ -119,7 +119,7 @@ impl ManagedService for Nexa {
     }
 
     fn check_and_upgrade(&self) -> Result<bool> {
-        let upgradable = crate::nix::packages_with_upgrades()?;
+        let upgradable = crate::nix::packages_with_upgrades(&["nexa"])?;
 
         if !upgradable.iter().any(|name| name == "nexa") {
             return Ok(false);

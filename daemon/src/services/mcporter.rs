@@ -48,7 +48,7 @@ impl ManagedService for McPorter {
     }
 
     fn check_and_upgrade(&self) -> Result<bool> {
-        let upgradable = crate::nix::packages_with_upgrades()?;
+        let upgradable = crate::nix::packages_with_upgrades(&[PKG])?;
 
         if !upgradable.iter().any(|name| name == PKG) {
             return Ok(false);

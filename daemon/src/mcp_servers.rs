@@ -175,7 +175,8 @@ fn sync_nix_packages(servers: &HashMap<String, McpServerEntry>) {
     // Check for updates on existing packages
     let existing: Vec<&String> = desired.intersection(&current).collect();
     if !existing.is_empty() {
-        let upgradable: HashSet<String> = match crate::nix::packages_with_upgrades() {
+        let existing_strs: Vec<&str> = existing.iter().map(|s| s.as_str()).collect();
+        let upgradable: HashSet<String> = match crate::nix::packages_with_upgrades(&existing_strs) {
             Ok(pkgs) => pkgs.into_iter().collect(),
             Err(e) => {
                 tracing::warn!("failed to check MCP nix upgrades: {e}");
