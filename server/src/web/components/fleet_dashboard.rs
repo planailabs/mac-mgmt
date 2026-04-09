@@ -3,9 +3,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+use crate::web::app::AppRoute;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FleetEntry {
+    customer_id: String,
     customer_name: String,
     instance_id: String,
     hostname: String,
@@ -21,6 +23,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
 
     #[derive(sqlx::FromRow)]
     struct Row {
+        customer_id: String,
         customer_name: String,
         instance_id: String,
         hostname: String,
@@ -31,7 +34,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.name AS customer_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
+        "SELECT c.id AS customer_id, c.name AS customer_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
          FROM daemon_heartbeats dh \
          JOIN customers c ON c.id = dh.customer_id \
          ORDER BY dh.reported_at DESC",
@@ -43,6 +46,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(|r| FleetEntry {
+            customer_id: r.customer_id,
             customer_name: r.customer_name,
             instance_id: r.instance_id,
             hostname: r.hostname,
@@ -158,7 +162,13 @@ pub fn FleetDashboard() -> Element {
 
                                         rsx! {
                                             tr {
-                                                td { class: "px-6 py-4 text-sm", "{entry.customer_name}" }
+                                                td { class: "px-6 py-4 text-sm",
+                                                    Link {
+                                                        to: AppRoute::CustomerDetail { id: entry.customer_id.clone() },
+                                                        class: "text-blue-600 hover:underline",
+                                                        "{entry.customer_name}"
+                                                    }
+                                                }
                                                 td { class: "px-6 py-4 text-sm",
                                                     if entry.hostname.is_empty() {
                                                         span { class: "text-gray-400 font-mono text-xs", "{entry.instance_id}" }
