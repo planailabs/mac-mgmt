@@ -507,6 +507,29 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
         return run_profile_cmd(nix_bin, "install", pkg, &["add", &desired]);
     }
 
+    // When upgrading nix itself, pre-build the derivation so it lands in the
+    // store before any profile mutation.  This way a build failure cannot leave
+    // the profile in a state where nix is partially removed / unusable.
+    if pkg == "nix" {
+        tracing::info!("pre-building nix derivation before profile swap");
+        let build = Command::new(nix_bin)
+            .env("NIXPKGS_ALLOW_UNFREE", "1")
+            .env("NIXPKGS_ALLOW_INSECURE", "1")
+            .args(["build", "--no-link", "--impure", &desired])
+            .output()
+            .context("failed to run nix build for nix upgrade")?;
+        if !build.status.success() {
+            let stderr = String::from_utf8_lossy(&build.stderr);
+            sentry_ext::capture_cmd_failure(
+                "nix build (pre-upgrade nix)",
+                build.status.code(),
+                stderr.trim(),
+            );
+            anyhow::bail!("nix build for nix upgrade failed: {}", stderr.trim());
+        }
+        tracing::info!("pre-build of nix succeeded, proceeding with profile swap");
+    }
+
     let installed_url = profile_original_urls()
         .ok()
         .and_then(|m| m.get(pkg).cloned());
