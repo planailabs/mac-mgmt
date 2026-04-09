@@ -88,59 +88,70 @@ pub fn invalidate_capability_cache() {
     tracing::info!("nix capability cache invalidated");
 }
 
-/// Detect if `nix profile replace` is supported by probing with a non-existent
-/// element. If nix doesn't recognise the subcommand, the error mentions an
-/// unknown command; otherwise the error is about the element being missing.
-fn has_replace_support() -> bool {
-    if let Some(v) = *REPLACE_SUPPORTED.read().unwrap() {
+/// Probe whether `nix` recognises a particular subcommand/flag combination.
+/// Runs the given args, checks stderr for any of the `unsupported_hints`
+/// strings, caches the result in `cache`.
+fn probe_nix_capability(
+    cache: &RwLock<Option<bool>>,
+    args: &[&str],
+    unsupported_hints: &[&str],
+    feature_name: &str,
+) -> bool {
+    if let Some(v) = *cache.read().unwrap() {
         return v;
     }
-    let output = Command::new("nix")
-        .args(["profile", "replace", "__nonexistent_probe__", "__nonexistent_probe__"])
-        .output();
-
+    let output = Command::new("nix").args(args).output();
     let supported = match output {
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            let unsupported = stderr.contains("unknown subcommand")
-                || stderr.contains("unrecognised subcommand")
-                || stderr.contains("unrecognized subcommand")
-                || stderr.contains("unknown command");
+            let unsupported = unsupported_hints.iter().any(|h| stderr.contains(h));
             if unsupported {
-                tracing::info!("nix profile replace is NOT supported, will fall back to remove+add");
+                tracing::info!("{feature_name} is NOT supported");
             } else {
-                tracing::info!("nix profile replace is supported");
+                tracing::info!("{feature_name} is supported");
             }
             !unsupported
         }
         Err(_) => {
-            tracing::warn!("failed to probe for nix profile replace support, assuming unsupported");
+            tracing::warn!("failed to probe for {feature_name} support, assuming unsupported");
             false
         }
     };
-    *REPLACE_SUPPORTED.write().unwrap() = Some(supported);
+    *cache.write().unwrap() = Some(supported);
     supported
 }
 
-/// Check if a package is installed via `nix profile list --json`.
-pub fn is_installed(pkg: &str) -> Result<bool> {
-    let output = Command::new("nix")
-        .args(["profile", "list", "--json"])
-        .output()
-        .context("failed to run nix profile list")?;
+fn has_replace_support() -> bool {
+    probe_nix_capability(
+        &REPLACE_SUPPORTED,
+        &["profile", "replace", "__nonexistent_probe__", "__nonexistent_probe__"],
+        &["unknown subcommand", "unrecognised subcommand", "unrecognized subcommand", "unknown command"],
+        "nix profile replace",
+    )
+}
 
+/// Run `nix profile list --json` and return the parsed JSON.
+/// Optionally targets a specific profile path.
+fn profile_list_json(profile: Option<&str>) -> Result<serde_json::Value> {
+    let mut cmd = Command::new("nix");
+    cmd.args(["profile", "list", "--json"]);
+    if let Some(p) = profile {
+        cmd.args(["--profile", p]);
+    }
+    let output = cmd.output().context("failed to run nix profile list")?;
     if !output.status.success() {
         anyhow::bail!(
             "nix profile list failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
+    serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")
+}
 
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
+/// Check if a package is installed via `nix profile list --json`.
+pub fn is_installed(pkg: &str) -> Result<bool> {
+    let json = profile_list_json(None)?;
 
-    // The JSON has an "elements" object; each element has a "storePaths" array
-    // containing store paths that include the package name.
     if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
         for (_key, element) in elements {
             if let Some(paths) = element.get("storePaths").and_then(|p| p.as_array()) {
@@ -158,41 +169,14 @@ pub fn is_installed(pkg: &str) -> Result<bool> {
     Ok(false)
 }
 
-/// Detect if `nix profile upgrade --dry-run` is supported by running it with
-/// a non-existent element. If the error is about the unknown flag, dry-run is
-/// not supported. Any other error (e.g. element not found) means the flag was
-/// accepted.
 /// See: https://github.com/NixOS/nix/pull/15545
 fn has_dry_run_support() -> bool {
-    if let Some(v) = *DRY_RUN_SUPPORTED.read().unwrap() {
-        return v;
-    }
-    let output = Command::new("nix")
-        .args(["profile", "upgrade", "--dry-run", "__nonexistent_probe__"])
-        .output();
-
-    let supported = match output {
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            // If nix doesn't recognize --dry-run, the error message will mention
-            // the unrecognized flag. Otherwise the error will be about the element.
-            let unsupported = stderr.contains("unrecognised flag")
-                || stderr.contains("unrecognized flag")
-                || stderr.contains("unknown flag");
-            if unsupported {
-                tracing::info!("nix profile upgrade --dry-run is NOT supported");
-            } else {
-                tracing::info!("nix profile upgrade --dry-run is supported");
-            }
-            !unsupported
-        }
-        Err(_) => {
-            tracing::warn!("failed to probe for --dry-run support, assuming unsupported");
-            false
-        }
-    };
-    *DRY_RUN_SUPPORTED.write().unwrap() = Some(supported);
-    supported
+    probe_nix_capability(
+        &DRY_RUN_SUPPORTED,
+        &["profile", "upgrade", "--dry-run", "__nonexistent_probe__"],
+        &["unrecognised flag", "unrecognized flag", "unknown flag"],
+        "nix profile upgrade --dry-run",
+    )
 }
 
 /// Check which packages have upgrades available via `nix profile upgrade --dry-run`.
@@ -237,24 +221,10 @@ fn packages_with_upgrades_dry_run(packages: &[&str]) -> Result<Vec<String>> {
 }
 
 /// Get store paths for each element in a profile.
-fn profile_store_paths(profile: Option<&str>) -> Result<std::collections::HashMap<String, Vec<String>>> {
-    let mut cmd = Command::new("nix");
-    cmd.args(["profile", "list", "--json"]);
-    if let Some(p) = profile {
-        cmd.args(["--profile", p]);
-    }
-    let output = cmd.output().context("failed to run nix profile list")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "nix profile list failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
+fn profile_store_paths(profile: Option<&str>) -> Result<HashMap<String, Vec<String>>> {
+    let json = profile_list_json(profile)?;
 
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
-
-    let mut result = std::collections::HashMap::new();
+    let mut result = HashMap::new();
     if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
         for (name, element) in elements {
             let paths: Vec<String> = element
@@ -388,47 +358,18 @@ pub fn packages_with_upgrades(packages: &[&str]) -> Result<Vec<String>> {
 
 /// Remove a package from the nix profile by element name.
 pub fn profile_remove(pkg: &str) -> Result<()> {
-    tracing::info!("removing nix profile element {pkg}");
-
-    let status = Command::new("nix")
-        .args(["profile", "remove", pkg])
-        .status()
-        .with_context(|| format!("failed to run nix profile remove {pkg}"))?;
-
-    if !status.success() {
-        sentry_ext::capture_cmd_failure(&format!("nix profile remove {pkg}"), status.code(), "");
-        anyhow::bail!("nix profile remove {pkg} failed");
-    }
-
-    tracing::info!("nix profile remove {pkg} succeeded");
-    sentry_ext::breadcrumb("nix", &format!("nix profile remove {pkg} succeeded"), &[("package", pkg)]);
-    Ok(())
+    run_profile_cmd("nix", "remove", pkg, &["remove", pkg])
 }
 
 /// List installed element names from `nix profile list --json`.
 pub fn installed_elements() -> Result<Vec<String>> {
-    let output = Command::new("nix")
-        .args(["profile", "list", "--json"])
-        .output()
-        .context("failed to run nix profile list")?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "nix profile list failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
-
+    let json = profile_list_json(None)?;
     let mut names = Vec::new();
     if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
         for (name, _) in elements {
             names.push(name.clone());
         }
     }
-
     Ok(names)
 }
 
@@ -441,21 +382,7 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
 /// detect drift between the installed flake URL and the desired one (which
 /// may have moved if the customer's nixpkgs pin changed).
 fn profile_original_urls() -> Result<HashMap<String, String>> {
-    let output = Command::new("nix")
-        .args(["profile", "list", "--json"])
-        .output()
-        .context("failed to run nix profile list")?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "nix profile list failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse nix profile list json")?;
-
+    let json = profile_list_json(None)?;
     let mut result = HashMap::new();
     if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
         for (name, element) in elements {
@@ -464,8 +391,26 @@ fn profile_original_urls() -> Result<HashMap<String, String>> {
             }
         }
     }
-
     Ok(result)
+}
+
+/// Pre-build a nix derivation so it lands in the store before any profile
+/// mutation. Bails on build failure so the profile stays untouched.
+fn pre_build_nix(nix_bin: &str, flake_ref: &str) -> Result<()> {
+    tracing::info!("pre-building nix from {flake_ref}");
+    let build = Command::new(nix_bin)
+        .env("NIXPKGS_ALLOW_UNFREE", "1")
+        .env("NIXPKGS_ALLOW_INSECURE", "1")
+        .args(["build", "--no-link", "--impure", flake_ref])
+        .output()
+        .context("failed to run nix build for nix pre-build")?;
+    if !build.status.success() {
+        let stderr = String::from_utf8_lossy(&build.stderr);
+        sentry_ext::capture_cmd_failure("nix build (pre-upgrade nix)", build.status.code(), stderr.trim());
+        anyhow::bail!("nix build for nix upgrade failed: {}", stderr.trim());
+    }
+    tracing::info!("pre-build of nix succeeded");
+    Ok(())
 }
 
 /// Run a single `nix profile <args...>` invocation with the standard env +
@@ -511,23 +456,7 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
     // store before any profile mutation.  This way a build failure cannot leave
     // the profile in a state where nix is partially removed / unusable.
     if pkg == "nix" {
-        tracing::info!("pre-building nix derivation before profile swap");
-        let build = Command::new(nix_bin)
-            .env("NIXPKGS_ALLOW_UNFREE", "1")
-            .env("NIXPKGS_ALLOW_INSECURE", "1")
-            .args(["build", "--no-link", "--impure", &desired])
-            .output()
-            .context("failed to run nix build for nix upgrade")?;
-        if !build.status.success() {
-            let stderr = String::from_utf8_lossy(&build.stderr);
-            sentry_ext::capture_cmd_failure(
-                "nix build (pre-upgrade nix)",
-                build.status.code(),
-                stderr.trim(),
-            );
-            anyhow::bail!("nix build for nix upgrade failed: {}", stderr.trim());
-        }
-        tracing::info!("pre-build of nix succeeded, proceeding with profile swap");
+        pre_build_nix(nix_bin, &desired)?;
     }
 
     let installed_url = profile_original_urls()
@@ -627,30 +556,10 @@ fn upgrade_nix_inner() -> Result<()> {
 
     // Pre-build the new nix derivation before swapping the profile, so a
     // build failure doesn't leave the profile half-upgraded / the old binary
-    // briefly unusable. Best-effort: if we can't determine the flake URL or
-    // the build fails, fall through and let `profile upgrade` surface the
-    // real error.
+    // briefly unusable.
     match profile_original_urls() {
         Ok(urls) => match urls.get("nix") {
-            Some(url) => {
-                tracing::info!("pre-building new nix from {url}");
-                let build = Command::new(nix_bin_str)
-                    .env("NIXPKGS_ALLOW_UNFREE", "1")
-                    .env("NIXPKGS_ALLOW_INSECURE", "1")
-                    .args(["build", "--no-link", "--impure", &*format!("{url}#nix")])
-                    .output()
-                    .context("failed to run nix build for new nix")?;
-                if !build.status.success() {
-                    let stderr = String::from_utf8_lossy(&build.stderr);
-                    sentry_ext::capture_cmd_failure(
-                        "nix build (pre-upgrade nix)",
-                        build.status.code(),
-                        stderr.trim(),
-                    );
-                    anyhow::bail!("nix build for new nix failed: {}", stderr.trim());
-                }
-                tracing::info!("pre-build of new nix succeeded");
-            }
+            Some(url) => pre_build_nix(nix_bin_str, &format!("{url}#nix"))?,
             None => tracing::warn!("no originalUrl for nix element, skipping pre-build"),
         },
         Err(e) => tracing::warn!("could not list profile to pre-build nix: {e}"),
@@ -676,30 +585,10 @@ fn upgrade_nix_inner() -> Result<()> {
         // Remove nix-manual first if installed, as it clashes with the nix flake package
         let installed = installed_elements()?;
         if installed.iter().any(|name| name == "nix-manual") {
-            tracing::info!("removing nix-manual before reinstalling nix");
-            let status = Command::new(nix_bin_str)
-                .args(["profile", "remove", "nix-manual"])
-                .status()
-                .context("failed to run nix profile remove nix-manual")?;
-
-            if !status.success() {
-                sentry_ext::capture_cmd_failure("nix profile remove nix-manual", status.code(), "");
-                anyhow::bail!("nix profile remove nix-manual failed");
-            }
-            tracing::info!("nix-manual removed from profile");
+            run_profile_cmd(nix_bin_str, "remove", "nix-manual", &["remove", "nix-manual"])?;
         }
 
-        let status = Command::new(nix_bin_str)
-            .args(["profile", "remove", "nix"])
-            .status()
-            .context("failed to run nix profile remove nix")?;
-
-        if !status.success() {
-            sentry_ext::capture_cmd_failure("nix profile remove nix", status.code(), "");
-            anyhow::bail!("nix profile remove nix failed");
-        }
-
-        tracing::info!("nix removed from profile, reinstalling via absolute path");
+        run_profile_cmd(nix_bin_str, "remove", "nix", &["remove", "nix"])?;
         profile_install_with_nix(nix_bin_str, "nix", false)?;
 
         tracing::info!("nix reinstalled successfully");
