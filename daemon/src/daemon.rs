@@ -49,6 +49,17 @@ pub async fn run(
         ("target", TARGET),
     ]);
 
+    // Migration: remove legacy UUID-based instance-id file (replaced by
+    // host key fingerprint).
+    let legacy_id_path = config::config_dir().join("instance-id");
+    if legacy_id_path.exists() {
+        if let Err(e) = std::fs::remove_file(&legacy_id_path) {
+            tracing::warn!("failed to remove legacy instance-id file: {e}");
+        } else {
+            tracing::info!("removed legacy instance-id file");
+        }
+    }
+
     let mut cfg = config::load().await?;
     let mut current_cfg = cfg.clone();
 
@@ -430,6 +441,9 @@ pub async fn run(
 
     #[cfg(feature = "services")]
     svc_mgr.shutdown().await;
+
+    #[cfg(feature = "relay")]
+    relay_mgr.cleanup();
 
     sentry_ext::breadcrumb("daemon", "daemon shutdown complete", &[]);
     tracing::info!("daemon shutdown complete");

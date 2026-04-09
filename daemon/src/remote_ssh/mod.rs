@@ -100,6 +100,11 @@ impl Manager {
         self.ssh_cmd_rx.recv().await
     }
 
+    /// Clean up resources (FIFO) on shutdown.
+    pub fn cleanup(&self) {
+        fifo_watcher::cleanup();
+    }
+
     /// Handle a remote SSH command (toggle allow/deny).
     pub fn handle_cmd(&mut self, cmd: RemoteSshCommand) {
         match cmd {

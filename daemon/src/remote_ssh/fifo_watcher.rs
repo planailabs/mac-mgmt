@@ -27,6 +27,18 @@ fn create_fifo(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Remove the FIFO file. Call during daemon shutdown.
+pub fn cleanup() {
+    let path = fifo_path();
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!("failed to remove FIFO {}: {e}", path.display());
+        } else {
+            tracing::debug!("removed FIFO {}", path.display());
+        }
+    }
+}
+
 pub async fn watch(tx: mpsc::Sender<RemoteSshCommand>) -> Result<()> {
     let path = fifo_path();
     create_fifo(&path)?;
