@@ -137,7 +137,7 @@ impl Handler for SshSession {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let command = String::from_utf8_lossy(data).to_string();
-        tracing::info!("exec request on channel {channel_id:?}: {command}");
+        tracing::info!("exec request on channel {channel_id:?}: <{} bytes>", data.len());
 
         let handle = session.handle();
         tokio::spawn(async move {

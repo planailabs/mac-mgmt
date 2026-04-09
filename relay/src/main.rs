@@ -31,7 +31,10 @@ async fn main() -> Result<()> {
     let registry = Arc::new(daemon_registry::DaemonRegistry::new(
         cfg.ssh_port_min,
         cfg.ssh_port_max,
+        cfg.max_daemons,
     ));
+
+    bridge::spawn_cleanup_task();
 
     let app = ws_handler::router(
         Arc::clone(&registry),

@@ -50,3 +50,13 @@ pub fn load_or_generate() -> Result<PrivateKey> {
     tracing::info!("host key saved to {}", path.display());
     Ok(key)
 }
+
+/// Compute a hex-encoded SHA-256 fingerprint of the host key's public part.
+/// This is used as a stable, cryptographically-derived instance ID.
+pub fn fingerprint_hex(key: &PrivateKey) -> String {
+    use russh::keys::PublicKeyBase64;
+    use sha2::{Digest, Sha256};
+    let pk_bytes = key.public_key_bytes();
+    let hash = Sha256::digest(&pk_bytes);
+    hex::encode(hash)
+}

@@ -7,7 +7,6 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 
-use super::host_keys;
 use super::ssh_server::{self, SshSession};
 use super::ws_stream::WsStream;
 use crate::ws_reconnect::{self, WsClientConfig};
@@ -17,7 +16,10 @@ use crate::ws_reconnect::{self, WsClientConfig};
 #[serde(rename_all = "snake_case")]
 enum ControlMessage {
     Registered { ssh_port: u16 },
-    SessionRequest { session_id: String },
+    SessionRequest {
+        session_id: String,
+        session_secret: String,
+    },
     MetricsRequest { request_id: String, path: String },
 }
 
@@ -26,12 +28,11 @@ pub async fn run(
     token: &str,
     instance_id: &str,
     agent_name: Option<&str>,
+    host_key: russh::keys::PrivateKey,
     server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
     ssh_allowed: Arc<AtomicBool>,
     metrics_port: u16,
 ) -> Result<()> {
-    // Load SSH config once
-    let host_key = host_keys::load_or_generate()?;
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
         // Only advertise public-key auth; password / keyboard-interactive
@@ -81,7 +82,7 @@ pub async fn run(
                     "relay registered: instance={instance_id} ssh_port={ssh_port}"
                 );
             }
-            ControlMessage::SessionRequest { session_id } => {
+            ControlMessage::SessionRequest { session_id, session_secret } => {
                 if !ssh_allowed.load(Ordering::Relaxed) {
                     tracing::info!("session request {session_id} denied (remote SSH disabled)");
                     continue;
@@ -92,7 +93,7 @@ pub async fn run(
                 let config = Arc::clone(&russh_config);
                 let ssh_keys = Arc::clone(&server_ssh_keys);
                 tokio::spawn(async move {
-                    match handle_session(&relay_url, &token, &session_id, config, ssh_keys).await {
+                    match handle_session(&relay_url, &token, &session_id, &session_secret, config, ssh_keys).await {
                         Ok(()) => tracing::info!("session {session_id} completed"),
                         Err(e) => tracing::error!("session {session_id} failed: {e:#}"),
                     }
@@ -117,10 +118,14 @@ async fn handle_session(
     relay_url: &str,
     token: &str,
     session_id: &str,
+    session_secret: &str,
     config: Arc<russh::server::Config>,
     server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
 ) -> Result<()> {
-    let ws_url = format!("{relay_url}/api/daemon/session/{session_id}");
+    let ws_url = format!(
+        "{relay_url}/api/daemon/session/{session_id}?session_secret={}",
+        urlencoding::encode(session_secret),
+    );
     let host = ws_reconnect::extract_host(relay_url)?;
 
     let request = tokio_tungstenite::tungstenite::http::Request::builder()

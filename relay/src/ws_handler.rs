@@ -1,6 +1,7 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
 use axum::{Json, Router};
@@ -18,6 +19,9 @@ use crate::metrics_federation::{
     PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
 };
 use crate::ssh_listener;
+
+/// Maximum WebSocket message size (256 KB).
+const MAX_WS_MESSAGE_SIZE: usize = 256 * 1024;
 
 #[derive(Clone)]
 struct AppState {
@@ -41,7 +45,31 @@ pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String) -> Router {
         .route("/api/tunnels", get(list_tunnels))
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
+        .layer(middleware::from_fn(security_headers))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(256))
         .with_state(state)
+}
+
+/// Add security headers (CSP, X-Content-Type-Options, X-Frame-Options) to all responses.
+async fn security_headers(
+    request: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        axum::http::header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("DENY"),
+    );
+    response
 }
 
 async fn health() -> &'static str {
@@ -109,6 +137,16 @@ async fn require_auth(
     Ok(self_info)
 }
 
+/// Reject WebSocket upgrades that carry a browser Origin header (anti-CSRF).
+/// API clients (daemons) do not send Origin; only browsers do.
+fn reject_browser_origin(headers: &HeaderMap) -> Result<(), axum::response::Response> {
+    if headers.contains_key("origin") {
+        tracing::warn!("rejecting WebSocket upgrade with Origin header (possible CSRF)");
+        return Err(StatusCode::FORBIDDEN.into_response());
+    }
+    Ok(())
+}
+
 // ── Daemon registration WebSocket ───────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -124,12 +162,22 @@ async fn ws_daemon_register(
     Query(query): Query<RegisterQuery>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
+    if let Err(resp) = reject_browser_origin(&headers) {
+        return resp;
+    }
+
     let self_info = match require_auth(&headers, &state.server_api_url, &["sync"]).await {
         Ok(info) => info,
         Err(resp) => return resp,
     };
 
-    ws.on_upgrade(move |socket| handle_daemon_ws(socket, query, self_info, state))
+    if state.registry.is_full() {
+        tracing::error!("max daemon connections reached, rejecting {}", query.instance_id);
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+
+    ws.max_message_size(MAX_WS_MESSAGE_SIZE)
+        .on_upgrade(move |socket| handle_daemon_ws(socket, query, self_info, state))
         .into_response()
 }
 
@@ -217,8 +265,12 @@ async fn handle_daemon_ws(
             }
             Some(msg) = control_rx.recv() => {
                 let json = match msg {
-                    ControlMsg::SessionRequest { session_id } => {
-                        serde_json::json!({ "type": "session_request", "session_id": session_id })
+                    ControlMsg::SessionRequest { session_id, session_secret } => {
+                        serde_json::json!({
+                            "type": "session_request",
+                            "session_id": session_id,
+                            "session_secret": session_secret,
+                        })
                     }
                     ControlMsg::MetricsRequest { request_id, path, response_tx } => {
                         tracing::debug!("forwarding metrics request {request_id} ({path}) to {instance_id}");
@@ -268,24 +320,35 @@ async fn handle_daemon_ws(
 
 // ── Daemon data session WebSocket ───────────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+struct SessionQuery {
+    session_secret: String,
+}
+
 async fn ws_daemon_session(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     Path(session_id): Path<String>,
+    Query(query): Query<SessionQuery>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
+    if let Err(resp) = reject_browser_origin(&headers) {
+        return resp;
+    }
+
     if let Err(resp) = require_auth(&headers, &state.server_api_url, &["sync"]).await {
         return resp;
     }
 
-    ws.on_upgrade(move |socket| handle_data_session(socket, session_id))
+    ws.max_message_size(MAX_WS_MESSAGE_SIZE)
+        .on_upgrade(move |socket| handle_data_session(socket, session_id, query.session_secret))
         .into_response()
 }
 
-async fn handle_data_session(socket: WebSocket, session_id: String) {
+async fn handle_data_session(socket: WebSocket, session_id: String, session_secret: String) {
     tracing::debug!("daemon data WS upgraded for session {session_id}");
-    let Some(tcp_stream) = bridge::take_pending_session(&session_id) else {
-        tracing::warn!("daemon connected for session {session_id} but no SSH client waiting");
+    let Some(tcp_stream) = bridge::take_pending_session(&session_id, &session_secret) else {
+        tracing::warn!("daemon connected for session {session_id} but no valid pending session");
         return;
     };
 
@@ -295,6 +358,11 @@ async fn handle_data_session(socket: WebSocket, session_id: String) {
 }
 
 // ── Metrics proxy ───────────────────────────────────────────────────────
+
+/// Allowed characters in a metrics proxy path segment.
+fn is_safe_path(path: &str) -> bool {
+    !path.contains("..") && path.chars().all(|c| c.is_alphanumeric() || "-_/.?&=".contains(c))
+}
 
 async fn proxy_metrics(
     headers: HeaderMap,
@@ -306,6 +374,12 @@ async fn proxy_metrics(
         tracing::debug!("metrics proxy auth failed for {instance_id}");
         return resp;
     }
+
+    if !is_safe_path(&path) {
+        tracing::warn!("metrics proxy: rejecting unsafe path: {path}");
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
     tracing::debug!("metrics proxy: instance={instance_id} path={path}");
 
     let full_path = if query.is_empty() {

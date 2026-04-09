@@ -1,32 +1,84 @@
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use axum::extract::ws::{Message, WebSocket};
 
+const SESSION_TTL: Duration = Duration::from_secs(30);
+
+struct PendingSession {
+    stream: TcpStream,
+    secret: String,
+    created_at: Instant,
+}
+
 /// Pending sessions: SSH TCP streams waiting for the daemon's data channel.
-static PENDING_SESSIONS: LazyLock<Mutex<HashMap<String, TcpStream>>> =
+static PENDING_SESSIONS: LazyLock<Mutex<HashMap<String, PendingSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub fn register_pending_session(session_id: String, stream: TcpStream) {
+pub fn register_pending_session(session_id: String, secret: String, stream: TcpStream) {
     let count = {
         let mut sessions = PENDING_SESSIONS.lock().unwrap();
-        sessions.insert(session_id.clone(), stream);
+        sessions.insert(
+            session_id.clone(),
+            PendingSession {
+                stream,
+                secret,
+                created_at: Instant::now(),
+            },
+        );
         sessions.len()
     };
     tracing::debug!("registered pending session {session_id} (pending now: {count})");
 }
 
-pub fn take_pending_session(session_id: &str) -> Option<TcpStream> {
-    let result = PENDING_SESSIONS.lock().unwrap().remove(session_id);
-    if result.is_some() {
-        tracing::debug!("claimed pending session {session_id}");
-    } else {
-        tracing::warn!("no pending session found for {session_id}");
+pub fn take_pending_session(session_id: &str, secret: &str) -> Option<TcpStream> {
+    let mut sessions = PENDING_SESSIONS.lock().unwrap();
+    if let Some(pending) = sessions.get(session_id) {
+        if pending.secret != secret {
+            tracing::warn!("session {session_id}: secret mismatch, rejecting");
+            return None;
+        }
+        if pending.created_at.elapsed() > SESSION_TTL {
+            tracing::warn!("session {session_id}: expired, removing");
+            sessions.remove(session_id);
+            return None;
+        }
+        return sessions.remove(session_id).map(|p| p.stream);
     }
-    result
+    tracing::warn!("no pending session found for {session_id}");
+    None
+}
+
+/// Remove sessions that have been pending longer than the TTL.
+pub fn cleanup_expired() {
+    let mut sessions = PENDING_SESSIONS.lock().unwrap();
+    let before = sessions.len();
+    sessions.retain(|id, s| {
+        let expired = s.created_at.elapsed() > SESSION_TTL;
+        if expired {
+            tracing::info!("expiring stale pending session {id}");
+        }
+        !expired
+    });
+    let removed = before - sessions.len();
+    if removed > 0 {
+        tracing::debug!("cleaned up {removed} expired pending session(s)");
+    }
+}
+
+/// Spawn a background task that periodically cleans up expired sessions.
+pub fn spawn_cleanup_task() {
+    tokio::spawn(async {
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            cleanup_expired();
+        }
+    });
 }
 
 /// Bridge bidirectional data between a TCP stream and a WebSocket.
@@ -42,7 +94,7 @@ pub async fn bridge_tcp_ws(mut tcp: TcpStream, ws: WebSocket) {
             match msg {
                 Ok(Message::Binary(data)) => {
                     if let Err(e) = tcp_write.write_all(&data).await {
-                        tracing::debug!("ws→tcp write failed: {e}");
+                        tracing::debug!("ws->tcp write failed: {e}");
                         break;
                     }
                     bytes += data.len() as u64;
@@ -75,7 +127,7 @@ pub async fn bridge_tcp_ws(mut tcp: TcpStream, ws: WebSocket) {
                         .send(Message::Binary(buf[..n].to_vec().into()))
                         .await
                     {
-                        tracing::debug!("tcp→ws send failed: {e}");
+                        tracing::debug!("tcp->ws send failed: {e}");
                         break;
                     }
                     bytes += n as u64;
@@ -95,6 +147,6 @@ pub async fn bridge_tcp_ws(mut tcp: TcpStream, ws: WebSocket) {
     }
 
     tracing::info!(
-        "bridge closed (ws→tcp: {ws_to_tcp_bytes}B, tcp→ws: {tcp_to_ws_bytes}B)"
+        "bridge closed (ws->tcp: {ws_to_tcp_bytes}B, tcp->ws: {tcp_to_ws_bytes}B)"
     );
 }

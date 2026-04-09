@@ -8,7 +8,7 @@ pub mod ws_stream;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use russh::keys::PublicKey;
+use russh::keys::{PrivateKey, PublicKey};
 use tokio::sync::RwLock;
 
 #[derive(Debug)]
@@ -38,6 +38,7 @@ impl Manager {
         server_url: Option<String>,
         server_token: Option<String>,
         instance_id: String,
+        host_key: PrivateKey,
         metrics_port: u16,
         remote_ssh_enabled: bool,
     ) -> Self {
@@ -63,7 +64,7 @@ impl Manager {
             let allowed = Arc::clone(&ssh_allowed);
             tokio::spawn(async move {
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, keys, allowed, metrics_port,
+                    &url, &token, &iid, None, host_key, keys, allowed, metrics_port,
                 ).await {
                     tracing::error!("relay client exited: {e:#}");
                 }

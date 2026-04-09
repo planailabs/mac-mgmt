@@ -8,7 +8,10 @@ use uuid::Uuid;
 /// Message sent from relay to daemon over the control WebSocket.
 #[derive(Debug)]
 pub enum ControlMsg {
-    SessionRequest { session_id: String },
+    SessionRequest {
+        session_id: String,
+        session_secret: String,
+    },
     MetricsRequest {
         request_id: String,
         path: String,
@@ -53,15 +56,17 @@ pub struct DaemonRegistry {
     daemons: RwLock<HashMap<String, DaemonConn>>,
     port_min: u16,
     port_max: u16,
+    max_daemons: usize,
     used_ports: RwLock<std::collections::HashSet<u16>>,
 }
 
 impl DaemonRegistry {
-    pub fn new(port_min: u16, port_max: u16) -> Self {
+    pub fn new(port_min: u16, port_max: u16, max_daemons: usize) -> Self {
         Self {
             daemons: RwLock::new(HashMap::new()),
             port_min,
             port_max,
+            max_daemons,
             used_ports: RwLock::new(std::collections::HashSet::new()),
         }
     }
@@ -91,6 +96,10 @@ impl DaemonRegistry {
     pub fn release_port(&self, port: u16) {
         self.used_ports.write().unwrap().remove(&port);
         tracing::debug!("released port {port}");
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.daemons.read().unwrap().len() >= self.max_daemons
     }
 
     pub fn register(&self, conn: DaemonConn) {

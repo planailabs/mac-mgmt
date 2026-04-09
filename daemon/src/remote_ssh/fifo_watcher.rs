@@ -19,7 +19,7 @@ fn create_fifo(path: &std::path::Path) -> Result<()> {
     }
     let c_path = CString::new(path.to_str().context("non-UTF8 path")?)
         .context("path contains null byte")?;
-    let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o622) };
+    let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
     if ret != 0 {
         return Err(std::io::Error::last_os_error())
             .with_context(|| format!("mkfifo failed for {}", path.display()));

@@ -715,8 +715,9 @@ pub async fn setting_remove_skill(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_skills WHERE id = $1")
+    sqlx::query("DELETE FROM customer_skills WHERE id = $1 AND customer_id = $2")
         .bind(uuid)
+        .bind(auth.customer_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -875,8 +876,9 @@ pub async fn setting_remove_bundle(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_bundles WHERE id = $1")
+    sqlx::query("DELETE FROM customer_bundles WHERE id = $1 AND customer_id = $2")
         .bind(uuid)
+        .bind(auth.customer_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -1022,8 +1024,9 @@ pub async fn setting_remove_mcp_server(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_mcp_servers WHERE id = $1")
+    sqlx::query("DELETE FROM customer_mcp_servers WHERE id = $1 AND customer_id = $2")
         .bind(uuid)
+        .bind(auth.customer_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -1182,8 +1185,9 @@ pub async fn setting_remove_mcp_bundle(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_mcp_bundles WHERE id = $1")
+    sqlx::query("DELETE FROM customer_mcp_bundles WHERE id = $1 AND customer_id = $2")
         .bind(uuid)
+        .bind(auth.customer_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;

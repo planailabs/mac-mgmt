@@ -30,8 +30,9 @@ async fn listen(
     loop {
         let (tcp_stream, peer_addr) = listener.accept().await?;
         let session_id = uuid::Uuid::new_v4().to_string();
+        let session_secret = uuid::Uuid::new_v4().to_string();
         tracing::info!(
-            "SSH client {peer_addr} → {instance_id} (port {port}), session {session_id}"
+            "SSH client {peer_addr} -> {instance_id} (port {port}), session {session_id}"
         );
 
         let Some(control_tx) = registry.get_control_tx(instance_id) else {
@@ -44,6 +45,7 @@ async fn listen(
         if control_tx
             .send(ControlMsg::SessionRequest {
                 session_id: session_id.clone(),
+                session_secret: session_secret.clone(),
             })
             .await
             .is_err()
@@ -56,6 +58,6 @@ async fn listen(
         tracing::debug!("session request {session_id} sent to daemon {instance_id}");
 
         // Register pending session and spawn bridge when data channel arrives
-        bridge::register_pending_session(session_id, tcp_stream);
+        bridge::register_pending_session(session_id, session_secret, tcp_stream);
     }
 }
