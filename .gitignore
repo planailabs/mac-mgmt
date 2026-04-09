@@ -29,3 +29,6 @@ server/public/tailwind.css
 
 # Server config (contains secrets)
 server/config.toml
+
+# Test scripts
+test-*.sh
