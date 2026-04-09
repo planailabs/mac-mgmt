@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
-use crate::web::app::AppRoute;
+use crate::web::app::Route;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FleetEntry {
@@ -164,7 +164,7 @@ pub fn FleetDashboard() -> Element {
                                             tr {
                                                 td { class: "px-6 py-4 text-sm",
                                                     Link {
-                                                        to: AppRoute::CustomerDetail { id: entry.customer_id.clone() },
+                                                        to: Route::CustomerDetail { id: entry.customer_id.clone() },
                                                         class: "text-blue-600 hover:underline",
                                                         "{entry.customer_name}"
                                                     }
