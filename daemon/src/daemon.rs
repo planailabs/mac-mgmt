@@ -157,9 +157,8 @@ pub async fn run(
     };
 
     // Derive a stable instance ID from the ed25519 host key fingerprint.
-    #[allow(unused_variables)]
-    let host_key = crate::host_keys::load_or_generate()
-        .context("failed to load/generate SSH host key")?;
+    let host_key = Arc::new(crate::host_keys::load_or_generate()
+        .context("failed to load/generate SSH host key")?);
     let instance_id = crate::host_keys::fingerprint_hex(&host_key);
     tracing::info!("instance ID (host key fingerprint): {instance_id}");
 
@@ -169,7 +168,7 @@ pub async fn run(
         server_url.clone(),
         server_token.clone(),
         instance_id.clone(),
-        host_key,
+        Arc::clone(&host_key),
         metrics_port,
         cfg.relay.remote_ssh_enabled,
     );
@@ -333,8 +332,9 @@ pub async fn run(
                     let url = url.clone();
                     let token = token.clone();
                     let iid = instance_id.clone();
+                    let hk = Arc::clone(&host_key);
                     tokio::spawn(async move {
-                        send_heartbeat(&url, &token, &iid, services).await;
+                        send_heartbeat(&url, &token, &iid, &hk, services).await;
                     });
                 }
             }
@@ -522,18 +522,42 @@ async fn send_heartbeat(
     server_url: &str,
     server_token: &str,
     instance_id: &str,
+    host_key: &russh::keys::PrivateKey,
     services: Vec<serde_json::Value>,
 ) {
+    use russh::keys::PublicKeyBase64;
+    use russh::keys::signature::Signer;
+
     let client = reqwest::Client::new();
     let hostname = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_default();
+
+    let signed_at = chrono::Utc::now().timestamp();
+    let message = format!("{instance_id}:{signed_at}");
+    let sig = host_key.try_sign(message.as_bytes());
+    let (public_key_b64, sig_b64) = match sig {
+        Ok(sig) => {
+            use base64::Engine;
+            let pk_b64 = host_key.public_key_base64();
+            let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.as_bytes());
+            (pk_b64, sig_b64)
+        }
+        Err(e) => {
+            tracing::warn!("failed to sign heartbeat: {e}");
+            return;
+        }
+    };
+
     let body = mac_mgmt_common::HeartbeatBody {
         instance_id: instance_id.to_string(),
         version: CURRENT_VERSION.to_string(),
         hostname,
         environment: ENVIRONMENT.to_string(),
         services: serde_json::Value::Array(services),
+        public_key: public_key_b64,
+        signature: sig_b64,
+        signed_at,
     };
 
     let url = format!("{server_url}/api/heartbeat");

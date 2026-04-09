@@ -16,7 +16,9 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+base64 = "0.22"
 bytes = "1"
+chrono = "0.4"
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "panic", "backtrace", "contexts", "debug-images", "log"] }
 rust-embed = "8"
 tempfile = "3"

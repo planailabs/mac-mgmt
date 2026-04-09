@@ -2187,6 +2187,12 @@ pub async fn post_heartbeat(
     pool: &State<PgPool>,
     body: Json<HeartbeatBody>,
 ) -> Result<Status, Status> {
+    // Verify the daemon's cryptographic identity proof.
+    verify_heartbeat_signature(&body).map_err(|e| {
+        tracing::warn!("heartbeat signature verification failed: {e}");
+        Status::Forbidden
+    })?;
+
     sqlx::query(
         "INSERT INTO daemon_heartbeats (customer_id, instance_id, version, hostname, environment, services) \
          VALUES ($1, $2, $3, $4, $5, $6) \
@@ -2204,6 +2210,81 @@ pub async fn post_heartbeat(
     .map_err(|_| Status::InternalServerError)?;
 
     Ok(Status::Ok)
+}
+
+/// Maximum allowed clock skew for heartbeat signatures (seconds).
+const HEARTBEAT_MAX_AGE_SECS: i64 = 120;
+
+/// Verify the ed25519 signature on a heartbeat and check that the public
+/// key fingerprint matches the claimed instance_id.
+fn verify_heartbeat_signature(body: &HeartbeatBody) -> Result<(), &'static str> {
+    use base64::Engine;
+    use ed25519_dalek::{Signature, VerifyingKey};
+    use sha2::{Digest, Sha256};
+
+    if body.public_key.is_empty() || body.signature.is_empty() {
+        return Err("missing public_key or signature");
+    }
+
+    // Check timestamp freshness
+    let now = chrono::Utc::now().timestamp();
+    if (now - body.signed_at).abs() > HEARTBEAT_MAX_AGE_SECS {
+        return Err("signed_at timestamp too old or too far in the future");
+    }
+
+    // Decode the public key (SSH wire format: 4-byte type length + type + 4-byte key length + key)
+    let pk_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&body.public_key)
+        .map_err(|_| "invalid base64 in public_key")?;
+
+    // Verify fingerprint matches instance_id
+    let fingerprint = hex::encode(Sha256::digest(&pk_bytes));
+    if fingerprint != body.instance_id {
+        return Err("public key fingerprint does not match instance_id");
+    }
+
+    // Extract the raw 32-byte ed25519 public key from the SSH wire format.
+    // Format: [4-byte len]["ssh-ed25519"][4-byte len][32-byte key]
+    let raw_pk = extract_ed25519_pubkey(&pk_bytes)
+        .ok_or("invalid SSH ed25519 public key format")?;
+
+    let verifying_key = VerifyingKey::from_bytes(raw_pk)
+        .map_err(|_| "invalid ed25519 public key")?;
+
+    // Decode signature
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&body.signature)
+        .map_err(|_| "invalid base64 in signature")?;
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|_| "invalid ed25519 signature format")?;
+
+    // Verify signature over "{instance_id}:{signed_at}"
+    let message = format!("{}:{}", body.instance_id, body.signed_at);
+    use ed25519_dalek::Verifier;
+    verifying_key
+        .verify(message.as_bytes(), &signature)
+        .map_err(|_| "signature verification failed")?;
+
+    Ok(())
+}
+
+/// Extract the raw 32-byte ed25519 public key from SSH wire format.
+fn extract_ed25519_pubkey(data: &[u8]) -> Option<&[u8; 32]> {
+    // SSH wire format: u32 type_len, type_bytes, u32 key_len, key_bytes
+    if data.len() < 4 {
+        return None;
+    }
+    let type_len = u32::from_be_bytes(data[..4].try_into().ok()?) as usize;
+    let key_start = 4 + type_len;
+    if data.len() < key_start + 4 {
+        return None;
+    }
+    let key_len = u32::from_be_bytes(data[key_start..key_start + 4].try_into().ok()?) as usize;
+    if key_len != 32 || data.len() < key_start + 4 + 32 {
+        return None;
+    }
+    let key_bytes = &data[key_start + 4..key_start + 4 + 32];
+    key_bytes.try_into().ok()
 }
 
 // ── Rollout Groups (admin) ──────────────────────────────────────────

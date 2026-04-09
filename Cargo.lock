@@ -3655,7 +3655,9 @@ name = "mac-mgmt"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "base64",
  "bytes",
+ "chrono",
  "clap",
  "dirs",
  "futures-util",
@@ -3735,6 +3737,7 @@ dependencies = [
  "chrono",
  "dioxus",
  "dioxus-tabular",
+ "ed25519-dalek",
  "hex",
  "jsonschema",
  "mac-mgmt-common",

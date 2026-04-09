@@ -26,6 +26,16 @@ pub struct HeartbeatBody {
     #[serde(default)]
     pub environment: String,
     pub services: serde_json::Value,
+    /// Ed25519 public key bytes (base64-encoded SSH wire format).
+    /// The server verifies that SHA-256(public_key) == instance_id.
+    #[serde(default)]
+    pub public_key: String,
+    /// Ed25519 signature over "{instance_id}:{signed_at}" (base64-encoded).
+    #[serde(default)]
+    pub signature: String,
+    /// Unix timestamp (seconds) included in the signed message.
+    #[serde(default)]
+    pub signed_at: i64,
 }
 
 /// Server → daemon update target response (`GET /api/update`).

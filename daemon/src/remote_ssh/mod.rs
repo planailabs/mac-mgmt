@@ -38,7 +38,7 @@ impl Manager {
         server_url: Option<String>,
         server_token: Option<String>,
         instance_id: String,
-        host_key: PrivateKey,
+        host_key: Arc<PrivateKey>,
         metrics_port: u16,
         remote_ssh_enabled: bool,
     ) -> Self {
@@ -63,8 +63,9 @@ impl Manager {
             let keys = Arc::clone(&server_ssh_keys);
             let allowed = Arc::clone(&ssh_allowed);
             tokio::spawn(async move {
+                let hk = Arc::unwrap_or_clone(host_key);
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, host_key, keys, allowed, metrics_port,
+                    &url, &token, &iid, None, hk, keys, allowed, metrics_port,
                 ).await {
                     tracing::error!("relay client exited: {e:#}");
                 }
