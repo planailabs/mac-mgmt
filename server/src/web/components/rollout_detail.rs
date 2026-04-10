@@ -362,11 +362,11 @@ pub fn RolloutDetail(id: String) -> Element {
             let created = info.created_at.format("%Y-%m-%d %H:%M").to_string();
 
             let status_badge = match info.status.as_str() {
-                "rolling" => "bg-blue-100 text-blue-800",
-                "completed" => "bg-green-100 text-green-800",
-                "paused" => "bg-yellow-100 text-yellow-800",
-                "failed" => "bg-red-100 text-red-800",
-                _ => "bg-gray-100 text-gray-800",
+                "rolling" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
+                "completed" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+                "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
+                "failed" => "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+                _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
             };
 
             rsx! {
@@ -377,7 +377,7 @@ pub fn RolloutDetail(id: String) -> Element {
                             span { class: "px-2 py-0.5 rounded text-xs font-medium {status_badge}",
                                 "{status}"
                             }
-                            span { class: "text-gray-500 text-sm", "Created: {created}" }
+                            span { class: "text-gray-500 dark:text-gray-400 text-sm", "Created: {created}" }
                         }
                     }
                     if info.status == "pending" || info.status == "completed" || info.status == "failed" {
@@ -486,10 +486,10 @@ pub fn RolloutDetail(id: String) -> Element {
                     for stage in &info.stages {
                         {
                             let badge_class = match stage.status.as_str() {
-                                "rolling" => "bg-blue-100 text-blue-800",
-                                "completed" => "bg-green-100 text-green-800",
-                                "paused" => "bg-yellow-100 text-yellow-800",
-                                _ => "bg-gray-100 text-gray-800",
+                                "rolling" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
+                                "completed" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+                                "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
+                                _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
                             };
                             let started = stage
                                 .started_at
@@ -505,11 +505,11 @@ pub fn RolloutDetail(id: String) -> Element {
                                 "no heartbeats".to_string()
                             };
                             let health_color = if stage.total_count == 0 {
-                                "text-gray-400"
+                                "text-gray-400 dark:text-gray-500"
                             } else if stage.healthy_count == stage.total_count {
-                                "text-green-600"
+                                "text-green-600 dark:text-green-400"
                             } else {
-                                "text-red-600"
+                                "text-red-600 dark:text-red-400"
                             };
                             let upgrade_text = if stage.total_count > 0 {
                                 format!("{}/{} upgraded", stage.upgraded_count, stage.total_count)
@@ -517,23 +517,23 @@ pub fn RolloutDetail(id: String) -> Element {
                                 String::new()
                             };
                             let upgrade_color = if stage.total_count == 0 {
-                                "text-gray-400"
+                                "text-gray-400 dark:text-gray-500"
                             } else if stage.upgraded_count == stage.total_count {
-                                "text-green-600"
+                                "text-green-600 dark:text-green-400"
                             } else if stage.upgraded_count > 0 {
-                                "text-blue-600"
+                                "text-blue-600 dark:text-blue-400"
                             } else {
-                                "text-gray-400"
+                                "text-gray-400 dark:text-gray-500"
                             };
 
                             rsx! {
-                                div { class: "p-4 bg-white rounded shadow",
+                                div { class: "p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
                                     div { class: "flex justify-between items-center mb-2",
                                         div { class: "flex items-center gap-2",
                                             span { class: "font-medium text-sm",
                                                 "Stage {stage.stage_order}"
                                             }
-                                            span { class: "text-gray-600", "{stage.group_name}" }
+                                            span { class: "text-gray-600 dark:text-gray-300", "{stage.group_name}" }
                                             span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_class}",
                                                 "{stage.status}"
                                             }
@@ -549,7 +549,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                             }
                                         }
                                     }
-                                    div { class: "text-xs text-gray-400 flex gap-4",
+                                    div { class: "text-xs text-gray-400 dark:text-gray-500 flex gap-4",
                                         span { "Started: {started}" }
                                         span { "Completed: {completed}" }
                                     }
@@ -561,7 +561,7 @@ pub fn RolloutDetail(id: String) -> Element {
 
                 // Target
                 h3 { class: "text-lg font-semibold mb-2", "Target" }
-                div { class: "bg-gray-100 p-4 rounded text-sm space-y-1",
+                div { class: "bg-gray-100 dark:bg-gray-700 p-4 rounded text-sm space-y-1",
                     if let Some(ver) = &info.target_version {
                         p { span { class: "font-medium", "Version: " } "{ver}" }
                     }
@@ -572,10 +572,10 @@ pub fn RolloutDetail(id: String) -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { class: "text-gray-500 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
         },
     }
 }

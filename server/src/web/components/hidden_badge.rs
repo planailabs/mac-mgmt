@@ -13,7 +13,7 @@ pub fn HiddenBadge(hidden: bool) -> Element {
     }
     rsx! {
         span {
-            class: "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-700 border border-gray-300",
+            class: "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-500",
             title: "Hidden from public catalog",
             "Hidden"
         }
@@ -37,7 +37,7 @@ impl<R: Row + GetRowData<HiddenData>> TableColumn<R> for HiddenColumn {
         let indicator = sort_indicator(context);
         rsx! {
             th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
                 onclick: move |_| toggle_sort(context),
                 "Visibility {indicator}"
             }

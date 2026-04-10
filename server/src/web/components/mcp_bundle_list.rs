@@ -78,12 +78,12 @@ pub fn McpBundleList() -> Element {
 
                 rsx! {
                     TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                    div { class: "bg-white rounded shadow overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200",
-                            thead { class: "bg-gray-50",
+                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                        table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                            thead { class: "bg-gray-50 dark:bg-gray-700",
                                 tr { TableHeaders { data } }
                             }
-                            tbody { class: "bg-white divide-y divide-gray-200",
+                            tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                 for row in all_rows.into_iter().take(limit_val) {
                                     tr { key: "{row.key()}", TableCells { row } }
                                 }
@@ -92,7 +92,7 @@ pub fn McpBundleList() -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
         }}
     }

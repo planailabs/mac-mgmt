@@ -189,19 +189,19 @@ pub fn CustomerDetail(id: String) -> Element {
                                 }
                             },
                             input {
-                                class: "text-2xl font-bold border border-gray-300 rounded px-2 py-1",
+                                class: "text-2xl font-bold border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-white",
                                 r#type: "text",
                                 value: "{draft_name}",
                                 oninput: move |e| draft_name.set(e.value()),
                                 autofocus: true,
                             }
                             button {
-                                class: "text-green-600 hover:text-green-800",
+                                class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300",
                                 r#type: "submit",
                                 "Save"
                             }
                             button {
-                                class: "text-gray-500 hover:text-gray-700",
+                                class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200",
                                 r#type: "button",
                                 onclick: move |_| editing.set(false),
                                 "Cancel"
@@ -210,7 +210,7 @@ pub fn CustomerDetail(id: String) -> Element {
                     } else {
                         h2 { class: "text-2xl font-bold", "{name}" }
                         button {
-                            class: "text-gray-400 hover:text-gray-600",
+                            class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300",
                             onclick: move |_| {
                                 draft_name.set(name.clone());
                                 editing.set(true);
@@ -218,7 +218,7 @@ pub fn CustomerDetail(id: String) -> Element {
                             "Edit"
                         }
                         if *confirm_delete.read() {
-                            span { class: "text-red-600 text-sm", "Delete this customer?" }
+                            span { class: "text-red-600 dark:text-red-400 text-sm", "Delete this customer?" }
                             button {
                                 class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                                 onclick: {
@@ -234,20 +234,20 @@ pub fn CustomerDetail(id: String) -> Element {
                                 "Confirm"
                             }
                             button {
-                                class: "text-gray-500 hover:text-gray-700 text-sm",
+                                class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
                                 onclick: move |_| confirm_delete.set(false),
                                 "Cancel"
                             }
                         } else {
                             button {
-                                class: "text-red-400 hover:text-red-600 text-sm",
+                                class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 text-sm",
                                 onclick: move |_| confirm_delete.set(true),
                                 "Delete"
                             }
                         }
                     }
                 }
-                div { class: "text-gray-500 mb-6 flex items-center gap-4 flex-wrap",
+                div { class: "text-gray-500 dark:text-gray-400 mb-6 flex items-center gap-4 flex-wrap",
                     span { "Created: {created}" }
                     PinnedVersion { customer_id: cid2.clone(), version: pinned.clone(), on_change: move |_| customer.restart() }
                     NixpkgsCommit { customer_id: cid2.clone(), commit: nix_commit.clone(), on_change: move |_| customer.restart() }
@@ -286,7 +286,7 @@ pub fn CustomerDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
         None => rsx! { p { "Loading..." } },
     }
 }
@@ -312,9 +312,9 @@ fn ActiveRollouts(customer_id: String) -> Element {
         for entry in &entries {
             {
                 let badge_class = match entry.status.as_str() {
-                    "rolling" => "bg-blue-100 text-blue-800",
-                    "paused" => "bg-yellow-100 text-yellow-800",
-                    _ => "bg-gray-100 text-gray-800",
+                    "rolling" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
+                    "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
+                    _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
                 };
                 let rid = entry.id.clone();
                 let label = match &entry.target_version {
@@ -374,16 +374,16 @@ fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventH
                 },
                 span { "Version: " }
                 input {
-                    class: "border border-gray-300 rounded px-2 py-0.5 text-sm font-mono w-24",
+                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-0.5 text-sm font-mono w-24",
                     r#type: "text",
                     placeholder: "0.1.6",
                     value: "{draft}",
                     oninput: move |e| draft.set(e.value()),
                     autofocus: true,
                 }
-                button { class: "text-green-600 hover:text-green-800 text-sm", r#type: "submit", "Save" }
+                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", "Save" }
                 button {
-                    class: "text-gray-500 hover:text-gray-700 text-sm",
+                    class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
                     r#type: "button",
                     onclick: move |_| editing.set(false),
                     "Cancel"
@@ -395,16 +395,16 @@ fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventH
         rsx! {
             span { class: "flex items-center gap-1",
                 span { "Version: " }
-                span { class: "font-mono font-medium text-gray-700", "v{ver_display}" }
+                span { class: "font-mono font-medium text-gray-700 dark:text-gray-200", "v{ver_display}" }
                 if let Some(rid) = rollout_id {
                     Link {
                         to: Route::RolloutDetail { id: rid },
-                        class: "text-blue-600 hover:underline text-sm",
+                        class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
                         "(rollout)"
                     }
                 }
                 button {
-                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
                     onclick: move |_| {
                         draft.set(ver_display.clone());
                         editing.set(true);
@@ -416,9 +416,9 @@ fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventH
     } else {
         rsx! {
             span { class: "flex items-center gap-1",
-                span { class: "text-gray-400", "No version pinned" }
+                span { class: "text-gray-400 dark:text-gray-500", "No version pinned" }
                 button {
-                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
                     onclick: move |_| {
                         draft.set(String::new());
                         editing.set(true);
@@ -452,16 +452,16 @@ fn NixpkgsCommit(customer_id: String, commit: Option<String>, on_change: EventHa
                 },
                 span { "Nixpkgs: " }
                 input {
-                    class: "border border-gray-300 rounded px-2 py-0.5 text-sm font-mono w-64",
+                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-0.5 text-sm font-mono w-64",
                     r#type: "text",
                     placeholder: "commit sha",
                     value: "{draft}",
                     oninput: move |e| draft.set(e.value()),
                     autofocus: true,
                 }
-                button { class: "text-green-600 hover:text-green-800 text-sm", r#type: "submit", "Save" }
+                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", "Save" }
                 button {
-                    class: "text-gray-500 hover:text-gray-700 text-sm",
+                    class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
                     r#type: "button",
                     onclick: move |_| editing.set(false),
                     "Cancel"
@@ -474,9 +474,9 @@ fn NixpkgsCommit(customer_id: String, commit: Option<String>, on_change: EventHa
         rsx! {
             span { class: "flex items-center gap-1",
                 span { "Nixpkgs: " }
-                span { class: "font-mono font-medium text-gray-700", title: "{display}", "{short}" }
+                span { class: "font-mono font-medium text-gray-700 dark:text-gray-200", title: "{display}", "{short}" }
                 button {
-                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
                     onclick: move |_| {
                         draft.set(display.clone());
                         editing.set(true);
@@ -488,9 +488,9 @@ fn NixpkgsCommit(customer_id: String, commit: Option<String>, on_change: EventHa
     } else {
         rsx! {
             span { class: "flex items-center gap-1",
-                span { class: "text-gray-400", "No nixpkgs pin" }
+                span { class: "text-gray-400 dark:text-gray-500", "No nixpkgs pin" }
                 button {
-                    class: "text-gray-400 hover:text-gray-600 text-sm",
+                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
                     onclick: move |_| {
                         draft.set(String::new());
                         editing.set(true);

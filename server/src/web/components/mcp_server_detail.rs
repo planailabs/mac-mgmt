@@ -166,10 +166,10 @@ fn McpServerFormFields(
 ) -> Element {
     rsx! {
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 mb-1", "Slug" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Slug" }
             input {
-                class: "w-full border border-gray-300 rounded px-3 py-2 font-mono",
-                class: if slug_readonly { "bg-gray-100 text-gray-500" } else { "" },
+                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono dark:bg-gray-700 dark:text-white",
+                class: if slug_readonly { "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400" } else { "" },
                 r#type: "text",
                 required: true,
                 readonly: slug_readonly,
@@ -179,9 +179,9 @@ fn McpServerFormFields(
             }
         }
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 mb-1", "Name" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Name" }
             input {
-                class: "w-full border border-gray-300 rounded px-3 py-2",
+                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                 r#type: "text",
                 required: true,
                 value: "{name}",
@@ -189,18 +189,18 @@ fn McpServerFormFields(
             }
         }
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 mb-1", "Description" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Description" }
             textarea {
-                class: "w-full border border-gray-300 rounded px-3 py-2",
+                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                 rows: "2",
                 value: "{description}",
                 oninput: move |evt| description.set(evt.value()),
             }
         }
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 mb-1", "Config JSON" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Config JSON" }
             textarea {
-                class: "w-full border border-gray-300 rounded px-3 py-2 font-mono text-sm",
+                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono text-sm dark:bg-gray-700 dark:text-white",
                 rows: "10",
                 required: true,
                 value: "{config_json}",
@@ -208,7 +208,7 @@ fn McpServerFormFields(
             }
         }
         div { class: "mb-4",
-            label { class: "flex items-center gap-2 text-sm text-gray-700",
+            label { class: "flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200",
                 input {
                     r#type: "checkbox",
                     checked: "{hide_from_public_catalog}",
@@ -254,15 +254,15 @@ pub fn McpServerDetail(id: String) -> Element {
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
                     h2 { class: "text-2xl font-bold", "{name}" }
-                    span { class: "text-gray-400 font-mono text-sm", "({slug})" }
+                    span { class: "text-gray-400 dark:text-gray-500 font-mono text-sm", "({slug})" }
                     HiddenBadge { hidden: hide_flag }
                     Link {
                         to: Route::McpServerEdit { id: sid },
-                        class: "text-gray-400 hover:text-gray-600",
+                        class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
                         "Edit"
                     }
                     button {
-                        class: "text-red-400 hover:text-red-600",
+                        class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400",
                         onclick: move |_| {
                             let id = sid_del.clone();
                             let nav = navigator.clone();
@@ -276,13 +276,13 @@ pub fn McpServerDetail(id: String) -> Element {
                     }
                 }
                 if !s.description.is_empty() {
-                    p { class: "text-gray-600 mb-2", "{s.description}" }
+                    p { class: "text-gray-600 dark:text-gray-300 mb-2", "{s.description}" }
                 }
-                p { class: "text-gray-500 text-sm mb-6", "Created: {created}" }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", "Created: {created}" }
 
                 div { class: "mb-6",
                     h3 { class: "text-lg font-semibold mb-3", "Config JSON" }
-                    pre { class: "bg-gray-100 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap",
+                    pre { class: "bg-gray-100 dark:bg-gray-700 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap",
                         "{config_str}"
                     }
                 }
@@ -306,7 +306,7 @@ pub fn McpServerDetail(id: String) -> Element {
                             });
                         },
                         input {
-                            class: "flex-1 border border-gray-300 rounded px-3 py-1 text-sm font-mono",
+                            class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
                             r#type: "text",
                             placeholder: "package-name",
                             value: "{new_pkg}",
@@ -319,9 +319,9 @@ pub fn McpServerDetail(id: String) -> Element {
                         }
                     }
                     if packages.is_empty() {
-                        p { class: "text-sm text-gray-400", "No nix dependencies." }
+                        p { class: "text-sm text-gray-400 dark:text-gray-500", "No nix dependencies." }
                     } else {
-                        ul { class: "divide-y divide-gray-200",
+                        ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                             for pkg in &packages {
                                 {
                                     let pkg_display = pkg.clone();
@@ -331,7 +331,7 @@ pub fn McpServerDetail(id: String) -> Element {
                                         li { class: "py-2 flex justify-between items-center",
                                             span { class: "text-sm font-mono", "{pkg_display}" }
                                             button {
-                                                class: "text-xs text-red-600 hover:underline",
+                                                class: "text-xs text-red-600 dark:text-red-400 hover:underline",
                                                 onclick: move |_| {
                                                     let id = id_rm.clone();
                                                     let pkg = pkg_remove.clone();
@@ -356,10 +356,10 @@ pub fn McpServerDetail(id: String) -> Element {
                     h3 { class: "text-lg font-semibold mb-3", "Required by Skills" }
                     {match &*dep_skills.read() {
                         Some(Ok(list)) if list.is_empty() => rsx! {
-                            p { class: "text-sm text-gray-400", "No skills depend on this MCP server." }
+                            p { class: "text-sm text-gray-400 dark:text-gray-500", "No skills depend on this MCP server." }
                         },
                         Some(Ok(list)) => rsx! {
-                            ul { class: "divide-y divide-gray-200",
+                            ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                                 for dep in list {
                                     {
                                         let skill_slug = dep.skill_slug.clone();
@@ -369,23 +369,23 @@ pub fn McpServerDetail(id: String) -> Element {
                                             li { class: "py-2",
                                                 Link {
                                                     to: Route::SkillDetail { id: skill_id },
-                                                    class: "text-sm text-blue-600 hover:underline font-mono",
+                                                    class: "text-sm text-blue-600 dark:text-blue-400 hover:underline font-mono",
                                                     "{skill_slug}"
                                                 }
-                                                span { class: "text-xs text-gray-400 ml-2", "({channel})" }
+                                                span { class: "text-xs text-gray-400 dark:text-gray-500 ml-2", "({channel})" }
                                             }
                                         }
                                     }
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600", "Error: {e}" } },
+                        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600 dark:text-red-400", "Error: {e}" } },
                         None => rsx! { p { class: "text-sm", "Loading..." } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
         None => rsx! { p { "Loading..." } },
     }
 }
@@ -405,7 +405,7 @@ pub fn McpServerForm() -> Element {
     rsx! {
         h2 { class: "text-2xl font-bold mb-4", "New MCP Server" }
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 mb-4", "{err}" }
+            p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
         }
         form {
             onsubmit: move |evt: FormEvent| {
@@ -489,7 +489,7 @@ pub fn McpServerEdit(id: String) -> Element {
             rsx! {
                 h2 { class: "text-2xl font-bold mb-4", "Edit MCP Server" }
                 if let Some(err) = &*error.read() {
-                    p { class: "text-red-600 mb-4", "{err}" }
+                    p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
                 }
                 form {
                     onsubmit: move |evt: FormEvent| {
@@ -525,7 +525,7 @@ pub fn McpServerEdit(id: String) -> Element {
                         }
                         Link {
                             to: Route::McpServerDetail { id: id.clone() },
-                            class: "px-4 py-2 text-gray-600 hover:text-gray-900",
+                            class: "px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white",
                             "Cancel"
                         }
                         GenerateButton {
@@ -541,7 +541,7 @@ pub fn McpServerEdit(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
         None => rsx! { p { "Loading..." } },
     }
 }

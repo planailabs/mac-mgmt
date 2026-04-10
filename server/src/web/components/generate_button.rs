@@ -15,7 +15,7 @@ pub fn GenerateButton(
     rsx! {
         span { class: "inline-flex items-center gap-1",
             button {
-                class: "text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded hover:bg-purple-200 disabled:opacity-50",
+                class: "text-xs bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-200 px-2 py-1 rounded hover:bg-purple-200 dark:hover:bg-purple-800 disabled:opacity-50",
                 r#type: "button",
                 disabled: *generating.read(),
                 onclick: move |evt| {
@@ -41,7 +41,7 @@ pub fn GenerateButton(
                 if *generating.read() { "Generating..." } else { "Generate with AI" }
             }
             if let Some(err) = &*error_msg.read() {
-                span { class: "text-xs text-red-600", "{err}" }
+                span { class: "text-xs text-red-600 dark:text-red-400", "{err}" }
             }
         }
     }

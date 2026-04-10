@@ -196,7 +196,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             h2 { class: "text-2xl font-bold", "Daemon {version}" }
             Link {
                 to: Route::DaemonVersionList {},
-                class: "text-blue-600 hover:underline text-sm",
+                class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
                 "← All versions"
             }
         }
@@ -204,7 +204,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
-                        p { class: "text-gray-500 text-sm",
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
                             "No store paths found in xzar for this version."
                         }
                     }
@@ -239,19 +239,19 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     let shown = filtered_count.min(limit_val);
                     rsx! {
                         TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white rounded shadow overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200",
-                                thead { class: "bg-gray-50",
+                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                                thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
                                         SortableTh { label: "System".to_string(), sort_key: "system".to_string(), sort }
                                         SortableTh { label: "Store Path".to_string(), sort_key: "store_path".to_string(), sort }
                                     }
                                 }
-                                tbody { class: "bg-white divide-y divide-gray-200",
+                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                     for p in filtered.into_iter().take(limit_val) {
                                         tr { key: "{p.system}",
                                             td { class: "px-6 py-4 font-mono text-sm", "{p.system}" }
-                                            td { class: "px-6 py-4 font-mono text-xs text-gray-600 break-all",
+                                            td { class: "px-6 py-4 font-mono text-xs text-gray-600 dark:text-gray-300 break-all",
                                                 "{p.store_path}"
                                             }
                                         }
@@ -262,7 +262,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }}
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
         }}
 
@@ -271,7 +271,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
-                        p { class: "text-gray-500 text-sm",
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
                             "No daemons reporting this version."
                         }
                     }
@@ -306,25 +306,25 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     let shown = filtered_count.min(limit_val);
                     rsx! {
                         TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white rounded shadow overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200",
-                                thead { class: "bg-gray-50",
+                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                                thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
                                         SortableTh { label: "Customer".to_string(), sort_key: "customer".to_string(), sort }
                                         SortableTh { label: "Instances".to_string(), sort_key: "instances".to_string(), sort }
                                     }
                                 }
-                                tbody { class: "bg-white divide-y divide-gray-200",
+                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                     for c in filtered.into_iter().take(limit_val) {
                                         tr { key: "{c.id}",
                                             td { class: "px-6 py-4 text-sm",
                                                 Link {
                                                     to: Route::CustomerDetail { id: c.id.to_string() },
-                                                    class: "text-blue-600 hover:underline",
+                                                    class: "text-blue-600 dark:text-blue-400 hover:underline",
                                                     "{c.name}"
                                                 }
                                             }
-                                            td { class: "px-6 py-4 text-sm text-gray-600", "{c.instances}" }
+                                            td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300", "{c.instances}" }
                                         }
                                     }
                                 }
@@ -333,7 +333,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }}
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
         }}
 
@@ -342,7 +342,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
-                        p { class: "text-gray-500 text-sm", "No rollouts target this version." }
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm", "No rollouts target this version." }
                     }
                 } else {{
                     let search = use_signal(String::new);
@@ -376,16 +376,16 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     let shown = filtered_count.min(limit_val);
                     rsx! {
                         TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white rounded shadow overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200",
-                                thead { class: "bg-gray-50",
+                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                                thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
                                         SortableTh { label: "Rollout".to_string(), sort_key: "rollout".to_string(), sort }
                                         SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
                                         SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
                                     }
                                 }
-                                tbody { class: "bg-white divide-y divide-gray-200",
+                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                     for r in filtered.into_iter().take(limit_val) {
                                         {
                                             let ts = r.created_at.format("%Y-%m-%d %H:%M").to_string();
@@ -395,12 +395,12 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                                                     td { class: "px-6 py-4 text-sm font-mono",
                                                         Link {
                                                             to: Route::RolloutDetail { id: r.id.to_string() },
-                                                            class: "text-blue-600 hover:underline",
+                                                            class: "text-blue-600 dark:text-blue-400 hover:underline",
                                                             "{short}"
                                                         }
                                                     }
                                                     td { class: "px-6 py-4 text-sm", "{r.status}" }
-                                                    td { class: "px-6 py-4 text-xs text-gray-500", "{ts}" }
+                                                    td { class: "px-6 py-4 text-xs text-gray-500 dark:text-gray-400", "{ts}" }
                                                 }
                                             }
                                         }
@@ -411,7 +411,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }}
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
         }}
 
@@ -420,7 +420,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
-                        p { class: "text-gray-500 text-sm",
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
                             "No customers pinned to this version."
                         }
                     }
@@ -431,7 +431,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                                 li { key: "{c.id}",
                                     Link {
                                         to: Route::CustomerDetail { id: c.id.to_string() },
-                                        class: "text-blue-600 hover:underline",
+                                        class: "text-blue-600 dark:text-blue-400 hover:underline",
                                         "{c.name}"
                                     }
                                 }
@@ -440,7 +440,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
         }}
     }

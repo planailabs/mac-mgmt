@@ -97,7 +97,7 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
 
     rsx! {
         if let Some(err) = &*error_msg.read() {
-            p { class: "text-red-600 text-sm mb-2", "{err}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
         }
         form {
             class: "flex gap-2 mb-3",
@@ -121,7 +121,7 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
                 });
             },
             textarea {
-                class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm font-mono",
+                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
                 rows: 2,
                 placeholder: "ssh-ed25519 AAAA... user@host",
                 value: "{key_input}",
@@ -135,10 +135,10 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
         }
         {match &*keys.read() {
             Some(Ok(list)) if list.is_empty() => rsx! {
-                p { class: "text-gray-500 text-sm", "No SSH keys." }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm", "No SSH keys." }
             },
             Some(Ok(list)) => rsx! {
-                ul { class: "divide-y divide-gray-200",
+                ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                     for key in list {
                         {
                             let kid = key.id.to_string();
@@ -149,11 +149,11 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
                                     div {
                                         span { class: "text-sm font-mono", "{fp}" }
                                         if !comment.is_empty() {
-                                            span { class: "text-xs text-gray-500 ml-2", "{comment}" }
+                                            span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{comment}" }
                                         }
                                     }
                                     button {
-                                        class: "text-red-600 hover:text-red-700 text-sm",
+                                        class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                         onclick: move |_| {
                                             let kid = kid.clone();
                                             spawn(async move {
@@ -170,8 +170,8 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-            None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
         }}
     }
 }

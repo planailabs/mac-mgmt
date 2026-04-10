@@ -259,19 +259,19 @@ pub fn SkillDetail(id: String) -> Element {
                                 });
                             },
                             input {
-                                class: "text-2xl font-bold border border-gray-300 rounded px-2 py-1 w-full",
+                                class: "text-2xl font-bold border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-full dark:bg-gray-700 dark:text-white",
                                 r#type: "text",
                                 value: "{draft_name}",
                                 oninput: move |e| draft_name.set(e.value()),
                                 autofocus: true,
                             }
                             textarea {
-                                class: "w-full border border-gray-300 rounded px-2 py-1",
+                                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-white",
                                 rows: "2",
                                 value: "{draft_desc}",
                                 oninput: move |e| draft_desc.set(e.value()),
                             }
-                            label { class: "flex items-center gap-2 text-sm text-gray-700",
+                            label { class: "flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200",
                                 input {
                                     r#type: "checkbox",
                                     checked: "{draft_hide}",
@@ -280,9 +280,9 @@ pub fn SkillDetail(id: String) -> Element {
                                 "Hide from public catalog"
                             }
                             div { class: "flex gap-2",
-                                button { class: "text-green-600 hover:text-green-800", r#type: "submit", "Save" }
+                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300", r#type: "submit", "Save" }
                                 button {
-                                    class: "text-gray-500 hover:text-gray-700",
+                                    class: "text-gray-500 hover:text-gray-700 dark:hover:text-gray-200",
                                     r#type: "button",
                                     onclick: move |_| editing.set(false),
                                     "Cancel"
@@ -300,10 +300,10 @@ pub fn SkillDetail(id: String) -> Element {
                         }
                     } else {
                         h2 { class: "text-2xl font-bold", "{name}" }
-                        span { class: "text-gray-400 font-mono text-sm", "({slug})" }
+                        span { class: "text-gray-400 dark:text-gray-500 font-mono text-sm", "({slug})" }
                         HiddenBadge { hidden: hide_flag }
                         button {
-                            class: "text-gray-400 hover:text-gray-600",
+                            class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
                             onclick: move |_| {
                                 draft_name.set(name.clone());
                                 draft_desc.set(desc.clone());
@@ -315,17 +315,17 @@ pub fn SkillDetail(id: String) -> Element {
                     }
                 }
                 if !*editing.read() && !s.description.is_empty() {
-                    p { class: "text-gray-600 mb-2", "{s.description}" }
+                    p { class: "text-gray-600 dark:text-gray-300 mb-2", "{s.description}" }
                 }
-                p { class: "text-gray-500 text-sm mb-6", "Created: {created}" }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", "Created: {created}" }
 
                 // Channels section (read-only, synced from xzar)
                 div {
                     h3 { class: "text-lg font-semibold mb-3", "Channels" }
-                    p { class: "text-xs text-gray-400 mb-3", "Channels are synced from xzar." }
+                    p { class: "text-xs text-gray-400 dark:text-gray-500 mb-3", "Channels are synced from xzar." }
                     {match &*channels.read() {
                         Some(Ok(list)) if list.is_empty() => rsx! {
-                            p { class: "text-sm text-gray-500", "No channels synced yet." }
+                            p { class: "text-sm text-gray-500 dark:text-gray-400", "No channels synced yet." }
                         },
                         Some(Ok(list)) => {
                             let path_map = match &*paths.read() {
@@ -333,7 +333,7 @@ pub fn SkillDetail(id: String) -> Element {
                                 _ => HashMap::new(),
                             };
                             rsx! {
-                                ul { class: "divide-y divide-gray-200",
+                                ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                                     for ch in list {
                                         {
                                             let ch_name = ch.channel.clone();
@@ -344,11 +344,11 @@ pub fn SkillDetail(id: String) -> Element {
                                                 li { class: "py-2",
                                                     div {
                                                         span { class: "text-sm font-mono font-medium", "{ch_name}" }
-                                                        span { class: "text-xs text-gray-400 ml-2", "{ch_created}" }
+                                                        span { class: "text-xs text-gray-400 dark:text-gray-500 ml-2", "{ch_created}" }
                                                     }
                                                     for (arch, path) in &arch_paths {
-                                                        p { class: "text-xs text-gray-400 font-mono mt-0.5 truncate",
-                                                            span { class: "text-gray-500", "{arch}" }
+                                                        p { class: "text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5 truncate",
+                                                            span { class: "text-gray-500 dark:text-gray-400", "{arch}" }
                                                             " {path}"
                                                         }
                                                     }
@@ -360,13 +360,13 @@ pub fn SkillDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+                        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
                         None => rsx! { p { class: "text-sm", "Loading..." } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
         None => rsx! { p { "Loading..." } },
     }
 }
@@ -386,7 +386,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
 
     rsx! {
         div { class: "mt-3",
-            h4 { class: "text-sm font-semibold text-gray-700 mb-2", "MCP Dependencies" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "MCP Dependencies" }
             form {
                 class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
@@ -403,7 +403,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                     });
                 },
                 select {
-                    class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm",
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                     value: "{selected_server}",
                     onchange: move |e| selected_server.set(e.value()),
                     option { value: "", "Select MCP server..." }
@@ -424,10 +424,10 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
             }
             {match &*deps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400", "No MCP dependencies." }
+                    p { class: "text-xs text-gray-400 dark:text-gray-500", "No MCP dependencies." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for dep in list {
                             {
                                 let dep_id = dep.dep_id.clone();
@@ -436,7 +436,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                                     li { class: "py-1 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{slug}" }
                                         button {
-                                            class: "text-xs text-red-600 hover:underline",
+                                            class: "text-xs text-red-600 dark:text-red-400 hover:underline",
                                             onclick: move |_| {
                                                 let did = dep_id.clone();
                                                 spawn(async move {
@@ -453,7 +453,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-xs", "Error: {e}" } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-xs", "Error: {e}" } },
                 None => rsx! { p { class: "text-xs", "Loading..." } },
             }}
         }

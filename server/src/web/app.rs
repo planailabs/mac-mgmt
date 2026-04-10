@@ -77,10 +77,32 @@ pub enum Route {
     DaemonVersionDetail { version: String },
 }
 
+const THEME_INIT_SCRIPT: &str = r#"
+(function(){
+    try {
+        var d = document.documentElement;
+        var t = localStorage.getItem('theme');
+        var dark = t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) {
+            d.classList.add('dark');
+            d.style.colorScheme = 'dark';
+            d.style.backgroundColor = '#111827';
+        } else {
+            d.classList.remove('dark');
+            d.style.colorScheme = 'light';
+            d.style.backgroundColor = '#f9fafb';
+        }
+    } catch(e){}
+})();
+"#;
+
 #[component]
 pub fn App() -> Element {
+    let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
     rsx! {
-        document::Link { rel: "stylesheet", href: "/tailwind.css" }
+        // Script FIRST: sets .dark class + inline bg before CSS even loads
+        script { dangerous_inner_html: THEME_INIT_SCRIPT }
+        document::Link { rel: "stylesheet", href: "{css_href}" }
         Router::<Route> {}
     }
 }

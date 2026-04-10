@@ -248,7 +248,7 @@ impl<R: Row + GetRowData<LinkData>> TableColumn<R> for LinkColumn {
         let indicator = sort_indicator(context);
         rsx! {
             th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
                 onclick: move |_| toggle_sort(context),
                 "{header} {indicator}"
             }
@@ -263,12 +263,12 @@ impl<R: Row + GetRowData<LinkData>> TableColumn<R> for LinkColumn {
     ) -> Element {
         let data: LinkData = row.get();
         let class = if data.mono {
-            "text-blue-600 hover:underline font-mono text-sm"
+            "text-blue-600 dark:text-blue-400 hover:underline font-mono text-sm"
         } else {
-            "text-blue-600 hover:underline"
+            "text-blue-600 dark:text-blue-400 hover:underline"
         };
         rsx! {
-            td { class: "px-6 py-4",
+            td { class: "px-6 py-4 dark:text-gray-200",
                 Link { to: data.route, class, "{data.label}" }
             }
         }
@@ -296,7 +296,7 @@ impl<R: Row + GetRowData<TextData>> TableColumn<R> for TextColumn {
         let indicator = sort_indicator(context);
         rsx! {
             th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
                 onclick: move |_| toggle_sort(context),
                 "{header} {indicator}"
             }
@@ -311,7 +311,7 @@ impl<R: Row + GetRowData<TextData>> TableColumn<R> for TextColumn {
     ) -> Element {
         let data: TextData = row.get();
         rsx! {
-            td { class: "px-6 py-4", "{data.0}" }
+            td { class: "px-6 py-4 dark:text-gray-200", "{data.0}" }
         }
     }
 
@@ -334,7 +334,7 @@ impl<R: Row + GetRowData<CreatedAtData>> TableColumn<R> for CreatedAtColumn {
         let indicator = sort_indicator(context);
         rsx! {
             th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
                 onclick: move |_| toggle_sort(context),
                 "Created {indicator}"
             }
@@ -349,7 +349,7 @@ impl<R: Row + GetRowData<CreatedAtData>> TableColumn<R> for CreatedAtColumn {
     ) -> Element {
         let data: CreatedAtData = row.get();
         rsx! {
-            td { class: "px-6 py-4 text-gray-500", "{data.0}" }
+            td { class: "px-6 py-4 text-gray-500 dark:text-gray-400", "{data.0}" }
         }
     }
 
@@ -377,7 +377,7 @@ impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
         let indicator = sort_indicator(context);
         rsx! {
             th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
                 onclick: move |_| toggle_sort(context),
                 "Version {indicator}"
             }
@@ -394,11 +394,11 @@ impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
         match data.0 {
             Some(ver) => rsx! {
                 td { class: "px-6 py-4",
-                    span { class: "font-mono text-sm text-gray-700", "v{ver}" }
+                    span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", "v{ver}" }
                 }
             },
             None => rsx! {
-                td { class: "px-6 py-4 text-gray-400 text-sm", "-" }
+                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", "-" }
             },
         }
     }
@@ -427,7 +427,7 @@ impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitCol
         let indicator = sort_indicator(context);
         rsx! {
             th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
                 onclick: move |_| toggle_sort(context),
                 "Nixpkgs {indicator}"
             }
@@ -446,12 +446,12 @@ impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitCol
                 let short = commit.chars().take(7).collect::<String>();
                 rsx! {
                     td { class: "px-6 py-4",
-                        span { class: "font-mono text-sm text-gray-700", "{short}" }
+                        span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", "{short}" }
                     }
                 }
             }
             None => rsx! {
-                td { class: "px-6 py-4 text-gray-400 text-sm", "-" }
+                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", "-" }
             },
         }
     }
@@ -505,7 +505,7 @@ pub fn SortableTh(label: String, sort_key: String, sort: Signal<SortState>) -> E
     let key_click = sort_key.clone();
     rsx! {
         th {
-            class: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer select-none hover:text-gray-700",
+            class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
             onclick: move |_| {
                 let (k, a) = sort.read().clone();
                 if k == key_click {
@@ -533,14 +533,14 @@ pub fn TableToolbar(
         div { class: "flex items-center justify-between mb-3 gap-4",
             div { class: "relative",
                 input {
-                    class: "border border-gray-300 rounded px-3 py-1.5 text-sm w-64 pl-8",
+                    class: "border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm w-64 pl-8 dark:bg-gray-700 dark:text-white",
                     r#type: "text",
                     placeholder: "Search\u{2026}",
                     value: "{search}",
                     oninput: move |evt| search.set(evt.value()),
                 }
                 svg {
-                    class: "absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400",
+                    class: "absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 dark:text-gray-500",
                     fill: "none",
                     stroke: "currentColor",
                     stroke_width: "2",
@@ -549,14 +549,14 @@ pub fn TableToolbar(
                     line { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }
                 }
             }
-            div { class: "flex items-center gap-3 text-sm text-gray-500",
+            div { class: "flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400",
                 if total != filtered {
                     span { "Showing {shown} of {filtered} (filtered from {total})" }
                 } else {
                     span { "Showing {shown} of {total}" }
                 }
                 select {
-                    class: "border border-gray-300 rounded px-2 py-1.5 text-sm bg-white",
+                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-sm bg-white dark:bg-gray-700 dark:text-white",
                     value: "{limit}",
                     onchange: move |evt| {
                         if let Ok(n) = evt.value().parse::<usize>() {

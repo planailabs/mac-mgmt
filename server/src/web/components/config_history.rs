@@ -113,7 +113,7 @@ pub fn ConfigHistory(customer_id: String) -> Element {
         Some(Ok(versions)) => {
             if versions.is_empty() {
                 return rsx! {
-                    p { class: "text-gray-500 text-sm", "No config history yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No config history yet." }
                 };
             }
 
@@ -124,11 +124,11 @@ pub fn ConfigHistory(customer_id: String) -> Element {
                 div { class: "mt-4",
                     div { class: "flex gap-4 mb-3 items-end",
                         div {
-                            label { class: "block text-sm font-medium text-gray-700 mb-1",
+                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
                                 "Left (older)"
                             }
                             select {
-                                class: "border border-gray-300 rounded px-2 py-1 text-sm",
+                                class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm",
                                 onchange: move |e| {
                                     let val = e.value();
                                     if val.is_empty() {
@@ -148,11 +148,11 @@ pub fn ConfigHistory(customer_id: String) -> Element {
                             }
                         }
                         div {
-                            label { class: "block text-sm font-medium text-gray-700 mb-1",
+                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
                                 "Right (newer)"
                             }
                             select {
-                                class: "border border-gray-300 rounded px-2 py-1 text-sm",
+                                class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm",
                                 onchange: move |e| {
                                     let val = e.value();
                                     if val.is_empty() {
@@ -204,17 +204,17 @@ pub fn ConfigHistory(customer_id: String) -> Element {
                     }
 
                     if let Some(error) = &*diff_error.read() {
-                        p { class: "text-red-600 text-sm", "{error}" }
+                        p { class: "text-red-600 dark:text-red-400 text-sm", "{error}" }
                     }
 
                     if let Some(lines) = &*diff_lines.read() {
-                        div { class: "border rounded overflow-auto max-h-96",
+                        div { class: "border dark:border-gray-700 rounded overflow-auto max-h-96",
                             pre { class: "text-xs font-mono p-2",
                                 for line in lines {
                                     {
                                         let (bg, prefix) = match line.tag.as_str() {
-                                            "insert" => ("bg-green-50 text-green-800", "+ "),
-                                            "delete" => ("bg-red-50 text-red-800", "- "),
+                                            "insert" => ("bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300", "+ "),
+                                            "delete" => ("bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-300", "- "),
                                             _ => ("", "  "),
                                         };
                                         rsx! {
@@ -229,10 +229,10 @@ pub fn ConfigHistory(customer_id: String) -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { class: "text-gray-500 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
         },
     }
 }
