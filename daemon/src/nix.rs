@@ -125,7 +125,7 @@ fn has_replace_support() -> bool {
     probe_nix_capability(
         &REPLACE_SUPPORTED,
         &["profile", "replace", "__nonexistent_probe__", "__nonexistent_probe__"],
-        &["unknown subcommand", "unrecognised subcommand", "unrecognized subcommand", "unknown command"],
+        &["unknown subcommand", "unrecognised subcommand", "unrecognized subcommand", "unknown command", "is not a recognised command", "is not a recognized command"],
         "nix profile replace",
     )
 }
