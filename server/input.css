@@ -1,3 +1,65 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /*
+   * Smooth color transitions for dark mode toggling.
+   */
+  *, *::before, *::after {
+    transition-property: color, background-color, border-color;
+    transition-duration: 150ms;
+    transition-timing-function: ease-in-out;
+  }
+
+  /*
+   * When .dark IS on <html>, set color-scheme for native elements
+   * (scrollbars, form controls, etc.) and base body colors.
+   */
+  .dark {
+    color-scheme: dark;
+  }
+  .dark body {
+    background-color: #111827;
+    color: #f9fafb;
+  }
+
+  /*
+   * Light mode body defaults (explicit, avoids inheriting wrong state).
+   */
+  html:not(.dark) body {
+    background-color: #f9fafb;
+    color: #111827;
+  }
+
+  /*
+   * Safety net: dark mode defaults for ALL form elements.
+   * Ensures no input/select/textarea renders with a jarring white bg
+   * even if we missed a Tailwind dark: class.
+   */
+  .dark input,
+  .dark textarea,
+  .dark select {
+    background-color: #374151; /* gray-700 */
+    color: #ffffff;
+    border-color: #4b5563; /* gray-600 */
+  }
+
+  .dark input::placeholder,
+  .dark textarea::placeholder {
+    color: #9ca3af; /* gray-400 */
+  }
+
+  .dark option {
+    background-color: #374151;
+    color: #ffffff;
+  }
+
+  /*
+   * Checkbox and radio: reset — don't force gray-700 background.
+   */
+  .dark input[type="checkbox"],
+  .dark input[type="radio"] {
+    background-color: transparent;
+  }
+}

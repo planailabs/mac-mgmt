@@ -152,16 +152,16 @@ pub fn DaemonVersionList() -> Element {
             }
         }
         if let Some(msg) = &*sync_msg.read() {
-            p { class: "text-green-600 text-sm mb-4", "{msg}" }
+            p { class: "text-green-600 dark:text-green-400 text-sm mb-4", "{msg}" }
         }
         if let Some(err) = &*sync_err.read() {
-            p { class: "text-red-600 text-sm mb-4", "{err}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm mb-4", "{err}" }
         }
         {match &*versions.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
-                        p { class: "text-gray-500 text-sm",
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
                             "No daemon versions yet. Run xzar.sh to upload binaries, then click Sync."
                         }
                     }
@@ -196,15 +196,15 @@ pub fn DaemonVersionList() -> Element {
 
                     rsx! {
                         TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white rounded shadow overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200",
-                                thead { class: "bg-gray-50",
+                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                                thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
                                         SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
                                         SortableTh { label: "Added".to_string(), sort_key: "added".to_string(), sort }
                                     }
                                 }
-                                tbody { class: "bg-white divide-y divide-gray-200",
+                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                     for v in filtered.into_iter().take(limit_val) {
                                         {
                                             let ts = v.created_at.format("%Y-%m-%d %H:%M").to_string();
@@ -213,11 +213,11 @@ pub fn DaemonVersionList() -> Element {
                                                     td { class: "px-6 py-4 font-mono text-sm",
                                                         Link {
                                                             to: Route::DaemonVersionDetail { version: v.version.clone() },
-                                                            class: "text-blue-600 hover:underline",
+                                                            class: "text-blue-600 dark:text-blue-400 hover:underline",
                                                             "{v.version}"
                                                         }
                                                     }
-                                                    td { class: "px-6 py-4 text-sm text-gray-500", "{ts}" }
+                                                    td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400", "{ts}" }
                                                 }
                                             }
                                         }
@@ -228,7 +228,7 @@ pub fn DaemonVersionList() -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
             None => rsx! { p { "Loading..." } },
         }}
     }

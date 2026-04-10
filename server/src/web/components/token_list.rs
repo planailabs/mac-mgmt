@@ -91,15 +91,15 @@ pub fn SyncTokenList(customer_id: String) -> Element {
 
     rsx! {
         if let Some(raw) = &*new_token.read() {
-            div { class: "bg-green-50 border border-green-200 rounded p-3 mb-4",
-                p { class: "text-sm font-medium text-green-800", "New token (copy now, shown once):" }
-                code { class: "block mt-1 text-xs break-all bg-green-100 p-2 rounded", "{raw}" }
+            div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
+                p { class: "text-sm font-medium text-green-800 dark:text-green-300", "New token (copy now, shown once):" }
+                code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
             }
         }
 
         form { onsubmit: on_create, class: "flex gap-2 mb-4",
             input {
-                class: "flex-1 border border-gray-300 rounded px-3 py-1 text-sm",
+                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
                 r#type: "text",
                 required: true,
                 placeholder: "Sync token label",
@@ -115,7 +115,7 @@ pub fn SyncTokenList(customer_id: String) -> Element {
 
         {match &*tokens.read() {
             Some(Ok(list)) => rsx! {
-                ul { class: "divide-y divide-gray-200",
+                ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                     for token in list {
                         {
                             let display_label = if token.label.is_empty() {
@@ -130,14 +130,14 @@ pub fn SyncTokenList(customer_id: String) -> Element {
                                 li { class: "py-2 flex justify-between items-center",
                                     div {
                                         span { class: "text-sm font-medium", "{display_label}" }
-                                        span { class: "text-xs text-gray-500 ml-2", "{created}" }
+                                        span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{created}" }
                                         if revoked {
-                                            span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 ml-2", "revoked" }
+                                            span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
                                         }
                                     }
                                     if !revoked {
                                         button {
-                                            class: "text-red-600 hover:text-red-700 text-sm",
+                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                             onclick: move |_| {
                                                 let tid = tid.clone();
                                                 spawn(async move {
@@ -155,8 +155,8 @@ pub fn SyncTokenList(customer_id: String) -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-            None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
         }}
     }
 }

@@ -65,17 +65,17 @@ pub fn RolloutGroupList() -> Element {
             rsx! {
                 h2 { class: "text-2xl font-bold mb-4", "Rollout Groups" }
 
-                div { class: "mb-6 p-4 bg-white rounded shadow",
+                div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
                     h3 { class: "text-lg font-semibold mb-2", "Create Group" }
                     div { class: "flex gap-2",
                         input {
-                            class: "border rounded px-2 py-1 flex-1",
+                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
                             placeholder: "Group name",
                             value: "{name}",
                             oninput: move |e| name.set(e.value()),
                         }
                         input {
-                            class: "border rounded px-2 py-1 flex-1",
+                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
                             placeholder: "Description",
                             value: "{desc}",
                             oninput: move |e| desc.set(e.value()),
@@ -133,16 +133,16 @@ pub fn RolloutGroupList() -> Element {
 
                     rsx! {
                         TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white rounded shadow overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200",
-                                thead { class: "bg-gray-50",
+                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                                thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
                                         SortableTh { label: "Name".to_string(), sort_key: "name".to_string(), sort }
                                         SortableTh { label: "Description".to_string(), sort_key: "description".to_string(), sort }
                                         SortableTh { label: "Members".to_string(), sort_key: "members".to_string(), sort }
                                     }
                                 }
-                                tbody { class: "bg-white divide-y divide-gray-200",
+                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                     for g in filtered.into_iter().take(limit_val) {
                                         {
                                             let gid = g.id.to_string();
@@ -150,11 +150,11 @@ pub fn RolloutGroupList() -> Element {
                                                 tr {
                                                     td { class: "px-6 py-4 text-sm font-medium",
                                                         Link { to: Route::RolloutGroupDetail { id: gid },
-                                                            class: "text-blue-600 hover:underline",
+                                                            class: "text-blue-600 dark:text-blue-400 hover:underline",
                                                             "{g.name}"
                                                         }
                                                     }
-                                                    td { class: "px-6 py-4 text-sm text-gray-500", "{g.description}" }
+                                                    td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400", "{g.description}" }
                                                     td { class: "px-6 py-4 text-sm", "{g.member_count}" }
                                                 }
                                             }
@@ -167,7 +167,7 @@ pub fn RolloutGroupList() -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-        None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
     }
 }

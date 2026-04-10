@@ -90,11 +90,11 @@ pub fn ConfigEditor(customer_id: String) -> Element {
 
     rsx! {
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 text-sm mb-2", "{err}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
         }
 
         div { class: "flex items-center gap-2 mb-3",
-            label { class: "text-sm text-gray-600 flex items-center gap-1 cursor-pointer",
+            label { class: "text-sm text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer",
                 input {
                     r#type: "checkbox",
                     checked: *raw_mode.read(),
@@ -107,7 +107,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
         div {
             if *raw_mode.read() {
                 textarea {
-                    class: "w-full h-64 font-mono text-sm border border-gray-300 rounded p-2 mb-2",
+                    class: "w-full h-64 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded p-2 mb-2 dark:bg-gray-700 dark:text-white",
                     placeholder: "Paste JSON config here...",
                     value: "{editor_text}",
                     oninput: move |evt| editor_text.set(evt.value()),
@@ -123,9 +123,9 @@ pub fn ConfigEditor(customer_id: String) -> Element {
                         }
                     }
                     Some(Err(e)) => rsx! {
-                        p { class: "text-red-600 text-sm", "Failed to load schema: {e}" }
+                        p { class: "text-red-600 dark:text-red-400 text-sm", "Failed to load schema: {e}" }
                         textarea {
-                            class: "w-full h-64 font-mono text-sm border border-gray-300 rounded p-2 mb-2",
+                            class: "w-full h-64 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded p-2 mb-2 dark:bg-gray-700 dark:text-white",
                             placeholder: "Paste JSON config here...",
                             value: "{editor_text}",
                             oninput: move |evt| editor_text.set(evt.value()),
@@ -151,14 +151,14 @@ pub fn ConfigEditor(customer_id: String) -> Element {
                 let saved_at = cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string();
                 rsx! {
                     div { class: "mt-4",
-                        p { class: "text-xs text-gray-500", "Last saved: {saved_at}" }
+                        p { class: "text-xs text-gray-500 dark:text-gray-400", "Last saved: {saved_at}" }
                     }
                 }
             }
             Some(Ok(None)) => rsx! {
-                p { class: "text-sm text-gray-500 mt-2", "No config saved yet." }
+                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-2", "No config saved yet." }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm mt-2", "Error: {e}" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm mt-2", "Error: {e}" } },
             None => rsx! { p { class: "text-sm mt-2", "Loading..." } },
         }}
     }
@@ -214,14 +214,14 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
 
                 let section_name_clone = section_name.clone();
                 rsx! {
-                    details { class: "border border-gray-300 rounded shadow-sm",
+                    details { class: "border border-gray-300 dark:border-gray-600 rounded shadow-sm",
                         key: "{section_name}",
                         open: form_values.read().get(&section_name).is_some(),
-                        summary { class: "px-3 py-2 bg-gray-100 cursor-pointer font-semibold text-sm hover:bg-gray-200",
+                        summary { class: "px-3 py-2 bg-gray-100 dark:bg-gray-700 cursor-pointer font-semibold text-sm hover:bg-gray-200 dark:hover:bg-gray-600",
                             "{section_name_clone}"
                         }
                         if !description.is_empty() {
-                            p { class: "px-3 pt-1 text-xs text-gray-500", "{description}" }
+                            p { class: "px-3 pt-1 text-xs text-gray-500 dark:text-gray-400", "{description}" }
                         }
                         div { class: "px-3 py-2 space-y-2",
                             {render_section_fields(
@@ -335,7 +335,7 @@ fn render_section_fields(
                         key: "{key}",
                         label { class: "text-sm font-semibold text-blue-700", "{field_name}" }
                         if !description.is_empty() {
-                            p { class: "text-xs text-gray-500", "{description}" }
+                            p { class: "text-xs text-gray-500 dark:text-gray-400", "{description}" }
                         }
                         {render_section_fields(
                             &resolved,
@@ -354,9 +354,9 @@ fn render_section_fields(
                 rsx! {
                     div { class: "flex flex-col gap-0.5",
                         key: "{key}",
-                        label { class: "text-sm font-medium text-gray-700", "{field_name}" }
+                        label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "{field_name}" }
                         if !description.is_empty() {
-                            p { class: "text-xs text-gray-500", "{description}" }
+                            p { class: "text-xs text-gray-500 dark:text-gray-400", "{description}" }
                         }
                         {match field_type.as_str() {
                             "boolean" => {
@@ -390,7 +390,7 @@ fn render_section_fields(
                                 rsx! {
                                     input {
                                         r#type: "number",
-                                        class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
+                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
                                         value: val_str,
                                         oninput: move |evt| {
                                             if let Ok(n) = evt.value().parse::<i64>() {
@@ -425,7 +425,7 @@ fn render_section_fields(
                                             div {
                                                 key: "{idx}",
                                                 class: "flex items-center gap-1",
-                                                span { class: "flex-1 text-sm font-mono bg-gray-50 border border-gray-200 rounded px-2 py-0.5 truncate",
+                                                span { class: "flex-1 text-sm font-mono bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-2 py-0.5 truncate",
                                                     "{item}"
                                                 }
                                                 button {
@@ -459,7 +459,7 @@ fn render_section_fields(
                                                 div { class: "flex gap-1",
                                                     input {
                                                         r#type: "text",
-                                                        class: "flex-1 border border-gray-300 rounded px-2 py-0.5 text-sm",
+                                                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white",
                                                         placeholder: "Add item...",
                                                         value: "{new_val}",
                                                         oninput: move |e| new_val.set(e.value()),
@@ -527,7 +527,7 @@ fn render_section_fields(
                                     let fp = fp.clone();
                                     rsx! {
                                         select {
-                                            class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
+                                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
                                             value: val_str,
                                             onchange: move |evt| {
                                                 set_at_path(&mut form_values, &fp,
@@ -545,7 +545,7 @@ fn render_section_fields(
                                     rsx! {
                                         input {
                                             r#type: "text",
-                                            class: "border border-gray-300 rounded px-2 py-1 text-sm w-full",
+                                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
                                             value: val_str,
                                             oninput: move |evt| {
                                                 let v = evt.value();

@@ -69,11 +69,11 @@ impl Searchable for RolloutEntry {
 
 fn status_badge(status: &str) -> (&'static str, &'static str) {
     match status {
-        "rolling" => ("bg-blue-100 text-blue-800", "rolling"),
-        "completed" => ("bg-green-100 text-green-800", "completed"),
-        "paused" => ("bg-yellow-100 text-yellow-800", "paused"),
-        "failed" => ("bg-red-100 text-red-800", "failed"),
-        _ => ("bg-gray-100 text-gray-800", "pending"),
+        "rolling" => ("bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200", "rolling"),
+        "completed" => ("bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200", "completed"),
+        "paused" => ("bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200", "paused"),
+        "failed" => ("bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200", "failed"),
+        _ => ("bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200", "pending"),
     }
 }
 
@@ -89,7 +89,7 @@ pub fn RolloutList() -> Element {
                     div { class: "flex gap-2",
                         Link {
                             to: Route::RolloutGroupList {},
-                            class: "bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300",
+                            class: "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-500",
                             "Manage Groups"
                         }
                         Link {
@@ -100,7 +100,7 @@ pub fn RolloutList() -> Element {
                     }
                 }
                 if list.is_empty() {
-                    p { class: "text-gray-500 text-sm", "No rollouts yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No rollouts yet." }
                 } else {
                     {
                         let search = use_signal(String::new);
@@ -137,20 +137,20 @@ pub fn RolloutList() -> Element {
 
                         rsx! {
                             TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                            div { class: "bg-white rounded shadow overflow-hidden",
-                                table { class: "min-w-full divide-y divide-gray-200",
-                                    thead { class: "bg-gray-50",
+                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                                    thead { class: "bg-gray-50 dark:bg-gray-700",
                                         tr {
                                             SortableTh { label: "ID".to_string(), sort_key: "id".to_string(), sort }
                                             SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
                                             SortableTh { label: "Stages".to_string(), sort_key: "stages".to_string(), sort }
                                             SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
-                                            th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase",
+                                            th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase",
                                                 ""
                                             }
                                         }
                                     }
-                                    tbody { class: "bg-white divide-y divide-gray-200",
+                                    tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                         for r in filtered.into_iter().take(limit_val) {
                                             {
                                                 let rid = r.id.to_string();
@@ -168,7 +168,7 @@ pub fn RolloutList() -> Element {
                                                                 to: Route::RolloutDetail {
                                                                     id: rid.clone(),
                                                                 },
-                                                                class: "text-blue-600 hover:underline font-mono text-xs",
+                                                                class: "text-blue-600 dark:text-blue-400 hover:underline font-mono text-xs",
                                                                 "{rid}"
                                                             }
                                                         }
@@ -180,13 +180,13 @@ pub fn RolloutList() -> Element {
                                                         td { class: "px-6 py-4 text-sm",
                                                             "{r.stage_count}"
                                                         }
-                                                        td { class: "px-6 py-4 text-sm text-gray-500",
+                                                        td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400",
                                                             "{created}"
                                                         }
                                                         td { class: "px-6 py-4 text-right",
                                                             if can_delete {
                                                                 button {
-                                                                    class: "text-red-600 hover:text-red-700 text-sm",
+                                                                    class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                                                     onclick: {
                                                                         let rid = rid.clone();
                                                                         move |_| {
@@ -216,10 +216,10 @@ pub fn RolloutList() -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { class: "text-gray-500 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
         },
     }
 }

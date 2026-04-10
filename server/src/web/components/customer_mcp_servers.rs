@@ -401,7 +401,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
     rsx! {
         // Direct MCP server assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 mb-2", "Direct MCP Servers" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Direct MCP Servers" }
             form {
                 class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
@@ -418,7 +418,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     });
                 },
                 select {
-                    class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm",
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                     value: "{selected_server}",
                     onchange: move |evt| selected_server.set(evt.value()),
                     option { value: "", "Select MCP server..." }
@@ -443,10 +443,10 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
             }
             {match &*servers.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 text-sm", "No direct MCP server assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No direct MCP server assignments." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cs in list {
                             {
                                 let csid = cs.customer_mcp_server_id.to_string();
@@ -455,7 +455,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{label}" }
                                         button {
-                                            class: "text-red-600 hover:text-red-700 text-sm",
+                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                             onclick: move |_| {
                                                 let csid = csid.clone();
                                                 spawn(async move {
@@ -472,8 +472,8 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
             }}
         }
 
@@ -482,10 +482,10 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
             h4 { class: "text-sm font-semibold text-blue-700 mb-2", "From Bundles" }
             {match &*bundle_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 text-sm", "No MCP servers from bundles." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No MCP servers from bundles." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for bm in list {
                             {
                                 let label = format!("{} ({})", bm.server_name, bm.server_slug);
@@ -499,7 +499,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                         }
                                         span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, "via {via}" }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 italic", "overwritten" }
+                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", "overwritten" }
                                         }
                                     }
                                 }
@@ -507,20 +507,20 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
             }}
         }
 
         // MCP servers from skills (transitive, read-only, grey)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-500 mb-2", "From Skills (transitive)" }
+            h4 { class: "text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2", "From Skills (transitive)" }
             {match &*transitive_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 text-sm", "No transitive MCP dependencies." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No transitive MCP dependencies." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for tm in list {
                             {
                                 let label = format!("{} ({})", tm.server_name, tm.server_slug);
@@ -529,12 +529,12 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                 rsx! {
                                     li { class: "py-2 flex items-center gap-2",
                                         span {
-                                            class: if overwritten { "text-sm font-mono text-gray-400 line-through" } else { "text-sm font-mono text-gray-500" },
+                                            class: if overwritten { "text-sm font-mono text-gray-400 dark:text-gray-500 line-through" } else { "text-sm font-mono text-gray-500 dark:text-gray-400" },
                                             "{label}"
                                         }
-                                        span { class: if overwritten { "text-xs text-gray-300" } else { "text-xs text-gray-400" }, "via {via}" }
+                                        span { class: if overwritten { "text-xs text-gray-300 dark:text-gray-600" } else { "text-xs text-gray-400 dark:text-gray-500" }, "via {via}" }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 italic", "overwritten" }
+                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", "overwritten" }
                                         }
                                     }
                                 }
@@ -542,16 +542,16 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
             }}
         }
 
         // MCP bundle assignments
         div {
-            h4 { class: "text-sm font-semibold text-gray-700 mb-2", "MCP Bundles" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "MCP Bundles" }
             if let Some(err) = &*bundle_error.read() {
-                p { class: "text-red-600 text-sm mb-2", "{err}" }
+                p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
             }
             form {
                 class: "flex gap-2 mb-3",
@@ -575,7 +575,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     });
                 },
                 select {
-                    class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm",
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                     value: "{selected_bundle}",
                     onchange: move |evt| selected_bundle.set(evt.value()),
                     option { value: "", "Select MCP bundle..." }
@@ -600,10 +600,10 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
             }
             {match &*bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 text-sm", "No MCP bundle assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No MCP bundle assignments." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cb in list {
                             {
                                 let cbid = cb.customer_mcp_bundle_id.to_string();
@@ -612,7 +612,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm", "{label}" }
                                         button {
-                                            class: "text-red-600 hover:text-red-700 text-sm",
+                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                             onclick: move |_| {
                                                 let cbid = cbid.clone();
                                                 spawn(async move {
@@ -629,8 +629,8 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
             }}
         }
     }

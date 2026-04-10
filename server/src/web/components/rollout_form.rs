@@ -213,14 +213,14 @@ pub fn RolloutForm() -> Element {
                     h2 { class: "text-2xl font-bold", "New Version Rollout" }
                     Link {
                         to: Route::RolloutGroupList {},
-                        class: "text-blue-600 hover:underline text-sm",
+                        class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
                         "Manage Groups"
                     }
                 }
 
                 div { class: "space-y-4",
                     div {
-                        label { class: "block text-sm font-medium text-gray-700 mb-1",
+                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
                             "Target Version"
                         }
                         {
@@ -230,7 +230,7 @@ pub fn RolloutForm() -> Element {
                             };
                             rsx! {
                                 select {
-                                    class: "w-full border rounded px-3 py-2 text-sm font-mono",
+                                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm font-mono dark:bg-gray-700 dark:text-white",
                                     value: "{target_version}",
                                     onchange: move |e| target_version.set(e.value()),
                                     option { value: "", "— none (nixpkgs only) —" }
@@ -239,32 +239,32 @@ pub fn RolloutForm() -> Element {
                                     }
                                 }
                                 if version_list.is_empty() {
-                                    p { class: "text-xs text-amber-600 mt-1",
+                                    p { class: "text-xs text-amber-600 dark:text-amber-500 mt-1",
                                         "No daemon versions available. Sync them on the Daemon Versions page."
                                     }
                                 }
                             }
                         }
-                        p { class: "text-xs text-gray-400 mt-1",
+                        p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
                             "Pick a version uploaded via xzar. Downgrades are blocked."
                         }
                     }
                     div {
-                        label { class: "block text-sm font-medium text-gray-700 mb-1",
+                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
                             "Nixpkgs Commit (optional)"
                         }
                         input {
-                            class: "w-full border rounded px-3 py-2 text-sm font-mono",
+                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm font-mono dark:bg-gray-700 dark:text-white",
                             placeholder: "e.g. 170a4b510ad7ee95dde01adf2fe21704498dbb5c",
                             value: "{nixpkgs_commit}",
                             oninput: move |e| nixpkgs_commit.set(e.value()),
                         }
-                        p { class: "text-xs text-gray-400 mt-1",
+                        p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
                             "Pin the nixpkgs source to this commit. Leave blank to leave each customer's existing pin untouched."
                         }
                     }
                     div {
-                        label { class: "block text-sm font-medium text-gray-700 mb-1",
+                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
                             "Stages (select in order)"
                         }
 
@@ -292,7 +292,7 @@ pub fn RolloutForm() -> Element {
                                     }
                                     span { class: "font-semibold", "All Customers" }
                                     if let Some(idx) = order {
-                                        span { class: "text-xs text-gray-400",
+                                        span { class: "text-xs text-gray-400 dark:text-gray-500",
                                             "(stage {idx})"
                                         }
                                     }
@@ -332,7 +332,7 @@ pub fn RolloutForm() -> Element {
                                         }
                                         span { "{gname}" }
                                         if let Some(idx) = order {
-                                            span { class: "text-xs text-gray-400",
+                                            span { class: "text-xs text-gray-400 dark:text-gray-500",
                                                 "(stage {idx})"
                                             }
                                         }
@@ -342,10 +342,10 @@ pub fn RolloutForm() -> Element {
                         }
 
                         if group_list_clone.is_empty() {
-                            p { class: "text-gray-500 text-xs mt-1",
+                            p { class: "text-gray-500 dark:text-gray-400 text-xs mt-1",
                                 Link {
                                     to: Route::RolloutGroupList {},
-                                    class: "text-blue-600 hover:underline",
+                                    class: "text-blue-600 dark:text-blue-400 hover:underline",
                                     "Create groups"
                                 }
                                 " to roll out in stages."
@@ -354,7 +354,7 @@ pub fn RolloutForm() -> Element {
                     }
 
                     if let Some(err) = &*error.read() {
-                        p { class: "text-red-600 text-sm", "{err}" }
+                        p { class: "text-red-600 dark:text-red-400 text-sm", "{err}" }
                     }
 
                     button {
@@ -392,10 +392,10 @@ pub fn RolloutForm() -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
         },
         None => rsx! {
-            p { class: "text-gray-500 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
         },
     }
 }

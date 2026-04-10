@@ -49,13 +49,13 @@ pub fn McpBundleForm() -> Element {
     rsx! {
         h2 { class: "text-2xl font-bold mb-4", "New MCP Bundle" }
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 mb-4", "{err}" }
+            p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
         }
         form { onsubmit: on_submit,
             div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 mb-1", "Slug" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Slug" }
                 input {
-                    class: "w-full border border-gray-300 rounded px-3 py-2 font-mono",
+                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono dark:bg-gray-700 dark:text-white",
                     r#type: "text",
                     required: true,
                     placeholder: "my-mcp-bundle",
@@ -64,9 +64,9 @@ pub fn McpBundleForm() -> Element {
                 }
             }
             div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 mb-1", "Name" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Name" }
                 input {
-                    class: "w-full border border-gray-300 rounded px-3 py-2",
+                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                     r#type: "text",
                     required: true,
                     value: "{name}",
@@ -74,9 +74,9 @@ pub fn McpBundleForm() -> Element {
                 }
             }
             div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 mb-1", "Description" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Description" }
                 textarea {
-                    class: "w-full border border-gray-300 rounded px-3 py-2",
+                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                     rows: "3",
                     value: "{description}",
                     oninput: move |evt| description.set(evt.value()),

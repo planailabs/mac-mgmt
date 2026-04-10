@@ -277,7 +277,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
     rsx! {
         // Direct skill assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 mb-2", "Direct Skills" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Direct Skills" }
             form {
                 class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
@@ -294,7 +294,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                     });
                 },
                 select {
-                    class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm",
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                     value: "{selected_sc}",
                     onchange: move |evt| selected_sc.set(evt.value()),
                     option { value: "", "Select skill/channel..." }
@@ -319,10 +319,10 @@ pub fn CustomerSkills(customer_id: String) -> Element {
             }
             {match &*skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 text-sm", "No direct skill assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No direct skill assignments." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cs in list {
                             {
                                 let csid = cs.customer_skill_id.to_string();
@@ -331,7 +331,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{label}" }
                                         button {
-                                            class: "text-red-600 hover:text-red-700 text-sm",
+                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                             onclick: move |_| {
                                                 let csid = csid.clone();
                                                 spawn(async move {
@@ -348,8 +348,8 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
             }}
         }
 
@@ -358,10 +358,10 @@ pub fn CustomerSkills(customer_id: String) -> Element {
             h4 { class: "text-sm font-semibold text-blue-700 mb-2", "From Bundles" }
             {match &*bundle_skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 text-sm", "No skills from bundles." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No skills from bundles." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for bs in list {
                             {
                                 let label = format!("{} / {}", bs.skill_slug, bs.channel);
@@ -375,7 +375,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                                         }
                                         span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, "via {via}" }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 italic", "overwritten" }
+                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", "overwritten" }
                                         }
                                     }
                                 }
@@ -383,16 +383,16 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
             }}
         }
 
         // Bundle assignments
         div {
-            h4 { class: "text-sm font-semibold text-gray-700 mb-2", "Bundles" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Bundles" }
             if let Some(err) = &*bundle_error.read() {
-                p { class: "text-red-600 text-sm mb-2", "{err}" }
+                p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
             }
             form {
                 class: "flex gap-2 mb-3",
@@ -416,7 +416,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                     });
                 },
                 select {
-                    class: "flex-1 border border-gray-300 rounded px-2 py-1 text-sm",
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                     value: "{selected_bundle}",
                     onchange: move |evt| selected_bundle.set(evt.value()),
                     option { value: "", "Select bundle..." }
@@ -441,10 +441,10 @@ pub fn CustomerSkills(customer_id: String) -> Element {
             }
             {match &*bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 text-sm", "No bundle assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No bundle assignments." }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200",
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cb in list {
                             {
                                 let cbid = cb.customer_bundle_id.to_string();
@@ -453,7 +453,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm", "{label}" }
                                         button {
-                                            class: "text-red-600 hover:text-red-700 text-sm",
+                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                             onclick: move |_| {
                                                 let cbid = cbid.clone();
                                                 spawn(async move {
@@ -470,8 +470,8 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
             }}
         }
     }

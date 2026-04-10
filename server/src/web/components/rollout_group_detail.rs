@@ -215,7 +215,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                 div { class: "flex justify-between items-center mb-4",
                     div {
                         h2 { class: "text-2xl font-bold", "{info.name}" }
-                        p { class: "text-gray-500 text-sm", "{info.description}" }
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm", "{info.description}" }
                     }
                     button {
                         class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
@@ -237,7 +237,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
 
                 div { class: "flex gap-2 mb-4",
                     select {
-                        class: "border rounded px-2 py-1 flex-1",
+                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
                         onchange: move |e| {
                             let val = e.value();
                             if val.is_empty() {
@@ -296,7 +296,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                 }
 
                 if info.members.is_empty() {
-                    p { class: "text-gray-500 text-sm", "No members yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No members yet." }
                 } else {{
                     let search = use_signal(String::new);
                     let limit = use_signal(|| 20usize);
@@ -326,15 +326,15 @@ pub fn RolloutGroupDetail(id: String) -> Element {
 
                     rsx! {
                         TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white rounded shadow overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200",
-                                thead { class: "bg-gray-50",
+                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
+                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
+                                thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
                                         SortableTh { label: "Customer".to_string(), sort_key: "customer".to_string(), sort }
-                                        th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase", "" }
+                                        th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
                                     }
                                 }
-                                tbody { class: "bg-white divide-y divide-gray-200",
+                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                     for m in filtered.into_iter().take(limit_val) {
                                     {
                                         let mid = m.member_id.to_string();
@@ -343,7 +343,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                                 td { class: "px-6 py-4 text-sm", "{m.customer_name}" }
                                                 td { class: "px-6 py-4 text-right",
                                                     button {
-                                                        class: "text-red-600 hover:text-red-700 text-sm",
+                                                        class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                                         onclick: {
                                                             let mid = mid.clone();
                                                             move |_| {
@@ -369,7 +369,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-        None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
     }
 }
