@@ -417,22 +417,30 @@ fn pre_build_nix(nix_bin: &str, flake_ref: &str) -> Result<()> {
 /// `--impure` flag. Logs/breadcrumbs and bails on non-zero exit.
 fn run_profile_cmd(nix_bin: &str, action: &str, pkg: &str, args: &[&str]) -> Result<()> {
     tracing::info!("running nix profile {action} {pkg}");
-    let status = Command::new(nix_bin)
+    let output = Command::new(nix_bin)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .arg("profile")
         .args(args)
         .arg("--impure")
-        .status()
+        .output()
         .with_context(|| format!("failed to run nix profile {action}"))?;
 
-    if !status.success() {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        tracing::error!(
+            "nix profile {action} {pkg} failed (exit {:?})\nstdout: {}\nstderr: {}",
+            output.status.code(),
+            stdout.trim(),
+            stderr.trim(),
+        );
         sentry_ext::capture_cmd_failure(
             &format!("nix profile {action} {pkg}"),
-            status.code(),
-            "",
+            output.status.code(),
+            stderr.trim(),
         );
-        anyhow::bail!("nix profile {action} {pkg} failed");
+        anyhow::bail!("nix profile {action} {pkg} failed: {}", stderr.trim());
     }
 
     tracing::info!("nix profile {action} {pkg} succeeded");
