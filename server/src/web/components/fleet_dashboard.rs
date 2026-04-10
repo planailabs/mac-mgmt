@@ -23,7 +23,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
 
     #[derive(sqlx::FromRow)]
     struct Row {
-        customer_id: String,
+        customer_id: uuid::Uuid,
         customer_name: String,
         instance_id: String,
         hostname: String,
@@ -46,7 +46,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(|r| FleetEntry {
-            customer_id: r.customer_id,
+            customer_id: r.customer_id.to_string(),
             customer_name: r.customer_name,
             instance_id: r.instance_id,
             hostname: r.hostname,
