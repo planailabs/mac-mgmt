@@ -333,7 +333,7 @@ fn render_section_fields(
                 rsx! {
                     div { class: "border-l-2 border-blue-300 pl-3 mt-2 mb-1",
                         key: "{key}",
-                        label { class: "text-sm font-semibold text-blue-700", "{field_name}" }
+                        label { class: "text-sm font-semibold text-blue-700 dark:text-blue-400", "{field_name}" }
                         if !description.is_empty() {
                             p { class: "text-xs text-gray-500 dark:text-gray-400", "{description}" }
                         }

@@ -355,7 +355,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
 
         // Skills from bundles (read-only, blue)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-blue-700 mb-2", "From Bundles" }
+            h4 { class: "text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2", "From Bundles" }
             {match &*bundle_skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
                     p { class: "text-gray-500 dark:text-gray-400 text-sm", "No skills from bundles." }
@@ -370,7 +370,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                                 rsx! {
                                     li { class: "py-2 flex items-center gap-2",
                                         span {
-                                            class: if overwritten { "text-sm font-mono text-blue-400 line-through" } else { "text-sm font-mono text-blue-700" },
+                                            class: if overwritten { "text-sm font-mono text-blue-400 dark:text-blue-600 line-through" } else { "text-sm font-mono text-blue-700 dark:text-blue-400" },
                                             "{label}"
                                         }
                                         span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, "via {via}" }
