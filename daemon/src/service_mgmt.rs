@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::connectors::{self, Connector};
@@ -11,7 +10,7 @@ use crate::managed_service::{ManagedService, ServiceMode};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
 use crate::service_ipc::client::ManagedClient;
-use crate::service_ipc::protocol::{IpcNotification, IpcRequest, IpcResponse};
+use crate::service_ipc::protocol::{IpcRequest, IpcResponse, IpcNotification};
 use crate::sentry_ext;
 
 // ── Inline (child-process) backend state ─────────────────────────────
@@ -19,6 +18,7 @@ use crate::sentry_ext;
 struct InlineServiceState {
     service: Box<dyn ManagedService>,
     child: Option<std::process::Child>,
+    healthy: bool,
     upgrade_pending: bool,
     restart_pending: bool,
     skip_health_check: bool,
@@ -54,15 +54,12 @@ enum ServiceBackend {
     External(Vec<ExternalServiceState>),
 }
 
-#[allow(dead_code)]
 pub struct ServiceManager {
     backend: ServiceBackend,
     install_only: Vec<Box<dyn ManagedService>>,
     connectors: Vec<ConnectorState>,
     dispatcher: Arc<Dispatcher>,
     log_buf: LogBuffer,
-    /// Channel for forwarding IPC notifications to the daemon event loop.
-    notification_tx: mpsc::Sender<IpcNotification>,
     /// Serialized config JSON, sent to wrappers on connect.
     config_json: Option<String>,
 }
@@ -99,7 +96,6 @@ impl ServiceManager {
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
-        let (notification_tx, _notification_rx) = mpsc::channel(64);
 
         let backend = if external {
             tracing::info!("external_processes=true, using per-service system units");
@@ -202,6 +198,7 @@ impl ServiceManager {
                 inline_states.push(InlineServiceState {
                     service,
                     child: None,
+                    healthy: false,
                     upgrade_pending: false,
                     restart_pending: false,
                     skip_health_check: true,
@@ -226,7 +223,6 @@ impl ServiceManager {
             connectors,
             dispatcher,
             log_buf,
-            notification_tx,
             config_json,
         })
     }
@@ -468,7 +464,6 @@ impl ServiceManager {
                 Self::health_tick_external(
                     states,
                     &self.dispatcher,
-                    &self.notification_tx,
                     &self.log_buf,
                     metrics,
                     in_upgrade_window,
@@ -592,7 +587,7 @@ impl ServiceManager {
             };
 
             // Health check.
-            let healthy = if state.skip_health_check {
+            state.healthy = if state.skip_health_check {
                 tracing::info!("skipping health check, {name} recently started");
                 state.skip_health_check = false;
                 true
@@ -650,25 +645,13 @@ impl ServiceManager {
                 }
             };
 
-            metrics
-                .service_healthy
-                .with_label_values(&[&name])
-                .set(if healthy { 1 } else { 0 });
-            metrics
-                .service_upgrade_pending
-                .with_label_values(&[&name])
-                .set(if state.upgrade_pending { 1 } else { 0 });
-            metrics
-                .service_busy
-                .with_label_values(&[&name])
-                .set(if busy { 1 } else { 0 });
+            Self::update_metrics(metrics, &name, state.healthy, state.upgrade_pending, busy);
         }
     }
 
     async fn health_tick_external(
         states: &mut [ExternalServiceState],
         dispatcher: &Dispatcher,
-        _notification_tx: &mpsc::Sender<IpcNotification>,
         log_buf: &LogBuffer,
         metrics: &Metrics,
         in_upgrade_window: bool,
@@ -779,18 +762,7 @@ impl ServiceManager {
                 }
             }
 
-            metrics
-                .service_healthy
-                .with_label_values(&[name])
-                .set(if state.last_healthy { 1 } else { 0 });
-            metrics
-                .service_upgrade_pending
-                .with_label_values(&[name])
-                .set(if state.upgrade_pending { 1 } else { 0 });
-            metrics
-                .service_busy
-                .with_label_values(&[name])
-                .set(if state.last_busy { 1 } else { 0 });
+            Self::update_metrics(metrics, name, state.last_healthy, state.upgrade_pending, state.last_busy);
         }
     }
 
@@ -825,6 +797,12 @@ impl ServiceManager {
             }
             cs.done = true;
         }
+    }
+
+    fn update_metrics(metrics: &Metrics, name: &str, healthy: bool, upgrade_pending: bool, busy: bool) {
+        metrics.service_healthy.with_label_values(&[name]).set(if healthy { 1 } else { 0 });
+        metrics.service_upgrade_pending.with_label_values(&[name]).set(if upgrade_pending { 1 } else { 0 });
+        metrics.service_busy.with_label_values(&[name]).set(if busy { 1 } else { 0 });
     }
 
     // ── Schedule restart ─────────────────────────────────────────────
@@ -909,7 +887,7 @@ impl ServiceManager {
                     let name = state.service.name();
                     serde_json::json!({
                         "name": name,
-                        "healthy": !state.was_unhealthy,
+                        "healthy": state.healthy,
                         "upgrade_pending": state.upgrade_pending,
                         "busy": false,
                     })

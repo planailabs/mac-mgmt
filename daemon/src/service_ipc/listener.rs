@@ -73,30 +73,23 @@ impl IpcConnection {
         }
     }
 
+    /// Send any IPC message to the daemon.
+    async fn send(&mut self, msg: IpcMessage) -> Result<()> {
+        let mut line = serde_json::to_string(&msg).context("serialize IPC message")?;
+        line.push('\n');
+        self.writer.write_all(line.as_bytes()).await.context("write IPC")?;
+        self.writer.flush().await.context("flush IPC")?;
+        Ok(())
+    }
+
     /// Send a response to the daemon.
     pub async fn send_response(&mut self, resp: IpcResponse) -> Result<()> {
-        let msg = IpcMessage::Response(resp);
-        let mut line = serde_json::to_string(&msg).context("serialize response")?;
-        line.push('\n');
-        self.writer
-            .write_all(line.as_bytes())
-            .await
-            .context("write response")?;
-        self.writer.flush().await.context("flush response")?;
-        Ok(())
+        self.send(IpcMessage::Response(resp)).await
     }
 
     /// Send an unsolicited notification to the daemon.
     pub async fn send_notification(&mut self, notif: IpcNotification) -> Result<()> {
-        let msg = IpcMessage::Notification(notif);
-        let mut line = serde_json::to_string(&msg).context("serialize notification")?;
-        line.push('\n');
-        self.writer
-            .write_all(line.as_bytes())
-            .await
-            .context("write notification")?;
-        self.writer.flush().await.context("flush notification")?;
-        Ok(())
+        self.send(IpcMessage::Notification(notif)).await
     }
 }
 

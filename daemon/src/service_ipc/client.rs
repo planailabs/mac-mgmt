@@ -106,12 +106,6 @@ impl ManagedClient {
             .context("wrapper closed connection")
     }
 
-    /// Receive the next notification (non-blocking select-friendly).
-    #[allow(dead_code)]
-    pub async fn recv_notification(&mut self) -> Option<IpcNotification> {
-        self.notification_rx.recv().await
-    }
-
     /// Check if a notification is pending without blocking.
     pub fn try_recv_notification(&mut self) -> Option<IpcNotification> {
         self.notification_rx.try_recv().ok()

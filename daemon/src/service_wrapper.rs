@@ -180,6 +180,23 @@ fn find_service(service_name: &str, cfg: &crate::config::Config) -> Result<Box<d
         .with_context(|| format!("service {service_name} not found in current config"))
 }
 
+/// Parse config JSON and build the named service. Returns an IpcResponse on failure.
+fn parse_config_and_build(
+    service_name: &str,
+    config_json: &str,
+) -> Result<Box<dyn ManagedService>, IpcResponse> {
+    let cfg: crate::config::Config = serde_json::from_str(config_json).map_err(|e| {
+        IpcResponse::Error {
+            command: "set_config".into(),
+            message: format!("invalid config JSON: {e}"),
+        }
+    })?;
+    find_service(service_name, &cfg).map_err(|e| IpcResponse::Error {
+        command: "set_config".into(),
+        message: e.to_string(),
+    })
+}
+
 /// Entry point for `mac-mgmt daemon-service-launch <service>`.
 pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
     tracing::info!("service wrapper starting for {service_name}");
@@ -196,48 +213,28 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
     let service = loop {
         match req_rx.recv().await {
             Some((IpcRequest::SetConfig { config_json }, resp_tx)) => {
-                match serde_json::from_str::<crate::config::Config>(&config_json) {
-                    Ok(cfg) => {
-                        match find_service(service_name, &cfg) {
-                            Ok(svc) => {
-                                if svc.service_mode() == ServiceMode::InstallOnly {
-                                    let _ = resp_tx.send(IpcResponse::Error {
-                                        command: "set_config".into(),
-                                        message: format!("{service_name} is install-only"),
-                                    }).await;
-                                    anyhow::bail!("{service_name} is install-only");
-                                }
-                                let _ = resp_tx.send(IpcResponse::Ack {
-                                    command: "set_config".into(),
-                                }).await;
-                                break svc;
-                            }
-                            Err(e) => {
-                                let _ = resp_tx.send(IpcResponse::Error {
-                                    command: "set_config".into(),
-                                    message: e.to_string(),
-                                }).await;
-                            }
-                        }
-                    }
-                    Err(e) => {
+                match parse_config_and_build(service_name, &config_json) {
+                    Ok(svc) if svc.service_mode() == ServiceMode::InstallOnly => {
                         let _ = resp_tx.send(IpcResponse::Error {
                             command: "set_config".into(),
-                            message: format!("invalid config JSON: {e}"),
+                            message: format!("{service_name} is install-only"),
                         }).await;
+                        anyhow::bail!("{service_name} is install-only");
                     }
+                    Ok(svc) => {
+                        let _ = resp_tx.send(IpcResponse::Ack { command: "set_config".into() }).await;
+                        break svc;
+                    }
+                    Err(resp) => { let _ = resp_tx.send(resp).await; }
                 }
             }
-            Some((other, resp_tx)) => {
-                // Not ready yet — reject other requests until configured.
+            Some((_other, resp_tx)) => {
                 let _ = resp_tx.send(IpcResponse::Error {
-                    command: format!("{other:?}"),
+                    command: "set_config".into(),
                     message: "wrapper not yet configured, send SetConfig first".into(),
                 }).await;
             }
-            None => {
-                anyhow::bail!("IPC channel closed before receiving config");
-            }
+            None => anyhow::bail!("IPC channel closed before receiving config"),
         }
     };
 
@@ -339,21 +336,12 @@ async fn handle_request(state: &mut WrapperState, req: IpcRequest) -> IpcRespons
     match req {
         IpcRequest::SetConfig { config_json } => {
             tracing::info!("{name}: set_config received");
-            match serde_json::from_str::<crate::config::Config>(&config_json) {
-                Ok(cfg) => match find_service(&name, &cfg) {
-                    Ok(new_svc) => {
-                        state.service = new_svc;
-                        IpcResponse::Ack { command: "set_config".into() }
-                    }
-                    Err(e) => IpcResponse::Error {
-                        command: "set_config".into(),
-                        message: e.to_string(),
-                    },
-                },
-                Err(e) => IpcResponse::Error {
-                    command: "set_config".into(),
-                    message: format!("invalid config JSON: {e}"),
-                },
+            match parse_config_and_build(&name, &config_json) {
+                Ok(new_svc) => {
+                    state.service = new_svc;
+                    IpcResponse::Ack { command: "set_config".into() }
+                }
+                Err(resp) => resp,
             }
         }
         IpcRequest::Health => state.build_status_response(),
@@ -420,8 +408,6 @@ fn capture_and_forward(
     buf: &LogBuffer,
     notif_tx: &NotificationSender,
 ) -> tokio::task::JoinHandle<()> {
-    use std::io::BufRead;
-
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let name = service_name.to_string();
@@ -434,40 +420,43 @@ fn capture_and_forward(
             let buf = buf.clone();
             let notif_tx = notif_tx.clone();
             std::thread::spawn(move || {
-                for line in std::io::BufReader::new(stderr).lines() {
-                    let Ok(line) = line else { break };
-                    let clean = strip_ansi_escapes::strip(&line);
-                    let clean = String::from_utf8(clean).unwrap_or_else(|_| line.clone());
-                    tracing::warn!(target: "service", "[{name}] {clean}");
-                    buf.push(format!("[{name}] {clean}"));
-                    notif_tx.send(IpcNotification::Log {
-                        service: name.clone(),
-                        line: clean,
-                        is_stderr: true,
-                    });
-                }
+                drain_and_forward(std::io::BufReader::new(stderr), &name, true, &buf, &notif_tx);
             })
         });
 
         if let Some(stdout) = stdout {
-            for line in std::io::BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                let clean = strip_ansi_escapes::strip(&line);
-                let clean = String::from_utf8(clean).unwrap_or_else(|_| line.clone());
-                tracing::info!(target: "service", "[{name}] {clean}");
-                buf.push(format!("[{name}] {clean}"));
-                notif_tx.send(IpcNotification::Log {
-                    service: name.clone(),
-                    line: clean,
-                    is_stderr: false,
-                });
-            }
+            drain_and_forward(std::io::BufReader::new(stdout), &name, false, &buf, &notif_tx);
         }
 
         if let Some(t) = stderr_thread {
             let _ = t.join();
         }
     })
+}
+
+fn drain_and_forward(
+    reader: impl std::io::BufRead,
+    name: &str,
+    is_stderr: bool,
+    buf: &LogBuffer,
+    notif_tx: &NotificationSender,
+) {
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        let clean = strip_ansi_escapes::strip(&line);
+        let clean = String::from_utf8(clean).unwrap_or_else(|_| line.clone());
+        if is_stderr {
+            tracing::warn!(target: "service", "[{name}] {clean}");
+        } else {
+            tracing::info!(target: "service", "[{name}] {clean}");
+        }
+        buf.push(format!("[{name}] {clean}"));
+        notif_tx.send(IpcNotification::Log {
+            service: name.to_string(),
+            line: clean,
+            is_stderr,
+        });
+    }
 }
 
 /// Replace the current process image with a fresh exec of ourselves.
