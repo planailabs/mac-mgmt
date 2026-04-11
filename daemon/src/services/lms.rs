@@ -68,12 +68,17 @@ impl ManagedService for Lms {
         Ok(())
     }
 
+    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
+        // lms server start backgrounds itself, so we use a sleep shim as
+        // the monitored process. The real server runs independently.
+        crate::service_ipc::protocol::SpawnSpec {
+            program: "sleep".into(),
+            args: vec!["infinity".into()],
+            env: Default::default(),
+        }
+    }
+
     fn spawn(&self) -> Result<std::process::Child> {
-        // `lms server start` is a fire-and-forget command that backgrounds
-        // the actual server. The daemon's service manager wants a child to
-        // monitor, so we kick off the server and then keep a `sleep` shim
-        // alive as the tracked child. `check_health`/`repair` operate on
-        // the real server independently.
         self.server_start()?;
         tracing::info!("lms server started, base_url={}", self.base_url());
         sentry_ext::breadcrumb("spawn", "lms server started", &[
@@ -81,8 +86,9 @@ impl ManagedService for Lms {
             ("base_url", &self.base_url()),
         ]);
 
-        let child = Command::new("sleep")
-            .arg("infinity")
+        let spec = self.spawn_spec();
+        let child = Command::new(&spec.program)
+            .args(&spec.args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

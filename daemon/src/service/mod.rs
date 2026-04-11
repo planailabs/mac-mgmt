@@ -76,6 +76,7 @@ pub fn start_managed_service(name: &str) -> Result<()> {
 }
 
 /// Stop a per-service system unit (without removing it).
+#[allow(dead_code)]
 pub fn stop_managed_service(name: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     return launchd::stop_managed_service(name);

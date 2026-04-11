@@ -47,16 +47,23 @@ impl ManagedService for Nexa {
         Ok(())
     }
 
-    fn spawn(&self) -> Result<std::process::Child> {
-        let mut cmd = Command::new("nexa");
-        cmd.args([
-            "serve",
-            "--host",
-            &format!("{}:{}", self.config.host, self.config.port),
-            "--skip-update",
-        ]);
+    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
+        crate::service_ipc::protocol::SpawnSpec {
+            program: "nexa".into(),
+            args: vec![
+                "serve".into(),
+                "--host".into(),
+                format!("{}:{}", self.config.host, self.config.port),
+                "--skip-update".into(),
+            ],
+            env: Default::default(),
+        }
+    }
 
-        let child = cmd
+    fn spawn(&self) -> Result<std::process::Child> {
+        let spec = self.spawn_spec();
+        let child = Command::new(&spec.program)
+            .args(&spec.args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()

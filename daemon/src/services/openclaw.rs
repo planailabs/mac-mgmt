@@ -248,9 +248,18 @@ impl ManagedService for OpenClaw {
         true
     }
 
+    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
+        crate::service_ipc::protocol::SpawnSpec {
+            program: "openclaw".into(),
+            args: vec!["gateway".into()],
+            env: Default::default(),
+        }
+    }
+
     fn spawn(&self) -> Result<std::process::Child> {
-        let child = Command::new("openclaw")
-            .arg("gateway")
+        let spec = self.spawn_spec();
+        let child = Command::new(&spec.program)
+            .args(&spec.args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()

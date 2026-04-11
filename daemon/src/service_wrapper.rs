@@ -2,29 +2,17 @@ use anyhow::{Context, Result};
 use std::time::Duration;
 
 use crate::log_buffer::LogBuffer;
-use crate::managed_service::{ManagedService, ServiceMode};
 use crate::service_ipc::listener::{spawn_listener, IpcListener, NotificationSender};
-use crate::service_ipc::protocol::{IpcNotification, IpcRequest, IpcResponse};
+use crate::service_ipc::protocol::{IpcNotification, IpcRequest, IpcResponse, SpawnSpec};
 
 struct WrapperState {
     service_name: String,
-    service: Box<dyn ManagedService>,
     child: Option<std::process::Child>,
     log_task: Option<tokio::task::JoinHandle<()>>,
     log_buf: LogBuffer,
-    healthy: bool,
-    busy: bool,
-    upgrade_pending: bool,
-    post_start_done: bool,
-    consecutive_crashes: u32,
-    was_unhealthy: bool,
     notif_tx: NotificationSender,
-    /// Store path of the service binary at spawn time.
-    running_store_path: Option<String>,
     /// Hash of the mac-mgmt binary at startup, for self-update detection.
     own_binary_hash: Option<Vec<u8>>,
-    /// Parsed upgrade window (start, end) from config. None = always allowed.
-    upgrade_window: Option<(chrono::NaiveTime, chrono::NaiveTime)>,
 }
 
 impl WrapperState {
@@ -43,11 +31,14 @@ impl WrapperState {
         self.child = None;
     }
 
-    fn spawn_child(&mut self) -> bool {
-        // Record the current store path before spawning so we can detect drift.
-        self.running_store_path = crate::nix::binary_store_path(self.service.binary_name());
-
-        match self.service.spawn() {
+    fn spawn_child(&mut self, spec: &SpawnSpec) -> bool {
+        match std::process::Command::new(&spec.program)
+            .args(&spec.args)
+            .envs(&spec.env)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
             Ok(mut child) => {
                 let log_task = capture_and_forward(
                     &self.service_name,
@@ -58,7 +49,6 @@ impl WrapperState {
                 tracing::info!("{} spawned (pid: {})", self.service_name, child.id());
                 self.child = Some(child);
                 self.log_task = Some(log_task);
-                self.post_start_done = false;
                 true
             }
             Err(e) => {
@@ -68,123 +58,27 @@ impl WrapperState {
         }
     }
 
-    fn respawn(&mut self) -> bool {
+    fn respawn(&mut self, spec: &SpawnSpec) -> bool {
         self.kill_child();
-        self.spawn_child()
+        self.spawn_child(spec)
     }
 
-    /// Whether restarts can proceed regardless of busy status.
-    fn in_upgrade_window(&self) -> bool {
-        self.upgrade_window
-            .map_or(true, |(start, end)| mac_mgmt_common::is_within_window(start, end))
-    }
-
-    /// Check if the service binary's nix store path has changed since we spawned.
-    /// Returns true if the service should be restarted to pick up the new binary.
-    fn service_binary_changed(&self) -> bool {
-        let current = crate::nix::binary_store_path(self.service.binary_name());
-        match (&self.running_store_path, &current) {
-            (Some(old), Some(new)) if old != new => {
-                tracing::info!(
-                    "{}: service binary store path changed ({old} → {new})",
-                    self.service_name
-                );
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Check if our own mac-mgmt binary has changed since startup.
-    fn own_binary_changed(&self) -> bool {
-        let current = hash_current_exe();
-        match (&self.own_binary_hash, &current) {
-            (Some(old), Some(new)) if old != new => {
-                tracing::info!("{}: mac-mgmt binary has changed, need re-exec", self.service_name);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn run_health_check(&mut self) {
-        let name = &self.service_name;
-        match self.service.check_health() {
-            Ok(true) => {
-                if !self.healthy || self.was_unhealthy {
-                    tracing::info!("{name} is healthy");
-                    self.notif_tx.send(IpcNotification::Healthy {
-                        service: name.clone(),
-                    });
-                }
-                self.healthy = true;
-                self.was_unhealthy = false;
-                self.consecutive_crashes = 0;
-
-                if !self.post_start_done {
-                    if let Err(e) = self.service.post_start() {
-                        tracing::error!("{name} post_start failed: {e}");
-                    }
-                    self.post_start_done = true;
-                }
-            }
-            Ok(false) => {
-                tracing::warn!("{name} is unhealthy");
-                self.healthy = false;
-                if !self.was_unhealthy {
-                    self.was_unhealthy = true;
-                    self.notif_tx.send(IpcNotification::Unhealthy {
-                        service: name.clone(),
-                    });
-                }
-                if let Err(e) = self.service.repair() {
-                    tracing::error!("{name} repair failed: {e}");
-                }
-            }
-            Err(e) => {
-                tracing::warn!("{name} health check failed: {e}");
-                self.healthy = false;
-            }
-        }
-
-        self.busy = self.service.is_busy().unwrap_or(false);
-    }
-
-    /// Check if the child exited. Returns true if it crashed (and was respawned).
-    fn check_child_exit(&mut self) -> bool {
+    /// Check if the child exited. Returns true if it crashed.
+    fn check_child_exit(&mut self, spec: &SpawnSpec) -> bool {
         let Some(ref mut child) = self.child else {
             return false;
         };
         match child.try_wait() {
             Ok(Some(status)) => {
-                self.consecutive_crashes += 1;
-                let name = &self.service_name;
-                tracing::warn!(
-                    "{name} exited with {status} (crash #{})",
-                    self.consecutive_crashes
-                );
+                tracing::warn!("{} exited with {status}", self.service_name);
                 self.notif_tx.send(IpcNotification::Crashed {
-                    service: name.clone(),
                     exit_code: status.code(),
                 });
                 if let Some(task) = self.log_task.take() {
                     task.abort();
                 }
                 self.child = None;
-                self.healthy = false;
-                self.post_start_done = false;
-
-                if self.consecutive_crashes >= 2 {
-                    tracing::warn!(
-                        "{name} crashed {} times, attempting repair",
-                        self.consecutive_crashes
-                    );
-                    if let Err(e) = self.service.repair() {
-                        tracing::error!("{name} repair failed: {e}");
-                    }
-                }
-
-                self.spawn_child();
+                self.spawn_child(spec);
                 true
             }
             Ok(None) => false,
@@ -195,123 +89,62 @@ impl WrapperState {
         }
     }
 
-    fn build_status_response(&self) -> IpcResponse {
-        IpcResponse::Status {
-            service: self.service_name.clone(),
-            healthy: self.healthy,
-            busy: self.busy,
-            upgrade_pending: self.upgrade_pending,
-            pid: self.child_pid(),
-            post_start_done: self.post_start_done,
-            supports_hot_reload: self.service.supports_hot_reload(),
+    /// Check if our own mac-mgmt binary has changed since startup.
+    fn own_binary_changed(&self) -> bool {
+        let current = hash_current_exe();
+        match (&self.own_binary_hash, &current) {
+            (Some(old), Some(new)) if old != new => {
+                tracing::info!("{}: mac-mgmt binary changed, need re-exec", self.service_name);
+                true
+            }
+            _ => false,
         }
     }
-}
-
-fn find_service(service_name: &str, cfg: &crate::config::Config) -> Result<Box<dyn ManagedService>> {
-    let services = crate::connectors::build_services(
-        &cfg.global,
-        cfg.openclaw.clone(),
-        cfg.ollama.clone(),
-        cfg.nexa.clone(),
-        cfg.lms.clone(),
-    );
-    services
-        .into_iter()
-        .find(|s| s.name() == service_name)
-        .with_context(|| format!("service {service_name} not found in current config"))
-}
-
-/// Parse config JSON and build the named service. Returns an IpcResponse on failure.
-fn parse_config_and_build(
-    service_name: &str,
-    config_json: &str,
-) -> Result<Box<dyn ManagedService>, IpcResponse> {
-    let cfg: crate::config::Config = serde_json::from_str(config_json).map_err(|e| {
-        IpcResponse::Error {
-            command: "set_config".into(),
-            message: format!("invalid config JSON: {e}"),
-        }
-    })?;
-    find_service(service_name, &cfg).map_err(|e| IpcResponse::Error {
-        command: "set_config".into(),
-        message: e.to_string(),
-    })
 }
 
 /// Entry point for `mac-mgmt daemon-service-launch <service>`.
 pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
     tracing::info!("service wrapper starting for {service_name}");
 
-    // Bind the IPC socket first — the daemon will connect and send config.
+    // Bind the IPC socket first — the daemon will connect and send Spawn.
     let socket_path = crate::service_ipc::socket_path(service_name);
     let listener = IpcListener::bind(&socket_path)
         .with_context(|| format!("bind IPC socket at {}", socket_path.display()))?;
-    tracing::info!("IPC socket bound at {}, waiting for config from daemon", socket_path.display());
+    tracing::info!("IPC socket bound at {}, waiting for Spawn from daemon", socket_path.display());
 
     let (mut req_rx, notif_tx) = spawn_listener(listener);
 
-    // Wait for the daemon to send SetConfig with the full DaemonConfig.
-    let (service, upgrade_window) = loop {
+    // Wait for the daemon to send the initial Spawn command.
+    let mut spec = loop {
         match req_rx.recv().await {
-            Some((IpcRequest::SetConfig { config_json }, resp_tx)) => {
-                match parse_config_and_build(service_name, &config_json) {
-                    Ok(svc) if svc.service_mode() == ServiceMode::InstallOnly => {
-                        let _ = resp_tx.send(IpcResponse::Error {
-                            command: "set_config".into(),
-                            message: format!("{service_name} is install-only"),
-                        }).await;
-                        anyhow::bail!("{service_name} is install-only");
-                    }
-                    Ok(svc) => {
-                        let _ = resp_tx.send(IpcResponse::Ack { command: "set_config".into() }).await;
-                        let window = parse_upgrade_window(&config_json);
-                        break (svc, window);
-                    }
-                    Err(resp) => { let _ = resp_tx.send(resp).await; }
-                }
+            Some((IpcRequest::Spawn(spec), resp_tx)) => {
+                let _ = resp_tx.send(IpcResponse::Ack { command: "spawn".into() }).await;
+                break spec;
             }
             Some((_other, resp_tx)) => {
                 let _ = resp_tx.send(IpcResponse::Error {
-                    command: "set_config".into(),
-                    message: "wrapper not yet configured, send SetConfig first".into(),
+                    command: "spawn".into(),
+                    message: "wrapper not yet spawned, send Spawn first".into(),
                 }).await;
             }
-            None => anyhow::bail!("IPC channel closed before receiving config"),
+            None => anyhow::bail!("IPC channel closed before receiving Spawn"),
         }
     };
 
-    tracing::info!("{service_name}: configure");
-    service.configure()?;
-    tracing::info!("{service_name}: preflight");
-    service.preflight()?;
-
     let mut state = WrapperState {
         service_name: service_name.to_string(),
-        service,
         child: None,
         log_task: None,
         log_buf,
-        healthy: false,
-        busy: false,
-        upgrade_pending: false,
-        post_start_done: false,
-        consecutive_crashes: 0,
-        was_unhealthy: false,
         notif_tx,
-        running_store_path: None,
         own_binary_hash: hash_current_exe(),
-        upgrade_window,
     };
 
-    // Initial spawn.
-    state.spawn_child();
-
-    let mut health_tick = tokio::time::interval(Duration::from_secs(60));
-    health_tick.tick().await; // consume immediate tick
-    let mut skip_first_health = true;
+    state.spawn_child(&spec);
 
     let mut child_check = tokio::time::interval(Duration::from_secs(2));
+    let mut self_check = tokio::time::interval(Duration::from_secs(60));
+    self_check.tick().await; // consume immediate tick
 
     let mut sigterm =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -333,40 +166,19 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
                 break;
             }
             _ = child_check.tick() => {
-                state.check_child_exit();
+                state.check_child_exit(&spec);
             }
-            _ = health_tick.tick() => {
-                if skip_first_health {
-                    skip_first_health = false;
-                    continue;
-                }
-                if state.child.is_some() {
-                    state.run_health_check();
-
-                    // Check if the service binary was upgraded in the nix profile.
-                    let can_restart = !state.busy || state.in_upgrade_window();
-                    if can_restart && state.service_binary_changed() {
-                        tracing::info!("{service_name}: service binary updated, restarting");
-                        state.respawn();
-                    }
-                }
-
-                // Check if our own binary (mac-mgmt) has changed.
+            _ = self_check.tick() => {
                 if state.own_binary_changed() {
-                    let can_restart = !state.busy || state.in_upgrade_window();
-                    if can_restart {
-                        pending_update_self = true;
-                        break;
-                    } else {
-                        tracing::info!("{service_name}: mac-mgmt binary changed but service is busy, deferring re-exec");
-                    }
+                    pending_update_self = true;
+                    break;
                 }
             }
             Some((req, resp_tx)) = req_rx.recv() => {
                 let is_update_self = matches!(req, IpcRequest::UpdateSelf);
                 let is_shutdown = matches!(req, IpcRequest::Shutdown);
 
-                let resp = handle_request(&mut state, req).await;
+                let resp = handle_request(&mut state, &mut spec, req);
                 let _ = resp_tx.send(resp).await;
 
                 if is_update_self {
@@ -380,14 +192,12 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
         }
     }
 
-    // Cleanup.
     state.kill_child();
     std::fs::remove_file(&socket_path).ok();
 
     if pending_update_self {
         tracing::info!("re-execing wrapper with new binary");
         do_update_self();
-        // If exec fails, we fall through and exit. launchd/systemd will restart us.
         tracing::error!("exec failed, exiting (service manager will restart)");
     }
 
@@ -395,73 +205,33 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(state: &mut WrapperState, req: IpcRequest) -> IpcResponse {
-    let name = state.service_name.clone();
+fn handle_request(state: &mut WrapperState, spec: &mut SpawnSpec, req: IpcRequest) -> IpcResponse {
     match req {
-        IpcRequest::SetConfig { ref config_json } => {
-            tracing::info!("{name}: set_config received");
-            match parse_config_and_build(&name, config_json) {
-                Ok(new_svc) => {
-                    state.service = new_svc;
-                    state.upgrade_window = parse_upgrade_window(config_json);
-                    IpcResponse::Ack { command: "set_config".into() }
-                }
-                Err(resp) => resp,
-            }
-        }
-        IpcRequest::Health => state.build_status_response(),
-        IpcRequest::Configure => {
-            tracing::info!("{name}: configure requested");
-            match state.service.configure() {
-                Ok(()) => IpcResponse::Ack { command: "configure".into() },
-                Err(e) => IpcResponse::Error {
-                    command: "configure".into(),
-                    message: e.to_string(),
-                },
-            }
-        }
-        IpcRequest::Restart => {
-            tracing::info!("{name}: restart requested");
-            if let Err(e) = state.service.configure() {
-                tracing::warn!("{name}: configure before restart failed: {e}");
-            }
-            if state.respawn() {
-                state.upgrade_pending = false;
-                IpcResponse::Ack { command: "restart".into() }
+        IpcRequest::Spawn(new_spec) => {
+            tracing::info!("{}: respawn with new spec", state.service_name);
+            *spec = new_spec;
+            if state.respawn(spec) {
+                IpcResponse::Ack { command: "spawn".into() }
             } else {
                 IpcResponse::Error {
-                    command: "restart".into(),
+                    command: "spawn".into(),
                     message: "spawn failed".into(),
                 }
             }
         }
-        IpcRequest::Upgrade => {
-            // The main daemon handles the actual nix upgrade. The wrapper
-            // just restarts the service to pick up the new binary.
-            tracing::info!("{name}: upgrade restart requested");
-            if let Err(e) = state.service.configure() {
-                tracing::warn!("{name}: configure before upgrade restart failed: {e}");
-            }
-            if state.respawn() {
-                state.upgrade_pending = false;
-                IpcResponse::Ack { command: "upgrade".into() }
-            } else {
-                IpcResponse::Error {
-                    command: "upgrade".into(),
-                    message: "spawn failed".into(),
-                }
-            }
-        }
+        IpcRequest::Status => IpcResponse::Status {
+            pid: state.child_pid(),
+            running: state.child.is_some(),
+        },
         IpcRequest::Shutdown => {
-            tracing::info!("{name}: shutdown requested");
+            tracing::info!("{}: shutdown requested", state.service_name);
             state.kill_child();
             IpcResponse::Ack { command: "shutdown".into() }
         }
         IpcRequest::UpdateSelf => {
-            tracing::info!("{name}: update-self requested");
+            tracing::info!("{}: update-self requested", state.service_name);
             state.kill_child();
             IpcResponse::Ack { command: "update_self".into() }
-            // The main loop breaks after this and calls do_update_self().
         }
     }
 }
@@ -517,18 +287,10 @@ fn drain_and_forward(
         }
         buf.push(format!("[{name}] {clean}"));
         notif_tx.send(IpcNotification::Log {
-            service: name.to_string(),
             line: clean,
             is_stderr,
         });
     }
-}
-
-/// Parse the upgrade_window field from a serialized DaemonConfig JSON.
-fn parse_upgrade_window(config_json: &str) -> Option<(chrono::NaiveTime, chrono::NaiveTime)> {
-    let cfg: crate::config::Config = serde_json::from_str(config_json).ok()?;
-    let w = cfg.daemon.upgrade_window.as_ref()?;
-    mac_mgmt_common::parse_time_window(w).ok()
 }
 
 /// SHA-256 hash of the currently running mac-mgmt binary.
@@ -555,6 +317,5 @@ fn do_update_self() {
     tracing::info!("exec {exe:?} {args:?}");
 
     let err = std::process::Command::new(&exe).args(&args).exec();
-    // exec() only returns on error.
     tracing::error!("exec failed: {err}");
 }

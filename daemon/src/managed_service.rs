@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use crate::service_ipc::protocol::SpawnSpec;
+
 /// Whether the daemon should spawn and manage a long-running process,
 /// or only install the package (no child process).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +40,10 @@ pub trait ManagedService {
 
     /// Ensure the service is configured (first-run setup, etc.).
     fn ensure_setup(&self) -> Result<()>;
+
+    /// Return the command spec for spawning this service. Used by the
+    /// external process wrapper which doesn't have access to ManagedService.
+    fn spawn_spec(&self) -> SpawnSpec;
 
     /// Start the service process.
     fn spawn(&self) -> Result<std::process::Child>;

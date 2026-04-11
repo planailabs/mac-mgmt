@@ -34,13 +34,16 @@ struct ExternalServiceState {
     service_name: String,
     service: Box<dyn ManagedService>,
     client: Option<ManagedClient>,
+    healthy: bool,
     upgrade_pending: bool,
     update_self_pending: bool,
+    restart_pending: bool,
+    skip_health_check: bool,
     post_start_done: bool,
+    consecutive_crashes: u32,
     was_unhealthy: bool,
-    last_healthy: bool,
-    last_busy: bool,
-    supports_hot_reload: bool,
+    /// Store path of the service binary when last spawned.
+    running_store_path: Option<String>,
 }
 
 struct ConnectorState {
@@ -61,8 +64,6 @@ pub struct ServiceManager {
     connectors: Vec<ConnectorState>,
     dispatcher: Arc<Dispatcher>,
     log_buf: LogBuffer,
-    /// Serialized config JSON, sent to wrappers on connect.
-    config_json: Option<String>,
 }
 
 impl ServiceManager {
@@ -75,11 +76,6 @@ impl ServiceManager {
         log_buf: LogBuffer,
     ) -> Result<Self> {
         let external = cfg.global.external_processes;
-        let config_json = if external {
-            Some(serde_json::to_string(&*cfg).unwrap_or_default())
-        } else {
-            None
-        };
 
         let global_cfg = std::mem::take(&mut cfg.global);
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
@@ -146,18 +142,19 @@ impl ServiceManager {
                     continue;
                 }
 
-                let hot_reload = service.supports_hot_reload();
                 external_states.push(ExternalServiceState {
                     service_name: name,
                     service,
                     client: None,
+                    healthy: false,
                     upgrade_pending: false,
                     update_self_pending: false,
+                    restart_pending: false,
+                    skip_health_check: true,
                     post_start_done: false,
+                    consecutive_crashes: 0,
                     was_unhealthy: false,
-                    last_healthy: false,
-                    last_busy: false,
-                    supports_hot_reload: hot_reload,
+                    running_store_path: None,
                 });
             }
 
@@ -225,7 +222,6 @@ impl ServiceManager {
             connectors,
             dispatcher,
             log_buf,
-            config_json,
         })
     }
 
@@ -265,49 +261,53 @@ impl ServiceManager {
     }
 
     /// Connect to all service wrapper sockets (external mode). No-op in inline mode.
-    /// Sends `SetConfig` to each wrapper after connecting so it can build its
-    /// service and start spawning.
+    /// Sends `Spawn` with the service's spawn spec to start the child process.
     pub async fn connect_all(&mut self) {
         let ServiceBackend::External(ref mut states) = self.backend else {
             return;
         };
-        let config_json = match &self.config_json {
-            Some(j) => j.clone(),
-            None => return,
-        };
         for state in states {
-            let name = &state.service_name;
-            let path = crate::service_ipc::socket_path(name);
-            tracing::info!("connecting to {name} wrapper at {}", path.display());
-            match ManagedClient::connect(&path, Duration::from_secs(30)).await {
-                Ok(mut client) => {
-                    tracing::info!("connected to {name} wrapper, sending config");
-                    match client
-                        .request(&IpcRequest::SetConfig {
-                            config_json: config_json.clone(),
-                        })
-                        .await
-                    {
-                        Ok(IpcResponse::Ack { .. }) => {
-                            tracing::info!("{name} wrapper configured");
-                        }
-                        Ok(IpcResponse::Error { message, .. }) => {
-                            tracing::error!("{name} wrapper rejected config: {message}");
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::error!("{name} SetConfig failed: {e}");
-                        }
+            Self::connect_and_spawn(state).await;
+        }
+    }
+
+    async fn connect_and_spawn(state: &mut ExternalServiceState) {
+        let name = &state.service_name;
+        let path = crate::service_ipc::socket_path(name);
+        tracing::info!("connecting to {name} wrapper at {}", path.display());
+        match ManagedClient::connect(&path, Duration::from_secs(30)).await {
+            Ok(mut client) => {
+                tracing::info!("connected to {name} wrapper, sending Spawn");
+                // Run configure + preflight before spawning.
+                if let Err(e) = state.service.configure() {
+                    tracing::warn!("{name} configure failed: {e}");
+                }
+                if let Err(e) = state.service.preflight() {
+                    tracing::warn!("{name} preflight failed: {e}");
+                }
+                let spec = state.service.spawn_spec();
+                state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
+                match client.request(&IpcRequest::Spawn(spec)).await {
+                    Ok(IpcResponse::Ack { .. }) => {
+                        tracing::info!("{name} spawned via wrapper");
+                        state.skip_health_check = true;
                     }
-                    state.client = Some(client);
+                    Ok(IpcResponse::Error { message, .. }) => {
+                        tracing::error!("{name} Spawn failed: {message}");
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!("{name} Spawn IPC failed: {e}");
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("failed to connect to {name} wrapper: {e}");
-                    sentry_ext::capture_error(
-                        &format!("IPC connect to {name} failed: {e}"),
-                        &[("service", name)],
-                    );
-                }
+                state.client = Some(client);
+            }
+            Err(e) => {
+                tracing::error!("failed to connect to {name} wrapper: {e}");
+                sentry_ext::capture_error(
+                    &format!("IPC connect to {name} failed: {e}"),
+                    &[("service", name)],
+                );
             }
         }
     }
@@ -659,12 +659,12 @@ impl ServiceManager {
         in_upgrade_window: bool,
     ) {
         for state in states {
-            let name = &state.service_name;
-            sentry_ext::set_tag("service", name);
+            let name = state.service_name.clone();
+            sentry_ext::set_tag("service", &name);
 
-            let Some(ref mut client) = state.client else {
-                // Not connected — try to reconnect.
-                let path = crate::service_ipc::socket_path(name);
+            // Ensure wrapper is connected.
+            if state.client.is_none() {
+                let path = crate::service_ipc::socket_path(&name);
                 match ManagedClient::connect(&path, Duration::from_secs(5)).await {
                     Ok(c) => {
                         tracing::info!("reconnected to {name} wrapper");
@@ -672,108 +672,149 @@ impl ServiceManager {
                     }
                     Err(_) => {
                         tracing::warn!("{name} wrapper not reachable, trying to restart unit");
-                        if let Err(e) = crate::service::start_managed_service(name) {
+                        if let Err(e) = crate::service::start_managed_service(&name) {
                             tracing::error!("failed to start {name} unit: {e}");
                         }
                         continue;
                     }
                 }
-                continue;
-            };
+            }
 
-            // Drain any pending notifications.
+            let client = state.client.as_mut().unwrap();
+
+            // Drain log and crash notifications from the wrapper.
             while let Some(notif) = client.try_recv_notification() {
-                match &notif {
-                    IpcNotification::Crashed { service, exit_code } => {
+                match notif {
+                    IpcNotification::Crashed { exit_code } => {
+                        state.consecutive_crashes += 1;
+                        tracing::warn!("{name} crashed (#{}, exit: {exit_code:?})", state.consecutive_crashes);
                         dispatcher.dispatch(&DaemonEvent::ServiceCrashed {
-                            service: service.clone(),
-                            exit_code: *exit_code,
+                            service: name.clone(),
+                            exit_code,
                         });
-                    }
-                    IpcNotification::Healthy { service } => {
-                        if state.was_unhealthy {
-                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
-                                service: service.clone(),
-                            });
-                            state.was_unhealthy = false;
+                        state.healthy = false;
+                        state.post_start_done = false;
+
+                        if state.consecutive_crashes >= 2 {
+                            if let Err(e) = state.service.repair() {
+                                tracing::error!("{name} repair failed: {e}");
+                            }
                         }
                     }
-                    IpcNotification::Unhealthy { service } => {
+                    IpcNotification::Log { line, .. } => {
+                        log_buf.push(format!("[{name}] {line}"));
+                    }
+                }
+            }
+
+            // Apply pending restart (config change) when idle.
+            let busy = state.service.is_busy().unwrap_or(false);
+            if state.restart_pending {
+                if !busy || in_upgrade_window {
+                    tracing::info!("{name} restarting for config change");
+                    if let Err(e) = state.service.configure() {
+                        tracing::warn!("{name} configure failed: {e}");
+                    }
+                    let spec = state.service.spawn_spec();
+                    state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
+                    match client.request(&IpcRequest::Spawn(spec)).await {
+                        Ok(IpcResponse::Ack { .. }) => {
+                            state.restart_pending = false;
+                            state.upgrade_pending = false;
+                            state.skip_health_check = true;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    tracing::info!("{name} is busy, deferring restart");
+                }
+            }
+
+            // Apply pending upgrade when idle.
+            if state.upgrade_pending && in_upgrade_window {
+                if !busy || in_upgrade_window {
+                    tracing::info!("{name} restarting for upgrade");
+                    let spec = state.service.spawn_spec();
+                    state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
+                    match client.request(&IpcRequest::Spawn(spec)).await {
+                        Ok(IpcResponse::Ack { .. }) => {
+                            state.upgrade_pending = false;
+                            state.skip_health_check = true;
+                            dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
+                                service: name.clone(),
+                            });
+                        }
+                        Ok(IpcResponse::Error { message, .. }) => {
+                            dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
+                                service: name.clone(),
+                                error: message,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Detect service binary store path drift.
+            let current_store = crate::nix::binary_store_path(state.service.binary_name());
+            if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
+                if old != new && (!busy || in_upgrade_window) {
+                    tracing::info!("{name} binary changed ({old} → {new}), restarting");
+                    let spec = state.service.spawn_spec();
+                    state.running_store_path = current_store;
+                    let _ = client.request(&IpcRequest::Spawn(spec)).await;
+                    state.skip_health_check = true;
+                }
+            }
+
+            // Health check (daemon calls it directly, not the wrapper).
+            if state.skip_health_check {
+                state.skip_health_check = false;
+            } else {
+                match state.service.check_health() {
+                    Ok(true) => {
+                        state.healthy = true;
+                        state.consecutive_crashes = 0;
+                        if state.was_unhealthy {
+                            state.was_unhealthy = false;
+                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
+                                service: name.clone(),
+                            });
+                        }
+                        if !state.post_start_done {
+                            if let Err(e) = state.service.post_start() {
+                                tracing::error!("{name} post_start failed: {e}");
+                            }
+                            state.post_start_done = true;
+                        }
+                    }
+                    Ok(false) => {
+                        state.healthy = false;
                         if !state.was_unhealthy {
                             state.was_unhealthy = true;
                             dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy {
-                                service: service.clone(),
+                                service: name.clone(),
                             });
                         }
+                        if let Err(e) = state.service.repair() {
+                            tracing::error!("{name} repair failed: {e}");
+                        }
                     }
-                    IpcNotification::Log { service, line, .. } => {
-                        log_buf.push(format!("[{service}] {line}"));
-                    }
-                }
-            }
-
-            // Send upgrade command if pending and in window.
-            if state.upgrade_pending && in_upgrade_window {
-                match client.request(&IpcRequest::Upgrade).await {
-                    Ok(IpcResponse::Ack { .. }) => {
-                        state.upgrade_pending = false;
-                        dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
-                            service: name.to_string(),
-                        });
-                    }
-                    Ok(IpcResponse::Error { message, .. }) => {
-                        tracing::warn!("{name} upgrade failed: {message}");
-                        dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
-                            service: name.to_string(),
-                            error: message,
-                        });
-                    }
-                    Ok(_) => {}
                     Err(e) => {
-                        tracing::warn!("{name} upgrade IPC failed: {e}");
-                        state.client = None; // connection lost
-                        continue;
+                        tracing::warn!("{name} health check failed: {e}");
+                        state.healthy = false;
                     }
                 }
             }
 
-            // Query health status.
-            match client.request(&IpcRequest::Health).await {
-                Ok(IpcResponse::Status {
-                    healthy,
-                    busy,
-                    upgrade_pending,
-                    post_start_done,
-                    supports_hot_reload,
-                    ..
-                }) => {
-                    state.last_healthy = healthy;
-                    state.last_busy = busy;
-                    state.post_start_done = post_start_done;
-                    state.supports_hot_reload = supports_hot_reload;
-                    if upgrade_pending {
-                        state.upgrade_pending = true;
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!("{name} health IPC failed: {e}");
-                    state.client = None;
-                    state.last_healthy = false;
-                    continue;
-                }
+            // Retry deferred update-self when idle.
+            if state.update_self_pending && !busy {
+                tracing::info!("{name} is now idle, sending deferred update-self");
+                Self::do_send_update_self(client, &name).await;
+                state.update_self_pending = false;
             }
 
-            // Retry deferred update-self when no longer busy.
-            if state.update_self_pending && !state.last_busy {
-                if let Some(ref mut client) = state.client {
-                    tracing::info!("{name} is now idle, sending deferred update-self");
-                    Self::do_send_update_self(client, name).await;
-                    state.update_self_pending = false;
-                }
-            }
-
-            Self::update_metrics(metrics, name, state.last_healthy, state.upgrade_pending, state.last_busy);
+            Self::update_metrics(metrics, &name, state.healthy, state.upgrade_pending, busy);
         }
     }
 
@@ -844,43 +885,18 @@ impl ServiceManager {
             ServiceBackend::External(states) => {
                 for state in states {
                     let name = &state.service_name;
-                    if let Some(ref mut client) = state.client {
-                        // First try Configure. If the service supports hot
-                        // reload, the wrapper will apply the config without
-                        // restarting the process.
-                        let use_configure = state.supports_hot_reload;
-                        let cmd = if use_configure {
-                            IpcRequest::Configure
-                        } else {
-                            IpcRequest::Restart
-                        };
-                        let cmd_name = if use_configure { "configure" } else { "restart" };
-                        match client.request(&cmd).await {
-                            Ok(IpcResponse::Ack { .. }) => {
-                                tracing::info!("{name} {cmd_name} sent via IPC");
-                            }
-                            Ok(IpcResponse::Error { message, .. }) => {
-                                tracing::warn!("{name} {cmd_name} failed: {message}");
-                                // Fall back to restart if configure failed.
-                                if use_configure {
-                                    tracing::info!("{name} falling back to restart");
-                                    let _ = client.request(&IpcRequest::Restart).await;
-                                }
-                            }
-                            Ok(_) => {}
+                    if state.service.supports_hot_reload() {
+                        tracing::info!("{name} supports hot reload, running configure");
+                        match state.service.configure() {
+                            Ok(()) => tracing::info!("{name} configured (no restart needed)"),
                             Err(e) => {
-                                tracing::warn!("{name} {cmd_name} IPC failed: {e}");
-                                state.client = None;
+                                tracing::warn!("{name} configure failed, scheduling restart: {e}");
+                                state.restart_pending = true;
                             }
                         }
                     } else {
-                        tracing::warn!("{name} not connected, restarting unit directly");
-                        if let Err(e) = crate::service::stop_managed_service(name) {
-                            tracing::warn!("stop {name}: {e}");
-                        }
-                        if let Err(e) = crate::service::start_managed_service(name) {
-                            tracing::error!("start {name}: {e}");
-                        }
+                        state.restart_pending = true;
+                        tracing::info!("{name} restart pending (config change)");
                     }
                 }
             }
@@ -909,9 +925,9 @@ impl ServiceManager {
                 .map(|state| {
                     serde_json::json!({
                         "name": state.service_name,
-                        "healthy": state.last_healthy,
+                        "healthy": state.healthy,
                         "upgrade_pending": state.upgrade_pending,
-                        "busy": state.last_busy,
+                        "busy": false,
                     })
                 })
                 .collect(),
@@ -983,11 +999,12 @@ impl ServiceManager {
         };
         for state in states {
             let name = &state.service_name;
+            let busy = state.service.is_busy().unwrap_or(false);
             let Some(ref mut client) = state.client else {
                 state.update_self_pending = true;
                 continue;
             };
-            if state.last_busy {
+            if busy {
                 tracing::info!("{name} is busy, deferring update-self");
                 state.update_self_pending = true;
                 continue;

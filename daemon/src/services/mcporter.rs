@@ -35,6 +35,10 @@ impl ManagedService for McPorter {
         Ok(())
     }
 
+    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
+        unreachable!("mcporter is install-only")
+    }
+
     fn spawn(&self) -> Result<std::process::Child> {
         anyhow::bail!("mcporter is install-only, cannot spawn")
     }

@@ -83,18 +83,26 @@ impl ManagedService for Ollama {
         Ok(())
     }
 
-    fn spawn(&self) -> Result<std::process::Child> {
-        let mut cmd = Command::new("ollama");
-        cmd.arg("serve");
-
+    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
+        let mut env = std::collections::HashMap::new();
         if self.config.host != "127.0.0.1" || self.config.port != 11434 {
-            cmd.env(
-                "OLLAMA_HOST",
+            env.insert(
+                "OLLAMA_HOST".into(),
                 format!("{}:{}", self.config.host, self.config.port),
             );
         }
+        crate::service_ipc::protocol::SpawnSpec {
+            program: "ollama".into(),
+            args: vec!["serve".into()],
+            env,
+        }
+    }
 
-        let child = cmd
+    fn spawn(&self) -> Result<std::process::Child> {
+        let spec = self.spawn_spec();
+        let child = Command::new(&spec.program)
+            .args(&spec.args)
+            .envs(&spec.env)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
