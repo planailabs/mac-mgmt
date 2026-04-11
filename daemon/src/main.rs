@@ -104,6 +104,8 @@ enum Commands {
     DisableSsh,
     /// Trigger an immediate sync of skills, MCP servers, and SSH keys
     Sync,
+    /// Stop all externally managed services (launchd/systemd per-service units)
+    StopManagedServices,
     /// Run a managed service wrapper (called by launchd/systemd per-service units)
     DaemonServiceLaunch {
         /// Service name (e.g., "ollama")
@@ -178,6 +180,21 @@ async fn main() -> Result<()> {
                 }
             });
             daemon::run(log_buf, set_log_level).await?
+        }
+        Commands::StopManagedServices => {
+            let names = service::list_managed_service_units()?;
+            if names.is_empty() {
+                println!("No managed services found");
+            } else {
+                for name in &names {
+                    print!("Stopping {name}... ");
+                    match service::cleanup_managed_service(name) {
+                        Ok(()) => println!("done"),
+                        Err(e) => println!("failed: {e}"),
+                    }
+                }
+                println!("Stopped {} managed service(s)", names.len());
+            }
         }
         Commands::DaemonServiceLaunch { service } => {
             #[cfg(feature = "services")]
