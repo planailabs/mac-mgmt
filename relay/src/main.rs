@@ -36,6 +36,16 @@ async fn main() -> Result<()> {
 
     bridge::spawn_cleanup_task();
 
+    // Periodically expire port reservations (every hour).
+    let registry_cleanup = Arc::clone(&registry);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            registry_cleanup.expire_reservations();
+        }
+    });
+
     let app = ws_handler::router(
         Arc::clone(&registry),
         cfg.server_api_url.clone(),

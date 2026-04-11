@@ -205,7 +205,7 @@ async fn handle_daemon_ws(
         query.hostname,
     );
 
-    let Some(port) = state.registry.allocate_port() else {
+    let Some(port) = state.registry.allocate_port(&instance_id) else {
         tracing::error!("no available ports for {instance_id}, rejecting");
         return;
     };
