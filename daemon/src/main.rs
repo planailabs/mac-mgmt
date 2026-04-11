@@ -27,7 +27,11 @@ mod scripts;
 #[cfg(feature = "self-update")]
 mod self_update;
 #[cfg(feature = "services")]
+mod service_ipc;
+#[cfg(feature = "services")]
 mod service_mgmt;
+#[cfg(feature = "services")]
+mod service_wrapper;
 mod skills;
 mod service;
 mod server_push;
@@ -100,6 +104,11 @@ enum Commands {
     DisableSsh,
     /// Trigger an immediate sync of skills, MCP servers, and SSH keys
     Sync,
+    /// Run a managed service wrapper (called by launchd/systemd per-service units)
+    DaemonServiceLaunch {
+        /// Service name (e.g., "ollama")
+        service: String,
+    },
     /// View service logs
     Logs {
         /// Service name (e.g., "ollama"). Shows all services if omitted.
@@ -169,6 +178,12 @@ async fn main() -> Result<()> {
                 }
             });
             daemon::run(log_buf, set_log_level).await?
+        }
+        Commands::DaemonServiceLaunch { service } => {
+            #[cfg(feature = "services")]
+            service_wrapper::run(&service, log_buf).await?;
+            #[cfg(not(feature = "services"))]
+            anyhow::bail!("services feature is not enabled");
         }
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]

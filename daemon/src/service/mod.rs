@@ -13,6 +13,15 @@ pub fn install() -> Result<()> {
 }
 
 pub fn uninstall() -> Result<()> {
+    // Clean up any per-service units first.
+    if let Ok(services) = list_managed_service_units() {
+        for name in &services {
+            if let Err(e) = cleanup_managed_service(name) {
+                tracing::warn!("failed to clean up managed service {name}: {e}");
+            }
+        }
+    }
+
     #[cfg(target_os = "macos")]
     return launchd::uninstall();
     #[cfg(not(target_os = "macos"))]
@@ -38,6 +47,69 @@ pub fn restart() -> Result<()> {
     return launchd::restart();
     #[cfg(not(target_os = "macos"))]
     return systemd::restart();
+}
+
+// ── Per-service managed unit operations ──────────────────────────────
+
+/// Install and start a per-service system unit (user-level).
+pub fn install_managed_service(name: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return launchd::install_managed_service(name);
+    #[cfg(not(target_os = "macos"))]
+    return systemd::install_managed_service(name);
+}
+
+/// Stop and remove a per-service system unit.
+pub fn uninstall_managed_service(name: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return launchd::uninstall_managed_service(name);
+    #[cfg(not(target_os = "macos"))]
+    return systemd::uninstall_managed_service(name);
+}
+
+/// Start an existing per-service system unit.
+pub fn start_managed_service(name: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return launchd::start_managed_service(name);
+    #[cfg(not(target_os = "macos"))]
+    return systemd::start_managed_service(name);
+}
+
+/// Stop a per-service system unit (without removing it).
+pub fn stop_managed_service(name: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return launchd::stop_managed_service(name);
+    #[cfg(not(target_os = "macos"))]
+    return systemd::stop_managed_service(name);
+}
+
+/// List service names that have installed per-service system units.
+pub fn list_managed_service_units() -> Result<Vec<String>> {
+    #[cfg(target_os = "macos")]
+    return launchd::list_managed_service_units();
+    #[cfg(not(target_os = "macos"))]
+    return systemd::list_managed_service_units();
+}
+
+/// Full cleanup: gracefully stop, remove unit file, remove socket.
+pub fn cleanup_managed_service(name: &str) -> Result<()> {
+    // Try to send a shutdown command via the socket first.
+    let sock = crate::service_ipc::socket_path(name);
+    if sock.exists() {
+        // Best-effort: connect and send shutdown. If it fails, we'll
+        // just stop the unit directly.
+        let _ = std::os::unix::net::UnixStream::connect(&sock).and_then(|mut s| {
+            use std::io::Write;
+            let msg = r#"{"kind":"request","type":"shutdown"}"#;
+            writeln!(s, "{msg}")?;
+            // Give it a moment to process.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            Ok(())
+        });
+    }
+
+    uninstall_managed_service(name)?;
+    Ok(())
 }
 
 /// Look up a user's home directory from /etc/passwd via `getent passwd`.

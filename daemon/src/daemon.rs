@@ -137,10 +137,13 @@ pub async fn run(
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("failed to register SIGINT handler")?;
 
-    // Now that signal handlers are registered, spawn all services.
+    // Now that signal handlers are registered, spawn/connect all services.
     // If a SIGTERM arrives during spawn, the handler will catch it.
     #[cfg(feature = "services")]
-    svc_mgr.spawn_all();
+    {
+        svc_mgr.spawn_all();
+        svc_mgr.connect_all().await;
+    }
 
     // Set up config file watcher
     let (config_tx, mut config_rx) = tokio::sync::mpsc::channel(4);
@@ -190,6 +193,9 @@ pub async fn run(
     #[cfg(feature = "self-update")]
     if in_upgrade_window!() {
         let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
+        // Notify external wrappers to re-exec with the (possibly new) binary.
+        #[cfg(feature = "services")]
+        svc_mgr.send_update_self().await;
     } else {
         tracing::info!("outside upgrade window, skipping initial self-update");
     }
@@ -215,7 +221,11 @@ pub async fn run(
 
                 if in_upgrade_window!() {
                     #[cfg(feature = "self-update")]
-                    { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
+                    {
+                        let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
+                        #[cfg(feature = "services")]
+                        svc_mgr.send_update_self().await;
+                    }
                     let _ = tokio::task::spawn_blocking(upgrade_nix).await;
                 } else {
                     tracing::info!("outside upgrade window, skipping upgrades");
@@ -287,7 +297,7 @@ pub async fn run(
                             if needs_restart {
                                 tracing::info!("service config changed, scheduling restart");
                                 #[cfg(feature = "services")]
-                                svc_mgr.schedule_restart();
+                                svc_mgr.schedule_restart().await;
                             }
                             if new_cfg.metrics.port != current_cfg.metrics.port {
                                 tracing::warn!("metrics.port changed \u{2014} daemon restart required to apply");
@@ -320,7 +330,7 @@ pub async fn run(
         () => {
             {
                 #[cfg(feature = "services")]
-                svc_mgr.health_tick(&metrics, in_upgrade_window!());
+                svc_mgr.health_tick(&metrics, in_upgrade_window!()).await;
 
                 // Send heartbeat if server is configured
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -374,7 +384,11 @@ pub async fn run(
                         }
                         if in_upgrade_window!() {
                             #[cfg(feature = "self-update")]
-                            { let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await; }
+                            {
+                                let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
+                                #[cfg(feature = "services")]
+                                svc_mgr.send_update_self().await;
+                            }
                         } else {
                             tracing::info!("outside upgrade window, deferring self-update");
                         }
@@ -440,7 +454,7 @@ pub async fn run(
     }
 
     #[cfg(feature = "services")]
-    svc_mgr.shutdown().await;
+    svc_mgr.shutdown(true).await;
 
     #[cfg(feature = "relay")]
     relay_mgr.cleanup();
