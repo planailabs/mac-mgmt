@@ -200,7 +200,10 @@ async fn main() -> Result<()> {
             #[cfg(feature = "services")]
             service_wrapper::run(&service).await?;
             #[cfg(not(feature = "services"))]
-            anyhow::bail!("services feature is not enabled");
+            {
+                let _ = service;
+                anyhow::bail!("services feature is not enabled");
+            }
         }
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]

@@ -104,18 +104,21 @@ pub fn list_managed_service_units() -> Result<Vec<String>> {
 /// Full cleanup: gracefully stop, remove unit file, remove socket.
 pub fn cleanup_managed_service(name: &str) -> Result<()> {
     // Try to send a shutdown command via the socket first.
-    let sock = crate::service_ipc::socket_path(name);
-    if sock.exists() {
-        // Best-effort: connect and send shutdown. If it fails, we'll
-        // just stop the unit directly.
-        let _ = std::os::unix::net::UnixStream::connect(&sock).and_then(|mut s| {
-            use std::io::Write;
-            let msg = r#"{"kind":"request","type":"shutdown"}"#;
-            writeln!(s, "{msg}")?;
-            // Give it a moment to process.
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            Ok(())
-        });
+    #[cfg(feature = "services")]
+    {
+        let sock = crate::service_ipc::socket_path(name);
+        if sock.exists() {
+            // Best-effort: connect and send shutdown. If it fails, we'll
+            // just stop the unit directly.
+            let _ = std::os::unix::net::UnixStream::connect(&sock).and_then(|mut s| {
+                use std::io::Write;
+                let msg = r#"{"kind":"request","type":"shutdown"}"#;
+                writeln!(s, "{msg}")?;
+                // Give it a moment to process.
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                Ok(())
+            });
+        }
     }
 
     uninstall_managed_service(name)?;
