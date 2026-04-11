@@ -4,6 +4,16 @@ use crate::web::app::Route;
 
 use super::navbar::Navbar;
 
+#[server]
+async fn get_current_user_info() -> Result<(bool,), ServerFnError> {
+    use crate::web::user::current_user;
+    match current_user().await {
+        Ok(user) => Ok((user.is_admin,)),
+        // If no user in extensions (e.g. OIDC disabled), default to admin
+        Err(_) => Ok((true,)),
+    }
+}
+
 /// Loading spinner shown during page transitions via SuspenseBoundary.
 #[component]
 fn LoadingSpinner() -> Element {
@@ -36,9 +46,15 @@ fn LoadingSpinner() -> Element {
 
 #[component]
 pub fn Layout() -> Element {
+    let user_info = use_server_future(get_current_user_info)?;
+    let is_admin = match &*user_info.read() {
+        Some(Ok((admin,))) => *admin,
+        _ => false,
+    };
+
     rsx! {
         div { class: "min-h-screen bg-gray-50 dark:bg-gray-900",
-            Navbar {}
+            Navbar { is_admin }
             main { class: "max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8",
                 SuspenseBoundary {
                     fallback: |_| rsx! { LoadingSpinner {} },

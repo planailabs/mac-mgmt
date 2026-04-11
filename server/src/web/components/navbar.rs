@@ -82,7 +82,7 @@ fn ThemeIcon(mode: ThemeMode) -> Element {
 }
 
 #[component]
-pub fn Navbar() -> Element {
+pub fn Navbar(is_admin: bool) -> Element {
     // State for the mobile hamburger menu
     let mut is_open = use_signal(|| false);
     // Theme state
@@ -146,17 +146,30 @@ pub fn Navbar() -> Element {
         document::eval(js);
     };
 
-    let nav_links = [
+    // Links visible to all authenticated users
+    let common_links: Vec<(Route, &str)> = vec![
         (Route::ClusterList {}, "Clusters"),
-        (Route::SkillList {}, "Skills"),
-        (Route::BundleList {}, "Bundles"),
-        (Route::McpServerList {}, "MCP Servers"),
-        (Route::McpBundleList {}, "MCP Bundles"),
-        (Route::AdminTokens {}, "Admin Tokens"),
         (Route::FleetDashboard {}, "Fleet"),
-        (Route::RolloutList {}, "Rollouts"),
-        (Route::DaemonVersionList {}, "Daemon Versions"),
     ];
+
+    // Links visible only to admins
+    let admin_links: Vec<(Route, &str)> = if is_admin {
+        vec![
+            (Route::SkillList {}, "Skills"),
+            (Route::BundleList {}, "Bundles"),
+            (Route::McpServerList {}, "MCP Servers"),
+            (Route::McpBundleList {}, "MCP Bundles"),
+            (Route::AdminTokens {}, "Admin Tokens"),
+            (Route::RolloutList {}, "Rollouts"),
+            (Route::DaemonVersionList {}, "Daemon Versions"),
+            (Route::OrganizationList {}, "Organizations"),
+            (Route::UserList {}, "Users"),
+        ]
+    } else {
+        vec![]
+    };
+
+    let all_links: Vec<(Route, &str)> = common_links.into_iter().chain(admin_links).collect();
 
     let current_aria = theme().aria_label();
     let current_theme = theme();
@@ -171,7 +184,7 @@ pub fn Navbar() -> Element {
 
                     // Desktop menu (visible on xl and larger)
                     div { class: "hidden xl:flex xl:space-x-1 xl:items-center",
-                        for (route, label) in nav_links.clone() {
+                        for (route, label) in all_links.clone() {
                             Link {
                                 key: "{label}",
                                 to: route,
@@ -229,7 +242,7 @@ pub fn Navbar() -> Element {
                     id: "mobile-menu",
                     class: "xl:hidden border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg",
                     div { class: "px-2 pt-2 pb-3 space-y-1 sm:px-3",
-                        for (route, label) in nav_links.clone() {
+                        for (route, label) in all_links.clone() {
                             Link {
                                 key: "{label}",
                                 to: route,

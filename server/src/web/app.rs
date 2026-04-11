@@ -23,6 +23,10 @@ use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
 use super::components::daemon_version_list::DaemonVersionList;
 use super::components::daemon_version_detail::DaemonVersionDetail;
+use super::components::organization_detail::OrganizationDetail;
+use super::components::organization_form::OrganizationForm;
+use super::components::organization_list::OrganizationList;
+use super::components::user_list::UserList;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 pub enum Route {
@@ -75,6 +79,14 @@ pub enum Route {
     DaemonVersionList {},
     #[route("/daemon-versions/:version")]
     DaemonVersionDetail { version: String },
+    #[route("/organizations")]
+    OrganizationList {},
+    #[route("/organizations/new")]
+    OrganizationForm {},
+    #[route("/organizations/:id")]
+    OrganizationDetail { id: String },
+    #[route("/users")]
+    UserList {},
 }
 
 const THEME_INIT_SCRIPT: &str = r#"
