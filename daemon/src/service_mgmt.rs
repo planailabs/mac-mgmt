@@ -13,6 +13,13 @@ use crate::service_ipc::client::ManagedClient;
 use crate::service_ipc::protocol::{IpcRequest, IpcResponse, IpcNotification};
 use crate::sentry_ext;
 
+fn hash_current_exe() -> Option<Vec<u8>> {
+    use sha2::{Digest, Sha256};
+    let exe = std::env::current_exe().ok()?;
+    let bytes = std::fs::read(&exe).ok()?;
+    Some(Sha256::digest(&bytes).to_vec())
+}
+
 // ── Inline (child-process) backend state ─────────────────────────────
 
 struct InlineServiceState {
@@ -43,6 +50,9 @@ struct ExternalServiceState {
     consecutive_crashes: u32,
     was_unhealthy: bool,
     running_store_path: Option<String>,
+    /// Hash of the mac-mgmt binary when the wrapper was last connected/spawned.
+    /// Compared on each health tick to detect stale wrappers after self-update.
+    wrapper_binary_hash: Option<Vec<u8>>,
 }
 
 impl ExternalServiceState {
@@ -211,6 +221,7 @@ impl ServiceManager {
                     consecutive_crashes: 0,
                     was_unhealthy: false,
                     running_store_path: None,
+                    wrapper_binary_hash: None,
                 });
             }
 
@@ -319,6 +330,7 @@ impl ServiceManager {
             Ok(client) => {
                 tracing::info!("connected to {name} wrapper");
                 state.client = Some(client);
+                state.wrapper_binary_hash = hash_current_exe();
                 if let Err(e) = state.service.configure() {
                     tracing::warn!("{name} configure failed: {e}");
                 }
@@ -565,7 +577,7 @@ impl ServiceManager {
                     Ok(client) => {
                         tracing::info!("reconnected to {name} wrapper");
                         state.client = Some(client);
-                        // Re-send Spawn so the wrapper has a child running.
+                        state.wrapper_binary_hash = hash_current_exe();
                         if let Err(e) = state.service.configure() {
                             tracing::warn!("{name} configure on reconnect: {e}");
                         }
@@ -660,10 +672,20 @@ impl ServiceManager {
                 }
             }
 
-            // Deferred update-self.
+            // Detect wrapper running an outdated mac-mgmt binary.
+            if !state.update_self_pending {
+                let current_hash = hash_current_exe();
+                if state.wrapper_binary_hash != current_hash {
+                    tracing::info!("{name} wrapper is running an outdated binary");
+                    state.update_self_pending = true;
+                }
+            }
+
+            // Deferred update-self when idle.
             if state.update_self_pending && !busy {
                 if let Some(ref mut client) = state.client {
                     Self::do_send_update_self(client, &name).await;
+                    state.wrapper_binary_hash = hash_current_exe();
                 }
                 state.update_self_pending = false;
             }
