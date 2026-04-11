@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct Customer {
+pub struct Cluster {
     pub id: Uuid,
     pub name: String,
     pub pinned_version: Option<String>,
@@ -16,7 +16,7 @@ pub struct Customer {
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct Token {
     pub id: Uuid,
-    pub customer_id: Option<Uuid>,
+    pub cluster_id: Option<Uuid>,
     pub token_hash: String,
     pub label: String,
     pub kind: String,
@@ -26,9 +26,9 @@ pub struct Token {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerConfig {
+pub struct ClusterConfig {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
     pub config_json: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
@@ -76,9 +76,9 @@ pub struct BundleItem {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerSkill {
+pub struct ClusterSkill {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
     pub skill_channel_id: Uuid,
     pub created_at: DateTime<Utc>,
 }
@@ -86,9 +86,9 @@ pub struct CustomerSkill {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerBundle {
+pub struct ClusterBundle {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
     pub bundle_id: Uuid,
     pub created_at: DateTime<Utc>,
 }
@@ -131,9 +131,9 @@ pub struct McpServerBundleItem {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerMcpServer {
+pub struct ClusterMcpServer {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
     pub mcp_server_id: Uuid,
     pub created_at: DateTime<Utc>,
 }
@@ -141,9 +141,9 @@ pub struct CustomerMcpServer {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerMcpBundle {
+pub struct ClusterMcpBundle {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
     pub bundle_id: Uuid,
     pub created_at: DateTime<Utc>,
 }
@@ -154,7 +154,7 @@ pub struct CustomerMcpBundle {
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct DaemonHeartbeat {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
     pub instance_id: String,
     pub version: String,
     pub services: serde_json::Value,
@@ -177,7 +177,7 @@ pub struct RolloutGroup {
 pub struct RolloutGroupMember {
     pub id: Uuid,
     pub group_id: Uuid,
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

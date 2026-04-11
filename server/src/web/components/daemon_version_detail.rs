@@ -6,7 +6,7 @@ use crate::web::app::Route;
 use crate::web::components::table_utils::{SortableTh, TableToolbar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VersionCustomer {
+pub struct VersionCluster {
     pub id: Uuid,
     pub name: String,
     pub instances: i64,
@@ -53,15 +53,15 @@ async fn get_rollouts_for_version(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PinnedCustomer {
+pub struct PinnedCluster {
     pub id: Uuid,
     pub name: String,
 }
 
 #[server]
-async fn get_customers_pinned_to(
+async fn get_clusters_pinned_to(
     version: String,
-) -> Result<Vec<PinnedCustomer>, ServerFnError> {
+) -> Result<Vec<PinnedCluster>, ServerFnError> {
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -71,7 +71,7 @@ async fn get_customers_pinned_to(
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, name FROM customers WHERE pinned_version = $1 ORDER BY name",
+        "SELECT id, name FROM clusters WHERE pinned_version = $1 ORDER BY name",
     )
     .bind(&version)
     .fetch_all(&pool)
@@ -80,14 +80,14 @@ async fn get_customers_pinned_to(
 
     Ok(rows
         .into_iter()
-        .map(|r| PinnedCustomer { id: r.id, name: r.name })
+        .map(|r| PinnedCluster { id: r.id, name: r.name })
         .collect())
 }
 
 #[server]
-async fn get_customers_on_version(
+async fn get_clusters_on_version(
     version: String,
-) -> Result<Vec<VersionCustomer>, ServerFnError> {
+) -> Result<Vec<VersionCluster>, ServerFnError> {
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -100,7 +100,7 @@ async fn get_customers_on_version(
     let rows = sqlx::query_as::<_, Row>(
         "SELECT c.id, c.name, COUNT(*)::bigint AS instances \
          FROM daemon_heartbeats h \
-         JOIN customers c ON c.id = h.customer_id \
+         JOIN clusters c ON c.id = h.cluster_id \
          WHERE h.version = $1 \
          GROUP BY c.id, c.name \
          ORDER BY c.name",
@@ -112,7 +112,7 @@ async fn get_customers_on_version(
 
     Ok(rows
         .into_iter()
-        .map(|r| VersionCustomer {
+        .map(|r| VersionCluster {
             id: r.id,
             name: r.name,
             instances: r.instances,
@@ -176,9 +176,9 @@ pub fn DaemonVersionDetail(version: String) -> Element {
         async move { get_daemon_store_paths(v).await }
     })?;
     let v2 = version.clone();
-    let customers = use_server_future(move || {
+    let clusters = use_server_future(move || {
         let v = v2.clone();
-        async move { get_customers_on_version(v).await }
+        async move { get_clusters_on_version(v).await }
     })?;
     let v_r = version.clone();
     let rollouts = use_server_future(move || {
@@ -188,7 +188,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
     let v3 = version.clone();
     let pinned = use_server_future(move || {
         let v = v3.clone();
-        async move { get_customers_pinned_to(v).await }
+        async move { get_clusters_pinned_to(v).await }
     })?;
 
     rsx! {
@@ -266,8 +266,8 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             None => rsx! { p { "Loading..." } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", "Customers on this version" }
-        {match &*customers.read() {
+        h3 { class: "text-lg font-semibold mt-10 mb-3", "Clusters on this version" }
+        {match &*clusters.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
@@ -278,9 +278,9 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                 } else {{
                     let search = use_signal(String::new);
                     let limit = use_signal(|| 20usize);
-                    let sort = use_signal(|| ("customer".to_string(), true));
+                    let sort = use_signal(|| ("cluster".to_string(), true));
                     let list_clone = list.clone();
-                    let mut filtered: Vec<VersionCustomer> = {
+                    let mut filtered: Vec<VersionCluster> = {
                         let q = search.read().to_lowercase();
                         if q.is_empty() {
                             list_clone.clone()
@@ -310,7 +310,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                 thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
-                                        SortableTh { label: "Customer".to_string(), sort_key: "customer".to_string(), sort }
+                                        SortableTh { label: "Cluster".to_string(), sort_key: "cluster".to_string(), sort }
                                         SortableTh { label: "Instances".to_string(), sort_key: "instances".to_string(), sort }
                                     }
                                 }
@@ -319,7 +319,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                                         tr { key: "{c.id}",
                                             td { class: "px-6 py-4 text-sm",
                                                 Link {
-                                                    to: Route::CustomerDetail { id: c.id.to_string() },
+                                                    to: Route::ClusterDetail { id: c.id.to_string() },
                                                     class: "text-blue-600 dark:text-blue-400 hover:underline",
                                                     "{c.name}"
                                                 }
@@ -415,13 +415,13 @@ pub fn DaemonVersionDetail(version: String) -> Element {
             None => rsx! { p { "Loading..." } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", "Customers pinned to this version" }
+        h3 { class: "text-lg font-semibold mt-10 mb-3", "Clusters pinned to this version" }
         {match &*pinned.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
                         p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            "No customers pinned to this version."
+                            "No clusters pinned to this version."
                         }
                     }
                 } else {
@@ -430,7 +430,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             for c in list.iter() {
                                 li { key: "{c.id}",
                                     Link {
-                                        to: Route::CustomerDetail { id: c.id.to_string() },
+                                        to: Route::ClusterDetail { id: c.id.to_string() },
                                         class: "text-blue-600 dark:text-blue-400 hover:underline",
                                         "{c.name}"
                                     }

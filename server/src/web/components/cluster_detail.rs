@@ -1,26 +1,26 @@
 use dioxus::prelude::*;
 
-use crate::models::Customer;
+use crate::models::Cluster;
 use crate::web::app::Route;
 
 use super::config_editor::ConfigEditor;
 use super::config_history::ConfigHistory;
-use super::customer_mcp_servers::CustomerMcpServers;
-use super::customer_skills::CustomerSkills;
-use super::customer_ssh_keys::CustomerSshKeys;
+use super::cluster_mcp_servers::ClusterMcpServers;
+use super::cluster_skills::ClusterSkills;
+use super::cluster_ssh_keys::ClusterSshKeys;
 use super::setting_token_list::SettingTokenList;
 use super::token_list::SyncTokenList;
 
 #[server]
-async fn get_customer(id: String) -> Result<Customer, ServerFnError> {
+async fn get_cluster(id: String) -> Result<Cluster, ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let customer = sqlx::query_as::<_, Customer>("SELECT * FROM customers WHERE id = $1")
+    let cluster = sqlx::query_as::<_, Cluster>("SELECT * FROM clusters WHERE id = $1")
         .bind(uuid)
         .fetch_one(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(customer)
+    Ok(cluster)
 }
 
 #[server]
@@ -39,10 +39,10 @@ async fn get_pinned_rollout(version: String) -> Result<Option<String>, ServerFnE
 }
 
 #[server]
-async fn rename_customer(id: String, name: String) -> Result<(), ServerFnError> {
+async fn rename_cluster(id: String, name: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("UPDATE customers SET name = $1 WHERE id = $2")
+    sqlx::query("UPDATE clusters SET name = $1 WHERE id = $2")
         .bind(&name)
         .bind(uuid)
         .execute(&pool)
@@ -57,13 +57,13 @@ async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnE
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let ver = version.trim().to_string();
     if ver.is_empty() {
-        sqlx::query("UPDATE customers SET pinned_version = NULL WHERE id = $1")
+        sqlx::query("UPDATE clusters SET pinned_version = NULL WHERE id = $1")
             .bind(uuid)
             .execute(&pool)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
     } else {
-        sqlx::query("UPDATE customers SET pinned_version = $1 WHERE id = $2")
+        sqlx::query("UPDATE clusters SET pinned_version = $1 WHERE id = $2")
             .bind(&ver)
             .bind(uuid)
             .execute(&pool)
@@ -79,7 +79,7 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let c = commit.trim().to_string();
     if c.is_empty() {
-        sqlx::query("UPDATE customers SET nixpkgs_commit = NULL WHERE id = $1")
+        sqlx::query("UPDATE clusters SET nixpkgs_commit = NULL WHERE id = $1")
             .bind(uuid)
             .execute(&pool)
             .await
@@ -89,7 +89,7 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
         if !valid {
             return Err(ServerFnError::new("commit must be 7-40 hex chars"));
         }
-        sqlx::query("UPDATE customers SET nixpkgs_commit = $1 WHERE id = $2")
+        sqlx::query("UPDATE clusters SET nixpkgs_commit = $1 WHERE id = $2")
             .bind(&c)
             .bind(uuid)
             .execute(&pool)
@@ -101,10 +101,10 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
 }
 
 #[server]
-async fn delete_customer(id: String) -> Result<(), ServerFnError> {
+async fn delete_cluster(id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM customers WHERE id = $1")
+    sqlx::query("DELETE FROM clusters WHERE id = $1")
         .bind(uuid)
         .execute(&pool)
         .await
@@ -120,9 +120,9 @@ struct ActiveRolloutEntry {
 }
 
 #[server]
-async fn get_active_rollouts(customer_id: String) -> Result<Vec<ActiveRolloutEntry>, ServerFnError> {
+async fn get_active_rollouts(cluster_id: String) -> Result<Vec<ActiveRolloutEntry>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -135,7 +135,7 @@ async fn get_active_rollouts(customer_id: String) -> Result<Vec<ActiveRolloutEnt
         "SELECT DISTINCT r.id, r.target_version, r.status FROM rollouts r \
          JOIN rollout_stages rs ON rs.rollout_id = r.id \
          JOIN rollout_group_members rgm ON rgm.group_id = rs.group_id \
-         WHERE rgm.customer_id = $1 AND r.status IN ('rolling', 'paused') \
+         WHERE rgm.cluster_id = $1 AND r.status IN ('rolling', 'paused') \
          ORDER BY r.target_version DESC",
     )
     .bind(cid)
@@ -151,11 +151,11 @@ async fn get_active_rollouts(customer_id: String) -> Result<Vec<ActiveRolloutEnt
 }
 
 #[component]
-pub fn CustomerDetail(id: String) -> Element {
+pub fn ClusterDetail(id: String) -> Element {
     let id_clone = id.clone();
-    let mut customer = use_server_future(move || {
+    let mut cluster = use_server_future(move || {
         let id = id_clone.clone();
-        async move { get_customer(id).await }
+        async move { get_cluster(id).await }
     })?;
 
     let mut editing = use_signal(|| false);
@@ -163,7 +163,7 @@ pub fn CustomerDetail(id: String) -> Element {
     let mut confirm_delete = use_signal(|| false);
     let nav = navigator();
 
-    match &*customer.read() {
+    match &*cluster.read() {
         Some(Ok(c)) => {
             let created = c.created_at.format("%Y-%m-%d %H:%M").to_string();
             let pinned = c.pinned_version.clone();
@@ -182,8 +182,8 @@ pub fn CustomerDetail(id: String) -> Element {
                                 let new_name = draft_name.read().clone();
                                 async move {
                                     if !new_name.trim().is_empty() {
-                                        let _ = rename_customer(id, new_name).await;
-                                        customer.restart();
+                                        let _ = rename_cluster(id, new_name).await;
+                                        cluster.restart();
                                     }
                                     editing.set(false);
                                 }
@@ -218,7 +218,7 @@ pub fn CustomerDetail(id: String) -> Element {
                             "Edit"
                         }
                         if *confirm_delete.read() {
-                            span { class: "text-red-600 dark:text-red-400 text-sm", "Delete this customer?" }
+                            span { class: "text-red-600 dark:text-red-400 text-sm", "Delete this cluster?" }
                             button {
                                 class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                                 onclick: {
@@ -226,8 +226,8 @@ pub fn CustomerDetail(id: String) -> Element {
                                     move |_| {
                                         let cid = cid.clone();
                                         async move {
-                                            let _ = delete_customer(cid).await;
-                                            nav.push(Route::CustomerList {});
+                                            let _ = delete_cluster(cid).await;
+                                            nav.push(Route::ClusterList {});
                                         }
                                     }
                                 },
@@ -249,39 +249,39 @@ pub fn CustomerDetail(id: String) -> Element {
                 }
                 div { class: "text-gray-500 dark:text-gray-400 mb-6 flex items-center gap-4 flex-wrap",
                     span { "Created: {created}" }
-                    PinnedVersion { customer_id: cid2.clone(), version: pinned.clone(), on_change: move |_| customer.restart() }
-                    NixpkgsCommit { customer_id: cid2.clone(), commit: nix_commit.clone(), on_change: move |_| customer.restart() }
-                    ActiveRollouts { customer_id: cid2.clone() }
+                    PinnedVersion { cluster_id: cid2.clone(), version: pinned.clone(), on_change: move |_| cluster.restart() }
+                    NixpkgsCommit { cluster_id: cid2.clone(), commit: nix_commit.clone(), on_change: move |_| cluster.restart() }
+                    ActiveRollouts { cluster_id: cid2.clone() }
                 }
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Sync Tokens" }
-                        SyncTokenList { customer_id: cid2.clone() }
+                        SyncTokenList { cluster_id: cid2.clone() }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Setting / Customer Tokens" }
-                        SettingTokenList { customer_id: cid2.clone() }
+                        h3 { class: "text-lg font-semibold mb-3", "Setting / Cluster Tokens" }
+                        SettingTokenList { cluster_id: cid2.clone() }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Config" }
-                        ConfigEditor { customer_id: cid2.clone() }
+                        ConfigEditor { cluster_id: cid2.clone() }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Config History" }
-                        ConfigHistory { customer_id: cid2.clone() }
+                        ConfigHistory { cluster_id: cid2.clone() }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Skills" }
-                        CustomerSkills { customer_id: cid2.clone() }
+                        ClusterSkills { cluster_id: cid2.clone() }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "MCP Servers" }
-                        CustomerMcpServers { customer_id: cid2.clone() }
+                        ClusterMcpServers { cluster_id: cid2.clone() }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "SSH Keys" }
-                        CustomerSshKeys { customer_id: cid2.clone() }
+                        ClusterSshKeys { cluster_id: cid2.clone() }
                     }
                 }
             }
@@ -292,8 +292,8 @@ pub fn CustomerDetail(id: String) -> Element {
 }
 
 #[component]
-fn ActiveRollouts(customer_id: String) -> Element {
-    let cid = customer_id.clone();
+fn ActiveRollouts(cluster_id: String) -> Element {
+    let cid = cluster_id.clone();
     let rollouts = use_server_future(move || {
         let cid = cid.clone();
         async move { get_active_rollouts(cid).await }
@@ -334,7 +334,7 @@ fn ActiveRollouts(customer_id: String) -> Element {
 }
 
 #[component]
-fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventHandler) -> Element {
+fn PinnedVersion(cluster_id: String, version: Option<String>, on_change: EventHandler) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(String::new);
 
@@ -358,7 +358,7 @@ fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventH
     };
 
     if *editing.read() {
-        let cid = customer_id.clone();
+        let cid = cluster_id.clone();
         rsx! {
             form {
                 class: "flex items-center gap-1",
@@ -431,12 +431,12 @@ fn PinnedVersion(customer_id: String, version: Option<String>, on_change: EventH
 }
 
 #[component]
-fn NixpkgsCommit(customer_id: String, commit: Option<String>, on_change: EventHandler) -> Element {
+fn NixpkgsCommit(cluster_id: String, commit: Option<String>, on_change: EventHandler) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(String::new);
 
     if *editing.read() {
-        let cid = customer_id.clone();
+        let cid = cluster_id.clone();
         rsx! {
             form {
                 class: "flex items-center gap-1",

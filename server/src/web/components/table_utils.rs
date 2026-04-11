@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_tabular::*;
 
-use crate::models::{Bundle, Customer, McpServer, McpServerBundle, Skill};
+use crate::models::{Bundle, Cluster, McpServer, McpServerBundle, Skill};
 use crate::web::app::Route;
 
 // ── Searchable trait ────────────────────────────────────────────────
@@ -10,7 +10,7 @@ pub trait Searchable {
     fn matches_search(&self, query: &str) -> bool;
 }
 
-impl Searchable for Customer {
+impl Searchable for Cluster {
     fn matches_search(&self, query: &str) -> bool {
         self.name.to_lowercase().contains(query)
     }
@@ -50,7 +50,7 @@ impl Searchable for McpServerBundle {
 
 // ── Row impls ───────────────────────────────────────────────────────
 
-impl Row for Customer {
+impl Row for Cluster {
     fn key(&self) -> impl Into<String> {
         self.id.to_string()
     }
@@ -95,13 +95,13 @@ pub struct TextData(pub String);
 #[derive(Clone, PartialEq)]
 pub struct CreatedAtData(pub String);
 
-// ── GetRowData: Customer (Link by name + CreatedAt) ─────────────────
+// ── GetRowData: Cluster (Link by name + CreatedAt) ─────────────────
 
-impl GetRowData<LinkData> for Customer {
+impl GetRowData<LinkData> for Cluster {
     fn get(&self) -> LinkData {
         LinkData {
             label: self.name.clone(),
-            route: Route::CustomerDetail {
+            route: Route::ClusterDetail {
                 id: self.id.to_string(),
             },
             mono: false,
@@ -109,19 +109,19 @@ impl GetRowData<LinkData> for Customer {
     }
 }
 
-impl GetRowData<CreatedAtData> for Customer {
+impl GetRowData<CreatedAtData> for Cluster {
     fn get(&self) -> CreatedAtData {
         CreatedAtData(self.created_at.format("%Y-%m-%d %H:%M").to_string())
     }
 }
 
-impl GetRowData<VersionData> for Customer {
+impl GetRowData<VersionData> for Cluster {
     fn get(&self) -> VersionData {
         VersionData(self.pinned_version.clone())
     }
 }
 
-impl GetRowData<NixpkgsCommitData> for Customer {
+impl GetRowData<NixpkgsCommitData> for Cluster {
     fn get(&self) -> NixpkgsCommitData {
         NixpkgsCommitData(self.nixpkgs_commit.clone())
     }

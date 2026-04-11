@@ -233,7 +233,7 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-// ── Daemon settings (daemon-only, not in CustomerConfig) ────────────────
+// ── Daemon settings (daemon-only, not in ClusterConfig) ────────────────
 
 fn default_update_interval() -> String {
     "1h".to_string()
@@ -632,11 +632,11 @@ impl GlobalConfig {
     }
 }
 
-// ── Customer Config (what the server manages per-customer) ──────────────
+// ── Cluster Config (what the server manages per-cluster) ──────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct CustomerConfig {
+pub struct ClusterConfig {
     #[serde(default)]
     pub daemon: DaemonSettings,
     #[serde(default)]
@@ -675,15 +675,15 @@ impl OllamaConfig {
     }
 }
 
-impl CustomerConfig {
-    /// Parse and validate a TOML string as a customer config.
+impl ClusterConfig {
+    /// Parse and validate a TOML string as a cluster config.
     pub fn from_toml(toml_str: &str) -> Result<Self, String> {
         let config: Self = toml::from_str(toml_str).map_err(|e| e.to_string())?;
         config.validate()?;
         Ok(config)
     }
 
-    /// Parse and validate a JSON value as a customer config.
+    /// Parse and validate a JSON value as a cluster config.
     pub fn from_json(json: &serde_json::Value) -> Result<Self, String> {
         let config: Self = serde_json::from_value(json.clone()).map_err(|e| e.to_string())?;
         config.validate()?;
@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn valid_minimal_config() {
-        let config = CustomerConfig::from_toml("").unwrap();
+        let config = ClusterConfig::from_toml("").unwrap();
         assert_eq!(config.ollama.flavour, "cpu");
         assert_eq!(config.global.llm_provider, LlmProvider::Ollama);
         assert_eq!(config.global.agent_provider, AgentProvider::Openclaw);
@@ -850,7 +850,7 @@ flavour = "rocm"
 [metrics]
 port = 9000
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         assert_eq!(config.ollama.host, "10.0.0.1");
         assert_eq!(config.ollama.port, 11435);
         assert_eq!(config.ollama.flavour, "rocm");
@@ -863,7 +863,7 @@ port = 9000
 [ollama]
 bogus = true
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("unknown field"), "got: {err}");
     }
 
@@ -873,7 +873,7 @@ bogus = true
 [nosuch]
 key = "value"
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("unknown field"), "got: {err}");
     }
 
@@ -883,7 +883,7 @@ key = "value"
 [ollama]
 flavour = "metal"
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("invalid ollama flavour"), "got: {err}");
     }
 
@@ -893,7 +893,7 @@ flavour = "metal"
 [ollama]
 models = []
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("models list cannot be empty"), "got: {err}");
     }
 
@@ -903,7 +903,7 @@ models = []
 [global]
 llm_provider = "chatgpt"
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("unknown variant"), "got: {err}");
     }
 
@@ -913,7 +913,7 @@ llm_provider = "chatgpt"
 [global]
 agent_provider = "chatgpt"
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("unknown variant"), "got: {err}");
     }
 
@@ -926,7 +926,7 @@ port = 18181
 models = ["ggml-org/Qwen3-1.7B-GGUF"]
 default_model = "ggml-org/Qwen3-1.7B-GGUF"
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         assert_eq!(config.nexa.host, "10.0.0.1");
         assert_eq!(config.nexa.port, 18181);
     }
@@ -937,7 +937,7 @@ default_model = "ggml-org/Qwen3-1.7B-GGUF"
 [nexa]
 models = []
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("nexa models list cannot be empty"), "got: {err}");
     }
 
@@ -947,7 +947,7 @@ models = []
 [global]
 llm_provider = "nexa"
 "#;
-        CustomerConfig::from_toml(toml).unwrap();
+        ClusterConfig::from_toml(toml).unwrap();
     }
 
     #[test]
@@ -957,7 +957,7 @@ llm_provider = "nexa"
 llm_provider = "none"
 agent_provider = "none"
 "#;
-        CustomerConfig::from_toml(toml).unwrap();
+        ClusterConfig::from_toml(toml).unwrap();
     }
 
     #[test]
@@ -966,7 +966,7 @@ agent_provider = "none"
 [ollama]
 port = "not_a_number"
 "#;
-        let err = CustomerConfig::from_toml(toml).unwrap_err();
+        let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("invalid type"), "got: {err}");
     }
 
@@ -974,7 +974,7 @@ port = "not_a_number"
     fn accepts_all_valid_flavours() {
         for flavour in VALID_FLAVOURS {
             let toml = format!("[ollama]\nflavour = \"{flavour}\"");
-            CustomerConfig::from_toml(&toml).unwrap();
+            ClusterConfig::from_toml(&toml).unwrap();
         }
     }
 
@@ -1026,7 +1026,7 @@ log_level = "verbose"
 
     #[test]
     fn providers_default_to_ollama_and_openclaw() {
-        let config = CustomerConfig::from_toml("").unwrap();
+        let config = ClusterConfig::from_toml("").unwrap();
         assert_eq!(config.global.llm_provider, LlmProvider::Ollama);
         assert_eq!(config.global.agent_provider, AgentProvider::Openclaw);
     }
@@ -1038,7 +1038,7 @@ log_level = "verbose"
 llm_provider = "none"
 agent_provider = "none"
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         assert_eq!(config.global.llm_provider, LlmProvider::None);
         assert_eq!(config.global.agent_provider, AgentProvider::None);
     }
@@ -1087,7 +1087,7 @@ urls = ["ntfy://ntfy.sh/topic"]
 port = 9090
 host = "0.0.0.0"
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         let gw = config.openclaw.gateway.unwrap();
         assert_eq!(gw.port, 9090);
         assert_eq!(gw.host, "0.0.0.0");
@@ -1099,7 +1099,7 @@ host = "0.0.0.0"
 [openclaw.skills]
 auto_update = false
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         let skills = config.openclaw.skills.unwrap();
         assert!(!skills.auto_update);
     }
@@ -1111,7 +1111,7 @@ auto_update = false
 bot_token = "123456:ABC-DEF"
 allowed_chat_ids = [111, 222]
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         let tg = config.openclaw.telegram.unwrap();
         assert_eq!(tg.bot_token, "123456:ABC-DEF");
         assert_eq!(tg.allowed_chat_ids, vec![111, 222]);
@@ -1124,7 +1124,7 @@ allowed_chat_ids = [111, 222]
 [openclaw.telegram]
 bot_token = "tok"
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         let tg = config.openclaw.telegram.unwrap();
         assert_eq!(tg.bot_token, "tok");
         assert!(tg.allowed_chat_ids.is_empty());
@@ -1140,7 +1140,7 @@ port = 8080
 [openclaw.extra_config]
 some_key = "some_value"
 "#;
-        let config = CustomerConfig::from_toml(toml).unwrap();
+        let config = ClusterConfig::from_toml(toml).unwrap();
         assert!(config.openclaw.gateway.is_some());
         assert!(config.openclaw.extra_config.is_some());
     }
@@ -1227,7 +1227,7 @@ upgrade_window = "bogus"
 
     #[test]
     fn schema_has_descriptions() {
-        let schema = schemars::schema_for!(CustomerConfig);
+        let schema = schemars::schema_for!(ClusterConfig);
         let json = serde_json::to_string(&schema).unwrap();
         // Spot-check that descriptions made it into the schema
         assert!(json.contains("Package flavour"), "schema missing flavour description");

@@ -1,16 +1,16 @@
 use dioxus::prelude::*;
 
-use crate::models::CustomerConfig;
+use crate::models::ClusterConfig;
 use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 
 #[server]
-async fn get_current_config(customer_id: String) -> Result<Option<CustomerConfig>, ServerFnError> {
+async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id
+    let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let config = sqlx::query_as::<_, CustomerConfig>(
-        "SELECT * FROM customer_configs WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 1",
+    let config = sqlx::query_as::<_, ClusterConfig>(
+        "SELECT * FROM cluster_configs WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(uuid)
     .fetch_optional(&pool)
@@ -20,18 +20,18 @@ async fn get_current_config(customer_id: String) -> Result<Option<CustomerConfig
 }
 
 #[server]
-async fn save_config(customer_id: String, config_json: String) -> Result<(), ServerFnError> {
+async fn save_config(cluster_id: String, config_json: String) -> Result<(), ServerFnError> {
     let json: serde_json::Value = serde_json::from_str(&config_json)
         .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
     // Validate
-    let _: mac_mgmt_common::CustomerConfig = serde_json::from_value(json.clone())
+    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(json.clone())
         .map_err(|e| ServerFnError::new(format!("invalid config: {e}")))?;
 
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id
+    let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("INSERT INTO customer_configs (customer_id, config_json) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
         .bind(uuid)
         .bind(&json)
         .execute(&pool)
@@ -43,15 +43,15 @@ async fn save_config(customer_id: String, config_json: String) -> Result<(), Ser
 
 #[server]
 async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
-    let schema = schemars::schema_for!(mac_mgmt_common::CustomerConfig);
+    let schema = schemars::schema_for!(mac_mgmt_common::ClusterConfig);
     let value = serde_json::to_value(&schema)
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(value)
 }
 
 #[component]
-pub fn ConfigEditor(customer_id: String) -> Element {
-    let cid = customer_id.clone();
+pub fn ConfigEditor(cluster_id: String) -> Element {
+    let cid = cluster_id.clone();
     let mut config = use_server_future(move || {
         let cid = cid.clone();
         async move { get_current_config(cid).await }
@@ -71,7 +71,7 @@ pub fn ConfigEditor(customer_id: String) -> Element {
         }
     }
 
-    let cid_save = customer_id.clone();
+    let cid_save = cluster_id.clone();
     let do_save = move || {
         let cid = cid_save.clone();
         let text = editor_text.read().clone();

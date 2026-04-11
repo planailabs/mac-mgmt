@@ -5,8 +5,8 @@ use super::bundle_detail::SkillChannelDisplay;
 /// Direct skill assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerSkillDisplay {
-    pub customer_skill_id: uuid::Uuid,
+pub struct ClusterSkillDisplay {
+    pub cluster_skill_id: uuid::Uuid,
     pub skill_slug: String,
     pub channel: String,
 }
@@ -23,22 +23,22 @@ pub struct BundleSkillDisplay {
 /// Bundle assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerBundleDisplay {
-    pub customer_bundle_id: uuid::Uuid,
+pub struct ClusterBundleDisplay {
+    pub cluster_bundle_id: uuid::Uuid,
     pub bundle_slug: String,
     pub bundle_name: String,
 }
 
 #[server]
-async fn list_customer_skills(customer_id: String) -> Result<Vec<CustomerSkillDisplay>, ServerFnError> {
+async fn list_cluster_skills(cluster_id: String) -> Result<Vec<ClusterSkillDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let skills = sqlx::query_as::<_, CustomerSkillDisplay>(
-        "SELECT cs.id as customer_skill_id, s.slug as skill_slug, sc.channel \
-         FROM customer_skills cs \
+    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let skills = sqlx::query_as::<_, ClusterSkillDisplay>(
+        "SELECT cs.id as cluster_skill_id, s.slug as skill_slug, sc.channel \
+         FROM cluster_skills cs \
          JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cs.customer_id = $1 \
+         WHERE cs.cluster_id = $1 \
          ORDER BY s.slug, sc.channel",
     )
     .bind(uuid)
@@ -49,14 +49,14 @@ async fn list_customer_skills(customer_id: String) -> Result<Vec<CustomerSkillDi
 }
 
 #[server]
-async fn list_customer_bundles(customer_id: String) -> Result<Vec<CustomerBundleDisplay>, ServerFnError> {
+async fn list_cluster_bundles(cluster_id: String) -> Result<Vec<ClusterBundleDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let bundles = sqlx::query_as::<_, CustomerBundleDisplay>(
-        "SELECT cb.id as customer_bundle_id, b.slug as bundle_slug, b.name as bundle_name \
-         FROM customer_bundles cb \
+    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let bundles = sqlx::query_as::<_, ClusterBundleDisplay>(
+        "SELECT cb.id as cluster_bundle_id, b.slug as bundle_slug, b.name as bundle_name \
+         FROM cluster_bundles cb \
          JOIN bundles b ON b.id = cb.bundle_id \
-         WHERE cb.customer_id = $1 \
+         WHERE cb.cluster_id = $1 \
          ORDER BY b.slug",
     )
     .bind(uuid)
@@ -67,9 +67,9 @@ async fn list_customer_bundles(customer_id: String) -> Result<Vec<CustomerBundle
 }
 
 #[server]
-async fn list_bundle_skills(customer_id: String) -> Result<Vec<BundleSkillDisplay>, ServerFnError> {
+async fn list_bundle_skills(cluster_id: String) -> Result<Vec<BundleSkillDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -80,12 +80,12 @@ async fn list_bundle_skills(customer_id: String) -> Result<Vec<BundleSkillDispla
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT DISTINCT s.slug as skill_slug, sc.channel, b.slug as bundle_slug \
-         FROM customer_bundles cb \
+         FROM cluster_bundles cb \
          JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
          JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
          JOIN bundles b ON b.id = cb.bundle_id \
-         WHERE cb.customer_id = $1 \
+         WHERE cb.cluster_id = $1 \
          ORDER BY s.slug, sc.channel",
     )
     .bind(uuid)
@@ -96,10 +96,10 @@ async fn list_bundle_skills(customer_id: String) -> Result<Vec<BundleSkillDispla
     // A bundle skill is overwritten if a direct assignment exists for the same slug.
     let direct_slugs: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT s.slug \
-         FROM customer_skills cs \
+         FROM cluster_skills cs \
          JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cs.customer_id = $1",
+         WHERE cs.cluster_id = $1",
     )
     .bind(uuid)
     .fetch_all(&pool)
@@ -156,11 +156,11 @@ async fn list_all_bundles() -> Result<Vec<BundleOption>, ServerFnError> {
 }
 
 #[server]
-async fn add_customer_skill(customer_id: String, skill_channel_id: String) -> Result<(), ServerFnError> {
+async fn add_cluster_skill(cluster_id: String, skill_channel_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let scid: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("INSERT INTO customer_skills (customer_id, skill_channel_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO cluster_skills (cluster_id, skill_channel_id) VALUES ($1, $2)")
         .bind(cid)
         .bind(scid)
         .execute(&pool)
@@ -171,11 +171,11 @@ async fn add_customer_skill(customer_id: String, skill_channel_id: String) -> Re
 }
 
 #[server]
-async fn remove_customer_skill(customer_skill_id: String) -> Result<(), ServerFnError> {
+async fn remove_cluster_skill(cluster_skill_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "DELETE FROM customer_skills WHERE id = $1 RETURNING customer_id",
+        "DELETE FROM cluster_skills WHERE id = $1 RETURNING cluster_id",
     )
     .bind(uuid)
     .fetch_optional(&pool)
@@ -188,18 +188,18 @@ async fn remove_customer_skill(customer_skill_id: String) -> Result<(), ServerFn
 }
 
 #[server]
-async fn add_customer_bundle(customer_id: String, bundle_id: String) -> Result<(), ServerFnError> {
+async fn add_cluster_bundle(cluster_id: String, bundle_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     // Check for overlap: does the new bundle share any skill_channel_id with
-    // any bundle already assigned to this customer?
+    // any bundle already assigned to this cluster?
     let overlap = sqlx::query_scalar::<_, String>(
         "SELECT s.slug || '/' || sc.channel \
          FROM bundle_items new_bi \
          JOIN bundle_items existing_bi ON existing_bi.skill_channel_id = new_bi.skill_channel_id \
-         JOIN customer_bundles cb ON cb.bundle_id = existing_bi.bundle_id AND cb.customer_id = $1 \
+         JOIN cluster_bundles cb ON cb.bundle_id = existing_bi.bundle_id AND cb.cluster_id = $1 \
          JOIN skill_channels sc ON sc.id = new_bi.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
          WHERE new_bi.bundle_id = $2 \
@@ -217,7 +217,7 @@ async fn add_customer_bundle(customer_id: String, bundle_id: String) -> Result<(
         )));
     }
 
-    sqlx::query("INSERT INTO customer_bundles (customer_id, bundle_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO cluster_bundles (cluster_id, bundle_id) VALUES ($1, $2)")
         .bind(cid)
         .bind(bid)
         .execute(&pool)
@@ -228,11 +228,11 @@ async fn add_customer_bundle(customer_id: String, bundle_id: String) -> Result<(
 }
 
 #[server]
-async fn remove_customer_bundle(customer_bundle_id: String) -> Result<(), ServerFnError> {
+async fn remove_cluster_bundle(cluster_bundle_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "DELETE FROM customer_bundles WHERE id = $1 RETURNING customer_id",
+        "DELETE FROM cluster_bundles WHERE id = $1 RETURNING cluster_id",
     )
     .bind(uuid)
     .fetch_optional(&pool)
@@ -245,20 +245,20 @@ async fn remove_customer_bundle(customer_bundle_id: String) -> Result<(), Server
 }
 
 #[component]
-pub fn CustomerSkills(customer_id: String) -> Element {
-    let cid_skills = customer_id.clone();
+pub fn ClusterSkills(cluster_id: String) -> Element {
+    let cid_skills = cluster_id.clone();
     let mut skills = use_server_future(move || {
         let cid = cid_skills.clone();
-        async move { list_customer_skills(cid).await }
+        async move { list_cluster_skills(cid).await }
     })?;
 
-    let cid_bundles = customer_id.clone();
+    let cid_bundles = cluster_id.clone();
     let mut bundles = use_server_future(move || {
         let cid = cid_bundles.clone();
-        async move { list_customer_bundles(cid).await }
+        async move { list_cluster_bundles(cid).await }
     })?;
 
-    let cid_bskills = customer_id.clone();
+    let cid_bskills = cluster_id.clone();
     let bundle_skills = use_server_future(move || {
         let cid = cid_bskills.clone();
         async move { list_bundle_skills(cid).await }
@@ -271,8 +271,8 @@ pub fn CustomerSkills(customer_id: String) -> Element {
     let mut selected_bundle = use_signal(String::new);
     let mut bundle_error = use_signal(|| None::<String>);
 
-    let cid_add_skill = customer_id.clone();
-    let cid_add_bundle = customer_id.clone();
+    let cid_add_skill = cluster_id.clone();
+    let cid_add_bundle = cluster_id.clone();
 
     rsx! {
         // Direct skill assignments
@@ -286,7 +286,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                     let scid = selected_sc.read().clone();
                     spawn(async move {
                         if !scid.is_empty() {
-                            if add_customer_skill(cid, scid).await.is_ok() {
+                            if add_cluster_skill(cid, scid).await.is_ok() {
                                 selected_sc.set(String::new());
                                 skills.restart();
                             }
@@ -325,7 +325,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cs in list {
                             {
-                                let csid = cs.customer_skill_id.to_string();
+                                let csid = cs.cluster_skill_id.to_string();
                                 let label = format!("{} / {}", cs.skill_slug, cs.channel);
                                 rsx! {
                                     li { class: "py-2 flex justify-between items-center",
@@ -335,7 +335,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                                             onclick: move |_| {
                                                 let csid = csid.clone();
                                                 spawn(async move {
-                                                    if remove_customer_skill(csid).await.is_ok() {
+                                                    if remove_cluster_skill(csid).await.is_ok() {
                                                         skills.restart();
                                                     }
                                                 });
@@ -402,7 +402,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                     let bid = selected_bundle.read().clone();
                     spawn(async move {
                         if !bid.is_empty() {
-                            match add_customer_bundle(cid, bid).await {
+                            match add_cluster_bundle(cid, bid).await {
                                 Ok(()) => {
                                     bundle_error.set(None);
                                     selected_bundle.set(String::new());
@@ -447,7 +447,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cb in list {
                             {
-                                let cbid = cb.customer_bundle_id.to_string();
+                                let cbid = cb.cluster_bundle_id.to_string();
                                 let label = format!("{} ({})", cb.bundle_name, cb.bundle_slug);
                                 rsx! {
                                     li { class: "py-2 flex justify-between items-center",
@@ -457,7 +457,7 @@ pub fn CustomerSkills(customer_id: String) -> Element {
                                             onclick: move |_| {
                                                 let cbid = cbid.clone();
                                                 spawn(async move {
-                                                    if remove_customer_bundle(cbid).await.is_ok() {
+                                                    if remove_cluster_bundle(cbid).await.is_ok() {
                                                         bundles.restart();
                                                     }
                                                 });

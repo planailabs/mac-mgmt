@@ -80,8 +80,8 @@ async fn health() -> &'static str {
 
 #[derive(Debug, Deserialize)]
 struct SelfInfo {
-    customer_id: Option<Uuid>,
-    customer_name: Option<String>,
+    cluster_id: Option<Uuid>,
+    cluster_name: Option<String>,
     token_kind: String,
 }
 
@@ -199,8 +199,8 @@ async fn handle_daemon_ws(
 ) {
     let instance_id = query.instance_id;
     tracing::info!(
-        "daemon WS connected: instance={instance_id} customer={:?} agent={:?} hostname={:?}",
-        self_info.customer_name,
+        "daemon WS connected: instance={instance_id} cluster={:?} agent={:?} hostname={:?}",
+        self_info.cluster_name,
         query.agent_name,
         query.hostname,
     );
@@ -220,8 +220,8 @@ async fn handle_daemon_ws(
 
     let conn = DaemonConn {
         instance_id: instance_id.clone(),
-        customer_id: self_info.customer_id,
-        customer_name: self_info.customer_name,
+        cluster_id: self_info.cluster_id,
+        cluster_name: self_info.cluster_name,
         agent_name: query.agent_name,
         hostname: query.hostname,
         ssh_port: port,
@@ -445,8 +445,8 @@ async fn list_tunnels(
 
     let mut tunnels = state.registry.list_tunnels();
     if self_info.token_kind == "setting" {
-        let cid = self_info.customer_id;
-        tunnels.retain(|t| t.customer_id == cid);
+        let cid = self_info.cluster_id;
+        tunnels.retain(|t| t.cluster_id == cid);
     }
     Json(tunnels).into_response()
 }
@@ -460,7 +460,7 @@ const FEDERATION_CONCURRENCY: usize = 32;
 struct ScrapeOutcome {
     instance_id: String,
     hostname: String,
-    customer_id: String,
+    cluster_id: String,
     families: Vec<prometheus::proto::MetricFamily>,
     up: bool,
     duration_secs: f64,
@@ -478,8 +478,8 @@ async fn federated_metrics(
 
     let mut tunnels = state.registry.list_tunnels();
     if self_info.token_kind == "setting" {
-        let cid = self_info.customer_id;
-        tunnels.retain(|t| t.customer_id == cid);
+        let cid = self_info.cluster_id;
+        tunnels.retain(|t| t.cluster_id == cid);
     }
 
     let registry = state.registry.clone();
@@ -505,7 +505,7 @@ async fn federated_metrics(
         let labels: [(&str, &str); 3] = [
             ("instance_id", outcome.instance_id.as_str()),
             ("hostname", outcome.hostname.as_str()),
-            ("customer_id", outcome.customer_id.as_str()),
+            ("cluster_id", outcome.cluster_id.as_str()),
         ];
         push_gauge_strs(
             &mut families,
@@ -553,8 +553,8 @@ async fn scrape_one(
     let started = std::time::Instant::now();
     let instance_id = tunnel.instance_id.clone();
     let hostname = tunnel.hostname.clone().unwrap_or_default();
-    let customer_id = tunnel
-        .customer_id
+    let cluster_id = tunnel
+        .cluster_id
         .map(|c| c.to_string())
         .unwrap_or_default();
 
@@ -563,7 +563,7 @@ async fn scrape_one(
         return ScrapeOutcome {
             instance_id,
             hostname,
-            customer_id,
+            cluster_id,
             families: Vec::new(),
             up: false,
             duration_secs: started.elapsed().as_secs_f64(),
@@ -585,7 +585,7 @@ async fn scrape_one(
         return ScrapeOutcome {
             instance_id,
             hostname,
-            customer_id,
+            cluster_id,
             families: Vec::new(),
             up: false,
             duration_secs: started.elapsed().as_secs_f64(),
@@ -596,11 +596,11 @@ async fn scrape_one(
 
     match result {
         Ok(Ok(resp)) if resp.status == 200 => {
-            match parse_and_relabel(&resp.body, &instance_id, &hostname, &customer_id) {
+            match parse_and_relabel(&resp.body, &instance_id, &hostname, &cluster_id) {
                 Ok(families) => ScrapeOutcome {
                     instance_id,
                     hostname,
-                    customer_id,
+                    cluster_id,
                     families,
                     up: true,
                     duration_secs: started.elapsed().as_secs_f64(),
@@ -610,7 +610,7 @@ async fn scrape_one(
                     ScrapeOutcome {
                         instance_id,
                         hostname,
-                        customer_id,
+                        cluster_id,
                         families: Vec::new(),
                         up: false,
                         duration_secs: started.elapsed().as_secs_f64(),
@@ -626,7 +626,7 @@ async fn scrape_one(
             ScrapeOutcome {
                 instance_id,
                 hostname,
-                customer_id,
+                cluster_id,
                 families: Vec::new(),
                 up: false,
                 duration_secs: started.elapsed().as_secs_f64(),
@@ -637,7 +637,7 @@ async fn scrape_one(
             ScrapeOutcome {
                 instance_id,
                 hostname,
-                customer_id,
+                cluster_id,
                 families: Vec::new(),
                 up: false,
                 duration_secs: started.elapsed().as_secs_f64(),
@@ -648,7 +648,7 @@ async fn scrape_one(
             ScrapeOutcome {
                 instance_id,
                 hostname,
-                customer_id,
+                cluster_id,
                 families: Vec::new(),
                 up: false,
                 duration_secs: started.elapsed().as_secs_f64(),

@@ -45,7 +45,7 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
 
     tracing::info!("server returned {} skill(s)", skills.len());
     if skills.is_empty() {
-        tracing::debug!("no skills assigned to this customer");
+        tracing::debug!("no skills assigned to this cluster");
     }
 
     // Ensure skills directory exists

@@ -7,8 +7,8 @@ use crate::web::app::Route;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FleetEntry {
-    customer_id: String,
-    customer_name: String,
+    cluster_id: String,
+    cluster_name: String,
     instance_id: String,
     hostname: String,
     environment: String,
@@ -23,8 +23,8 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
 
     #[derive(sqlx::FromRow)]
     struct Row {
-        customer_id: uuid::Uuid,
-        customer_name: String,
+        cluster_id: uuid::Uuid,
+        cluster_name: String,
         instance_id: String,
         hostname: String,
         environment: String,
@@ -34,9 +34,9 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.id AS customer_id, c.name AS customer_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
+        "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
          FROM daemon_heartbeats dh \
-         JOIN customers c ON c.id = dh.customer_id \
+         JOIN clusters c ON c.id = dh.cluster_id \
          ORDER BY dh.reported_at DESC",
     )
     .fetch_all(&pool)
@@ -46,8 +46,8 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(|r| FleetEntry {
-            customer_id: r.customer_id.to_string(),
-            customer_name: r.customer_name,
+            cluster_id: r.cluster_id.to_string(),
+            cluster_name: r.cluster_name,
             instance_id: r.instance_id,
             hostname: r.hostname,
             environment: r.environment,
@@ -60,7 +60,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
 
 impl Searchable for FleetEntry {
     fn matches_search(&self, query: &str) -> bool {
-        self.customer_name.to_lowercase().contains(query)
+        self.cluster_name.to_lowercase().contains(query)
             || self.hostname.to_lowercase().contains(query)
             || self.instance_id.to_lowercase().contains(query)
             || self.version.to_lowercase().contains(query)
@@ -92,7 +92,7 @@ pub fn FleetDashboard() -> Element {
                 let (key, asc) = sort.read().clone();
                 filtered.sort_by(|a, b| {
                     let ord = match key.as_str() {
-                        "customer" => a.customer_name.to_lowercase().cmp(&b.customer_name.to_lowercase()),
+                        "cluster" => a.cluster_name.to_lowercase().cmp(&b.cluster_name.to_lowercase()),
                         "hostname" => a.hostname.to_lowercase().cmp(&b.hostname.to_lowercase()),
                         "env" => a.environment.to_lowercase().cmp(&b.environment.to_lowercase()),
                         "version" => a.version.cmp(&b.version),
@@ -117,7 +117,7 @@ pub fn FleetDashboard() -> Element {
                         table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                             thead { class: "bg-gray-50 dark:bg-gray-700",
                                 tr {
-                                    SortableTh { label: "Customer".to_string(), sort_key: "customer".to_string(), sort }
+                                    SortableTh { label: "Cluster".to_string(), sort_key: "cluster".to_string(), sort }
                                     SortableTh { label: "Hostname".to_string(), sort_key: "hostname".to_string(), sort }
                                     SortableTh { label: "Env".to_string(), sort_key: "env".to_string(), sort }
                                     SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
@@ -164,9 +164,9 @@ pub fn FleetDashboard() -> Element {
                                             tr {
                                                 td { class: "px-6 py-4 text-sm",
                                                     Link {
-                                                        to: Route::CustomerDetail { id: entry.customer_id.clone() },
+                                                        to: Route::ClusterDetail { id: entry.cluster_id.clone() },
                                                         class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                                        "{entry.customer_name}"
+                                                        "{entry.cluster_name}"
                                                     }
                                                 }
                                                 td { class: "px-6 py-4 text-sm",

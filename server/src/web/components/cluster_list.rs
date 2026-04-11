@@ -1,34 +1,34 @@
 use dioxus::prelude::*;
 use dioxus_tabular::*;
 
-use crate::models::Customer;
+use crate::models::Cluster;
 use crate::web::app::Route;
 use crate::web::components::table_utils::*;
 
 #[server]
-async fn list_customers() -> Result<Vec<Customer>, ServerFnError> {
+async fn list_clusters() -> Result<Vec<Cluster>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let customers = sqlx::query_as::<_, Customer>("SELECT * FROM customers ORDER BY name")
+    let clusters = sqlx::query_as::<_, Cluster>("SELECT * FROM clusters ORDER BY name")
         .fetch_all(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(customers)
+    Ok(clusters)
 }
 
 #[component]
-pub fn CustomerList() -> Element {
-    let customers = use_server_future(list_customers)?;
+pub fn ClusterList() -> Element {
+    let clusters = use_server_future(list_clusters)?;
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", "Customers" }
+            h2 { class: "text-2xl font-bold", "Clusters" }
             Link {
-                to: Route::CustomerForm {},
+                to: Route::ClusterForm {},
                 class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                "New Customer"
+                "New Cluster"
             }
         }
-        {match &*customers.read() {
+        {match &*clusters.read() {
             Some(Ok(list)) => {
                 let search = use_signal(String::new);
                 let limit = use_signal(|| 20usize);

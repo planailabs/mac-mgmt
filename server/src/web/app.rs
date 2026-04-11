@@ -3,9 +3,9 @@ use dioxus::prelude::*;
 use super::components::bundle_detail::BundleDetail;
 use super::components::bundle_form::BundleForm;
 use super::components::bundle_list::BundleList;
-use super::components::customer_detail::CustomerDetail;
-use super::components::customer_form::CustomerForm;
-use super::components::customer_list::CustomerList;
+use super::components::cluster_detail::ClusterDetail;
+use super::components::cluster_form::ClusterForm;
+use super::components::cluster_list::ClusterList;
 use super::components::fleet_dashboard::FleetDashboard;
 use super::components::layout::Layout;
 use super::components::mcp_bundle_detail::McpBundleDetail;
@@ -28,11 +28,11 @@ use super::components::daemon_version_detail::DaemonVersionDetail;
 pub enum Route {
     #[layout(Layout)]
     #[route("/")]
-    CustomerList {},
-    #[route("/customers/new")]
-    CustomerForm {},
-    #[route("/customers/:id")]
-    CustomerDetail { id: String },
+    ClusterList {},
+    #[route("/clusters/new")]
+    ClusterForm {},
+    #[route("/clusters/:id")]
+    ClusterDetail { id: String },
     #[route("/skills")]
     SkillList {},
     #[route("/skills/:id")]

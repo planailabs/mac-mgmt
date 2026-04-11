@@ -102,7 +102,7 @@ async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnE
 async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Resolve affected customers BEFORE the delete — the cascade will wipe
+    // Resolve affected clusters BEFORE the delete — the cascade will wipe
     // both direct assignments and bundle memberships, so a post-delete query
     // would find nothing.
     crate::api::push::notify_mcp_server_global(uuid).await;

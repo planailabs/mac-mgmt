@@ -30,7 +30,7 @@ async fn create_admin_token(label: String) -> Result<String, ServerFnError> {
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
     sqlx::query(
-        "INSERT INTO tokens (customer_id, token_hash, label, kind) VALUES (NULL, $1, $2, 'admin')",
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES (NULL, $1, $2, 'admin')",
     )
     .bind(&hash)
     .bind(&label)

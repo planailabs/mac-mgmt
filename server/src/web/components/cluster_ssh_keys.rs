@@ -10,12 +10,12 @@ pub struct SshKeyDisplay {
 }
 
 #[server]
-async fn list_ssh_keys(customer_id: String) -> Result<Vec<SshKeyDisplay>, ServerFnError> {
+async fn list_ssh_keys(cluster_id: String) -> Result<Vec<SshKeyDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let keys = sqlx::query_as::<_, SshKeyDisplay>(
         "SELECT id, fingerprint, comment, created_at \
-         FROM customer_ssh_keys WHERE customer_id = $1 ORDER BY created_at",
+         FROM cluster_ssh_keys WHERE cluster_id = $1 ORDER BY created_at",
     )
     .bind(uuid)
     .fetch_all(&pool)
@@ -25,12 +25,12 @@ async fn list_ssh_keys(customer_id: String) -> Result<Vec<SshKeyDisplay>, Server
 }
 
 #[server]
-async fn add_ssh_key(customer_id: String, public_key: String) -> Result<(), ServerFnError> {
+async fn add_ssh_key(cluster_id: String, public_key: String) -> Result<(), ServerFnError> {
     use base64::Engine;
     use sha2::{Sha256, Digest};
 
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     let trimmed = public_key.trim();
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -51,7 +51,7 @@ async fn add_ssh_key(customer_id: String, public_key: String) -> Result<(), Serv
     };
 
     sqlx::query(
-        "INSERT INTO customer_ssh_keys (customer_id, public_key, comment, fingerprint) \
+        "INSERT INTO cluster_ssh_keys (cluster_id, public_key, comment, fingerprint) \
          VALUES ($1, $2, $3, $4)",
     )
     .bind(cid)
@@ -70,7 +70,7 @@ async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = ssh_key_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "DELETE FROM customer_ssh_keys WHERE id = $1 RETURNING customer_id",
+        "DELETE FROM cluster_ssh_keys WHERE id = $1 RETURNING cluster_id",
     )
     .bind(uuid)
     .fetch_optional(&pool)
@@ -83,8 +83,8 @@ async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
 }
 
 #[component]
-pub fn CustomerSshKeys(customer_id: String) -> Element {
-    let cid_list = customer_id.clone();
+pub fn ClusterSshKeys(cluster_id: String) -> Element {
+    let cid_list = cluster_id.clone();
     let mut keys = use_server_future(move || {
         let cid = cid_list.clone();
         async move { list_ssh_keys(cid).await }
@@ -93,7 +93,7 @@ pub fn CustomerSshKeys(customer_id: String) -> Element {
     let mut key_input = use_signal(String::new);
     let mut error_msg = use_signal(|| None::<String>);
 
-    let cid_add = customer_id.clone();
+    let cid_add = cluster_id.clone();
 
     rsx! {
         if let Some(err) = &*error_msg.read() {

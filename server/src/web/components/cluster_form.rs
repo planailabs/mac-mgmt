@@ -1,23 +1,23 @@
 use dioxus::prelude::*;
 
-use crate::models::Customer;
+use crate::models::Cluster;
 use crate::web::app::Route;
 
 #[server]
-async fn create_customer(name: String) -> Result<Customer, ServerFnError> {
+async fn create_cluster(name: String) -> Result<Cluster, ServerFnError> {
     let pool = crate::server_pool()?;
-    let customer = sqlx::query_as::<_, Customer>(
-        "INSERT INTO customers (name) VALUES ($1) RETURNING *",
+    let cluster = sqlx::query_as::<_, Cluster>(
+        "INSERT INTO clusters (name) VALUES ($1) RETURNING *",
     )
     .bind(&name)
     .fetch_one(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(customer)
+    Ok(cluster)
 }
 
 #[component]
-pub fn CustomerForm() -> Element {
+pub fn ClusterForm() -> Element {
     let navigator = navigator();
     let mut name = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
@@ -27,9 +27,9 @@ pub fn CustomerForm() -> Element {
         let nav = navigator.clone();
         let name_val = name.read().clone();
         spawn(async move {
-            match create_customer(name_val).await {
-                Ok(customer) => {
-                    nav.push(Route::CustomerDetail { id: customer.id.to_string() });
+            match create_cluster(name_val).await {
+                Ok(cluster) => {
+                    nav.push(Route::ClusterDetail { id: cluster.id.to_string() });
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
@@ -39,7 +39,7 @@ pub fn CustomerForm() -> Element {
     };
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "New Customer" }
+        h2 { class: "text-2xl font-bold mb-4", "New Cluster" }
         if let Some(err) = &*error.read() {
             p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
         }

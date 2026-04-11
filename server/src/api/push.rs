@@ -11,18 +11,18 @@ use uuid::Uuid;
 
 pub use mac_mgmt_common::PushEvent as PushMessage;
 
-/// Per-customer broadcast channels for push notifications.
+/// Per-cluster broadcast channels for push notifications.
 pub type PushChannels = Arc<RwLock<HashMap<Uuid, broadcast::Sender<PushMessage>>>>;
 
 pub fn new_push_channels() -> PushChannels {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
-/// Send a push message to all connected daemons for a customer.
+/// Send a push message to all connected daemons for a cluster.
 /// No-op if no daemon is connected.
-pub async fn notify(channels: &PushChannels, customer_id: Uuid, msg: PushMessage) {
+pub async fn notify(channels: &PushChannels, cluster_id: Uuid, msg: PushMessage) {
     let map = channels.read().await;
-    if let Some(tx) = map.get(&customer_id) {
+    if let Some(tx) = map.get(&cluster_id) {
         let _ = tx.send(msg);
     }
 }
@@ -30,29 +30,29 @@ pub async fn notify(channels: &PushChannels, customer_id: Uuid, msg: PushMessage
 /// Send a push message using the global PushChannels (for Dioxus server functions).
 /// No-op if push channels are not initialized or no daemon is connected.
 #[cfg(feature = "webui")]
-pub async fn notify_global(customer_id: Uuid, msg: PushMessage) {
+pub async fn notify_global(cluster_id: Uuid, msg: PushMessage) {
     if let Ok(channels) = crate::push_channels() {
-        notify(&channels, customer_id, msg).await;
+        notify(&channels, cluster_id, msg).await;
     }
 }
 
-/// Send a push message to a specific set of customers.
-async fn notify_customers(channels: &PushChannels, customer_ids: &[Uuid], msg: PushMessage) {
-    if customer_ids.is_empty() {
+/// Send a push message to a specific set of clusters.
+async fn notify_clusters(channels: &PushChannels, cluster_ids: &[Uuid], msg: PushMessage) {
+    if cluster_ids.is_empty() {
         return;
     }
     let map = channels.read().await;
-    for cid in customer_ids {
+    for cid in cluster_ids {
         if let Some(tx) = map.get(cid) {
             let _ = tx.send(msg.clone());
         }
     }
 }
 
-/// Find every customer that uses any of the given skill channels — either
-/// through a direct `customer_skills` assignment or transitively via a
-/// `customer_bundles` membership whose bundle contains one of the channels.
-pub async fn notify_skill_channel_customers(
+/// Find every cluster that uses any of the given skill channels — either
+/// through a direct `cluster_skills` assignment or transitively via a
+/// `cluster_bundles` membership whose bundle contains one of the channels.
+pub async fn notify_skill_channel_clusters(
     channels: &PushChannels,
     pool: &PgPool,
     channel_ids: &[Uuid],
@@ -60,11 +60,11 @@ pub async fn notify_skill_channel_customers(
     if channel_ids.is_empty() {
         return;
     }
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT customer_id FROM ( \
-           SELECT customer_id FROM customer_skills WHERE skill_channel_id = ANY($1) \
+    let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT cluster_id FROM ( \
+           SELECT cluster_id FROM cluster_skills WHERE skill_channel_id = ANY($1) \
            UNION \
-           SELECT cb.customer_id FROM customer_bundles cb \
+           SELECT cb.cluster_id FROM cluster_bundles cb \
              JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
              WHERE bi.skill_channel_id = ANY($1) \
          ) u",
@@ -74,31 +74,31 @@ pub async fn notify_skill_channel_customers(
     .await
     .unwrap_or_default();
 
-    notify_customers(channels, &customer_ids, PushMessage::SyncSkills).await;
+    notify_clusters(channels, &cluster_ids, PushMessage::SyncSkills).await;
 }
 
-/// Dioxus server function variant: notify customers affected by changes to
+/// Dioxus server function variant: notify clusters affected by changes to
 /// the given skill channels.
 #[cfg(feature = "webui")]
 pub async fn notify_skill_channels_global(channel_ids: &[Uuid]) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_skill_channel_customers(&channels, &pool, channel_ids).await;
+        notify_skill_channel_clusters(&channels, &pool, channel_ids).await;
     }
 }
 
-/// Find every customer that uses the given MCP server — either through a
-/// direct `customer_mcp_servers` assignment or transitively via a
-/// `customer_mcp_bundles` membership whose bundle contains the server.
-pub async fn notify_mcp_server_customers(
+/// Find every cluster that uses the given MCP server — either through a
+/// direct `cluster_mcp_servers` assignment or transitively via a
+/// `cluster_mcp_bundles` membership whose bundle contains the server.
+pub async fn notify_mcp_server_clusters(
     channels: &PushChannels,
     pool: &PgPool,
     mcp_server_id: Uuid,
 ) {
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT customer_id FROM ( \
-           SELECT customer_id FROM customer_mcp_servers WHERE mcp_server_id = $1 \
+    let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT cluster_id FROM ( \
+           SELECT cluster_id FROM cluster_mcp_servers WHERE mcp_server_id = $1 \
            UNION \
-           SELECT cmb.customer_id FROM customer_mcp_bundles cmb \
+           SELECT cmb.cluster_id FROM cluster_mcp_bundles cmb \
              JOIN mcp_server_bundle_items mbi ON mbi.bundle_id = cmb.bundle_id \
              WHERE mbi.mcp_server_id = $1 \
          ) u",
@@ -108,26 +108,26 @@ pub async fn notify_mcp_server_customers(
     .await
     .unwrap_or_default();
 
-    notify_customers(channels, &customer_ids, PushMessage::SyncMcpServers).await;
+    notify_clusters(channels, &cluster_ids, PushMessage::SyncMcpServers).await;
 }
 
-/// Dioxus server function variant: notify customers affected by changes to
+/// Dioxus server function variant: notify clusters affected by changes to
 /// the given MCP server.
 #[cfg(feature = "webui")]
 pub async fn notify_mcp_server_global(mcp_server_id: Uuid) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_mcp_server_customers(&channels, &pool, mcp_server_id).await;
+        notify_mcp_server_clusters(&channels, &pool, mcp_server_id).await;
     }
 }
 
-/// Notify all customers targeted by a rollout's currently-rolling stages.
-pub async fn notify_rollout_customers(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+/// Notify all clusters targeted by a rollout's currently-rolling stages.
+pub async fn notify_rollout_clusters(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
+    let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
          JOIN LATERAL ( \
-           SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+           SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
            UNION ALL \
-           SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+           SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
          ) rgm ON true \
          WHERE rs.rollout_id = $1 AND rs.status = 'rolling'",
     )
@@ -137,21 +137,21 @@ pub async fn notify_rollout_customers(channels: &PushChannels, pool: &PgPool, ro
     .unwrap_or_default();
 
     let map = channels.read().await;
-    for cid in customer_ids {
+    for cid in cluster_ids {
         if let Some(tx) = map.get(&cid) {
             let _ = tx.send(msg.clone());
         }
     }
 }
 
-/// Same as notify_rollout_customers but for all stages (used on complete).
-pub async fn notify_all_rollout_customers(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+/// Same as notify_rollout_clusters but for all stages (used on complete).
+pub async fn notify_all_rollout_clusters(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
+    let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
          JOIN LATERAL ( \
-           SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+           SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
            UNION ALL \
-           SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+           SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
          ) rgm ON true \
          WHERE rs.rollout_id = $1",
     )
@@ -161,32 +161,32 @@ pub async fn notify_all_rollout_customers(channels: &PushChannels, pool: &PgPool
     .unwrap_or_default();
 
     let map = channels.read().await;
-    for cid in customer_ids {
+    for cid in cluster_ids {
         if let Some(tx) = map.get(&cid) {
             let _ = tx.send(msg.clone());
         }
     }
 }
 
-/// Dioxus server function variant: notify rollout customers using global state.
+/// Dioxus server function variant: notify rollout clusters using global state.
 #[cfg(feature = "webui")]
 pub async fn notify_rollout_global(rollout_id: Uuid, msg: PushMessage) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_rollout_customers(&channels, &pool, rollout_id, msg).await;
+        notify_rollout_clusters(&channels, &pool, rollout_id, msg).await;
     }
 }
 
-/// Dioxus server function variant: notify ALL customers in a rollout.
+/// Dioxus server function variant: notify ALL clusters in a rollout.
 #[cfg(feature = "webui")]
 pub async fn notify_all_rollout_global(rollout_id: Uuid, msg: PushMessage) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_all_rollout_customers(&channels, &pool, rollout_id, msg).await;
+        notify_all_rollout_clusters(&channels, &pool, rollout_id, msg).await;
     }
 }
 
-/// Notify all customers that have a given bundle assigned via `assignment_table`
-/// (which must have `customer_id` and `bundle_id` columns).
-pub async fn notify_bundle_customers(
+/// Notify all clusters that have a given bundle assigned via `assignment_table`
+/// (which must have `cluster_id` and `bundle_id` columns).
+pub async fn notify_bundle_clusters(
     channels: &PushChannels,
     pool: &PgPool,
     assignment_table: &str,
@@ -194,30 +194,30 @@ pub async fn notify_bundle_customers(
     msg: PushMessage,
 ) {
     let query = format!(
-        "SELECT DISTINCT customer_id FROM {assignment_table} WHERE bundle_id = $1"
+        "SELECT DISTINCT cluster_id FROM {assignment_table} WHERE bundle_id = $1"
     );
-    let customer_ids: Vec<Uuid> = sqlx::query_scalar(&query)
+    let cluster_ids: Vec<Uuid> = sqlx::query_scalar(&query)
         .bind(bundle_id)
         .fetch_all(pool)
         .await
         .unwrap_or_default();
 
     let map = channels.read().await;
-    for cid in customer_ids {
+    for cid in cluster_ids {
         if let Some(tx) = map.get(&cid) {
             let _ = tx.send(msg.clone());
         }
     }
 }
 
-/// Dioxus server function variant: notify all customers using a skill bundle.
+/// Dioxus server function variant: notify all clusters using a skill bundle.
 #[cfg(feature = "webui")]
 pub async fn notify_skill_bundle_global(bundle_id: Uuid) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_bundle_customers(
+        notify_bundle_clusters(
             &channels,
             &pool,
-            "customer_bundles",
+            "cluster_bundles",
             bundle_id,
             PushMessage::SyncSkills,
         )
@@ -225,14 +225,14 @@ pub async fn notify_skill_bundle_global(bundle_id: Uuid) {
     }
 }
 
-/// Dioxus server function variant: notify all customers using an MCP bundle.
+/// Dioxus server function variant: notify all clusters using an MCP bundle.
 #[cfg(feature = "webui")]
 pub async fn notify_mcp_bundle_global(bundle_id: Uuid) {
     if let (Ok(channels), Ok(pool)) = (crate::push_channels(), crate::server_pool()) {
-        notify_bundle_customers(
+        notify_bundle_clusters(
             &channels,
             &pool,
-            "customer_mcp_bundles",
+            "cluster_mcp_bundles",
             bundle_id,
             PushMessage::SyncMcpServers,
         )
@@ -253,24 +253,24 @@ pub async fn sse_events(
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
     let result = sqlx::query_as::<_, (Option<Uuid>, String)>(
-        "SELECT customer_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",
+        "SELECT cluster_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",
     )
     .bind(&hash)
     .fetch_optional(pool.inner())
     .await
     .ok()??;
 
-    let (customer_id, kind) = result;
+    let (cluster_id, kind) = result;
     if kind != "sync" {
         return None;
     }
-    let customer_id = customer_id?;
+    let cluster_id = cluster_id?;
 
-    // Get or create broadcast channel for this customer
+    // Get or create broadcast channel for this cluster
     let rx = {
         let mut map = channels.write().await;
         let tx = map
-            .entry(customer_id)
+            .entry(cluster_id)
             .or_insert_with(|| broadcast::channel(64).0);
         tx.subscribe()
     };

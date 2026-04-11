@@ -118,7 +118,7 @@ flavour = "cpu"
 # merges local settings on top (local always wins).
 # [server]
 # url = "https://mgmt.example.com:8080"
-# token = "customer-token-here"
+# token = "cluster-token-here"
 
 # ── Relay ────────────────────────────────────────────────────────────
 # Connect to a relay server for remote SSH access to this machine.

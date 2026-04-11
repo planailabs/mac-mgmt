@@ -66,7 +66,7 @@ use utoipa_swagger_ui::SwaggerUi;
         // Sync — Heartbeat
         routes::post_heartbeat,
         // Admin
-        routes::admin_list_customers,
+        routes::admin_list_clusters,
         routes::admin_create_token,
         // Admin — Rollouts
         routes::admin_create_rollout_group,
@@ -91,13 +91,13 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::PatchConfigBody,
         routes::AddSkillBody,
         routes::BatchSkillsBody,
-        routes::CustomerBundleRow,
+        routes::ClusterBundleRow,
         routes::AddBundleBody,
         routes::BatchBundlesBody,
         routes::AddMcpServerBody,
         routes::BatchMcpServersBody,
         routes::McpServerOptionRow,
-        routes::CustomerMcpBundleRow,
+        routes::ClusterMcpBundleRow,
         routes::AddMcpBundleBody,
         routes::BatchMcpBundlesBody,
         routes::SkillChannelRow,
@@ -107,8 +107,8 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::Catalog,
         routes::CatalogBundle,
         routes::CatalogMcpBundle,
-        routes::AdminCustomerRow,
-        routes::CreateTokenForCustomerBody,
+        routes::AdminClusterRow,
+        routes::CreateTokenForClusterBody,
         routes::CreatedToken,
         routes::SshKeyRow,
         routes::AddSshKeyBody,
@@ -217,7 +217,7 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::setting_add_ssh_key,
                 routes::setting_remove_ssh_key,
                 // Admin token routes
-                routes::admin_list_customers,
+                routes::admin_list_clusters,
                 routes::admin_create_token,
                 // Admin — skill MCP dependencies
                 routes::admin_list_skill_mcp_deps,

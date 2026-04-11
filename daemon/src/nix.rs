@@ -32,7 +32,7 @@ fn nixpkgs_tarball_url(commit: &str) -> String {
     )
 }
 
-/// Base flake URL (no `#attr`) for the desired state. Honours the per-customer
+/// Base flake URL (no `#attr`) for the desired state. Honours the per-cluster
 /// pin if set, otherwise falls back to the legacy CI-artifact URL (which still
 /// carries the `_<system>` suffix).
 fn desired_flake_base() -> Result<String> {
@@ -315,7 +315,7 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
 /// Check which of the given packages have upgrades available.
 /// Uses --dry-run if supported, otherwise falls back to temp profile comparison.
 /// Also unions in any installed packages whose flake URL has drifted from the
-/// desired one (e.g. the customer's nixpkgs pin moved) — those would not be
+/// desired one (e.g. the cluster's nixpkgs pin moved) — those would not be
 /// caught by `nix profile upgrade --dry-run` since the flake ref itself changed.
 ///
 /// If the upgrade dry-run itself fails (e.g. because a drifted flake ref is no
@@ -402,7 +402,7 @@ pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
 
 /// Read `originalUrl` per element from `nix profile list --json`. Used to
 /// detect drift between the installed flake URL and the desired one (which
-/// may have moved if the customer's nixpkgs pin changed).
+/// may have moved if the cluster's nixpkgs pin changed).
 fn profile_original_urls() -> Result<HashMap<String, String>> {
     let json = profile_list_json(None)?;
     let mut result = HashMap::new();
@@ -472,7 +472,7 @@ fn run_profile_cmd(nix_bin: &str, action: &str, pkg: &str, args: &[&str]) -> Res
 
 /// Install or upgrade a package via `nix profile`, using the given nix binary path.
 /// When `upgrade` is set and the installed flake URL differs from the desired
-/// one (i.e. the customer's nixpkgs pin moved), use `nix profile replace` if the
+/// one (i.e. the cluster's nixpkgs pin moved), use `nix profile replace` if the
 /// fork's verb is available, otherwise fall back to `remove` + `add`.
 fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<()> {
     let desired = desired_flake_ref(pkg)?;

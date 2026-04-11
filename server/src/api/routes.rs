@@ -12,15 +12,15 @@ use uuid::Uuid;
 use base64::Engine;
 use sha2::{Sha256, Digest};
 
-use super::auth::{AdminAuth, AuthenticatedCustomer, SettingAuth, SyncAuth};
+use super::auth::{AdminAuth, AuthenticatedToken, SettingAuth, SyncAuth};
 use super::push::{self, PushChannels, PushMessage};
 
 // ── Common routes (any valid token) ────────────────────────────────────
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct SelfInfo {
-    customer_id: Option<Uuid>,
-    customer_name: Option<String>,
+    cluster_id: Option<Uuid>,
+    cluster_name: Option<String>,
     token_kind: String,
 }
 
@@ -29,7 +29,7 @@ pub(crate) struct SelfInfo {
     path = "/api/self",
     tag = "Common",
     summary = "Get current token identity",
-    description = "Returns customer info and token kind for the authenticated token.",
+    description = "Returns cluster info and token kind for the authenticated token.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Token identity", body = SelfInfo),
@@ -38,13 +38,13 @@ pub(crate) struct SelfInfo {
 )]
 #[rocket::get("/self")]
 pub async fn get_self(
-    auth: AuthenticatedCustomer,
+    auth: AuthenticatedToken,
     pool: &State<PgPool>,
 ) -> Result<Json<SelfInfo>, Status> {
-    let name = match auth.customer_id {
+    let name = match auth.cluster_id {
         Some(cid) => {
             let n = sqlx::query_scalar::<_, String>(
-                "SELECT name FROM customers WHERE id = $1",
+                "SELECT name FROM clusters WHERE id = $1",
             )
             .bind(cid)
             .fetch_one(pool.inner())
@@ -56,8 +56,8 @@ pub async fn get_self(
     };
 
     Ok(Json(SelfInfo {
-        customer_id: auth.customer_id,
-        customer_name: name,
+        cluster_id: auth.cluster_id,
+        cluster_name: name,
         token_kind: auth.token_kind,
     }))
 }
@@ -94,17 +94,17 @@ pub async fn get_mcp_servers(
     // Precedence: direct (2) > bundle (1) > transitive from skill (0).
     let rows = sqlx::query_as::<_, McpServerRow>(
         "SELECT ms.slug, ms.config_json, ms.nix_packages, true AS is_direct \
-         FROM customer_mcp_servers cms \
+         FROM cluster_mcp_servers cms \
          JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
-         WHERE cms.customer_id = $1 \
+         WHERE cms.cluster_id = $1 \
          UNION ALL \
          SELECT ms.slug, ms.config_json, ms.nix_packages, false AS is_direct \
-         FROM customer_mcp_bundles cmb \
+         FROM cluster_mcp_bundles cmb \
          JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
          JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
-         WHERE cmb.customer_id = $1",
+         WHERE cmb.cluster_id = $1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -129,7 +129,7 @@ pub async fn get_mcp_servers(
     }
 
     // Resolve transitive MCP deps from winning skill channels.
-    let winning_channels = resolve_winning_skill_channels(auth.customer_id, pool.inner()).await?;
+    let winning_channels = resolve_winning_skill_channels(auth.cluster_id, pool.inner()).await?;
     let channel_ids: Vec<Uuid> = winning_channels.into_values().collect();
 
     if !channel_ids.is_empty() {
@@ -170,7 +170,7 @@ pub async fn get_mcp_servers(
     get,
     path = "/api/config",
     tag = "Sync",
-    summary = "Get customer config JSON for daemon sync",
+    summary = "Get cluster config JSON for daemon sync",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Config JSON"),
@@ -185,12 +185,12 @@ pub async fn get_config(
     pool: &State<PgPool>,
 ) -> Result<Json<serde_json::Value>, Status> {
     let config = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config_json FROM customer_configs \
-         WHERE customer_id = $1 \
+        "SELECT config_json FROM cluster_configs \
+         WHERE cluster_id = $1 \
          ORDER BY created_at DESC \
          LIMIT 1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_optional(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -210,7 +210,7 @@ pub(crate) use mac_mgmt_common::{NixpkgsPin, UpdateTarget};
     path = "/api/update",
     tag = "Sync",
     summary = "Get the target version for this daemon",
-    description = "Returns the version the daemon should update to. If an active rollout targets this customer, returns the rollout's version; otherwise returns the customer's pinned version. Null means stay on current version.",
+    description = "Returns the version the daemon should update to. If an active rollout targets this cluster, returns the rollout's version; otherwise returns the cluster's pinned version. Null means stay on current version.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Update target"),
@@ -224,19 +224,19 @@ pub async fn get_update_target(
     pool: &State<PgPool>,
     system: Option<String>,
 ) -> Result<Json<UpdateTarget>, Status> {
-    // Check for active rollout targeting this customer. The outer Option is
+    // Check for active rollout targeting this cluster. The outer Option is
     // "rollout row found?", inner is the nullable column (a rollout may carry
     // only nixpkgs_commit and leave target_version unset).
     let rollout_version: Option<Option<String>> = sqlx::query_scalar(
         "SELECT r.target_version FROM rollouts r \
          JOIN rollout_stages rs ON rs.rollout_id = r.id \
          WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE customer_id = $1)) \
+                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
            AND r.status = 'rolling' \
            AND rs.status = 'rolling' \
          ORDER BY r.created_at DESC LIMIT 1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_optional(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -245,9 +245,9 @@ pub async fn get_update_target(
         Some(ver)
     } else {
         sqlx::query_scalar::<_, Option<String>>(
-            "SELECT pinned_version FROM customers WHERE id = $1",
+            "SELECT pinned_version FROM clusters WHERE id = $1",
         )
-        .bind(auth.customer_id)
+        .bind(auth.cluster_id)
         .fetch_one(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?
@@ -285,7 +285,7 @@ pub async fn get_update_target(
     path = "/api/nixpkgs",
     tag = "Sync",
     summary = "Get the target nixpkgs commit for this daemon",
-    description = "Returns the commit the daemon should pin nixpkgs to. If an active rollout targeting this customer carries a nixpkgs_commit, that wins; otherwise returns the customer's persistent pin. Null means use the rolling default source.",
+    description = "Returns the commit the daemon should pin nixpkgs to. If an active rollout targeting this cluster carries a nixpkgs_commit, that wins; otherwise returns the cluster's persistent pin. Null means use the rolling default source.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Nixpkgs pin"),
@@ -298,18 +298,18 @@ pub async fn get_nixpkgs_pin(
     auth: SyncAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<NixpkgsPin>, Status> {
-    // Active rollout for this customer (mirrors get_update_target).
+    // Active rollout for this cluster (mirrors get_update_target).
     // Outer Option = "rollout row found?", inner Option = nullable column.
     let rollout_commit: Option<Option<String>> = sqlx::query_scalar(
         "SELECT r.nixpkgs_commit FROM rollouts r \
          JOIN rollout_stages rs ON rs.rollout_id = r.id \
          WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
-                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE customer_id = $1)) \
+                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
            AND r.status = 'rolling' \
            AND rs.status = 'rolling' \
          ORDER BY r.created_at DESC LIMIT 1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_optional(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -318,11 +318,11 @@ pub async fn get_nixpkgs_pin(
         return Ok(Json(NixpkgsPin { commit: Some(commit) }));
     }
 
-    // Fall back to customer's persistent pin.
+    // Fall back to cluster's persistent pin.
     let pinned = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT nixpkgs_commit FROM customers WHERE id = $1",
+        "SELECT nixpkgs_commit FROM clusters WHERE id = $1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_one(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -338,27 +338,27 @@ struct SkillSlugChannel {
     is_direct: bool,
 }
 
-/// Resolve the winning skill_channel_id per slug for a customer.
+/// Resolve the winning skill_channel_id per slug for a cluster.
 /// Direct assignments beat bundle assignments for the same slug.
 async fn resolve_winning_skill_channels(
-    customer_id: Uuid,
+    cluster_id: Uuid,
     pool: &PgPool,
 ) -> Result<HashMap<String, Uuid>, Status> {
     let rows = sqlx::query_as::<_, SkillSlugChannel>(
         "SELECT sc.id AS skill_channel_id, s.slug, sc.channel, true AS is_direct \
-         FROM customer_skills cs \
+         FROM cluster_skills cs \
          JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cs.customer_id = $1 \
+         WHERE cs.cluster_id = $1 \
          UNION ALL \
          SELECT sc.id AS skill_channel_id, s.slug, sc.channel, false AS is_direct \
-         FROM customer_bundles cb \
+         FROM cluster_bundles cb \
          JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
          JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cb.customer_id = $1",
+         WHERE cb.cluster_id = $1",
     )
-    .bind(customer_id)
+    .bind(cluster_id)
     .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -402,19 +402,19 @@ pub async fn get_skills(
 ) -> Result<Json<HashMap<String, String>>, Status> {
     let rows = sqlx::query_as::<_, SkillSlugChannel>(
         "SELECT sc.id AS skill_channel_id, s.slug, sc.channel, true AS is_direct \
-         FROM customer_skills cs \
+         FROM cluster_skills cs \
          JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cs.customer_id = $1 \
+         WHERE cs.cluster_id = $1 \
          UNION ALL \
          SELECT sc.id AS skill_channel_id, s.slug, sc.channel, false AS is_direct \
-         FROM customer_bundles cb \
+         FROM cluster_bundles cb \
          JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
          JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cb.customer_id = $1",
+         WHERE cb.cluster_id = $1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -464,7 +464,7 @@ pub async fn get_skills(
     get,
     path = "/api/setting/config/schema",
     tag = "Setting — Config",
-    summary = "Get JSON Schema for customer config",
+    summary = "Get JSON Schema for cluster config",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "JSON Schema", content_type = "application/json"),
@@ -476,7 +476,7 @@ pub async fn get_skills(
 pub async fn setting_config_schema(
     _auth: SettingAuth,
 ) -> (rocket::http::ContentType, String) {
-    let schema = schemars::schema_for!(mac_mgmt_common::CustomerConfig);
+    let schema = schemars::schema_for!(mac_mgmt_common::ClusterConfig);
     (
         rocket::http::ContentType::JSON,
         serde_json::to_string_pretty(&schema).unwrap(),
@@ -487,10 +487,10 @@ pub async fn setting_config_schema(
     get,
     path = "/api/setting/config",
     tag = "Setting — Config",
-    summary = "Get customer config as JSON",
+    summary = "Get cluster config as JSON",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Customer config JSON"),
+        (status = 200, description = "Cluster config JSON"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
         (status = 404, description = "No config saved"),
@@ -502,12 +502,12 @@ pub async fn setting_get_config(
     pool: &State<PgPool>,
 ) -> Result<Json<serde_json::Value>, Status> {
     let config = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config_json FROM customer_configs \
-         WHERE customer_id = $1 \
+        "SELECT config_json FROM cluster_configs \
+         WHERE cluster_id = $1 \
          ORDER BY created_at DESC \
          LIMIT 1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_optional(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?
@@ -526,7 +526,7 @@ pub struct SetConfigBody {
     put,
     path = "/api/setting/config",
     tag = "Setting — Config",
-    summary = "Set customer config (JSON body)",
+    summary = "Set cluster config (JSON body)",
     security(("bearer" = [])),
     request_body = SetConfigBody,
     responses(
@@ -543,18 +543,18 @@ pub async fn setting_set_config(
     channels: &State<PushChannels>,
     body: Json<SetConfigBody>,
 ) -> Result<Status, Status> {
-    // Validate by deserializing into CustomerConfig
-    let _: mac_mgmt_common::CustomerConfig = serde_json::from_value(body.config.clone())
+    // Validate by deserializing into ClusterConfig
+    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(body.config.clone())
         .map_err(|_| Status::UnprocessableEntity)?;
 
-    sqlx::query("INSERT INTO customer_configs (customer_id, config_json) VALUES ($1, $2)")
-        .bind(auth.customer_id)
+    sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
+        .bind(auth.cluster_id)
         .bind(&body.config)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    push::notify(channels, auth.customer_id, PushMessage::SyncConfig).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncConfig).await;
     Ok(Status::Created)
 }
 
@@ -571,7 +571,7 @@ pub struct PatchConfigBody {
     patch,
     path = "/api/setting/config",
     tag = "Setting — Config",
-    summary = "Partially update customer config",
+    summary = "Partially update cluster config",
     description = "Updates a single key within a config section. Reads the current config, merges the change, validates, and saves as a new version.",
     security(("bearer" = [])),
     request_body = PatchConfigBody,
@@ -591,12 +591,12 @@ pub async fn setting_patch_config(
 ) -> Result<Status, Status> {
     // Load current config
     let current: serde_json::Value = sqlx::query_scalar(
-        "SELECT config_json FROM customer_configs \
-         WHERE customer_id = $1 \
+        "SELECT config_json FROM cluster_configs \
+         WHERE cluster_id = $1 \
          ORDER BY created_at DESC \
          LIMIT 1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_optional(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?
@@ -616,17 +616,17 @@ pub async fn setting_patch_config(
     section_map.insert(body.key.clone(), body.value.clone());
 
     // Validate
-    let _: mac_mgmt_common::CustomerConfig = serde_json::from_value(config.clone())
+    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(config.clone())
         .map_err(|_| Status::UnprocessableEntity)?;
 
-    sqlx::query("INSERT INTO customer_configs (customer_id, config_json) VALUES ($1, $2)")
-        .bind(auth.customer_id)
+    sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
+        .bind(auth.cluster_id)
         .bind(&config)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    push::notify(channels, auth.customer_id, PushMessage::SyncConfig).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncConfig).await;
     Ok(Status::Ok)
 }
 
@@ -636,11 +636,11 @@ pub async fn setting_patch_config(
     get,
     path = "/api/setting/skills",
     tag = "Setting — Skills",
-    summary = "List customer skill assignments",
-    description = "Returns installed skill channels with `installed_bundle` indicating whether the skill comes from a bundle. `customer_skill_id` is present only for direct assignments.",
+    summary = "List cluster skill assignments",
+    description = "Returns installed skill channels with `installed_bundle` indicating whether the skill comes from a bundle. `cluster_skill_id` is present only for direct assignments.",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Customer skills", body = Vec<SkillChannelRow>),
+        (status = 200, description = "Cluster skills", body = Vec<SkillChannelRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -650,7 +650,7 @@ pub async fn setting_list_skills(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<SkillChannelRow>>, Status> {
-    let rows = build_skill_channel_rows(auth.customer_id, pool.inner())
+    let rows = build_skill_channel_rows(auth.cluster_id, pool.inner())
         .await?
         .into_iter()
         .filter(|r| r.installed)
@@ -683,13 +683,13 @@ pub async fn setting_add_skill(
     channels: &State<PushChannels>,
     body: Json<AddSkillBody>,
 ) -> Result<Status, Status> {
-    sqlx::query("INSERT INTO customer_skills (customer_id, skill_channel_id) VALUES ($1, $2)")
-        .bind(auth.customer_id)
+    sqlx::query("INSERT INTO cluster_skills (cluster_id, skill_channel_id) VALUES ($1, $2)")
+        .bind(auth.cluster_id)
         .bind(body.skill_channel_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::Created)
 }
 
@@ -699,7 +699,7 @@ pub async fn setting_add_skill(
     tag = "Setting — Skills",
     summary = "Remove a direct skill assignment",
     security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Customer skill assignment ID")),
+    params(("id" = Uuid, Path, description = "Cluster skill assignment ID")),
     responses(
         (status = 204, description = "Skill removed"),
         (status = 400, description = "Invalid UUID"),
@@ -715,13 +715,13 @@ pub async fn setting_remove_skill(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_skills WHERE id = $1 AND customer_id = $2")
+    sqlx::query("DELETE FROM cluster_skills WHERE id = $1 AND cluster_id = $2")
         .bind(uuid)
-        .bind(auth.customer_id)
+        .bind(auth.cluster_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::NoContent)
 }
 
@@ -740,7 +740,7 @@ pub struct BatchSkillsBody {
     path = "/api/setting/skills/batch",
     tag = "Setting — Skills",
     summary = "Batch add/remove direct skill assignments",
-    description = "Add and remove skill channels in a single request. `add` contains skill_channel_ids to assign (duplicates skipped). `remove` contains customer_skill_ids to delete.",
+    description = "Add and remove skill channels in a single request. `add` contains skill_channel_ids to assign (duplicates skipped). `remove` contains cluster_skill_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchSkillsBody,
     responses(
@@ -758,31 +758,31 @@ pub async fn setting_batch_skills(
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
-        sqlx::query("DELETE FROM customer_skills WHERE id = $1 AND customer_id = $2")
+        sqlx::query("DELETE FROM cluster_skills WHERE id = $1 AND cluster_id = $2")
             .bind(id)
-            .bind(auth.customer_id)
+            .bind(auth.cluster_id)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     for scid in &body.add {
-        sqlx::query("INSERT INTO customer_skills (customer_id, skill_channel_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-            .bind(auth.customer_id)
+        sqlx::query("INSERT INTO cluster_skills (cluster_id, skill_channel_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.cluster_id)
             .bind(scid)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::Ok)
 }
 
 // -- Bundles --
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct CustomerBundleRow {
-    customer_bundle_id: Uuid,
+pub(crate) struct ClusterBundleRow {
+    cluster_bundle_id: Uuid,
     bundle_slug: String,
     bundle_name: String,
     bundle_description: String,
@@ -792,10 +792,10 @@ pub(crate) struct CustomerBundleRow {
     get,
     path = "/api/setting/bundles",
     tag = "Setting — Bundles",
-    summary = "List customer bundle assignments",
+    summary = "List cluster bundle assignments",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Customer bundles", body = Vec<CustomerBundleRow>),
+        (status = 200, description = "Cluster bundles", body = Vec<ClusterBundleRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -804,15 +804,15 @@ pub(crate) struct CustomerBundleRow {
 pub async fn setting_list_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
-) -> Result<Json<Vec<CustomerBundleRow>>, Status> {
-    let rows = sqlx::query_as::<_, CustomerBundleRow>(
-        "SELECT cb.id as customer_bundle_id, b.slug as bundle_slug, b.name as bundle_name, b.description as bundle_description \
-         FROM customer_bundles cb \
+) -> Result<Json<Vec<ClusterBundleRow>>, Status> {
+    let rows = sqlx::query_as::<_, ClusterBundleRow>(
+        "SELECT cb.id as cluster_bundle_id, b.slug as bundle_slug, b.name as bundle_name, b.description as bundle_description \
+         FROM cluster_bundles cb \
          JOIN bundles b ON b.id = cb.bundle_id \
-         WHERE cb.customer_id = $1 \
+         WHERE cb.cluster_id = $1 \
          ORDER BY b.slug",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -844,13 +844,13 @@ pub async fn setting_add_bundle(
     channels: &State<PushChannels>,
     body: Json<AddBundleBody>,
 ) -> Result<Status, Status> {
-    sqlx::query("INSERT INTO customer_bundles (customer_id, bundle_id) VALUES ($1, $2)")
-        .bind(auth.customer_id)
+    sqlx::query("INSERT INTO cluster_bundles (cluster_id, bundle_id) VALUES ($1, $2)")
+        .bind(auth.cluster_id)
         .bind(body.bundle_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::Created)
 }
 
@@ -860,7 +860,7 @@ pub async fn setting_add_bundle(
     tag = "Setting — Bundles",
     summary = "Remove a bundle assignment",
     security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Customer bundle assignment ID")),
+    params(("id" = Uuid, Path, description = "Cluster bundle assignment ID")),
     responses(
         (status = 204, description = "Bundle removed"),
         (status = 400, description = "Invalid UUID"),
@@ -876,13 +876,13 @@ pub async fn setting_remove_bundle(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_bundles WHERE id = $1 AND customer_id = $2")
+    sqlx::query("DELETE FROM cluster_bundles WHERE id = $1 AND cluster_id = $2")
         .bind(uuid)
-        .bind(auth.customer_id)
+        .bind(auth.cluster_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::NoContent)
 }
 
@@ -901,7 +901,7 @@ pub struct BatchBundlesBody {
     path = "/api/setting/bundles/batch",
     tag = "Setting — Bundles",
     summary = "Batch add/remove bundle assignments",
-    description = "`add` contains bundle_ids to assign (duplicates skipped). `remove` contains customer_bundle_ids to delete.",
+    description = "`add` contains bundle_ids to assign (duplicates skipped). `remove` contains cluster_bundle_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchBundlesBody,
     responses(
@@ -919,23 +919,23 @@ pub async fn setting_batch_bundles(
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
-        sqlx::query("DELETE FROM customer_bundles WHERE id = $1 AND customer_id = $2")
+        sqlx::query("DELETE FROM cluster_bundles WHERE id = $1 AND cluster_id = $2")
             .bind(id)
-            .bind(auth.customer_id)
+            .bind(auth.cluster_id)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     for bid in &body.add {
-        sqlx::query("INSERT INTO customer_bundles (customer_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-            .bind(auth.customer_id)
+        sqlx::query("INSERT INTO cluster_bundles (cluster_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.cluster_id)
             .bind(bid)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncSkills).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
     Ok(Status::Ok)
 }
 
@@ -945,11 +945,11 @@ pub async fn setting_batch_bundles(
     get,
     path = "/api/setting/mcp-servers",
     tag = "Setting — MCP Servers",
-    summary = "List customer MCP server assignments",
-    description = "Returns installed MCP servers with `installed_bundle` and `installed_transitive` flags. `customer_mcp_server_id` is present only for direct assignments.",
+    summary = "List cluster MCP server assignments",
+    description = "Returns installed MCP servers with `installed_bundle` and `installed_transitive` flags. `cluster_mcp_server_id` is present only for direct assignments.",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Customer MCP servers", body = Vec<McpServerOptionRow>),
+        (status = 200, description = "Cluster MCP servers", body = Vec<McpServerOptionRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -959,7 +959,7 @@ pub async fn setting_list_mcp_servers(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<McpServerOptionRow>>, Status> {
-    let rows = build_mcp_server_options(auth.customer_id, pool.inner())
+    let rows = build_mcp_server_options(auth.cluster_id, pool.inner())
         .await?
         .into_iter()
         .filter(|r| r.installed)
@@ -992,13 +992,13 @@ pub async fn setting_add_mcp_server(
     channels: &State<PushChannels>,
     body: Json<AddMcpServerBody>,
 ) -> Result<Status, Status> {
-    sqlx::query("INSERT INTO customer_mcp_servers (customer_id, mcp_server_id) VALUES ($1, $2)")
-        .bind(auth.customer_id)
+    sqlx::query("INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2)")
+        .bind(auth.cluster_id)
         .bind(body.mcp_server_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Created)
 }
 
@@ -1008,7 +1008,7 @@ pub async fn setting_add_mcp_server(
     tag = "Setting — MCP Servers",
     summary = "Remove a direct MCP server assignment",
     security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Customer MCP server assignment ID")),
+    params(("id" = Uuid, Path, description = "Cluster MCP server assignment ID")),
     responses(
         (status = 204, description = "MCP server removed"),
         (status = 400, description = "Invalid UUID"),
@@ -1024,13 +1024,13 @@ pub async fn setting_remove_mcp_server(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_mcp_servers WHERE id = $1 AND customer_id = $2")
+    sqlx::query("DELETE FROM cluster_mcp_servers WHERE id = $1 AND cluster_id = $2")
         .bind(uuid)
-        .bind(auth.customer_id)
+        .bind(auth.cluster_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::NoContent)
 }
 
@@ -1049,7 +1049,7 @@ pub struct BatchMcpServersBody {
     path = "/api/setting/mcp-servers/batch",
     tag = "Setting — MCP Servers",
     summary = "Batch add/remove direct MCP server assignments",
-    description = "`add` contains mcp_server_ids to assign (duplicates skipped). `remove` contains customer_mcp_server_ids to delete.",
+    description = "`add` contains mcp_server_ids to assign (duplicates skipped). `remove` contains cluster_mcp_server_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchMcpServersBody,
     responses(
@@ -1067,31 +1067,31 @@ pub async fn setting_batch_mcp_servers(
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
-        sqlx::query("DELETE FROM customer_mcp_servers WHERE id = $1 AND customer_id = $2")
+        sqlx::query("DELETE FROM cluster_mcp_servers WHERE id = $1 AND cluster_id = $2")
             .bind(id)
-            .bind(auth.customer_id)
+            .bind(auth.cluster_id)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     for msid in &body.add {
-        sqlx::query("INSERT INTO customer_mcp_servers (customer_id, mcp_server_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-            .bind(auth.customer_id)
+        sqlx::query("INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.cluster_id)
             .bind(msid)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Ok)
 }
 
 // -- MCP Bundles --
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct CustomerMcpBundleRow {
-    customer_mcp_bundle_id: Uuid,
+pub(crate) struct ClusterMcpBundleRow {
+    cluster_mcp_bundle_id: Uuid,
     bundle_slug: String,
     bundle_name: String,
     bundle_description: String,
@@ -1101,10 +1101,10 @@ pub(crate) struct CustomerMcpBundleRow {
     get,
     path = "/api/setting/mcp-bundles",
     tag = "Setting — MCP Bundles",
-    summary = "List customer MCP bundle assignments",
+    summary = "List cluster MCP bundle assignments",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "Customer MCP bundles", body = Vec<CustomerMcpBundleRow>),
+        (status = 200, description = "Cluster MCP bundles", body = Vec<ClusterMcpBundleRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Setting token required"),
     ),
@@ -1113,15 +1113,15 @@ pub(crate) struct CustomerMcpBundleRow {
 pub async fn setting_list_mcp_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
-) -> Result<Json<Vec<CustomerMcpBundleRow>>, Status> {
-    let rows = sqlx::query_as::<_, CustomerMcpBundleRow>(
-        "SELECT cmb.id as customer_mcp_bundle_id, msb.slug as bundle_slug, msb.name as bundle_name, msb.description as bundle_description \
-         FROM customer_mcp_bundles cmb \
+) -> Result<Json<Vec<ClusterMcpBundleRow>>, Status> {
+    let rows = sqlx::query_as::<_, ClusterMcpBundleRow>(
+        "SELECT cmb.id as cluster_mcp_bundle_id, msb.slug as bundle_slug, msb.name as bundle_name, msb.description as bundle_description \
+         FROM cluster_mcp_bundles cmb \
          JOIN mcp_server_bundles msb ON msb.id = cmb.bundle_id \
-         WHERE cmb.customer_id = $1 \
+         WHERE cmb.cluster_id = $1 \
          ORDER BY msb.slug",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -1153,13 +1153,13 @@ pub async fn setting_add_mcp_bundle(
     channels: &State<PushChannels>,
     body: Json<AddMcpBundleBody>,
 ) -> Result<Status, Status> {
-    sqlx::query("INSERT INTO customer_mcp_bundles (customer_id, bundle_id) VALUES ($1, $2)")
-        .bind(auth.customer_id)
+    sqlx::query("INSERT INTO cluster_mcp_bundles (cluster_id, bundle_id) VALUES ($1, $2)")
+        .bind(auth.cluster_id)
         .bind(body.bundle_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Created)
 }
 
@@ -1169,7 +1169,7 @@ pub async fn setting_add_mcp_bundle(
     tag = "Setting — MCP Bundles",
     summary = "Remove an MCP bundle assignment",
     security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Customer MCP bundle assignment ID")),
+    params(("id" = Uuid, Path, description = "Cluster MCP bundle assignment ID")),
     responses(
         (status = 204, description = "MCP bundle removed"),
         (status = 400, description = "Invalid UUID"),
@@ -1185,13 +1185,13 @@ pub async fn setting_remove_mcp_bundle(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_mcp_bundles WHERE id = $1 AND customer_id = $2")
+    sqlx::query("DELETE FROM cluster_mcp_bundles WHERE id = $1 AND cluster_id = $2")
         .bind(uuid)
-        .bind(auth.customer_id)
+        .bind(auth.cluster_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::NoContent)
 }
 
@@ -1210,7 +1210,7 @@ pub struct BatchMcpBundlesBody {
     path = "/api/setting/mcp-bundles/batch",
     tag = "Setting — MCP Bundles",
     summary = "Batch add/remove MCP bundle assignments",
-    description = "`add` contains bundle_ids to assign (duplicates skipped). `remove` contains customer_mcp_bundle_ids to delete.",
+    description = "`add` contains bundle_ids to assign (duplicates skipped). `remove` contains cluster_mcp_bundle_ids to delete.",
     security(("bearer" = [])),
     request_body = BatchMcpBundlesBody,
     responses(
@@ -1228,23 +1228,23 @@ pub async fn setting_batch_mcp_bundles(
 ) -> Result<Status, Status> {
     let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
-        sqlx::query("DELETE FROM customer_mcp_bundles WHERE id = $1 AND customer_id = $2")
+        sqlx::query("DELETE FROM cluster_mcp_bundles WHERE id = $1 AND cluster_id = $2")
             .bind(id)
-            .bind(auth.customer_id)
+            .bind(auth.cluster_id)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     for bid in &body.add {
-        sqlx::query("INSERT INTO customer_mcp_bundles (customer_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-            .bind(auth.customer_id)
+        sqlx::query("INSERT INTO cluster_mcp_bundles (cluster_id, bundle_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(auth.cluster_id)
             .bind(bid)
             .execute(&mut *tx)
             .await
             .map_err(|_| Status::InternalServerError)?;
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncMcpServers).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
     Ok(Status::Ok)
 }
 
@@ -1260,27 +1260,27 @@ pub(crate) struct SkillChannelRow {
     installed: bool,
     installed_bundle: bool,
     /// Present only for direct (non-bundle) assignments; use with DELETE /setting/skills/{id}.
-    customer_skill_id: Option<Uuid>,
+    cluster_skill_id: Option<Uuid>,
 }
 
 async fn build_skill_channel_rows(
-    customer_id: Uuid,
+    cluster_id: Uuid,
     pool: &PgPool,
 ) -> Result<Vec<SkillChannelRow>, Status> {
     sqlx::query_as::<_, SkillChannelRow>(
         "SELECT sc.id, s.slug as skill_slug, s.name as skill_name, s.description as skill_description, sc.channel, \
                 (cs.id IS NOT NULL OR bi.id IS NOT NULL) as installed, \
                 (bi.id IS NOT NULL) as installed_bundle, \
-                cs.id as customer_skill_id \
+                cs.id as cluster_skill_id \
          FROM skill_channels sc \
          JOIN skills s ON s.id = sc.skill_id \
-         LEFT JOIN customer_skills cs ON cs.skill_channel_id = sc.id AND cs.customer_id = $1 \
+         LEFT JOIN cluster_skills cs ON cs.skill_channel_id = sc.id AND cs.cluster_id = $1 \
          LEFT JOIN bundle_items bi ON bi.skill_channel_id = sc.id \
-              AND bi.bundle_id IN (SELECT bundle_id FROM customer_bundles WHERE customer_id = $1) \
+              AND bi.bundle_id IN (SELECT bundle_id FROM cluster_bundles WHERE cluster_id = $1) \
          WHERE NOT s.hide_from_public_catalog \
          ORDER BY s.slug, sc.channel",
     )
-    .bind(customer_id)
+    .bind(cluster_id)
     .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)
@@ -1291,7 +1291,7 @@ async fn build_skill_channel_rows(
     path = "/api/setting/available/skill-channels",
     tag = "Setting — Available",
     summary = "List all skill channels",
-    description = "Returns all skill channels with an `installed` flag indicating whether the customer has this skill channel assigned (directly or via a bundle).",
+    description = "Returns all skill channels with an `installed` flag indicating whether the cluster has this skill channel assigned (directly or via a bundle).",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "All skill channels", body = Vec<SkillChannelRow>),
@@ -1304,7 +1304,7 @@ pub async fn setting_available_skill_channels(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<SkillChannelRow>>, Status> {
-    Ok(Json(build_skill_channel_rows(auth.customer_id, pool.inner()).await?))
+    Ok(Json(build_skill_channel_rows(auth.cluster_id, pool.inner()).await?))
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -1326,22 +1326,22 @@ pub(crate) struct McpServerOptionRow {
     installed_bundle: bool,
     installed_transitive: bool,
     /// Present only for direct (non-bundle, non-transitive) assignments; use with DELETE /setting/mcp-servers/{id}.
-    customer_mcp_server_id: Option<Uuid>,
+    cluster_mcp_server_id: Option<Uuid>,
 }
 
 async fn build_bundle_rows(
-    customer_id: Uuid,
+    cluster_id: Uuid,
     pool: &PgPool,
 ) -> Result<Vec<OptionRow>, Status> {
     sqlx::query_as::<_, OptionRow>(
         "SELECT b.id, b.slug, b.name, b.description, \
                 (cb.id IS NOT NULL) as installed \
          FROM bundles b \
-         LEFT JOIN customer_bundles cb ON cb.bundle_id = b.id AND cb.customer_id = $1 \
+         LEFT JOIN cluster_bundles cb ON cb.bundle_id = b.id AND cb.cluster_id = $1 \
          WHERE NOT b.hide_from_public_catalog \
          ORDER BY b.slug",
     )
-    .bind(customer_id)
+    .bind(cluster_id)
     .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)
@@ -1352,7 +1352,7 @@ async fn build_bundle_rows(
     path = "/api/setting/available/bundles",
     tag = "Setting — Available",
     summary = "List all skill bundles",
-    description = "Returns all skill bundles with an `installed` flag indicating whether the customer has this bundle assigned.",
+    description = "Returns all skill bundles with an `installed` flag indicating whether the cluster has this bundle assigned.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "All bundles", body = Vec<OptionRow>),
@@ -1365,15 +1365,15 @@ pub async fn setting_available_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
-    Ok(Json(build_bundle_rows(auth.customer_id, pool.inner()).await?))
+    Ok(Json(build_bundle_rows(auth.cluster_id, pool.inner()).await?))
 }
 
-/// Fetch the set of MCP server IDs transitively required by a customer's winning skill channels.
+/// Fetch the set of MCP server IDs transitively required by a cluster's winning skill channels.
 async fn transitive_mcp_server_ids(
-    customer_id: Uuid,
+    cluster_id: Uuid,
     pool: &PgPool,
 ) -> Result<std::collections::HashSet<Uuid>, Status> {
-    let winning = resolve_winning_skill_channels(customer_id, pool).await?;
+    let winning = resolve_winning_skill_channels(cluster_id, pool).await?;
     let channel_ids: Vec<Uuid> = winning.into_values().collect();
     if channel_ids.is_empty() {
         return Ok(std::collections::HashSet::new());
@@ -1396,32 +1396,32 @@ struct McpServerBaseRow {
     description: String,
     installed_direct: bool,
     installed_bundle: bool,
-    customer_mcp_server_id: Option<Uuid>,
+    cluster_mcp_server_id: Option<Uuid>,
 }
 
 /// Build the full MCP server option list with all install flags.
 async fn build_mcp_server_options(
-    customer_id: Uuid,
+    cluster_id: Uuid,
     pool: &PgPool,
 ) -> Result<Vec<McpServerOptionRow>, Status> {
     let base_rows = sqlx::query_as::<_, McpServerBaseRow>(
         "SELECT ms.id, ms.slug, ms.name, ms.description, \
                 (cms.id IS NOT NULL) as installed_direct, \
                 (msbi.id IS NOT NULL) as installed_bundle, \
-                cms.id as customer_mcp_server_id \
+                cms.id as cluster_mcp_server_id \
          FROM mcp_servers ms \
-         LEFT JOIN customer_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.customer_id = $1 \
+         LEFT JOIN cluster_mcp_servers cms ON cms.mcp_server_id = ms.id AND cms.cluster_id = $1 \
          LEFT JOIN mcp_server_bundle_items msbi ON msbi.mcp_server_id = ms.id \
-              AND msbi.bundle_id IN (SELECT bundle_id FROM customer_mcp_bundles WHERE customer_id = $1) \
+              AND msbi.bundle_id IN (SELECT bundle_id FROM cluster_mcp_bundles WHERE cluster_id = $1) \
          WHERE NOT ms.hide_from_public_catalog \
          ORDER BY ms.slug",
     )
-    .bind(customer_id)
+    .bind(cluster_id)
     .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    let transitive_ids = transitive_mcp_server_ids(customer_id, pool).await?;
+    let transitive_ids = transitive_mcp_server_ids(cluster_id, pool).await?;
 
     Ok(base_rows
         .into_iter()
@@ -1435,7 +1435,7 @@ async fn build_mcp_server_options(
                 installed: r.installed_direct || r.installed_bundle || installed_transitive,
                 installed_bundle: r.installed_bundle,
                 installed_transitive,
-                customer_mcp_server_id: r.customer_mcp_server_id,
+                cluster_mcp_server_id: r.cluster_mcp_server_id,
             }
         })
         .collect())
@@ -1459,23 +1459,23 @@ pub async fn setting_available_mcp_servers(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<McpServerOptionRow>>, Status> {
-    let rows = build_mcp_server_options(auth.customer_id, pool.inner()).await?;
+    let rows = build_mcp_server_options(auth.cluster_id, pool.inner()).await?;
     Ok(Json(rows))
 }
 
 async fn build_mcp_bundle_rows(
-    customer_id: Uuid,
+    cluster_id: Uuid,
     pool: &PgPool,
 ) -> Result<Vec<OptionRow>, Status> {
     sqlx::query_as::<_, OptionRow>(
         "SELECT msb.id, msb.slug, msb.name, msb.description, \
                 (cmb.id IS NOT NULL) as installed \
          FROM mcp_server_bundles msb \
-         LEFT JOIN customer_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.customer_id = $1 \
+         LEFT JOIN cluster_mcp_bundles cmb ON cmb.bundle_id = msb.id AND cmb.cluster_id = $1 \
          WHERE NOT msb.hide_from_public_catalog \
          ORDER BY msb.slug",
     )
-    .bind(customer_id)
+    .bind(cluster_id)
     .fetch_all(pool)
     .await
     .map_err(|_| Status::InternalServerError)
@@ -1486,7 +1486,7 @@ async fn build_mcp_bundle_rows(
     path = "/api/setting/available/mcp-bundles",
     tag = "Setting — Available",
     summary = "List all MCP bundles",
-    description = "Returns all MCP bundles with an `installed` flag indicating whether the customer has this bundle assigned.",
+    description = "Returns all MCP bundles with an `installed` flag indicating whether the cluster has this bundle assigned.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "All MCP bundles", body = Vec<OptionRow>),
@@ -1499,7 +1499,7 @@ pub async fn setting_available_mcp_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
-    Ok(Json(build_mcp_bundle_rows(auth.customer_id, pool.inner()).await?))
+    Ok(Json(build_mcp_bundle_rows(auth.cluster_id, pool.inner()).await?))
 }
 
 // -- Bundle contents --
@@ -1654,7 +1654,7 @@ pub async fn setting_catalog(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Catalog>, Status> {
-    let cid = auth.customer_id;
+    let cid = auth.cluster_id;
     let p = pool.inner();
 
     let skill_channels = build_skill_channel_rows(cid, p).await?;
@@ -1758,7 +1758,7 @@ pub async fn setting_catalog(
 // ── Admin routes ────────────────────────────────────────────────────
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct AdminCustomerRow {
+pub(crate) struct AdminClusterRow {
     id: Uuid,
     name: String,
     created_at: DateTime<Utc>,
@@ -1766,23 +1766,23 @@ pub(crate) struct AdminCustomerRow {
 
 #[utoipa::path(
     get,
-    path = "/api/admin/customers",
+    path = "/api/admin/clusters",
     tag = "Admin",
-    summary = "List all customers",
+    summary = "List all clusters",
     security(("bearer" = [])),
     responses(
-        (status = 200, description = "All customers", body = Vec<AdminCustomerRow>),
+        (status = 200, description = "All clusters", body = Vec<AdminClusterRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Admin token required"),
     ),
 )]
-#[rocket::get("/admin/customers")]
-pub async fn admin_list_customers(
+#[rocket::get("/admin/clusters")]
+pub async fn admin_list_clusters(
     _auth: AdminAuth,
     pool: &State<PgPool>,
-) -> Result<Json<Vec<AdminCustomerRow>>, Status> {
-    let rows = sqlx::query_as::<_, AdminCustomerRow>(
-        "SELECT id, name, created_at FROM customers ORDER BY name",
+) -> Result<Json<Vec<AdminClusterRow>>, Status> {
+    let rows = sqlx::query_as::<_, AdminClusterRow>(
+        "SELECT id, name, created_at FROM clusters ORDER BY name",
     )
     .fetch_all(pool.inner())
     .await
@@ -1791,7 +1791,7 @@ pub async fn admin_list_customers(
 }
 
 #[derive(Deserialize, ToSchema)]
-pub struct CreateTokenForCustomerBody {
+pub struct CreateTokenForClusterBody {
     label: String,
     kind: String,
 }
@@ -1803,12 +1803,12 @@ pub(crate) struct CreatedToken {
 
 #[utoipa::path(
     post,
-    path = "/api/admin/customers/{customer_id}/tokens",
+    path = "/api/admin/clusters/{cluster_id}/tokens",
     tag = "Admin",
-    summary = "Create a sync or setting token for a customer",
+    summary = "Create a sync or setting token for a cluster",
     security(("bearer" = [])),
-    params(("customer_id" = Uuid, Path, description = "Customer ID")),
-    request_body = CreateTokenForCustomerBody,
+    params(("cluster_id" = Uuid, Path, description = "Cluster ID")),
+    request_body = CreateTokenForClusterBody,
     responses(
         (status = 201, description = "Token created", body = CreatedToken),
         (status = 400, description = "Invalid kind (must be sync or setting)"),
@@ -1816,17 +1816,17 @@ pub(crate) struct CreatedToken {
         (status = 403, description = "Admin token required"),
     ),
 )]
-#[rocket::post("/admin/customers/<customer_id>/tokens", data = "<body>")]
+#[rocket::post("/admin/clusters/<cluster_id>/tokens", data = "<body>")]
 pub async fn admin_create_token(
     _auth: AdminAuth,
     pool: &State<PgPool>,
-    customer_id: &str,
-    body: Json<CreateTokenForCustomerBody>,
+    cluster_id: &str,
+    body: Json<CreateTokenForClusterBody>,
 ) -> Result<(Status, Json<CreatedToken>), Status> {
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
-    let cid: Uuid = customer_id.parse().map_err(|_| Status::BadRequest)?;
+    let cid: Uuid = cluster_id.parse().map_err(|_| Status::BadRequest)?;
 
     if body.kind != "sync" && body.kind != "setting" {
         return Err(Status::BadRequest);
@@ -1840,7 +1840,7 @@ pub async fn admin_create_token(
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
-    sqlx::query("INSERT INTO tokens (customer_id, token_hash, label, kind) VALUES ($1, $2, $3, $4)")
+    sqlx::query("INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, $4)")
         .bind(cid)
         .bind(&hash)
         .bind(label)
@@ -2008,9 +2008,9 @@ pub async fn get_ssh_keys(
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<SshKeySyncEntry>>, Status> {
     let keys = sqlx::query_scalar::<_, String>(
-        "SELECT public_key FROM customer_ssh_keys WHERE customer_id = $1",
+        "SELECT public_key FROM cluster_ssh_keys WHERE cluster_id = $1",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -2030,7 +2030,7 @@ pub(crate) struct SshKeyRow {
     get,
     path = "/api/setting/ssh-keys",
     tag = "Setting — SSH Keys",
-    summary = "List customer SSH keys",
+    summary = "List cluster SSH keys",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "SSH keys", body = Vec<SshKeyRow>),
@@ -2045,9 +2045,9 @@ pub async fn setting_list_ssh_keys(
 ) -> Result<Json<Vec<SshKeyRow>>, Status> {
     let rows = sqlx::query_as::<_, SshKeyRow>(
         "SELECT id, fingerprint, comment, created_at \
-         FROM customer_ssh_keys WHERE customer_id = $1 ORDER BY created_at",
+         FROM cluster_ssh_keys WHERE cluster_id = $1 ORDER BY created_at",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -2102,10 +2102,10 @@ pub async fn setting_add_ssh_key(
     let (fingerprint, comment) = parse_ssh_public_key(trimmed)?;
 
     sqlx::query(
-        "INSERT INTO customer_ssh_keys (customer_id, public_key, comment, fingerprint) \
+        "INSERT INTO cluster_ssh_keys (cluster_id, public_key, comment, fingerprint) \
          VALUES ($1, $2, $3, $4)",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .bind(trimmed)
     .bind(&comment)
     .bind(&fingerprint)
@@ -2119,7 +2119,7 @@ pub async fn setting_add_ssh_key(
         }
     })?;
 
-    push::notify(channels, auth.customer_id, PushMessage::SyncSshKeys).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSshKeys).await;
     Ok(Status::Created)
 }
 
@@ -2145,13 +2145,13 @@ pub async fn setting_remove_ssh_key(
     id: &str,
 ) -> Result<Status, Status> {
     let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM customer_ssh_keys WHERE id = $1 AND customer_id = $2")
+    sqlx::query("DELETE FROM cluster_ssh_keys WHERE id = $1 AND cluster_id = $2")
         .bind(uuid)
-        .bind(auth.customer_id)
+        .bind(auth.cluster_id)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.customer_id, PushMessage::SyncSshKeys).await;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncSshKeys).await;
     Ok(Status::NoContent)
 }
 
@@ -2194,12 +2194,12 @@ pub async fn post_heartbeat(
     })?;
 
     sqlx::query(
-        "INSERT INTO daemon_heartbeats (customer_id, instance_id, version, hostname, environment, services) \
+        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services) \
          VALUES ($1, $2, $3, $4, $5, $6) \
-         ON CONFLICT (customer_id, instance_id) \
+         ON CONFLICT (cluster_id, instance_id) \
          DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, reported_at = now()",
     )
-    .bind(auth.customer_id)
+    .bind(auth.cluster_id)
     .bind(&body.instance_id)
     .bind(&body.version)
     .bind(&body.hostname)
@@ -2360,14 +2360,14 @@ pub async fn admin_list_rollout_groups(
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct AddGroupMemberBody {
-    customer_id: Uuid,
+    cluster_id: Uuid,
 }
 
 #[utoipa::path(
     post,
     path = "/api/admin/rollout-groups/{group_id}/members",
     tag = "Admin — Rollouts",
-    summary = "Add customer to rollout group",
+    summary = "Add cluster to rollout group",
     security(("bearer" = [])),
     responses(
         (status = 201, description = "Member added"),
@@ -2383,14 +2383,14 @@ pub async fn admin_add_group_member(
 ) -> Result<Status, Status> {
     let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
     if gid == Uuid::nil() {
-        // The "All Customers" sentinel group is implicit — every customer is
+        // The "All Clusters" sentinel group is implicit — every cluster is
         // a member by virtue of existing. Adding rows would be meaningless and
         // confuses the resolver, which special-cases the nil UUID.
         return Err(Status::Forbidden);
     }
-    sqlx::query("INSERT INTO rollout_group_members (group_id, customer_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO rollout_group_members (group_id, cluster_id) VALUES ($1, $2)")
         .bind(gid)
-        .bind(body.customer_id)
+        .bind(body.cluster_id)
         .execute(pool.inner())
         .await
         .map_err(|e| {
@@ -2405,24 +2405,24 @@ pub async fn admin_add_group_member(
 
 #[utoipa::path(
     delete,
-    path = "/api/admin/rollout-groups/{group_id}/members/{customer_id}",
+    path = "/api/admin/rollout-groups/{group_id}/members/{cluster_id}",
     tag = "Admin — Rollouts",
-    summary = "Remove customer from rollout group",
+    summary = "Remove cluster from rollout group",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Member removed"),
     ),
 )]
-#[rocket::delete("/admin/rollout-groups/<group_id>/members/<customer_id>")]
+#[rocket::delete("/admin/rollout-groups/<group_id>/members/<cluster_id>")]
 pub async fn admin_remove_group_member(
     _auth: AdminAuth,
     pool: &State<PgPool>,
     group_id: &str,
-    customer_id: &str,
+    cluster_id: &str,
 ) -> Result<Status, Status> {
     let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
-    let cid: Uuid = customer_id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM rollout_group_members WHERE group_id = $1 AND customer_id = $2")
+    let cid: Uuid = cluster_id.parse().map_err(|_| Status::BadRequest)?;
+    sqlx::query("DELETE FROM rollout_group_members WHERE group_id = $1 AND cluster_id = $2")
         .bind(gid)
         .bind(cid)
         .execute(pool.inner())
@@ -2442,7 +2442,7 @@ pub(crate) struct CreateRolloutBody {
     /// Ordered list of group IDs for the rollout stages
     group_ids: Vec<Uuid>,
     /// Optional nixpkgs commit SHA to pin alongside the version. Null leaves
-    /// each customer's existing nixpkgs pin untouched.
+    /// each cluster's existing nixpkgs pin untouched.
     #[serde(default)]
     nixpkgs_commit: Option<String>,
 }
@@ -2452,13 +2452,13 @@ pub(crate) struct CreateRolloutBody {
     path = "/api/admin/rollouts",
     tag = "Admin — Rollouts",
     summary = "Create a new version rollout",
-    description = "Creates a staged rollout to move groups of customers to a target daemon version. Validates the version is semver and prevents downgrades.",
+    description = "Creates a staged rollout to move groups of clusters to a target daemon version. Validates the version is semver and prevents downgrades.",
     security(("bearer" = [])),
     request_body = CreateRolloutBody,
     responses(
         (status = 201, description = "Rollout created", body = String),
         (status = 400, description = "Bad request"),
-        (status = 409, description = "Would downgrade some customers"),
+        (status = 409, description = "Would downgrade some clusters"),
     ),
 )]
 #[rocket::post("/admin/rollouts", data = "<body>")]
@@ -2501,19 +2501,19 @@ pub async fn admin_create_rollout(
         return Err(Status::BadRequest);
     }
 
-    // Check which customers would be skipped (already at higher version).
+    // Check which clusters would be skipped (already at higher version).
     // Only meaningful when a target_version is given.
     let skipped_names: Vec<String> = if let Some(ver) = &target_version {
         #[derive(sqlx::FromRow)]
-        struct SkippedCustomer { name: String, pinned_version: String }
+        struct SkippedCluster { name: String, pinned_version: String }
 
-        let skipped = sqlx::query_as::<_, SkippedCustomer>(
-            "SELECT c.name, c.pinned_version FROM customers c \
+        let skipped = sqlx::query_as::<_, SkippedCluster>(
+            "SELECT c.name, c.pinned_version FROM clusters c \
              WHERE c.pinned_version IS NOT NULL \
                AND c.pinned_version > $1 \
                AND ('00000000-0000-0000-0000-000000000000'::uuid = ANY($2) \
                     OR c.id IN (\
-                      SELECT rgm.customer_id FROM rollout_group_members rgm \
+                      SELECT rgm.cluster_id FROM rollout_group_members rgm \
                       WHERE rgm.group_id = ANY($2)))",
         )
         .bind(ver)
@@ -2557,7 +2557,7 @@ pub async fn admin_create_rollout(
 
     let mut result = serde_json::json!({ "id": rollout_id });
     if !skipped_names.is_empty() {
-        result["skipped_customers"] = serde_json::json!(skipped_names);
+        result["skipped_clusters"] = serde_json::json!(skipped_names);
     }
     Ok(Json(result))
 }
@@ -2728,8 +2728,8 @@ pub async fn admin_start_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
-    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
+    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
     Ok(Status::Ok)
 }
 
@@ -2802,8 +2802,8 @@ pub async fn admin_advance_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
-    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
+    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
     Ok(Status::Ok)
 }
 
@@ -2852,7 +2852,7 @@ pub async fn admin_pause_rollout(
     post,
     path = "/api/admin/rollouts/{rollout_id}/complete",
     tag = "Admin — Rollouts",
-    summary = "Complete a rollout and persist config to all targeted customers",
+    summary = "Complete a rollout and persist config to all targeted clusters",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Rollout completed"),
@@ -2894,15 +2894,15 @@ pub async fn admin_complete_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    // Pin version for all targeted customers (only if the rollout carried one).
+    // Pin version for all targeted clusters (only if the rollout carried one).
     if let Some(version) = &target_version {
         sqlx::query(
-            "UPDATE customers SET pinned_version = $1 WHERE id IN (\
-             SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+            "UPDATE clusters SET pinned_version = $1 WHERE id IN (\
+             SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
              JOIN LATERAL ( \
-               SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+               SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
                UNION ALL \
-               SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+               SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
              ) rgm ON true \
              WHERE rs.rollout_id = $2)",
         )
@@ -2913,15 +2913,15 @@ pub async fn admin_complete_rollout(
         .map_err(|_| Status::InternalServerError)?;
     }
 
-    // Persist nixpkgs commit (if the rollout carried one) to the same customers.
+    // Persist nixpkgs commit (if the rollout carried one) to the same clusters.
     if let Some(commit) = &nixpkgs_commit {
         sqlx::query(
-            "UPDATE customers SET nixpkgs_commit = $1 WHERE id IN (\
-             SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+            "UPDATE clusters SET nixpkgs_commit = $1 WHERE id IN (\
+             SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
              JOIN LATERAL ( \
-               SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+               SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
                UNION ALL \
-               SELECT id AS customer_id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+               SELECT id AS cluster_id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
              ) rgm ON true \
              WHERE rs.rollout_id = $2)",
         )
@@ -2933,9 +2933,9 @@ pub async fn admin_complete_rollout(
     }
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_all_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_all_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
     if nixpkgs_commit.is_some() {
-        super::push::notify_all_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
+        super::push::notify_all_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
     }
     Ok(Status::Ok)
 }
@@ -2983,7 +2983,7 @@ pub async fn admin_resume_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_rollout_customers(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
     Ok(Status::Ok)
 }
 
@@ -3069,8 +3069,8 @@ pub(crate) struct GroupDetail {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct GroupMemberRow {
     member_id: Uuid,
-    customer_id: Uuid,
-    customer_name: String,
+    cluster_id: Uuid,
+    cluster_name: String,
 }
 
 #[utoipa::path(
@@ -3105,12 +3105,12 @@ pub async fn admin_get_rollout_group(
     .ok_or(Status::NotFound)?;
 
     #[derive(sqlx::FromRow)]
-    struct MRow { member_id: Uuid, customer_id: Uuid, customer_name: String }
+    struct MRow { member_id: Uuid, cluster_id: Uuid, cluster_name: String }
 
     let members = sqlx::query_as::<_, MRow>(
-        "SELECT rgm.id AS member_id, rgm.customer_id, c.name AS customer_name \
+        "SELECT rgm.id AS member_id, rgm.cluster_id, c.name AS cluster_name \
          FROM rollout_group_members rgm \
-         JOIN customers c ON c.id = rgm.customer_id \
+         JOIN clusters c ON c.id = rgm.cluster_id \
          WHERE rgm.group_id = $1 ORDER BY c.name",
     )
     .bind(gid)
@@ -3124,8 +3124,8 @@ pub async fn admin_get_rollout_group(
         description: group.description,
         members: members.into_iter().map(|m| GroupMemberRow {
             member_id: m.member_id,
-            customer_id: m.customer_id,
-            customer_name: m.customer_name,
+            cluster_id: m.cluster_id,
+            cluster_name: m.cluster_name,
         }).collect(),
     }))
 }

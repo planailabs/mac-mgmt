@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 
-const ALL_CUSTOMERS_SENTINEL: &str = "__all__";
+const ALL_CLUSTERS_SENTINEL: &str = "__all__";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupOption {
@@ -54,7 +54,7 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
 
 /// `stage_ids` is an ordered list of group UUIDs or `"__all__"` sentinel.
 /// `"__all__"` maps to the nil UUID (`00000000-…`) sentinel in `rollout_stages.group_id`;
-/// queries that resolve stage members use a subquery for all customers when
+/// queries that resolve stage members use a subquery for all clusters when
 /// the sentinel is present instead of joining through `rollout_group_members`.
 #[server]
 async fn create_rollout(
@@ -121,21 +121,21 @@ async fn create_rollout(
     if let Some(ver) = &target_version {
         #[derive(sqlx::FromRow)]
         struct DowngradeRow {
-            customer_name: String,
+            cluster_name: String,
             pinned_version: String,
             group_name: String,
         }
 
         let downgrades = sqlx::query_as::<_, DowngradeRow>(
-            "SELECT DISTINCT c.name AS customer_name, c.pinned_version, rg.name AS group_name \
+            "SELECT DISTINCT c.name AS cluster_name, c.pinned_version, rg.name AS group_name \
              FROM unnest($1::uuid[]) AS gid \
              JOIN rollout_groups rg ON rg.id = gid \
              JOIN LATERAL ( \
-               SELECT customer_id FROM rollout_group_members WHERE group_id = gid \
+               SELECT cluster_id FROM rollout_group_members WHERE group_id = gid \
                UNION ALL \
-               SELECT id FROM customers WHERE gid = '00000000-0000-0000-0000-000000000000'::uuid \
+               SELECT id FROM clusters WHERE gid = '00000000-0000-0000-0000-000000000000'::uuid \
              ) rgm ON true \
-             JOIN customers c ON c.id = rgm.customer_id \
+             JOIN clusters c ON c.id = rgm.cluster_id \
              WHERE c.pinned_version IS NOT NULL \
                AND c.pinned_version > $2 \
              ORDER BY c.name, rg.name",
@@ -147,17 +147,17 @@ async fn create_rollout(
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         if !downgrades.is_empty() {
-            // Group by customer
-            let mut by_customer: std::collections::BTreeMap<String, (String, Vec<String>)> =
+            // Group by cluster
+            let mut by_cluster: std::collections::BTreeMap<String, (String, Vec<String>)> =
                 std::collections::BTreeMap::new();
             for d in &downgrades {
-                by_customer
-                    .entry(d.customer_name.clone())
+                by_cluster
+                    .entry(d.cluster_name.clone())
                     .or_insert_with(|| (d.pinned_version.clone(), Vec::new()))
                     .1
                     .push(d.group_name.clone());
             }
-            let details: Vec<String> = by_customer
+            let details: Vec<String> = by_cluster
                 .into_iter()
                 .map(|(name, (cur, groups))| format!("{name} (v{cur}, in: {})", groups.join(", ")))
                 .collect();
@@ -260,7 +260,7 @@ pub fn RolloutForm() -> Element {
                             oninput: move |e| nixpkgs_commit.set(e.value()),
                         }
                         p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                            "Pin the nixpkgs source to this commit. Leave blank to leave each customer's existing pin untouched."
+                            "Pin the nixpkgs source to this commit. Leave blank to leave each cluster's existing pin untouched."
                         }
                     }
                     div {
@@ -268,9 +268,9 @@ pub fn RolloutForm() -> Element {
                             "Stages (select in order)"
                         }
 
-                        // "All Customers" as a selectable stage
+                        // "All Clusters" as a selectable stage
                         {
-                            let key = ALL_CUSTOMERS_SENTINEL.to_string();
+                            let key = ALL_CLUSTERS_SENTINEL.to_string();
                             let is_selected = selected_stages.read().contains(&key);
                             let order = selected_stages.read().iter().position(|x| x == &key);
                             rsx! {
@@ -290,7 +290,7 @@ pub fn RolloutForm() -> Element {
                                             }
                                         },
                                     }
-                                    span { class: "font-semibold", "All Customers" }
+                                    span { class: "font-semibold", "All Clusters" }
                                     if let Some(idx) = order {
                                         span { class: "text-xs text-gray-400 dark:text-gray-500",
                                             "(stage {idx})"

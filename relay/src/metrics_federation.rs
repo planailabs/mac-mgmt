@@ -1,7 +1,7 @@
 //! Helpers for the federated `/metrics` endpoint.
 //!
 //! Each per-daemon Prometheus exposition is parsed with `prometheus-parse`,
-//! the federation labels (`instance_id`, `hostname`, `customer_id`) are
+//! the federation labels (`instance_id`, `hostname`, `cluster_id`) are
 //! injected into every sample, and the result is converted into typed
 //! `prometheus::proto::MetricFamily` values that the official
 //! `prometheus::TextEncoder` can render. The federation handler itself lives
@@ -29,12 +29,12 @@ use protobuf::MessageField;
 pub const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 /// Parse a single daemon's `/metrics` body, inject `instance_id`, `hostname`
-/// and `customer_id` labels into every sample, and produce typed families.
+/// and `cluster_id` labels into every sample, and produce typed families.
 pub fn parse_and_relabel(
     body: &str,
     instance_id: &str,
     hostname: &str,
-    customer_id: &str,
+    cluster_id: &str,
 ) -> Result<Vec<MetricFamily>, std::io::Error> {
     let scrape = Scrape::parse(body.lines().map(|l| Ok(l.to_string())))?;
 
@@ -64,7 +64,7 @@ pub fn parse_and_relabel(
     let federation = [
         ("instance_id", instance_id),
         ("hostname", hostname),
-        ("customer_id", customer_id),
+        ("cluster_id", cluster_id),
     ];
 
     for sample in scrape.samples {
@@ -416,8 +416,8 @@ impl SummaryAcc {
 mod tests {
     use super::*;
 
-    fn render(body: &str, instance: &str, host: &str, customer: &str) -> String {
-        let families = parse_and_relabel(body, instance, host, customer).expect("parse ok");
+    fn render(body: &str, instance: &str, host: &str, cluster: &str) -> String {
+        let families = parse_and_relabel(body, instance, host, cluster).expect("parse ok");
         let bytes = encode_families(&families).expect("encode ok");
         String::from_utf8(bytes).expect("utf8")
     }
@@ -430,7 +430,7 @@ mod tests {
         assert!(out.contains("foo{"));
         assert!(out.contains("instance_id=\"abc\""));
         assert!(out.contains("hostname=\"host1\""));
-        assert!(out.contains("customer_id=\"cust1\""));
+        assert!(out.contains("cluster_id=\"cust1\""));
         assert!(out.contains("} 7"));
     }
 
@@ -441,7 +441,7 @@ mod tests {
         assert!(out.contains("# TYPE temp gauge"));
         assert!(out.contains("room=\"a\""));
         assert!(out.contains("instance_id=\"i\""));
-        assert!(out.contains("customer_id=\"c\""));
+        assert!(out.contains("cluster_id=\"c\""));
     }
 
     #[test]
@@ -476,7 +476,7 @@ http_request_duration_seconds_count 3
             .filter(|l| l.starts_with("http_request_duration_seconds"))
         {
             assert!(line.contains("instance_id=\"i\""), "missing in {line}");
-            assert!(line.contains("customer_id=\"c\""), "missing in {line}");
+            assert!(line.contains("cluster_id=\"c\""), "missing in {line}");
             assert!(line.contains("hostname=\"h\""), "missing in {line}");
         }
     }
@@ -500,7 +500,7 @@ rpc_duration_seconds_count 2693
         assert!(out.contains("rpc_duration_seconds_count{"));
         for line in out.lines().filter(|l| l.starts_with("rpc_duration_seconds")) {
             assert!(line.contains("instance_id=\"i\""));
-            assert!(line.contains("customer_id=\"c\""));
+            assert!(line.contains("cluster_id=\"c\""));
         }
     }
 
@@ -520,7 +520,7 @@ rpc_duration_seconds_count 2693
             &[
                 ("instance_id", "abc"),
                 ("hostname", "h"),
-                ("customer_id", "c"),
+                ("cluster_id", "c"),
             ],
             1.0,
         );

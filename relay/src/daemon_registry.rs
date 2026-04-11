@@ -32,8 +32,8 @@ pub struct MetricsResponse {
 /// A connected daemon.
 pub struct DaemonConn {
     pub instance_id: String,
-    pub customer_id: Option<Uuid>,
-    pub customer_name: Option<String>,
+    pub cluster_id: Option<Uuid>,
+    pub cluster_name: Option<String>,
     pub agent_name: Option<String>,
     pub hostname: Option<String>,
     pub ssh_port: u16,
@@ -46,8 +46,8 @@ pub struct DaemonConn {
 #[derive(Debug, Serialize)]
 pub struct TunnelInfo {
     pub instance_id: String,
-    pub customer_id: Option<Uuid>,
-    pub customer_name: Option<String>,
+    pub cluster_id: Option<Uuid>,
+    pub cluster_name: Option<String>,
     pub agent_name: Option<String>,
     pub hostname: Option<String>,
     pub ssh_port: u16,
@@ -224,8 +224,8 @@ impl DaemonRegistry {
             .values()
             .map(|d| TunnelInfo {
                 instance_id: d.instance_id.clone(),
-                customer_id: d.customer_id,
-                customer_name: d.customer_name.clone(),
+                cluster_id: d.cluster_id,
+                cluster_name: d.cluster_name.clone(),
                 agent_name: d.agent_name.clone(),
                 hostname: d.hostname.clone(),
                 ssh_port: d.ssh_port,

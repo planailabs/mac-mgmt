@@ -4,13 +4,13 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-pub struct AuthenticatedCustomer {
-    pub customer_id: Option<Uuid>,
+pub struct AuthenticatedToken {
+    pub cluster_id: Option<Uuid>,
     pub token_kind: String,
 }
 
 #[rocket::async_trait]
-impl<'r> FromRequest<'r> for AuthenticatedCustomer {
+impl<'r> FromRequest<'r> for AuthenticatedToken {
     type Error = &'static str;
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
@@ -32,15 +32,15 @@ impl<'r> FromRequest<'r> for AuthenticatedCustomer {
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
         let result = sqlx::query_as::<_, (Option<Uuid>, String)>(
-            "SELECT customer_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",
+            "SELECT cluster_id, kind FROM tokens WHERE token_hash = $1 AND NOT revoked",
         )
         .bind(&hash)
         .fetch_optional(pool)
         .await;
 
         match result {
-            Ok(Some((customer_id, kind))) => Outcome::Success(AuthenticatedCustomer {
-                customer_id,
+            Ok(Some((cluster_id, kind))) => Outcome::Success(AuthenticatedToken {
+                cluster_id,
                 token_kind: kind,
             }),
             Ok(None) => Outcome::Error((Status::Unauthorized, "invalid or revoked token")),
@@ -51,7 +51,7 @@ impl<'r> FromRequest<'r> for AuthenticatedCustomer {
 
 /// Guard that only allows sync tokens.
 pub struct SyncAuth {
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
 }
 
 #[rocket::async_trait]
@@ -59,11 +59,11 @@ impl<'r> FromRequest<'r> for SyncAuth {
     type Error = &'static str;
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        match AuthenticatedCustomer::from_request(req).await {
+        match AuthenticatedToken::from_request(req).await {
             Outcome::Success(auth) if auth.token_kind == "sync" => {
-                match auth.customer_id {
-                    Some(cid) => Outcome::Success(SyncAuth { customer_id: cid }),
-                    None => Outcome::Error((Status::Forbidden, "sync token requires a customer")),
+                match auth.cluster_id {
+                    Some(cid) => Outcome::Success(SyncAuth { cluster_id: cid }),
+                    None => Outcome::Error((Status::Forbidden, "sync token requires a cluster")),
                 }
             }
             Outcome::Success(_) => Outcome::Error((Status::Forbidden, "sync token required")),
@@ -75,7 +75,7 @@ impl<'r> FromRequest<'r> for SyncAuth {
 
 /// Guard that only allows setting tokens.
 pub struct SettingAuth {
-    pub customer_id: Uuid,
+    pub cluster_id: Uuid,
 }
 
 #[rocket::async_trait]
@@ -83,11 +83,11 @@ impl<'r> FromRequest<'r> for SettingAuth {
     type Error = &'static str;
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        match AuthenticatedCustomer::from_request(req).await {
+        match AuthenticatedToken::from_request(req).await {
             Outcome::Success(auth) if auth.token_kind == "setting" => {
-                match auth.customer_id {
-                    Some(cid) => Outcome::Success(SettingAuth { customer_id: cid }),
-                    None => Outcome::Error((Status::Forbidden, "setting token requires a customer")),
+                match auth.cluster_id {
+                    Some(cid) => Outcome::Success(SettingAuth { cluster_id: cid }),
+                    None => Outcome::Error((Status::Forbidden, "setting token requires a cluster")),
                 }
             }
             Outcome::Success(_) => Outcome::Error((Status::Forbidden, "setting token required")),
@@ -105,7 +105,7 @@ impl<'r> FromRequest<'r> for AdminAuth {
     type Error = &'static str;
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        match AuthenticatedCustomer::from_request(req).await {
+        match AuthenticatedToken::from_request(req).await {
             Outcome::Success(auth) if auth.token_kind == "admin" => {
                 Outcome::Success(AdminAuth)
             }

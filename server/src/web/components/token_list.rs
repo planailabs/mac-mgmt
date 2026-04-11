@@ -3,13 +3,13 @@ use dioxus::prelude::*;
 use crate::models::Token;
 
 #[server]
-async fn list_tokens(customer_id: String) -> Result<Vec<Token>, ServerFnError> {
+async fn list_tokens(cluster_id: String) -> Result<Vec<Token>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id
+    let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let tokens = sqlx::query_as::<_, Token>(
-        "SELECT * FROM tokens WHERE customer_id = $1 AND kind = 'sync' ORDER BY created_at DESC",
+        "SELECT * FROM tokens WHERE cluster_id = $1 AND kind = 'sync' ORDER BY created_at DESC",
     )
     .bind(uuid)
     .fetch_all(&pool)
@@ -19,7 +19,7 @@ async fn list_tokens(customer_id: String) -> Result<Vec<Token>, ServerFnError> {
 }
 
 #[server]
-async fn create_token(customer_id: String, label: String) -> Result<String, ServerFnError> {
+async fn create_token(cluster_id: String, label: String) -> Result<String, ServerFnError> {
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
@@ -29,14 +29,14 @@ async fn create_token(customer_id: String, label: String) -> Result<String, Serv
     }
 
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id
+    let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
-    sqlx::query("INSERT INTO tokens (customer_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')")
+    sqlx::query("INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')")
         .bind(uuid)
         .bind(&hash)
         .bind(&label)
@@ -62,8 +62,8 @@ async fn revoke_token(token_id: String) -> Result<(), ServerFnError> {
 }
 
 #[component]
-pub fn SyncTokenList(customer_id: String) -> Element {
-    let cid = customer_id.clone();
+pub fn SyncTokenList(cluster_id: String) -> Element {
+    let cid = cluster_id.clone();
     let mut tokens = use_server_future(move || {
         let cid = cid.clone();
         async move { list_tokens(cid).await }
@@ -72,7 +72,7 @@ pub fn SyncTokenList(customer_id: String) -> Element {
     let mut label = use_signal(String::new);
     let mut new_token = use_signal(|| None::<String>);
 
-    let cid_create = customer_id.clone();
+    let cid_create = cluster_id.clone();
     let on_create = move |evt: FormEvent| {
         evt.prevent_default();
         let cid = cid_create.clone();

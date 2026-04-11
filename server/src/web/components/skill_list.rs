@@ -109,8 +109,8 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
         }
     }
 
-    // Resolve which customers are affected BEFORE deleting — the cascade
-    // will wipe customer_skills/bundle_items rows and we'd otherwise lose
+    // Resolve which clusters are affected BEFORE deleting — the cascade
+    // will wipe cluster_skills/bundle_items rows and we'd otherwise lose
     // the ability to push them a sync.
     let slugs_vec: Vec<String> = valid_pairs.iter().map(|(s, _)| s.clone()).collect();
     let channels_vec: Vec<String> = valid_pairs.iter().map(|(_, c)| c.clone()).collect();

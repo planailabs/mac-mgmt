@@ -99,7 +99,7 @@ pub async fn run(
 
     dispatcher.dispatch(&DaemonEvent::DaemonStarted);
 
-    // Fetch the customer's nixpkgs pin (if any) before ServiceManager::init runs
+    // Fetch the cluster's nixpkgs pin (if any) before ServiceManager::init runs
     // ensure_installed(), so the very first install uses the pinned URL.
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         fetch_nixpkgs_pin(url, token).await;
@@ -505,7 +505,7 @@ async fn fetch_target_version(server_url: &str, server_token: &str) {
     }
 }
 
-/// Fetch the customer's nixpkgs commit pin from the server and apply it
+/// Fetch the cluster's nixpkgs commit pin from the server and apply it
 /// in-process. Subsequent `nix profile` operations will use this commit's
 /// GitLab archive tarball as the flake source.
 async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {

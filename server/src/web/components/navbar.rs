@@ -147,7 +147,7 @@ pub fn Navbar() -> Element {
     };
 
     let nav_links = [
-        (Route::CustomerList {}, "Customers"),
+        (Route::ClusterList {}, "Clusters"),
         (Route::SkillList {}, "Skills"),
         (Route::BundleList {}, "Bundles"),
         (Route::McpServerList {}, "MCP Servers"),
@@ -165,7 +165,7 @@ pub fn Navbar() -> Element {
         nav { class: "bg-white dark:bg-gray-800 shadow dark:shadow-gray-900/30",
             div { class: "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
                 div { class: "flex justify-between h-16 items-center",
-                    Link { to: Route::CustomerList {},
+                    Link { to: Route::ClusterList {},
                         h1 { class: "text-xl font-bold text-gray-900 dark:text-white", "mac-mgmt" }
                     }
 

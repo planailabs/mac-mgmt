@@ -16,9 +16,9 @@ pub struct DiffLine {
 }
 
 #[server]
-async fn get_config_history(customer_id: String) -> Result<Vec<ConfigVersion>, ServerFnError> {
+async fn get_config_history(cluster_id: String) -> Result<Vec<ConfigVersion>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: Uuid = customer_id
+    let uuid: Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
@@ -29,7 +29,7 @@ async fn get_config_history(customer_id: String) -> Result<Vec<ConfigVersion>, S
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, created_at FROM customer_configs WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 50",
+        "SELECT id, created_at FROM cluster_configs WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 50",
     )
     .bind(uuid)
     .fetch_all(&pool)
@@ -61,7 +61,7 @@ async fn get_config_diff(
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     let left_json: serde_json::Value =
-        sqlx::query_scalar("SELECT config_json FROM customer_configs WHERE id = $1")
+        sqlx::query_scalar("SELECT config_json FROM cluster_configs WHERE id = $1")
             .bind(left_uuid)
             .fetch_one(&pool)
             .await
@@ -69,7 +69,7 @@ async fn get_config_diff(
     let left_text = serde_json::to_string_pretty(&left_json).unwrap_or_default();
 
     let right_json: serde_json::Value =
-        sqlx::query_scalar("SELECT config_json FROM customer_configs WHERE id = $1")
+        sqlx::query_scalar("SELECT config_json FROM cluster_configs WHERE id = $1")
             .bind(right_uuid)
             .fetch_one(&pool)
             .await
@@ -96,8 +96,8 @@ async fn get_config_diff(
 }
 
 #[component]
-pub fn ConfigHistory(customer_id: String) -> Element {
-    let cid = customer_id.clone();
+pub fn ConfigHistory(cluster_id: String) -> Element {
+    let cid = cluster_id.clone();
     let history = use_server_future(move || {
         let id = cid.clone();
         async move { get_config_history(id).await }

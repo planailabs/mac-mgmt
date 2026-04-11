@@ -5,8 +5,8 @@ use super::mcp_bundle_detail::McpServerOption;
 /// Direct MCP server assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerMcpServerDisplay {
-    pub customer_mcp_server_id: uuid::Uuid,
+pub struct ClusterMcpServerDisplay {
+    pub cluster_mcp_server_id: uuid::Uuid,
     pub server_slug: String,
     pub server_name: String,
 }
@@ -33,8 +33,8 @@ pub struct TransitiveMcpServerDisplay {
 /// MCP bundle assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct CustomerMcpBundleDisplay {
-    pub customer_mcp_bundle_id: uuid::Uuid,
+pub struct ClusterMcpBundleDisplay {
+    pub cluster_mcp_bundle_id: uuid::Uuid,
     pub bundle_slug: String,
     pub bundle_name: String,
 }
@@ -49,14 +49,14 @@ pub struct McpBundleOption {
 }
 
 #[server]
-async fn list_customer_mcp_servers(customer_id: String) -> Result<Vec<CustomerMcpServerDisplay>, ServerFnError> {
+async fn list_cluster_mcp_servers(cluster_id: String) -> Result<Vec<ClusterMcpServerDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let servers = sqlx::query_as::<_, CustomerMcpServerDisplay>(
-        "SELECT cms.id as customer_mcp_server_id, ms.slug as server_slug, ms.name as server_name \
-         FROM customer_mcp_servers cms \
+    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let servers = sqlx::query_as::<_, ClusterMcpServerDisplay>(
+        "SELECT cms.id as cluster_mcp_server_id, ms.slug as server_slug, ms.name as server_name \
+         FROM cluster_mcp_servers cms \
          JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
-         WHERE cms.customer_id = $1 \
+         WHERE cms.cluster_id = $1 \
          ORDER BY ms.slug",
     )
     .bind(uuid)
@@ -67,14 +67,14 @@ async fn list_customer_mcp_servers(customer_id: String) -> Result<Vec<CustomerMc
 }
 
 #[server]
-async fn list_customer_mcp_bundles(customer_id: String) -> Result<Vec<CustomerMcpBundleDisplay>, ServerFnError> {
+async fn list_cluster_mcp_bundles(cluster_id: String) -> Result<Vec<ClusterMcpBundleDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let bundles = sqlx::query_as::<_, CustomerMcpBundleDisplay>(
-        "SELECT cmb.id as customer_mcp_bundle_id, msb.slug as bundle_slug, msb.name as bundle_name \
-         FROM customer_mcp_bundles cmb \
+    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let bundles = sqlx::query_as::<_, ClusterMcpBundleDisplay>(
+        "SELECT cmb.id as cluster_mcp_bundle_id, msb.slug as bundle_slug, msb.name as bundle_name \
+         FROM cluster_mcp_bundles cmb \
          JOIN mcp_server_bundles msb ON msb.id = cmb.bundle_id \
-         WHERE cmb.customer_id = $1 \
+         WHERE cmb.cluster_id = $1 \
          ORDER BY msb.slug",
     )
     .bind(uuid)
@@ -85,9 +85,9 @@ async fn list_customer_mcp_bundles(customer_id: String) -> Result<Vec<CustomerMc
 }
 
 #[server]
-async fn list_bundle_mcp_servers(customer_id: String) -> Result<Vec<BundleMcpServerDisplay>, ServerFnError> {
+async fn list_bundle_mcp_servers(cluster_id: String) -> Result<Vec<BundleMcpServerDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -98,11 +98,11 @@ async fn list_bundle_mcp_servers(customer_id: String) -> Result<Vec<BundleMcpSer
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT DISTINCT ms.slug as server_slug, ms.name as server_name, msb.slug as bundle_slug \
-         FROM customer_mcp_bundles cmb \
+         FROM cluster_mcp_bundles cmb \
          JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
          JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
          JOIN mcp_server_bundles msb ON msb.id = cmb.bundle_id \
-         WHERE cmb.customer_id = $1 \
+         WHERE cmb.cluster_id = $1 \
          ORDER BY ms.slug",
     )
     .bind(uuid)
@@ -113,9 +113,9 @@ async fn list_bundle_mcp_servers(customer_id: String) -> Result<Vec<BundleMcpSer
     // Overwritten if a direct assignment exists for the same server slug.
     let direct_slugs: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT ms.slug \
-         FROM customer_mcp_servers cms \
+         FROM cluster_mcp_servers cms \
          JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
-         WHERE cms.customer_id = $1",
+         WHERE cms.cluster_id = $1",
     )
     .bind(uuid)
     .fetch_all(&pool)
@@ -136,11 +136,11 @@ async fn list_bundle_mcp_servers(customer_id: String) -> Result<Vec<BundleMcpSer
 }
 
 #[server]
-async fn list_transitive_mcp_servers(customer_id: String) -> Result<Vec<TransitiveMcpServerDisplay>, ServerFnError> {
+async fn list_transitive_mcp_servers(cluster_id: String) -> Result<Vec<TransitiveMcpServerDisplay>, ServerFnError> {
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    // Resolve winning skill channels for this customer (direct wins over bundle).
+    // Resolve winning skill channels for this cluster (direct wins over bundle).
     #[derive(sqlx::FromRow)]
     struct WinRow {
         skill_channel_id: uuid::Uuid,
@@ -151,17 +151,17 @@ async fn list_transitive_mcp_servers(customer_id: String) -> Result<Vec<Transiti
 
     let skill_rows = sqlx::query_as::<_, WinRow>(
         "SELECT sc.id AS skill_channel_id, s.slug, sc.channel, true AS is_direct \
-         FROM customer_skills cs \
+         FROM cluster_skills cs \
          JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cs.customer_id = $1 \
+         WHERE cs.cluster_id = $1 \
          UNION ALL \
          SELECT sc.id AS skill_channel_id, s.slug, sc.channel, false AS is_direct \
-         FROM customer_bundles cb \
+         FROM cluster_bundles cb \
          JOIN bundle_items bi ON bi.bundle_id = cb.bundle_id \
          JOIN skill_channels sc ON sc.id = bi.skill_channel_id \
          JOIN skills s ON s.id = sc.skill_id \
-         WHERE cb.customer_id = $1",
+         WHERE cb.cluster_id = $1",
     )
     .bind(cid)
     .fetch_all(&pool)
@@ -216,15 +216,15 @@ async fn list_transitive_mcp_servers(customer_id: String) -> Result<Vec<Transiti
     // Overwritten if a direct or bundle assignment exists for the same server slug.
     let higher_slugs: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT ms.slug \
-         FROM customer_mcp_servers cms \
+         FROM cluster_mcp_servers cms \
          JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
-         WHERE cms.customer_id = $1 \
+         WHERE cms.cluster_id = $1 \
          UNION \
          SELECT ms.slug \
-         FROM customer_mcp_bundles cmb \
+         FROM cluster_mcp_bundles cmb \
          JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
          JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
-         WHERE cmb.customer_id = $1",
+         WHERE cmb.cluster_id = $1",
     )
     .bind(cid)
     .fetch_all(&pool)
@@ -275,11 +275,11 @@ async fn list_all_mcp_bundles() -> Result<Vec<McpBundleOption>, ServerFnError> {
 }
 
 #[server]
-async fn add_customer_mcp_server(customer_id: String, mcp_server_id: String) -> Result<(), ServerFnError> {
+async fn add_cluster_mcp_server(cluster_id: String, mcp_server_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let msid: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query("INSERT INTO customer_mcp_servers (customer_id, mcp_server_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2)")
         .bind(cid)
         .bind(msid)
         .execute(&pool)
@@ -290,11 +290,11 @@ async fn add_customer_mcp_server(customer_id: String, mcp_server_id: String) -> 
 }
 
 #[server]
-async fn remove_customer_mcp_server(customer_mcp_server_id: String) -> Result<(), ServerFnError> {
+async fn remove_cluster_mcp_server(cluster_mcp_server_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "DELETE FROM customer_mcp_servers WHERE id = $1 RETURNING customer_id",
+        "DELETE FROM cluster_mcp_servers WHERE id = $1 RETURNING cluster_id",
     )
     .bind(uuid)
     .fetch_optional(&pool)
@@ -307,18 +307,18 @@ async fn remove_customer_mcp_server(customer_mcp_server_id: String) -> Result<()
 }
 
 #[server]
-async fn add_customer_mcp_bundle(customer_id: String, bundle_id: String) -> Result<(), ServerFnError> {
+async fn add_cluster_mcp_bundle(cluster_id: String, bundle_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = customer_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     // Check for overlap: does the new bundle share any mcp_server with
-    // any bundle already assigned to this customer?
+    // any bundle already assigned to this cluster?
     let overlap = sqlx::query_scalar::<_, String>(
         "SELECT ms.slug \
          FROM mcp_server_bundle_items new_bi \
          JOIN mcp_server_bundle_items existing_bi ON existing_bi.mcp_server_id = new_bi.mcp_server_id \
-         JOIN customer_mcp_bundles cmb ON cmb.bundle_id = existing_bi.bundle_id AND cmb.customer_id = $1 \
+         JOIN cluster_mcp_bundles cmb ON cmb.bundle_id = existing_bi.bundle_id AND cmb.cluster_id = $1 \
          JOIN mcp_servers ms ON ms.id = new_bi.mcp_server_id \
          WHERE new_bi.bundle_id = $2 \
          LIMIT 1",
@@ -335,7 +335,7 @@ async fn add_customer_mcp_bundle(customer_id: String, bundle_id: String) -> Resu
         )));
     }
 
-    sqlx::query("INSERT INTO customer_mcp_bundles (customer_id, bundle_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO cluster_mcp_bundles (cluster_id, bundle_id) VALUES ($1, $2)")
         .bind(cid)
         .bind(bid)
         .execute(&pool)
@@ -346,11 +346,11 @@ async fn add_customer_mcp_bundle(customer_id: String, bundle_id: String) -> Resu
 }
 
 #[server]
-async fn remove_customer_mcp_bundle(customer_mcp_bundle_id: String) -> Result<(), ServerFnError> {
+async fn remove_cluster_mcp_bundle(cluster_mcp_bundle_id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = customer_mcp_bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_mcp_bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "DELETE FROM customer_mcp_bundles WHERE id = $1 RETURNING customer_id",
+        "DELETE FROM cluster_mcp_bundles WHERE id = $1 RETURNING cluster_id",
     )
     .bind(uuid)
     .fetch_optional(&pool)
@@ -363,26 +363,26 @@ async fn remove_customer_mcp_bundle(customer_mcp_bundle_id: String) -> Result<()
 }
 
 #[component]
-pub fn CustomerMcpServers(customer_id: String) -> Element {
-    let cid_servers = customer_id.clone();
+pub fn ClusterMcpServers(cluster_id: String) -> Element {
+    let cid_servers = cluster_id.clone();
     let mut servers = use_server_future(move || {
         let cid = cid_servers.clone();
-        async move { list_customer_mcp_servers(cid).await }
+        async move { list_cluster_mcp_servers(cid).await }
     })?;
 
-    let cid_bundles = customer_id.clone();
+    let cid_bundles = cluster_id.clone();
     let mut bundles = use_server_future(move || {
         let cid = cid_bundles.clone();
-        async move { list_customer_mcp_bundles(cid).await }
+        async move { list_cluster_mcp_bundles(cid).await }
     })?;
 
-    let cid_bmcps = customer_id.clone();
+    let cid_bmcps = cluster_id.clone();
     let bundle_mcps = use_server_future(move || {
         let cid = cid_bmcps.clone();
         async move { list_bundle_mcp_servers(cid).await }
     })?;
 
-    let cid_tmcps = customer_id.clone();
+    let cid_tmcps = cluster_id.clone();
     let transitive_mcps = use_server_future(move || {
         let cid = cid_tmcps.clone();
         async move { list_transitive_mcp_servers(cid).await }
@@ -395,8 +395,8 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
     let mut selected_bundle = use_signal(String::new);
     let mut bundle_error = use_signal(|| None::<String>);
 
-    let cid_add_server = customer_id.clone();
-    let cid_add_bundle = customer_id.clone();
+    let cid_add_server = cluster_id.clone();
+    let cid_add_bundle = cluster_id.clone();
 
     rsx! {
         // Direct MCP server assignments
@@ -410,7 +410,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     let msid = selected_server.read().clone();
                     spawn(async move {
                         if !msid.is_empty() {
-                            if add_customer_mcp_server(cid, msid).await.is_ok() {
+                            if add_cluster_mcp_server(cid, msid).await.is_ok() {
                                 selected_server.set(String::new());
                                 servers.restart();
                             }
@@ -449,7 +449,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cs in list {
                             {
-                                let csid = cs.customer_mcp_server_id.to_string();
+                                let csid = cs.cluster_mcp_server_id.to_string();
                                 let label = format!("{} ({})", cs.server_name, cs.server_slug);
                                 rsx! {
                                     li { class: "py-2 flex justify-between items-center",
@@ -459,7 +459,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                             onclick: move |_| {
                                                 let csid = csid.clone();
                                                 spawn(async move {
-                                                    if remove_customer_mcp_server(csid).await.is_ok() {
+                                                    if remove_cluster_mcp_server(csid).await.is_ok() {
                                                         servers.restart();
                                                     }
                                                 });
@@ -561,7 +561,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     let bid = selected_bundle.read().clone();
                     spawn(async move {
                         if !bid.is_empty() {
-                            match add_customer_mcp_bundle(cid, bid).await {
+                            match add_cluster_mcp_bundle(cid, bid).await {
                                 Ok(()) => {
                                     bundle_error.set(None);
                                     selected_bundle.set(String::new());
@@ -606,7 +606,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for cb in list {
                             {
-                                let cbid = cb.customer_mcp_bundle_id.to_string();
+                                let cbid = cb.cluster_mcp_bundle_id.to_string();
                                 let label = format!("{} ({})", cb.bundle_name, cb.bundle_slug);
                                 rsx! {
                                     li { class: "py-2 flex justify-between items-center",
@@ -616,7 +616,7 @@ pub fn CustomerMcpServers(customer_id: String) -> Element {
                                             onclick: move |_| {
                                                 let cbid = cbid.clone();
                                                 spawn(async move {
-                                                    if remove_customer_mcp_bundle(cbid).await.is_ok() {
+                                                    if remove_cluster_mcp_bundle(cbid).await.is_ok() {
                                                         bundles.restart();
                                                     }
                                                 });

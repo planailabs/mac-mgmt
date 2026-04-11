@@ -40,7 +40,7 @@ async fn get_bundle(id: String) -> Result<Bundle, ServerFnError> {
 async fn delete_bundle(id: String) -> Result<(), ServerFnError> {
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Notify affected customers before the cascade removes their assignments.
+    // Notify affected clusters before the cascade removes their assignments.
     crate::api::push::notify_skill_bundle_global(uuid).await;
     sqlx::query("DELETE FROM bundles WHERE id = $1")
         .bind(uuid)

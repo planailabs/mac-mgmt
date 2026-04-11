@@ -91,11 +91,11 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
          COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.version = $2 AND dh.reported_at > now() - interval '5 minutes') AS upgraded \
          FROM rollout_stages rs \
          JOIN LATERAL ( \
-           SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+           SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
            UNION ALL \
-           SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+           SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
          ) rgm ON true \
-         LEFT JOIN daemon_heartbeats dh ON dh.customer_id = rgm.customer_id \
+         LEFT JOIN daemon_heartbeats dh ON dh.cluster_id = rgm.cluster_id \
          WHERE rs.rollout_id = $1 \
          GROUP BY rs.stage_order",
     )
@@ -293,12 +293,12 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             .map_err(|e| ServerFnError::new(e.to_string()))?;
             if let Some(version) = &target_version {
                 sqlx::query(
-                    "UPDATE customers SET pinned_version = $1 WHERE id IN (\
-                     SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+                    "UPDATE clusters SET pinned_version = $1 WHERE id IN (\
+                     SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
                      JOIN LATERAL ( \
-                       SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+                       SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
                        UNION ALL \
-                       SELECT id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                       SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
                      ) rgm ON true \
                      WHERE rs.rollout_id = $2)",
                 )
@@ -310,12 +310,12 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             }
             if let Some(commit) = &nixpkgs_commit {
                 sqlx::query(
-                    "UPDATE customers SET nixpkgs_commit = $1 WHERE id IN (\
-                     SELECT DISTINCT rgm.customer_id FROM rollout_stages rs \
+                    "UPDATE clusters SET nixpkgs_commit = $1 WHERE id IN (\
+                     SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
                      JOIN LATERAL ( \
-                       SELECT customer_id FROM rollout_group_members WHERE group_id = rs.group_id \
+                       SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
                        UNION ALL \
-                       SELECT id AS customer_id FROM customers WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                       SELECT id AS cluster_id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
                      ) rgm ON true \
                      WHERE rs.rollout_id = $2)",
                 )
