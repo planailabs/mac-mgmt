@@ -920,12 +920,9 @@ impl ServiceManager {
 
     // ── Shutdown ─────────────────────────────────────────────────────
 
-    /// Graceful shutdown.
-    ///
-    /// If `stop_services` is true, also stop the per-service system units
-    /// (used by `mac-mgmt stop`). If false, leave them running (used by
-    /// daemon self-update / restart where services should survive).
-    pub async fn shutdown(&mut self, stop_services: bool) {
+    /// Graceful shutdown. Inline services are killed (they're child processes).
+    /// External services are left running — they survive daemon restarts.
+    pub async fn shutdown(&mut self) {
         match &mut self.backend {
             ServiceBackend::Inline(states) => {
                 // SIGTERM all, then SIGKILL after 10s.
@@ -970,20 +967,8 @@ impl ServiceManager {
                     tracing::info!("{name} stopped");
                 }
             }
-            ServiceBackend::External(states) => {
-                if stop_services {
-                    for state in states.iter_mut() {
-                        let name = &state.service_name;
-                        if let Some(ref mut client) = state.client {
-                            let _ = client.request(&IpcRequest::Shutdown).await;
-                        }
-                        if let Err(e) = crate::service::stop_managed_service(name) {
-                            tracing::warn!("stop {name} unit: {e}");
-                        }
-                    }
-                } else {
-                    tracing::info!("leaving per-service units running (daemon restart)");
-                }
+            ServiceBackend::External(_) => {
+                tracing::info!("leaving external services running (they survive daemon restarts)");
             }
         }
     }

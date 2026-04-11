@@ -454,7 +454,7 @@ pub async fn run(
     }
 
     #[cfg(feature = "services")]
-    svc_mgr.shutdown(true).await;
+    svc_mgr.shutdown().await;
 
     #[cfg(feature = "relay")]
     relay_mgr.cleanup();
