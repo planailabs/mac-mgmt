@@ -93,8 +93,11 @@ pub fn load() -> &'static ServerConfig {
             .unwrap_or_else(|e| panic!("failed to parse config from {path}: {e}"));
 
         #[cfg(feature = "webui")]
-        if cfg!(not(debug_assertions)) && config.oidc.is_none() {
-            panic!("[oidc] section is required in release builds");
+        if cfg!(not(debug_assertions))
+            && config.oidc.is_none()
+            && std::env::var("DEV_ONLY_NO_AUTH").as_deref() != Ok("1")
+        {
+            panic!("[oidc] section is required in release builds (set DEV_ONLY_NO_AUTH=1 to bypass)");
         }
 
         config

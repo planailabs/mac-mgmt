@@ -123,13 +123,17 @@ fn main() {
         });
 
         dioxus::serve(move || async move {
+            let dev_no_auth = std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
             let auth_layer = if let Some(layer) = INIT.get() {
                 layer.clone()
             } else {
                 let (_pool, api_rocket) = init_server().await;
                 let cfg = config::load();
 
-                let auth_layer = if cfg.oidc.is_some() {
+                let auth_layer = if dev_no_auth {
+                    tracing::warn!("DEV_ONLY_NO_AUTH=1 — OIDC disabled, using dev admin user");
+                    None
+                } else if cfg.oidc.is_some() {
                     let (layer, _cache) =
                         web::auth::build_auth_layer(&cfg.database.url).await;
                     Some(layer)
@@ -156,6 +160,10 @@ fn main() {
                 router = router
                     .layer(axum::middleware::from_fn(web::auth::require_auth))
                     .layer(auth_layer);
+            } else if dev_no_auth {
+                // DEV mode: add require_auth middleware (for dev user injection) without OIDC layer
+                router = router
+                    .layer(axum::middleware::from_fn(web::auth::require_auth));
             }
 
             Ok(router)

@@ -185,6 +185,44 @@ pub async fn require_auth(
         return next.run(request).await;
     }
 
+    // DEV_ONLY_NO_AUTH: skip OIDC, create a dummy admin user
+    if std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1") {
+        if let Ok(pool) = crate::server_pool() {
+            // Upsert dev admin user directly (bypass admin_emails config check)
+            let result = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+                "INSERT INTO users (email, name, is_admin) VALUES ('dev@localhost', 'Dev Admin', true) \
+                 ON CONFLICT (email) DO UPDATE SET is_admin = true \
+                 RETURNING id, email, name, is_admin",
+            )
+            .fetch_one(&pool)
+            .await;
+
+            match result {
+                Ok(user) => {
+                    let org_ids = sqlx::query_scalar::<_, Uuid>(
+                        "SELECT organization_id FROM organization_members WHERE user_id = $1",
+                    )
+                    .bind(user.0)
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap_or_default();
+
+                    request.extensions_mut().insert(WebUser {
+                        id: user.0,
+                        email: user.1,
+                        name: user.2,
+                        is_admin: user.3,
+                        org_ids,
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("DEV_ONLY_NO_AUTH: failed to create dev user: {e}");
+                }
+            }
+        }
+        return next.run(request).await;
+    }
+
     // Extract session ID from the private cookie jar
     let configuration = request
         .extensions()
