@@ -132,20 +132,24 @@ impl DaemonRegistry {
         tracing::debug!("released port {port}");
     }
 
-    /// Claim a reservation: remove it from the reservations map and return
-    /// the port (which stays in `used_ports`).
+    /// Claim a reserved port: refresh its timestamp and return it.
+    /// The port stays in `used_ports` and the reservation is kept (with
+    /// updated timestamp) so it survives the next disconnect too.
     fn claim_reservation(&self, instance_id: &str) -> Option<u16> {
         let mut reservations = self.reservations.write().unwrap();
-        let res = reservations.remove(instance_id)?;
+        let res = reservations.get_mut(instance_id)?;
         let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
         if res.reserved_at < cutoff {
-            // Expired — free the port.
-            self.used_ports.write().unwrap().remove(&res.port);
-            tracing::debug!("reservation for {instance_id} port {} expired", res.port);
+            let port = res.port;
+            reservations.remove(instance_id);
+            self.used_ports.write().unwrap().remove(&port);
+            tracing::debug!("reservation for {instance_id} port {port} expired");
             None
         } else {
-            tracing::debug!("claimed reservation for {instance_id} port {}", res.port);
-            Some(res.port)
+            res.reserved_at = Utc::now();
+            let port = res.port;
+            tracing::debug!("claimed reservation for {instance_id} port {port}");
+            Some(port)
         }
     }
 
@@ -192,14 +196,12 @@ impl DaemonRegistry {
                 old.ssh_port
             );
             old.listener_handle.abort();
-            // Don't release the old port — it will be replaced by the new one.
-            // If the port changed, release the old one.
             if old.ssh_port != port {
                 self.release_port(old.ssh_port);
             }
         }
-        // Remove any reservation for this instance (port is now active).
-        self.reservations.write().unwrap().remove(&id);
+        // Save/refresh the reservation so the port survives future disconnects.
+        self.reserve_port(&id, port);
         daemons.insert(id.clone(), conn);
         tracing::info!("registered daemon {id} on port {port} (total: {})", daemons.len());
     }
