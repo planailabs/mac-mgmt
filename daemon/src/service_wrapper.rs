@@ -23,6 +23,8 @@ struct WrapperState {
     running_store_path: Option<String>,
     /// Hash of the mac-mgmt binary at startup, for self-update detection.
     own_binary_hash: Option<Vec<u8>>,
+    /// Parsed upgrade window (start, end) from config. None = always allowed.
+    upgrade_window: Option<(chrono::NaiveTime, chrono::NaiveTime)>,
 }
 
 impl WrapperState {
@@ -69,6 +71,12 @@ impl WrapperState {
     fn respawn(&mut self) -> bool {
         self.kill_child();
         self.spawn_child()
+    }
+
+    /// Whether restarts can proceed regardless of busy status.
+    fn in_upgrade_window(&self) -> bool {
+        self.upgrade_window
+            .map_or(true, |(start, end)| mac_mgmt_common::is_within_window(start, end))
     }
 
     /// Check if the service binary's nix store path has changed since we spawned.
@@ -244,7 +252,7 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
     let (mut req_rx, notif_tx) = spawn_listener(listener);
 
     // Wait for the daemon to send SetConfig with the full DaemonConfig.
-    let service = loop {
+    let (service, upgrade_window) = loop {
         match req_rx.recv().await {
             Some((IpcRequest::SetConfig { config_json }, resp_tx)) => {
                 match parse_config_and_build(service_name, &config_json) {
@@ -257,7 +265,8 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
                     }
                     Ok(svc) => {
                         let _ = resp_tx.send(IpcResponse::Ack { command: "set_config".into() }).await;
-                        break svc;
+                        let window = parse_upgrade_window(&config_json);
+                        break (svc, window);
                     }
                     Err(resp) => { let _ = resp_tx.send(resp).await; }
                 }
@@ -292,6 +301,7 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
         notif_tx,
         running_store_path: None,
         own_binary_hash: hash_current_exe(),
+        upgrade_window,
     };
 
     // Initial spawn.
@@ -334,7 +344,8 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
                     state.run_health_check();
 
                     // Check if the service binary was upgraded in the nix profile.
-                    if !state.busy && state.service_binary_changed() {
+                    let can_restart = !state.busy || state.in_upgrade_window();
+                    if can_restart && state.service_binary_changed() {
                         tracing::info!("{service_name}: service binary updated, restarting");
                         state.respawn();
                     }
@@ -342,11 +353,12 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
 
                 // Check if our own binary (mac-mgmt) has changed.
                 if state.own_binary_changed() {
-                    if state.busy {
-                        tracing::info!("{service_name}: mac-mgmt binary changed but service is busy, deferring re-exec");
-                    } else {
+                    let can_restart = !state.busy || state.in_upgrade_window();
+                    if can_restart {
                         pending_update_self = true;
                         break;
+                    } else {
+                        tracing::info!("{service_name}: mac-mgmt binary changed but service is busy, deferring re-exec");
                     }
                 }
             }
@@ -386,11 +398,12 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
 async fn handle_request(state: &mut WrapperState, req: IpcRequest) -> IpcResponse {
     let name = state.service_name.clone();
     match req {
-        IpcRequest::SetConfig { config_json } => {
+        IpcRequest::SetConfig { ref config_json } => {
             tracing::info!("{name}: set_config received");
-            match parse_config_and_build(&name, &config_json) {
+            match parse_config_and_build(&name, config_json) {
                 Ok(new_svc) => {
                     state.service = new_svc;
+                    state.upgrade_window = parse_upgrade_window(config_json);
                     IpcResponse::Ack { command: "set_config".into() }
                 }
                 Err(resp) => resp,
@@ -509,6 +522,13 @@ fn drain_and_forward(
             is_stderr,
         });
     }
+}
+
+/// Parse the upgrade_window field from a serialized DaemonConfig JSON.
+fn parse_upgrade_window(config_json: &str) -> Option<(chrono::NaiveTime, chrono::NaiveTime)> {
+    let cfg: crate::config::Config = serde_json::from_str(config_json).ok()?;
+    let w = cfg.daemon.upgrade_window.as_ref()?;
+    mac_mgmt_common::parse_time_window(w).ok()
 }
 
 /// SHA-256 hash of the currently running mac-mgmt binary.
