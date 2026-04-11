@@ -79,6 +79,9 @@ pub struct OidcConfig {
     pub cookie_secret: String,
     /// Optional Redis URL for session cache. If absent, PostgreSQL is used.
     pub redis_url: Option<String>,
+    /// Emails that are automatically granted admin on first login.
+    #[serde(default)]
+    pub admin_emails: Vec<String>,
 }
 
 pub fn load() -> &'static ServerConfig {

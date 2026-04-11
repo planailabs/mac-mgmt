@@ -13,8 +13,10 @@ use axum_oidc_client::{
     sql_cache::{SqlAuthCache, SqlCacheConfig},
 };
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::config;
+use super::user::WebUser;
 
 /// Extract the email from a JWT ID token's payload (base64url-decoded, no verification needed
 /// since the OIDC client already validated it).
@@ -29,6 +31,20 @@ fn email_from_id_token(id_token: &str) -> Option<String> {
     let payload = engine.decode(parts[1]).ok()?;
     let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
     claims.get("email")?.as_str().map(String::from)
+}
+
+/// Extract the user's display name from the JWT ID token payload.
+fn name_from_id_token(id_token: &str) -> Option<String> {
+    let parts: Vec<&str> = id_token.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    use base64::Engine;
+    let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let payload = engine.decode(parts[1]).ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+    claims.get("name")?.as_str().map(String::from)
 }
 
 /// Build the OIDC AuthLayer and session cache from config.
@@ -96,14 +112,66 @@ pub async fn build_auth_layer(
     (auth_layer, cache)
 }
 
+/// Upsert the user record and load org memberships.
+async fn resolve_user(
+    pool: &sqlx::PgPool,
+    email: &str,
+    name: Option<&str>,
+) -> Result<WebUser, sqlx::Error> {
+    let oidc = config::config().oidc.as_ref();
+    let is_admin_email = oidc.is_some_and(|o| o.admin_emails.contains(&email.to_string()));
+
+    // Upsert user: create on first login, update name on subsequent logins.
+    // If the email is in admin_emails, ensure is_admin is set to true.
+    let display_name = name.unwrap_or("");
+    let user = if is_admin_email {
+        sqlx::query_as::<_, (Uuid, String, String, bool)>(
+            "INSERT INTO users (email, name, is_admin) VALUES ($1, $2, true) \
+             ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, is_admin = true \
+             RETURNING id, email, name, is_admin",
+        )
+        .bind(email)
+        .bind(display_name)
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, (Uuid, String, String, bool)>(
+            "INSERT INTO users (email, name) VALUES ($1, $2) \
+             ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name \
+             RETURNING id, email, name, is_admin",
+        )
+        .bind(email)
+        .bind(display_name)
+        .fetch_one(pool)
+        .await?
+    };
+
+    // Load organization memberships
+    let org_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM organization_members WHERE user_id = $1",
+    )
+    .bind(user.0)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(WebUser {
+        id: user.0,
+        email: user.1,
+        name: user.2,
+        is_admin: user.3,
+        org_ids,
+    })
+}
+
 /// Middleware that enforces authentication and allowed_emails on all non-auth, non-asset routes.
 ///
 /// axum-oidc-client's AuthLayer handles /auth, /auth/callback, /auth/logout and sets the
 /// session cookie, but does not block unauthenticated requests on other routes.
 /// This middleware reads the session from the cache, decodes the ID token to extract the
-/// email, and checks against the allowed_emails list.
+/// email, checks against the allowed_emails list, upserts the user record, and injects
+/// `WebUser` into request extensions.
 pub async fn require_auth(
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
     let path = request.uri().path();
@@ -142,6 +210,19 @@ pub async fn require_auth(
                     let domain_ok = oidc.is_some_and(|o| o.allowed_domains.iter().any(|d| email.ends_with(&format!("@{d}"))));
                     let email_ok = oidc.is_some_and(|o| o.allowed_emails.contains(&email));
                     if domain_ok || email_ok {
+                        // Resolve user from database and inject into extensions
+                        let pool = crate::server_pool();
+                        if let Ok(pool) = pool {
+                            let display_name = name_from_id_token(&session.id_token);
+                            match resolve_user(&pool, &email, display_name.as_deref()).await {
+                                Ok(web_user) => {
+                                    request.extensions_mut().insert(web_user);
+                                }
+                                Err(e) => {
+                                    tracing::error!("failed to resolve user {email}: {e}");
+                                }
+                            }
+                        }
                         return next.run(request).await;
                     }
                     tracing::warn!("access denied for {email}");
