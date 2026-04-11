@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
 
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 use super::mcp_bundle_detail::McpServerOption;
 
 /// Direct MCP server assignment display.
@@ -50,8 +52,14 @@ pub struct McpBundleOption {
 
 #[server]
 async fn list_cluster_mcp_servers(cluster_id: String) -> Result<Vec<ClusterMcpServerDisplay>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let servers = sqlx::query_as::<_, ClusterMcpServerDisplay>(
         "SELECT cms.id as cluster_mcp_server_id, ms.slug as server_slug, ms.name as server_name \
          FROM cluster_mcp_servers cms \
@@ -68,8 +76,14 @@ async fn list_cluster_mcp_servers(cluster_id: String) -> Result<Vec<ClusterMcpSe
 
 #[server]
 async fn list_cluster_mcp_bundles(cluster_id: String) -> Result<Vec<ClusterMcpBundleDisplay>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let bundles = sqlx::query_as::<_, ClusterMcpBundleDisplay>(
         "SELECT cmb.id as cluster_mcp_bundle_id, msb.slug as bundle_slug, msb.name as bundle_name \
          FROM cluster_mcp_bundles cmb \
@@ -86,8 +100,14 @@ async fn list_cluster_mcp_bundles(cluster_id: String) -> Result<Vec<ClusterMcpBu
 
 #[server]
 async fn list_bundle_mcp_servers(cluster_id: String) -> Result<Vec<BundleMcpServerDisplay>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -137,8 +157,14 @@ async fn list_bundle_mcp_servers(cluster_id: String) -> Result<Vec<BundleMcpServ
 
 #[server]
 async fn list_transitive_mcp_servers(cluster_id: String) -> Result<Vec<TransitiveMcpServerDisplay>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
 
     // Resolve winning skill channels for this cluster (direct wins over bundle).
     #[derive(sqlx::FromRow)]
@@ -252,6 +278,7 @@ async fn list_transitive_mcp_servers(cluster_id: String) -> Result<Vec<Transitiv
 
 #[server]
 async fn list_all_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
+    let _user = current_user().await?;
     let pool = crate::server_pool()?;
     let servers = sqlx::query_as::<_, McpServerOption>(
         "SELECT id, slug, name FROM mcp_servers ORDER BY slug",
@@ -264,6 +291,7 @@ async fn list_all_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
 
 #[server]
 async fn list_all_mcp_bundles() -> Result<Vec<McpBundleOption>, ServerFnError> {
+    let _user = current_user().await?;
     let pool = crate::server_pool()?;
     let bundles = sqlx::query_as::<_, McpBundleOption>(
         "SELECT id, slug, name FROM mcp_server_bundles ORDER BY slug",
@@ -276,8 +304,14 @@ async fn list_all_mcp_bundles() -> Result<Vec<McpBundleOption>, ServerFnError> {
 
 #[server]
 async fn add_cluster_mcp_server(cluster_id: String, mcp_server_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let msid: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2)")
         .bind(cid)
@@ -291,8 +325,24 @@ async fn add_cluster_mcp_server(cluster_id: String, mcp_server_id: String) -> Re
 
 #[server]
 async fn remove_cluster_mcp_server(cluster_mcp_server_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    // Check access before deleting
+    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT cluster_id FROM cluster_mcp_servers WHERE id = $1",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(owner_cid) = owner_cid {
+        if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+            if !ids.contains(&owner_cid) {
+                return Err(ServerFnError::new("access denied"));
+            }
+        }
+    }
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(
         "DELETE FROM cluster_mcp_servers WHERE id = $1 RETURNING cluster_id",
     )
@@ -308,8 +358,14 @@ async fn remove_cluster_mcp_server(cluster_mcp_server_id: String) -> Result<(), 
 
 #[server]
 async fn add_cluster_mcp_bundle(cluster_id: String, bundle_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     // Check for overlap: does the new bundle share any mcp_server with
@@ -347,8 +403,24 @@ async fn add_cluster_mcp_bundle(cluster_id: String, bundle_id: String) -> Result
 
 #[server]
 async fn remove_cluster_mcp_bundle(cluster_mcp_bundle_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_mcp_bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    // Check access before deleting
+    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT cluster_id FROM cluster_mcp_bundles WHERE id = $1",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(owner_cid) = owner_cid {
+        if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+            if !ids.contains(&owner_cid) {
+                return Err(ServerFnError::new("access denied"));
+            }
+        }
+    }
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(
         "DELETE FROM cluster_mcp_bundles WHERE id = $1 RETURNING cluster_id",
     )

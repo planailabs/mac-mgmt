@@ -7,9 +7,13 @@ use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn list_mcp_servers() -> Result<Vec<McpServer>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let servers = sqlx::query_as::<_, McpServer>("SELECT * FROM mcp_servers ORDER BY slug")
         .fetch_all(&pool)

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonVersionRow {
@@ -19,6 +21,8 @@ impl Searchable for DaemonVersionRow {
 
 #[server]
 async fn list_daemon_versions() -> Result<Vec<DaemonVersionRow>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -54,6 +58,8 @@ pub struct DaemonSyncResult {
 /// live from xzar on each /api/update call, so they are not stored.
 #[server]
 async fn sync_daemon_versions_from_xzar() -> Result<DaemonSyncResult, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let cfg = crate::config::config();
 

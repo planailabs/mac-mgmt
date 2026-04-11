@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupEntry {
@@ -22,6 +24,8 @@ impl Searchable for GroupEntry {
 
 #[server]
 async fn get_rollout_groups() -> Result<Vec<GroupEntry>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -44,6 +48,8 @@ async fn get_rollout_groups() -> Result<Vec<GroupEntry>, ServerFnError> {
 
 #[server]
 async fn create_group(name: String, description: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     sqlx::query("INSERT INTO rollout_groups (name, description) VALUES ($1, $2)")
         .bind(&name)

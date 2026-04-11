@@ -6,11 +6,15 @@ use crate::models::McpServer;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 // ── Server functions ─────────────────────────────────────────────────
 
 #[server]
 async fn get_mcp_server(id: String) -> Result<McpServer, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query_as::<_, McpServer>("SELECT * FROM mcp_servers WHERE id = $1")
@@ -29,6 +33,8 @@ async fn upsert_mcp_server(
     config_json: String,
     hide_from_public_catalog: bool,
 ) -> Result<McpServer, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let parsed: serde_json::Value = serde_json::from_str(&config_json)
         .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
@@ -65,6 +71,8 @@ async fn upsert_mcp_server(
 
 #[server]
 async fn add_nix_package(id: String, package: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let pkg = package.trim().to_string();
@@ -85,6 +93,8 @@ async fn add_nix_package(id: String, package: String) -> Result<(), ServerFnErro
 
 #[server]
 async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query(
@@ -100,6 +110,8 @@ async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnE
 
 #[server]
 async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Resolve affected clusters BEFORE the delete — the cascade will wipe
@@ -123,6 +135,8 @@ struct SkillDepRow {
 
 #[server]
 async fn list_dependent_skills(mcp_server_id: String) -> Result<Vec<SkillDepRow>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 

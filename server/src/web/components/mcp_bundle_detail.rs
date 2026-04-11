@@ -5,6 +5,8 @@ use crate::models::McpServerBundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 /// An MCP server for display in the bundle items list.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -26,6 +28,8 @@ pub struct McpServerOption {
 
 #[server]
 async fn get_mcp_bundle(id: String) -> Result<McpServerBundle, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bundle = sqlx::query_as::<_, McpServerBundle>("SELECT * FROM mcp_server_bundles WHERE id = $1")
@@ -38,6 +42,8 @@ async fn get_mcp_bundle(id: String) -> Result<McpServerBundle, ServerFnError> {
 
 #[server]
 async fn delete_mcp_bundle(id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     crate::api::push::notify_mcp_bundle_global(uuid).await;
@@ -56,6 +62,8 @@ async fn update_mcp_bundle(
     description: String,
     hide_from_public_catalog: bool,
 ) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("UPDATE mcp_server_bundles SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
@@ -72,6 +80,8 @@ async fn update_mcp_bundle(
 
 #[server]
 async fn list_mcp_bundle_items(bundle_id: String) -> Result<Vec<McpBundleItemDisplay>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let items = sqlx::query_as::<_, McpBundleItemDisplay>(
@@ -90,6 +100,8 @@ async fn list_mcp_bundle_items(bundle_id: String) -> Result<Vec<McpBundleItemDis
 
 #[server]
 async fn list_available_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let servers = sqlx::query_as::<_, McpServerOption>(
         "SELECT id, slug, name FROM mcp_servers ORDER BY slug",
@@ -102,6 +114,8 @@ async fn list_available_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnEr
 
 #[server]
 async fn add_mcp_bundle_item(bundle_id: String, mcp_server_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let msid: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
@@ -117,6 +131,8 @@ async fn add_mcp_bundle_item(bundle_id: String, mcp_server_id: String) -> Result
 
 #[server]
 async fn remove_mcp_bundle_item(bundle_item_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = bundle_item_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bundle_id: Option<uuid::Uuid> = sqlx::query_scalar(

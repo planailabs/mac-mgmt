@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 const ALL_CLUSTERS_SENTINEL: &str = "__all__";
 
@@ -14,6 +16,8 @@ struct GroupOption {
 
 #[server]
 async fn get_available_versions() -> Result<Vec<String>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let versions = sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT version FROM daemon_versions ORDER BY version DESC",
@@ -26,6 +30,8 @@ async fn get_available_versions() -> Result<Vec<String>, ServerFnError> {
 
 #[server]
 async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -62,6 +68,8 @@ async fn create_rollout(
     stage_ids: Vec<String>,
     nixpkgs_commit: Option<String>,
 ) -> Result<String, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     let target_version = target_version.and_then(|v| {

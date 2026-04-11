@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutInfo {
@@ -31,6 +33,8 @@ struct StageInfo {
 
 #[server]
 async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let rid: Uuid = id
         .parse()
@@ -142,6 +146,8 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
 
 #[server]
 async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let rid: Uuid = id
         .parse()

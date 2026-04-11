@@ -3,6 +3,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConfigVersion {
     id: Uuid,
@@ -17,10 +20,16 @@ pub struct DiffLine {
 
 #[server]
 async fn get_config_history(cluster_id: String) -> Result<Vec<ConfigVersion>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -52,6 +61,7 @@ async fn get_config_diff(
 ) -> Result<Vec<DiffLine>, ServerFnError> {
     use similar::{ChangeTag, TextDiff};
 
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let left_uuid: Uuid = left_id
         .parse()
@@ -59,6 +69,17 @@ async fn get_config_diff(
     let right_uuid: Uuid = right_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    // Verify user has access to the cluster that owns these configs
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        let cluster_id: Uuid = sqlx::query_scalar("SELECT cluster_id FROM cluster_configs WHERE id = $1")
+            .bind(left_uuid)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !ids.contains(&cluster_id) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
 
     let left_json: serde_json::Value =
         sqlx::query_scalar("SELECT config_json FROM cluster_configs WHERE id = $1")

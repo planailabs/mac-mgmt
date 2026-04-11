@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 use crate::web::app::Route;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FleetEntry {
@@ -19,6 +21,7 @@ struct FleetEntry {
 
 #[server]
 async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -33,15 +36,31 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         reported_at: DateTime<Utc>,
     }
 
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
-         FROM daemon_heartbeats dh \
-         JOIN clusters c ON c.id = dh.cluster_id \
-         ORDER BY dh.reported_at DESC",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let accessible = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let rows = if let Some(ids) = accessible {
+        sqlx::query_as::<_, Row>(
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
+             FROM daemon_heartbeats dh \
+             JOIN clusters c ON c.id = dh.cluster_id \
+             WHERE dh.cluster_id = ANY($1) \
+             ORDER BY dh.reported_at DESC",
+        )
+        .bind(&ids)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    } else {
+        sqlx::query_as::<_, Row>(
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
+             FROM daemon_heartbeats dh \
+             JOIN clusters c ON c.id = dh.cluster_id \
+             ORDER BY dh.reported_at DESC",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    };
 
     Ok(rows
         .into_iter()

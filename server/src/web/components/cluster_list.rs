@@ -4,14 +4,25 @@ use dioxus_tabular::*;
 use crate::models::Cluster;
 use crate::web::app::Route;
 use crate::web::components::table_utils::*;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn list_clusters() -> Result<Vec<Cluster>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let clusters = sqlx::query_as::<_, Cluster>("SELECT * FROM clusters ORDER BY name")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let clusters = if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        sqlx::query_as::<_, Cluster>("SELECT * FROM clusters WHERE id = ANY($1) ORDER BY name")
+            .bind(&ids)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+    } else {
+        sqlx::query_as::<_, Cluster>("SELECT * FROM clusters ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+    };
     Ok(clusters)
 }
 

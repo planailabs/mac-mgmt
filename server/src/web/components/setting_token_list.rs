@@ -1,13 +1,21 @@
 use dioxus::prelude::*;
 
 use crate::models::Token;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn list_setting_tokens(cluster_id: String) -> Result<Vec<Token>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let tokens = sqlx::query_as::<_, Token>(
         "SELECT * FROM tokens WHERE cluster_id = $1 AND kind = 'setting' ORDER BY created_at DESC",
     )
@@ -23,6 +31,8 @@ async fn create_setting_token(cluster_id: String, label: String) -> Result<Strin
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
+    let user = current_user().await?;
+
     let label = label.trim().to_string();
     if label.is_empty() {
         return Err(ServerFnError::new("label is required"));
@@ -32,6 +42,11 @@ async fn create_setting_token(cluster_id: String, label: String) -> Result<Strin
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
@@ -49,10 +64,26 @@ async fn create_setting_token(cluster_id: String, label: String) -> Result<Strin
 
 #[server]
 async fn revoke_setting_token(token_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = token_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    // Check access before revoking
+    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT cluster_id FROM tokens WHERE id = $1",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(owner_cid) = owner_cid {
+        if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+            if !ids.contains(&owner_cid) {
+                return Err(ServerFnError::new("access denied"));
+            }
+        }
+    }
     sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
         .bind(uuid)
         .execute(&pool)

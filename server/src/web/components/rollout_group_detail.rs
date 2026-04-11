@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::components::table_utils::{SortableTh, TableToolbar};
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupInfo {
@@ -27,6 +29,8 @@ struct ClusterOption {
 
 #[server]
 async fn get_group_detail(id: String) -> Result<GroupInfo, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let gid: Uuid = id
         .parse()
@@ -87,6 +91,8 @@ async fn get_group_detail(id: String) -> Result<GroupInfo, ServerFnError> {
 
 #[server]
 async fn get_available_clusters(group_id: String) -> Result<Vec<ClusterOption>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let gid: Uuid = group_id
         .parse()
@@ -119,6 +125,8 @@ async fn get_available_clusters(group_id: String) -> Result<Vec<ClusterOption>, 
 
 #[server]
 async fn add_member(group_id: String, cluster_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let gid: Uuid = group_id
         .parse()
@@ -137,6 +145,8 @@ async fn add_member(group_id: String, cluster_id: String) -> Result<(), ServerFn
 
 #[server]
 async fn add_all_clusters(group_id: String) -> Result<u64, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let gid: Uuid = group_id
         .parse()
@@ -156,6 +166,8 @@ async fn add_all_clusters(group_id: String) -> Result<u64, ServerFnError> {
 
 #[server]
 async fn remove_member(member_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let mid: Uuid = member_id
         .parse()
@@ -170,6 +182,8 @@ async fn remove_member(member_id: String) -> Result<(), ServerFnError> {
 
 #[server]
 async fn delete_group(id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let gid: Uuid = id
         .parse()

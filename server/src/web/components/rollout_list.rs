@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutEntry {
@@ -16,6 +18,8 @@ struct RolloutEntry {
 
 #[server]
 async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -48,6 +52,8 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
 
 #[server]
 async fn delete_rollout(id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let rid: Uuid = id
         .parse()

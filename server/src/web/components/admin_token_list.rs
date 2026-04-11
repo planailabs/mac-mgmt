@@ -1,9 +1,13 @@
 use dioxus::prelude::*;
 
 use crate::models::Token;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn list_admin_tokens() -> Result<Vec<Token>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let tokens = sqlx::query_as::<_, Token>(
         "SELECT * FROM tokens WHERE kind = 'admin' ORDER BY created_at DESC",
@@ -16,6 +20,8 @@ async fn list_admin_tokens() -> Result<Vec<Token>, ServerFnError> {
 
 #[server]
 async fn create_admin_token(label: String) -> Result<String, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
@@ -43,6 +49,8 @@ async fn create_admin_token(label: String) -> Result<String, ServerFnError> {
 
 #[server]
 async fn revoke_admin_token(token_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = token_id
         .parse()

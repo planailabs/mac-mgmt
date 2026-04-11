@@ -1,14 +1,22 @@
 use dioxus::prelude::*;
 
 use crate::models::ClusterConfig;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 
 #[server]
 async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let config = sqlx::query_as::<_, ClusterConfig>(
         "SELECT * FROM cluster_configs WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
@@ -21,6 +29,7 @@ async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>,
 
 #[server]
 async fn save_config(cluster_id: String, config_json: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let json: serde_json::Value = serde_json::from_str(&config_json)
         .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
     // Validate
@@ -31,6 +40,11 @@ async fn save_config(cluster_id: String, config_json: String) -> Result<(), Serv
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
         .bind(uuid)
         .bind(&json)
@@ -43,6 +57,7 @@ async fn save_config(cluster_id: String, config_json: String) -> Result<(), Serv
 
 #[server]
 async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
+    let _user = current_user().await?;
     let schema = schemars::schema_for!(mac_mgmt_common::ClusterConfig);
     let value = serde_json::to_value(&schema)
         .map_err(|e| ServerFnError::new(e.to_string()))?;

@@ -6,9 +6,13 @@ use crate::models::Skill;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn list_skills() -> Result<Vec<Skill>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let skills = sqlx::query_as::<_, Skill>("SELECT * FROM skills ORDER BY slug")
         .fetch_all(&pool)
@@ -30,6 +34,8 @@ pub struct SyncResult {
 /// skills + channels into the database.
 #[server]
 async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let cfg = crate::config::config();
 

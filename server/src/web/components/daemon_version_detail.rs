@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::{SortableTh, TableToolbar};
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionCluster {
@@ -23,6 +25,8 @@ pub struct VersionRollout {
 async fn get_rollouts_for_version(
     version: String,
 ) -> Result<Vec<VersionRollout>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -62,6 +66,8 @@ pub struct PinnedCluster {
 async fn get_clusters_pinned_to(
     version: String,
 ) -> Result<Vec<PinnedCluster>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -88,6 +94,8 @@ async fn get_clusters_pinned_to(
 async fn get_clusters_on_version(
     version: String,
 ) -> Result<Vec<VersionCluster>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -132,6 +140,8 @@ pub struct DaemonStorePath {
 async fn get_daemon_store_paths(
     version: String,
 ) -> Result<Vec<DaemonStorePath>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let cfg = crate::config::config();
     let xzar = cfg
         .xzar

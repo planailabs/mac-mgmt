@@ -7,9 +7,13 @@ use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::{Skill, SkillChannel};
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn get_skill(id: String) -> Result<Skill, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let skill = sqlx::query_as::<_, Skill>("SELECT * FROM skills WHERE id = $1")
@@ -27,6 +31,8 @@ async fn update_skill(
     description: String,
     hide_from_public_catalog: bool,
 ) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("UPDATE skills SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
@@ -42,6 +48,8 @@ async fn update_skill(
 
 #[server]
 async fn list_channels(skill_id: String) -> Result<Vec<SkillChannel>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let channels = sqlx::query_as::<_, SkillChannel>(
@@ -57,6 +65,8 @@ async fn list_channels(skill_id: String) -> Result<Vec<SkillChannel>, ServerFnEr
 /// Resolve store paths for all channels of a skill from xzar.
 #[server]
 async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Vec<(String, String)>>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
@@ -120,6 +130,8 @@ struct ChannelMcpDep {
 
 #[server]
 async fn list_channel_mcp_deps(skill_channel_id: String) -> Result<Vec<ChannelMcpDep>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
@@ -158,6 +170,8 @@ struct McpServerOption {
 
 #[server]
 async fn list_all_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
@@ -181,6 +195,8 @@ async fn list_all_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
 
 #[server]
 async fn add_channel_mcp_dep(skill_channel_id: String, mcp_server_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let sc_id: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let ms_id: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
@@ -195,6 +211,8 @@ async fn add_channel_mcp_dep(skill_channel_id: String, mcp_server_id: String) ->
 
 #[server]
 async fn remove_channel_mcp_dep(dep_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = dep_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("DELETE FROM skill_mcp_dependencies WHERE id = $1")

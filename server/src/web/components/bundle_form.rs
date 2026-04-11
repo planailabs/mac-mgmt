@@ -4,9 +4,13 @@ use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::Bundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn create_bundle(slug: String, name: String, description: String) -> Result<Bundle, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let bundle = sqlx::query_as::<_, Bundle>(
         "INSERT INTO bundles (slug, name, description) VALUES ($1, $2, $3) RETURNING *",

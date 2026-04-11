@@ -2,6 +2,8 @@ use dioxus::prelude::*;
 
 use crate::models::Cluster;
 use crate::web::app::Route;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 use super::config_editor::ConfigEditor;
 use super::config_history::ConfigHistory;
@@ -13,8 +15,14 @@ use super::token_list::SyncTokenList;
 
 #[server]
 async fn get_cluster(id: String) -> Result<Cluster, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let cluster = sqlx::query_as::<_, Cluster>("SELECT * FROM clusters WHERE id = $1")
         .bind(uuid)
         .fetch_one(&pool)
@@ -25,6 +33,7 @@ async fn get_cluster(id: String) -> Result<Cluster, ServerFnError> {
 
 #[server]
 async fn get_pinned_rollout(version: String) -> Result<Option<String>, ServerFnError> {
+    let _user = current_user().await?;
     let pool = crate::server_pool()?;
     let rollout_id: Option<uuid::Uuid> = sqlx::query_scalar(
         "SELECT id FROM rollouts \
@@ -40,6 +49,8 @@ async fn get_pinned_rollout(version: String) -> Result<Option<String>, ServerFnE
 
 #[server]
 async fn rename_cluster(id: String, name: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("UPDATE clusters SET name = $1 WHERE id = $2")
@@ -53,8 +64,14 @@ async fn rename_cluster(id: String, name: String) -> Result<(), ServerFnError> {
 
 #[server]
 async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let ver = version.trim().to_string();
     if ver.is_empty() {
         sqlx::query("UPDATE clusters SET pinned_version = NULL WHERE id = $1")
@@ -75,8 +92,14 @@ async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnE
 
 #[server]
 async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
     let c = commit.trim().to_string();
     if c.is_empty() {
         sqlx::query("UPDATE clusters SET nixpkgs_commit = NULL WHERE id = $1")
@@ -102,6 +125,8 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
 
 #[server]
 async fn delete_cluster(id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("DELETE FROM clusters WHERE id = $1")
@@ -121,8 +146,14 @@ struct ActiveRolloutEntry {
 
 #[server]
 async fn get_active_rollouts(cluster_id: String) -> Result<Vec<ActiveRolloutEntry>, ServerFnError> {
+    let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
 
     #[derive(sqlx::FromRow)]
     struct Row {

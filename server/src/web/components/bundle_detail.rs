@@ -5,6 +5,8 @@ use crate::models::Bundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 /// A skill channel with its skill slug for display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -26,6 +28,8 @@ pub struct BundleItemDisplay {
 
 #[server]
 async fn get_bundle(id: String) -> Result<Bundle, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bundle = sqlx::query_as::<_, Bundle>("SELECT * FROM bundles WHERE id = $1")
@@ -38,6 +42,8 @@ async fn get_bundle(id: String) -> Result<Bundle, ServerFnError> {
 
 #[server]
 async fn delete_bundle(id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Notify affected clusters before the cascade removes their assignments.
@@ -57,6 +63,8 @@ async fn update_bundle(
     description: String,
     hide_from_public_catalog: bool,
 ) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("UPDATE bundles SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
@@ -73,6 +81,8 @@ async fn update_bundle(
 
 #[server]
 async fn list_bundle_items(bundle_id: String) -> Result<Vec<BundleItemDisplay>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let items = sqlx::query_as::<_, BundleItemDisplay>(
@@ -92,6 +102,8 @@ async fn list_bundle_items(bundle_id: String) -> Result<Vec<BundleItemDisplay>, 
 
 #[server]
 async fn list_available_skill_channels() -> Result<Vec<SkillChannelDisplay>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let channels = sqlx::query_as::<_, SkillChannelDisplay>(
         "SELECT sc.id, s.slug as skill_slug, sc.channel \
@@ -107,6 +119,8 @@ async fn list_available_skill_channels() -> Result<Vec<SkillChannelDisplay>, Ser
 
 #[server]
 async fn add_bundle_item(bundle_id: String, skill_channel_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let scid: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
@@ -122,6 +136,8 @@ async fn add_bundle_item(bundle_id: String, skill_channel_id: String) -> Result<
 
 #[server]
 async fn remove_bundle_item(bundle_item_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = bundle_item_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bundle_id: Option<uuid::Uuid> = sqlx::query_scalar(

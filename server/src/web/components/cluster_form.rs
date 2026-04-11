@@ -2,9 +2,13 @@ use dioxus::prelude::*;
 
 use crate::models::Cluster;
 use crate::web::app::Route;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
 
 #[server]
 async fn create_cluster(name: String) -> Result<Cluster, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let cluster = sqlx::query_as::<_, Cluster>(
         "INSERT INTO clusters (name) VALUES ($1) RETURNING *",
