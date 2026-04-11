@@ -272,6 +272,20 @@ pub fn UserDetail(id: String) -> Element {
                             }
                             label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "Admin" }
                         }
+                        // Impersonate
+                        button {
+                            class: "bg-yellow-500 text-yellow-900 px-3 py-1 rounded text-sm hover:bg-yellow-600",
+                            onclick: {
+                                let uid = user_id.clone();
+                                move |_| {
+                                    let js = format!(
+                                        "document.cookie = 'impersonate_user_id={uid}; Path=/; SameSite=Lax'; window.location.href = '/';"
+                                    );
+                                    document::eval(&js);
+                                }
+                            },
+                            "Impersonate"
+                        }
                         // Delete
                         if *confirm_delete.read() {
                             span { class: "text-sm text-red-600 dark:text-red-400 mr-2", "Are you sure?" }
