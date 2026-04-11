@@ -10,6 +10,10 @@ pub struct WebUser {
     pub name: String,
     pub is_admin: bool,
     pub org_ids: Vec<Uuid>,
+    /// If set, this user context is the result of admin impersonation.
+    /// The value is the real admin's user ID.
+    #[serde(default)]
+    pub impersonating_from: Option<Uuid>,
 }
 
 impl WebUser {

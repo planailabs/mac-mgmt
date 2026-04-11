@@ -1,16 +1,37 @@
 use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
 use super::navbar::Navbar;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct UserInfo {
+    is_admin: bool,
+    /// If impersonating, this is the target user's email.
+    impersonating_email: Option<String>,
+    /// True if the real user (before impersonation) is admin.
+    real_is_admin: bool,
+}
+
 #[server]
-async fn get_current_user_info() -> Result<(bool,), ServerFnError> {
+async fn get_current_user_info() -> Result<UserInfo, ServerFnError> {
     use crate::web::user::current_user;
     match current_user().await {
-        Ok(user) => Ok((user.is_admin,)),
-        // If no user in extensions (e.g. OIDC disabled), default to admin
-        Err(_) => Ok((true,)),
+        Ok(user) => Ok(UserInfo {
+            is_admin: user.is_admin,
+            impersonating_email: if user.impersonating_from.is_some() {
+                Some(user.email)
+            } else {
+                None
+            },
+            real_is_admin: user.impersonating_from.is_some() || user.is_admin,
+        }),
+        Err(_) => Ok(UserInfo {
+            is_admin: true,
+            impersonating_email: None,
+            real_is_admin: true,
+        }),
     }
 }
 
@@ -47,14 +68,29 @@ fn LoadingSpinner() -> Element {
 #[component]
 pub fn Layout() -> Element {
     let user_info = use_server_future(get_current_user_info)?;
-    let is_admin = match &*user_info.read() {
-        Some(Ok((admin,))) => *admin,
-        _ => false,
+    let (is_admin, real_is_admin, impersonating_email) = match &*user_info.read() {
+        Some(Ok(info)) => (info.is_admin, info.real_is_admin, info.impersonating_email.clone()),
+        _ => (false, false, None),
     };
 
     rsx! {
         div { class: "min-h-screen bg-gray-50 dark:bg-gray-900",
-            Navbar { is_admin }
+            // Impersonation banner
+            if let Some(email) = &impersonating_email {
+                div { class: "bg-yellow-500 text-yellow-900 text-center text-sm py-1.5 px-4 flex items-center justify-center gap-3",
+                    span { "Impersonating " strong { "{email}" } }
+                    button {
+                        class: "bg-yellow-700 text-yellow-100 px-2 py-0.5 rounded text-xs hover:bg-yellow-800",
+                        onclick: move |_| {
+                            document::eval(
+                                "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
+                            );
+                        },
+                        "Stop"
+                    }
+                }
+            }
+            Navbar { is_admin, real_is_admin }
             main { class: "max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8",
                 SuspenseBoundary {
                     fallback: |_| rsx! { LoadingSpinner {} },

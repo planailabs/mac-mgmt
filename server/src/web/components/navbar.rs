@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
@@ -82,7 +83,7 @@ fn ThemeIcon(mode: ThemeMode) -> Element {
 }
 
 #[component]
-pub fn Navbar(is_admin: bool) -> Element {
+pub fn Navbar(is_admin: bool, real_is_admin: bool) -> Element {
     // State for the mobile hamburger menu
     let mut is_open = use_signal(|| false);
     // Theme state
@@ -193,6 +194,10 @@ pub fn Navbar(is_admin: bool) -> Element {
                                 "{label}"
                             }
                         }
+                        // Impersonation control (only for real admins)
+                        if real_is_admin {
+                            ImpersonateSelector {}
+                        }
                         // Desktop theme toggle
                         button {
                             onclick: toggle_theme,
@@ -254,6 +259,70 @@ pub fn Navbar(is_admin: bool) -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// ── Impersonation selector ──────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct ImpersonateUser {
+    id: String,
+    email: String,
+}
+
+#[server]
+async fn get_impersonation_targets() -> Result<Vec<ImpersonateUser>, ServerFnError> {
+    use crate::web::user::current_user;
+    let user = current_user().await?;
+    if !user.is_admin || user.impersonating_from.is_some() {
+        return Ok(vec![]);
+    }
+    let pool = crate::server_pool()?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row { id: uuid::Uuid, email: String }
+
+    let rows = sqlx::query_as::<_, Row>("SELECT id, email FROM users ORDER BY email")
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows.into_iter().map(|r| ImpersonateUser { id: r.id.to_string(), email: r.email }).collect())
+}
+
+#[component]
+fn ImpersonateSelector() -> Element {
+    let targets = use_server_future(get_impersonation_targets);
+
+    let users = match targets {
+        Ok(ref fut) => match &*fut.read() {
+            Some(Ok(list)) if !list.is_empty() => list.clone(),
+            _ => return rsx! {},
+        },
+        Err(_) => return rsx! {},
+    };
+
+    rsx! {
+        select {
+            class: "ml-2 border border-gray-300 dark:border-gray-600 rounded px-1 py-1 text-xs bg-white dark:bg-gray-700 dark:text-white max-w-[160px]",
+            onchange: move |e| {
+                let val = e.value();
+                if val.is_empty() {
+                    document::eval(
+                        "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
+                    );
+                } else {
+                    let js = format!(
+                        "document.cookie = 'impersonate_user_id={val}; Path=/; SameSite=Lax'; window.location.reload();"
+                    );
+                    document::eval(&js);
+                }
+            },
+            option { value: "", "Impersonate…" }
+            for u in &users {
+                option { value: "{u.id}", "{u.email}" }
             }
         }
     }

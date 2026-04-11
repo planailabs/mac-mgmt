@@ -160,7 +160,66 @@ async fn resolve_user(
         name: user.2,
         is_admin: user.3,
         org_ids,
+        impersonating_from: None,
     })
+}
+
+/// Cookie name used for admin impersonation of another user.
+pub const IMPERSONATE_COOKIE: &str = "impersonate_user_id";
+
+/// Extract the impersonate_user_id cookie value from request headers.
+fn get_impersonate_cookie(request: &Request<Body>) -> Option<Uuid> {
+    let cookie_header = request.headers().get("cookie")?.to_str().ok()?;
+    let target_id_str = cookie_header
+        .split(';')
+        .map(|s| s.trim())
+        .find_map(|s| s.strip_prefix("impersonate_user_id="))?;
+    target_id_str.parse().ok()
+}
+
+/// If the admin user has an impersonation cookie, load the target user's context instead.
+/// Returns the original user unchanged if no impersonation is active or if the target is invalid.
+async fn try_impersonate(
+    pool: &sqlx::PgPool,
+    admin_user: WebUser,
+    target_id: Option<Uuid>,
+) -> WebUser {
+    let target_id = match target_id {
+        Some(id) if id != admin_user.id => id,
+        _ => return admin_user,
+    };
+
+    let admin_id = admin_user.id;
+
+    // Load the target user
+    let target = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+        "SELECT id, email, name, is_admin FROM users WHERE id = $1",
+    )
+    .bind(target_id)
+    .fetch_optional(pool)
+    .await;
+
+    match target {
+        Ok(Some(user)) => {
+            let org_ids = sqlx::query_scalar::<_, Uuid>(
+                "SELECT organization_id FROM organization_members WHERE user_id = $1",
+            )
+            .bind(user.0)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+            WebUser {
+                id: user.0,
+                email: user.1,
+                name: user.2,
+                is_admin: user.3,
+                org_ids,
+                impersonating_from: Some(admin_id),
+            }
+        }
+        _ => admin_user,
+    }
 }
 
 /// Middleware that enforces authentication and allowed_emails on all non-auth, non-asset routes.
@@ -207,13 +266,18 @@ pub async fn require_auth(
                     .await
                     .unwrap_or_default();
 
-                    request.extensions_mut().insert(WebUser {
+                    let mut web_user = WebUser {
                         id: user.0,
                         email: user.1,
                         name: user.2,
                         is_admin: user.3,
                         org_ids,
-                    });
+                        impersonating_from: None,
+                    };
+                    // Impersonation support in dev mode too
+                    let imp_id = get_impersonate_cookie(&request);
+                    web_user = try_impersonate(&pool, web_user, imp_id).await;
+                    request.extensions_mut().insert(web_user);
                 }
                 Err(e) => {
                     tracing::error!("DEV_ONLY_NO_AUTH: failed to create dev user: {e}");
@@ -253,7 +317,12 @@ pub async fn require_auth(
                         if let Ok(pool) = pool {
                             let display_name = name_from_id_token(&session.id_token);
                             match resolve_user(&pool, &email, display_name.as_deref()).await {
-                                Ok(web_user) => {
+                                Ok(mut web_user) => {
+                                    // Impersonation: if admin, check for impersonate cookie
+                                    if web_user.is_admin {
+                                        let imp_id = get_impersonate_cookie(&request);
+                                        web_user = try_impersonate(&pool, web_user, imp_id).await;
+                                    }
                                     request.extensions_mut().insert(web_user);
                                 }
                                 Err(e) => {
