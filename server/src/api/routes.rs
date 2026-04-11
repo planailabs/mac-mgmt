@@ -21,7 +21,10 @@ use super::push::{self, PushChannels, PushMessage};
 pub(crate) struct SelfInfo {
     cluster_id: Option<Uuid>,
     cluster_name: Option<String>,
+    organization_id: Option<Uuid>,
     token_kind: String,
+    /// All cluster IDs this token can access.
+    cluster_ids: Vec<Uuid>,
 }
 
 #[utoipa::path(
@@ -55,10 +58,33 @@ pub async fn get_self(
         None => None,
     };
 
+    // Resolve all cluster IDs this token can access
+    let cluster_ids = if let Some(cid) = auth.cluster_id {
+        // Single-cluster token
+        vec![cid]
+    } else if let Some(org_id) = auth.organization_id {
+        // Org-scoped token: all clusters in the organization
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT cluster_id FROM organization_clusters WHERE organization_id = $1",
+        )
+        .bind(org_id)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+    } else {
+        // Admin token: all clusters
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM clusters")
+            .fetch_all(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?
+    };
+
     Ok(Json(SelfInfo {
         cluster_id: auth.cluster_id,
         cluster_name: name,
+        organization_id: auth.organization_id,
         token_kind: auth.token_kind,
+        cluster_ids,
     }))
 }
 
