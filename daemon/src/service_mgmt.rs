@@ -199,7 +199,16 @@ impl ServiceManager {
                 service.ensure_installed()?;
                 service.ensure_setup()?;
 
-                if let Err(e) = crate::service::install_managed_service(&name) {
+                if crate::service::is_managed_service_installed(&name) {
+                    tracing::info!("{name} service unit already installed, ensuring running");
+                    if let Err(e) = crate::service::start_managed_service(&name) {
+                        tracing::warn!("{name} start failed, reinstalling: {e}");
+                        if let Err(e) = crate::service::install_managed_service(&name) {
+                            tracing::error!("failed to install managed service unit for {name}: {e}");
+                            continue;
+                        }
+                    }
+                } else if let Err(e) = crate::service::install_managed_service(&name) {
                     tracing::error!("failed to install managed service unit for {name}: {e}");
                     sentry_ext::capture_error(
                         &format!("failed to install managed service {name}: {e}"),
