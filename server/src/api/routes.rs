@@ -1878,6 +1878,73 @@ pub async fn admin_create_token(
     Ok((Status::Created, Json(CreatedToken { token: raw_token })))
 }
 
+// ── Admin — Organization token creation ─────────────────────────────
+
+#[derive(Deserialize, ToSchema)]
+pub struct CreateOrgTokenBody {
+    label: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/organizations/{org_id}/tokens",
+    tag = "Admin",
+    summary = "Create a setting token scoped to an organization",
+    description = "Creates a setting token that grants access to all clusters in the organization.",
+    security(("bearer" = [])),
+    params(("org_id" = Uuid, Path, description = "Organization ID")),
+    request_body = CreateOrgTokenBody,
+    responses(
+        (status = 201, description = "Token created", body = CreatedToken),
+        (status = 400, description = "Invalid request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin token required"),
+    ),
+)]
+#[rocket::post("/admin/organizations/<org_id>/tokens", data = "<body>")]
+pub async fn admin_create_org_token(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+    body: Json<CreateOrgTokenBody>,
+) -> Result<(Status, Json<CreatedToken>), Status> {
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+
+    let label = body.label.trim();
+    if label.is_empty() {
+        return Err(Status::BadRequest);
+    }
+
+    // Verify organization exists
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)",
+    )
+    .bind(oid)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if !exists {
+        return Err(Status::NotFound);
+    }
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+
+    sqlx::query("INSERT INTO tokens (organization_id, token_hash, label, kind) VALUES ($1, $2, $3, 'setting')")
+        .bind(oid)
+        .bind(&hash)
+        .bind(label)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    Ok((Status::Created, Json(CreatedToken { token: raw_token })))
+}
+
 // ── Admin — Skill MCP dependencies ───────────────────────────────────
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]

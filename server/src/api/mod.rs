@@ -68,6 +68,7 @@ use utoipa_swagger_ui::SwaggerUi;
         // Admin
         routes::admin_list_clusters,
         routes::admin_create_token,
+        routes::admin_create_org_token,
         // Admin — Rollouts
         routes::admin_create_rollout_group,
         routes::admin_list_rollout_groups,
@@ -109,6 +110,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::CatalogMcpBundle,
         routes::AdminClusterRow,
         routes::CreateTokenForClusterBody,
+        routes::CreateOrgTokenBody,
         routes::CreatedToken,
         routes::SshKeyRow,
         routes::AddSshKeyBody,
@@ -219,6 +221,7 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 // Admin token routes
                 routes::admin_list_clusters,
                 routes::admin_create_token,
+                routes::admin_create_org_token,
                 // Admin — skill MCP dependencies
                 routes::admin_list_skill_mcp_deps,
                 routes::admin_add_skill_mcp_dep,

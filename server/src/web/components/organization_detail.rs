@@ -38,6 +38,15 @@ struct ClusterOption {
     name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OrgTokenRow {
+    id: String,
+    label: String,
+    kind: String,
+    revoked: bool,
+    created_at: DateTime<Utc>,
+}
+
 #[server]
 async fn get_organization(id: String) -> Result<OrgInfo, ServerFnError> {
     let user = current_user().await?;
@@ -294,6 +303,91 @@ async fn remove_org_cluster(org_id: String, cluster_id: String) -> Result<(), Se
 }
 
 #[server]
+async fn list_org_tokens(org_id: String) -> Result<Vec<OrgTokenRow>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let oid: uuid::Uuid = org_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: uuid::Uuid,
+        label: String,
+        kind: String,
+        revoked: bool,
+        created_at: DateTime<Utc>,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT id, label, kind, revoked, created_at FROM tokens \
+         WHERE organization_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(oid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| OrgTokenRow {
+            id: r.id.to_string(),
+            label: r.label,
+            kind: r.kind,
+            revoked: r.revoked,
+            created_at: r.created_at,
+        })
+        .collect())
+}
+
+#[server]
+async fn create_org_token(org_id: String, label: String) -> Result<String, ServerFnError> {
+    use rand::Rng;
+    use sha2::Digest;
+
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let oid: uuid::Uuid = org_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(sha2::Sha256::digest(raw_token.as_bytes()));
+
+    sqlx::query(
+        "INSERT INTO tokens (organization_id, token_hash, label, kind) VALUES ($1, $2, $3, 'setting')",
+    )
+    .bind(oid)
+    .bind(hash)
+    .bind(label)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(raw_token)
+}
+
+#[server]
+async fn revoke_org_token(token_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let tid: uuid::Uuid = token_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
+        .bind(tid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[server]
 async fn delete_organization(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
@@ -341,9 +435,17 @@ pub fn OrganizationDetail(id: String) -> Element {
         async move { get_available_clusters(id).await }
     })?;
 
+    let id_for_tokens = id.clone();
+    let mut tokens_future = use_server_future(move || {
+        let id = id_for_tokens.clone();
+        async move { list_org_tokens(id).await }
+    })?;
+
     let mut selected_user = use_signal(|| Option::<String>::None);
     let mut selected_cluster = use_signal(|| Option::<String>::None);
     let mut confirm_delete = use_signal(|| false);
+    let mut token_label = use_signal(|| String::new());
+    let mut created_token = use_signal(|| Option::<String>::None);
     let nav = navigator();
 
     match &*org_future.read() {
@@ -361,6 +463,10 @@ pub fn OrganizationDetail(id: String) -> Element {
                 _ => vec![],
             };
             let avail_clusters = match &*avail_clusters_future.read() {
+                Some(Ok(list)) => list.clone(),
+                _ => vec![],
+            };
+            let tokens = match &*tokens_future.read() {
                 Some(Ok(list)) => list.clone(),
                 _ => vec![],
             };
@@ -565,6 +671,95 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                         }
                                                     },
                                                     "Remove"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Tokens section
+                    div { class: "lg:col-span-2 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
+                        h3 { class: "text-lg font-semibold mb-3", "Tokens" }
+
+                        div { class: "flex gap-2 mb-4",
+                            input {
+                                class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
+                                r#type: "text",
+                                placeholder: "Token label...",
+                                value: "{token_label}",
+                                oninput: move |e| token_label.set(e.value()),
+                            }
+                            button {
+                                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                                disabled: token_label.read().trim().is_empty(),
+                                onclick: {
+                                    let oid = id.clone();
+                                    move |_| {
+                                        let oid = oid.clone();
+                                        let label = token_label.read().clone();
+                                        async move {
+                                            match create_org_token(oid, label).await {
+                                                Ok(raw) => {
+                                                    created_token.set(Some(raw));
+                                                    token_label.set(String::new());
+                                                    tokens_future.restart();
+                                                }
+                                                Err(_) => {}
+                                            }
+                                        }
+                                    }
+                                },
+                                "Create Token"
+                            }
+                        }
+
+                        if let Some(raw) = &*created_token.read() {
+                            div { class: "bg-green-100 dark:bg-green-900 border border-green-400 dark:border-green-600 text-green-800 dark:text-green-200 rounded p-3 mb-4 text-sm",
+                                p { class: "font-semibold mb-1", "Token created! Copy it now — it won't be shown again." }
+                                code { class: "block break-all", "{raw}" }
+                            }
+                        }
+
+                        if tokens.is_empty() {
+                            p { class: "text-gray-500 dark:text-gray-400 text-sm", "No tokens yet." }
+                        } else {
+                            div { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                                for t in &tokens {
+                                    {
+                                        let tid = t.id.clone();
+                                        let is_revoked = t.revoked;
+                                        let label = t.label.clone();
+                                        let created = t.created_at.format("%Y-%m-%d %H:%M").to_string();
+                                        rsx! {
+                                            div { class: "flex justify-between items-center py-2",
+                                                div {
+                                                    span { class: "text-sm font-medium", "{label}" }
+                                                    if is_revoked {
+                                                        span { class: "ml-2 text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded", "revoked" }
+                                                    } else {
+                                                        span { class: "ml-2 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded", "active" }
+                                                    }
+                                                    span { class: "text-sm text-gray-500 dark:text-gray-400 ml-2", "{created}" }
+                                                }
+                                                if !is_revoked {
+                                                    button {
+                                                        class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                                        onclick: {
+                                                            let tid = tid.clone();
+                                                            move |_| {
+                                                                let tid = tid.clone();
+                                                                async move {
+                                                                    let _ = revoke_org_token(tid).await;
+                                                                    created_token.set(None);
+                                                                    tokens_future.restart();
+                                                                }
+                                                            }
+                                                        },
+                                                        "Revoke"
+                                                    }
                                                 }
                                             }
                                         }
