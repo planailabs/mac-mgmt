@@ -45,6 +45,10 @@ impl Metrics {
         }
     }
 
+    pub fn register_collector(&self, collector: Box<dyn prometheus::core::Collector>) -> prometheus::Result<()> {
+        self.registry.register(collector)
+    }
+
     pub fn status(&self) -> (String, u64, Vec<(String, bool, bool, bool)>) {
         let uptime = self.started_at.elapsed().as_secs();
         let families = self.registry.gather();

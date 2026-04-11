@@ -65,11 +65,17 @@ pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Resu
 
 pub struct OpenClaw {
     config: OpenClawConfig,
+    active_sessions: prometheus::IntGauge,
 }
 
 impl OpenClaw {
     pub fn new(config: OpenClawConfig) -> Self {
-        Self { config }
+        let active_sessions = prometheus::IntGauge::new(
+            "mac_mgmt_openclaw_active_sessions",
+            "Number of active openclaw sessions",
+        )
+        .unwrap();
+        Self { config, active_sessions }
     }
 
     /// Uninstall any preexisting openclaw daemon service so it doesn't race ours.
@@ -160,6 +166,24 @@ impl OpenClaw {
         }
 
         Ok(())
+    }
+
+    fn active_session_count() -> usize {
+        let output = Command::new("openclaw")
+            .args(["sessions", "--active", "1", "--json"])
+            .output();
+        let Ok(output) = output else { return 0 };
+        if !output.status.success() { return 0; }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let json: serde_json::Value = match serde_json::from_str(&stdout) {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+        match &json {
+            serde_json::Value::Array(arr) => arr.len(),
+            serde_json::Value::Object(obj) => obj.len(),
+            _ => 0,
+        }
     }
 
     /// Stop any existing openclaw gateway so we don't conflict on ports.
@@ -350,36 +374,20 @@ impl ManagedService for OpenClaw {
     }
 
     fn is_busy(&self) -> Result<bool> {
-        let output = Command::new("openclaw")
-            .args(["sessions", "--active", "1", "--json"])
-            .output()
-            .context("failed to run openclaw sessions")?;
-
-        if !output.status.success() {
-            tracing::warn!(
-                "openclaw sessions exited with status {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-            return Ok(true);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let json: serde_json::Value =
-            serde_json::from_str(&stdout).context("failed to parse sessions json")?;
-
-        let busy = match &json {
-            serde_json::Value::Array(arr) => !arr.is_empty(),
-            serde_json::Value::Object(obj) => !obj.is_empty(),
-            _ => false,
-        };
-
-        if busy {
-            tracing::info!("openclaw is currently busy");
+        let count = Self::active_session_count();
+        if count > 0 {
+            tracing::info!("openclaw has {count} active session(s)");
         } else {
             tracing::debug!("openclaw is idle");
         }
+        Ok(count > 0)
+    }
 
-        Ok(busy)
+    fn metric_collectors(&self) -> Vec<Box<dyn prometheus::core::Collector>> {
+        vec![Box::new(self.active_sessions.clone())]
+    }
+
+    fn collect_metrics(&self) {
+        self.active_sessions.set(Self::active_session_count() as i64);
     }
 }

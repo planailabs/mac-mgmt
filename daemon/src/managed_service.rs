@@ -83,4 +83,17 @@ pub trait ManagedService {
     fn supports_hot_reload(&self) -> bool {
         false
     }
+
+    /// Return Prometheus metric collectors owned by this service.
+    /// Called once during init; the daemon registers them with its Registry.
+    /// Services should create and store their metrics in their struct and
+    /// update them in `collect_metrics()`.
+    fn metric_collectors(&self) -> Vec<Box<dyn prometheus::core::Collector>> {
+        Vec::new()
+    }
+
+    /// Update custom metrics from the running service. Called on each
+    /// health tick. Services should update the metrics they registered
+    /// via `metric_collectors()`.
+    fn collect_metrics(&self) {}
 }

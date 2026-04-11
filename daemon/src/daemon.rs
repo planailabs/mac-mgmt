@@ -113,6 +113,9 @@ pub async fn run(
 
     let metrics = Arc::new(Metrics::new());
 
+    #[cfg(feature = "services")]
+    svc_mgr.register_metrics(&metrics);
+
     // Channel for local sync requests (e.g. from `mac-mgmt sync` via /sync)
     let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
     let _sync_tx_keepalive = sync_tx.clone();

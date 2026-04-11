@@ -300,6 +300,22 @@ impl ServiceManager {
         })
     }
 
+    /// Register service-specific Prometheus metrics with the given Metrics instance.
+    /// Call once after init, before the first health tick.
+    pub fn register_metrics(&self, metrics: &Metrics) {
+        let services: Vec<&dyn ManagedService> = match &self.backend {
+            ServiceBackend::Inline(states) => states.iter().map(|s| s.service.as_ref()).collect(),
+            ServiceBackend::External(states) => states.iter().map(|s| s.service.as_ref()).collect(),
+        };
+        for svc in services {
+            for collector in svc.metric_collectors() {
+                if let Err(e) = metrics.register_collector(collector) {
+                    tracing::warn!("{}: failed to register metric: {e}", svc.name());
+                }
+            }
+        }
+    }
+
     // ── Spawn / Connect ──────────────────────────────────────────────
 
     pub fn spawn_all(&mut self) {
@@ -564,6 +580,7 @@ impl ServiceManager {
                 }
             };
 
+            state.service.collect_metrics();
             Self::update_metrics(metrics, &name, state.healthy, state.upgrade_pending, busy);
         }
     }
@@ -699,6 +716,7 @@ impl ServiceManager {
                 state.update_self_pending = false;
             }
 
+            state.service.collect_metrics();
             Self::update_metrics(metrics, &name, state.healthy, state.upgrade_pending, busy);
         }
     }

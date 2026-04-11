@@ -28,11 +28,17 @@ fn other_flavour_pkgs(flavour: &str) -> Vec<String> {
 
 pub struct Ollama {
     config: OllamaConfig,
+    loaded_models: prometheus::IntGauge,
 }
 
 impl Ollama {
     pub fn new(config: OllamaConfig) -> Self {
-        Self { config }
+        let loaded_models = prometheus::IntGauge::new(
+            "mac_mgmt_ollama_loaded_models",
+            "Number of models currently loaded in ollama",
+        )
+        .unwrap();
+        Self { config, loaded_models }
     }
 
     fn base_url(&self) -> String {
@@ -41,6 +47,14 @@ impl Ollama {
 
     fn http_get(&self, path: &str) -> Result<String> {
         super::http_get(&self.config.host, self.config.port, path)
+    }
+
+    fn loaded_model_count(&self) -> usize {
+        self.http_get("/api/ps")
+            .ok()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+            .and_then(|json| json.get("models")?.as_array().map(|a| a.len()))
+            .unwrap_or(0)
     }
 }
 
@@ -183,21 +197,20 @@ impl ManagedService for Ollama {
     }
 
     fn is_busy(&self) -> Result<bool> {
-        let body = self.http_get("/api/ps")?;
-        let json: serde_json::Value =
-            serde_json::from_str(&body).context("failed to parse ollama /api/ps")?;
-
-        let busy = json
-            .get("models")
-            .and_then(|m| m.as_array())
-            .is_some_and(|models| !models.is_empty());
-
-        if busy {
-            tracing::info!("ollama has models loaded");
+        let count = self.loaded_model_count();
+        if count > 0 {
+            tracing::info!("ollama has {count} model(s) loaded");
         } else {
             tracing::debug!("ollama is idle");
         }
+        Ok(count > 0)
+    }
 
-        Ok(busy)
+    fn metric_collectors(&self) -> Vec<Box<dyn prometheus::core::Collector>> {
+        vec![Box::new(self.loaded_models.clone())]
+    }
+
+    fn collect_metrics(&self) {
+        self.loaded_models.set(self.loaded_model_count() as i64);
     }
 }
