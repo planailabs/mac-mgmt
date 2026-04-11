@@ -110,4 +110,9 @@ impl ManagedClient {
     pub fn try_recv_notification(&mut self) -> Option<IpcNotification> {
         self.notification_rx.try_recv().ok()
     }
+
+    /// Check if the background reader has disconnected (wrapper died or socket closed).
+    pub fn is_disconnected(&self) -> bool {
+        self.response_rx.is_closed() || self.notification_rx.is_closed()
+    }
 }

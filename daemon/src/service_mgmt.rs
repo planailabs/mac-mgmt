@@ -42,8 +42,72 @@ struct ExternalServiceState {
     post_start_done: bool,
     consecutive_crashes: u32,
     was_unhealthy: bool,
-    /// Store path of the service binary when last spawned.
     running_store_path: Option<String>,
+}
+
+impl ExternalServiceState {
+    /// Send a request to the wrapper. On IPC error, disconnects the client
+    /// so the next health tick will reconnect.
+    async fn send(&mut self, req: &IpcRequest) -> Option<IpcResponse> {
+        let Some(ref mut client) = self.client else {
+            return None;
+        };
+        match client.request(req).await {
+            Ok(resp) => Some(resp),
+            Err(e) => {
+                tracing::warn!("{}: IPC error, disconnecting: {e}", self.service_name);
+                self.client = None;
+                None
+            }
+        }
+    }
+
+    /// Drain all pending notifications. Disconnects on channel close.
+    fn drain_notifications(&mut self, name: &str, log_buf: &LogBuffer, dispatcher: &Dispatcher) {
+        let Some(ref mut client) = self.client else { return };
+        loop {
+            match client.try_recv_notification() {
+                Some(IpcNotification::Crashed { exit_code }) => {
+                    self.consecutive_crashes += 1;
+                    tracing::warn!("{name} crashed (#{}, exit: {exit_code:?})", self.consecutive_crashes);
+                    dispatcher.dispatch(&DaemonEvent::ServiceCrashed {
+                        service: name.to_string(),
+                        exit_code,
+                    });
+                    self.healthy = false;
+                    self.post_start_done = false;
+
+                    if self.consecutive_crashes >= 2 {
+                        if let Err(e) = self.service.repair() {
+                            tracing::error!("{name} repair failed: {e}");
+                        }
+                    }
+                }
+                Some(IpcNotification::Log { line, .. }) => {
+                    log_buf.push(format!("[{name}] {line}"));
+                }
+                None => break,
+            }
+        }
+    }
+
+    /// Send Spawn to the wrapper and update state.
+    async fn spawn_via_wrapper(&mut self) {
+        let name = self.service_name.clone();
+        let spec = self.service.spawn_spec();
+        self.running_store_path = crate::nix::binary_store_path(self.service.binary_name());
+        match self.send(&IpcRequest::Spawn(spec)).await {
+            Some(IpcResponse::Ok) => {
+                tracing::info!("{name} spawned via wrapper");
+                self.skip_health_check = true;
+                self.post_start_done = false;
+            }
+            Some(IpcResponse::Error { message }) => {
+                tracing::error!("{name} Spawn failed: {message}");
+            }
+            None => {} // disconnected, will reconnect next tick
+        }
+    }
 }
 
 struct ConnectorState {
@@ -52,9 +116,7 @@ struct ConnectorState {
 }
 
 enum ServiceBackend {
-    /// Original: daemon owns child processes directly.
     Inline(Vec<InlineServiceState>),
-    /// New: services run as independent system services via IPC.
     External(Vec<ExternalServiceState>),
 }
 
@@ -67,9 +129,6 @@ pub struct ServiceManager {
 }
 
 impl ServiceManager {
-    /// Install and set up all services. Does NOT spawn any processes.
-    /// Call `spawn_all()` (inline) or `connect_all()` (external) after
-    /// registering signal handlers.
     pub fn init(
         cfg: &mut crate::config::Config,
         dispatcher: Arc<Dispatcher>,
@@ -97,7 +156,6 @@ impl ServiceManager {
         let backend = if external {
             tracing::info!("external_processes=true, using per-service system units");
 
-            // Clean up stale units from previous runs.
             let desired_names: Vec<String> = services
                 .iter()
                 .filter(|s| s.service_mode() != ServiceMode::InstallOnly)
@@ -128,11 +186,9 @@ impl ServiceManager {
                     continue;
                 }
 
-                // Install and setup via nix (done in the daemon, not the wrapper).
                 service.ensure_installed()?;
                 service.ensure_setup()?;
 
-                // Install and start the per-service system unit.
                 if let Err(e) = crate::service::install_managed_service(&name) {
                     tracing::error!("failed to install managed service unit for {name}: {e}");
                     sentry_ext::capture_error(
@@ -160,7 +216,6 @@ impl ServiceManager {
 
             ServiceBackend::External(external_states)
         } else {
-            // Clean up any stale per-service units from a previous external_processes=true run.
             if let Ok(existing) = crate::service::list_managed_service_units() {
                 for name in &existing {
                     tracing::info!("cleaning up stale managed service unit (external_processes=false): {name}");
@@ -225,12 +280,8 @@ impl ServiceManager {
         })
     }
 
-    // Notification receiver is reserved for future use when the daemon
-    // event loop has a dedicated select arm for IPC notifications.
-
     // ── Spawn / Connect ──────────────────────────────────────────────
 
-    /// Spawn all managed services (inline mode). No-op in external mode.
     pub fn spawn_all(&mut self) {
         let ServiceBackend::Inline(ref mut states) = self.backend else {
             return;
@@ -241,27 +292,16 @@ impl ServiceManager {
                 Ok(mut child) => {
                     let log_task = crate::log_capture::capture(name, &mut child, &self.log_buf);
                     tracing::info!("{name} spawned (pid: {})", child.id());
-                    sentry_ext::breadcrumb(
-                        "service",
-                        &format!("{name} spawned"),
-                        &[("service", &name), ("pid", &child.id().to_string())],
-                    );
                     state.child = Some(child);
                     state.log_task = Some(log_task);
                 }
                 Err(e) => {
                     tracing::error!("{name} spawn failed: {e}");
-                    sentry_ext::capture_error(
-                        &format!("{name} spawn failed: {e}"),
-                        &[("service", &name)],
-                    );
                 }
             }
         }
     }
 
-    /// Connect to all service wrapper sockets (external mode). No-op in inline mode.
-    /// Sends `Spawn` with the service's spawn spec to start the child process.
     pub async fn connect_all(&mut self) {
         let ServiceBackend::External(ref mut states) = self.backend else {
             return;
@@ -276,57 +316,32 @@ impl ServiceManager {
         let path = crate::service_ipc::socket_path(name);
         tracing::info!("connecting to {name} wrapper at {}", path.display());
         match ManagedClient::connect(&path, Duration::from_secs(30)).await {
-            Ok(mut client) => {
-                tracing::info!("connected to {name} wrapper, sending Spawn");
-                // Run configure + preflight before spawning.
+            Ok(client) => {
+                tracing::info!("connected to {name} wrapper");
+                state.client = Some(client);
                 if let Err(e) = state.service.configure() {
                     tracing::warn!("{name} configure failed: {e}");
                 }
                 if let Err(e) = state.service.preflight() {
                     tracing::warn!("{name} preflight failed: {e}");
                 }
-                let spec = state.service.spawn_spec();
-                state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
-                match client.request(&IpcRequest::Spawn(spec)).await {
-                    Ok(IpcResponse::Ok) => {
-                        tracing::info!("{name} spawned via wrapper");
-                        state.skip_health_check = true;
-                    }
-                    Ok(IpcResponse::Error { message }) => {
-                        tracing::error!("{name} Spawn failed: {message}");
-                    }
-                    Err(e) => {
-                        tracing::error!("{name} Spawn IPC failed: {e}");
-                    }
-                }
-                state.client = Some(client);
+                state.spawn_via_wrapper().await;
             }
             Err(e) => {
                 tracing::error!("failed to connect to {name} wrapper: {e}");
-                sentry_ext::capture_error(
-                    &format!("IPC connect to {name} failed: {e}"),
-                    &[("service", name)],
-                );
             }
         }
     }
 
     // ── Upgrades ─────────────────────────────────────────────────────
 
-    /// Check for upgrades on all services (called on the update interval).
     pub fn check_upgrades(&mut self) {
-        // Install-only services are always handled directly.
         for svc in &self.install_only {
             let name = svc.name();
             sentry_ext::set_tag("service", &name);
             match svc.check_and_upgrade() {
                 Ok(true) => {
                     tracing::info!("{name} upgraded (install-only)");
-                    sentry_ext::breadcrumb(
-                        "upgrade",
-                        &format!("{name} upgraded (install-only)"),
-                        &[("service", &name)],
-                    );
                     self.dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
                         service: name.to_string(),
                     });
@@ -334,10 +349,6 @@ impl ServiceManager {
                 Ok(false) => {}
                 Err(e) => {
                     tracing::warn!("{name} upgrade check failed: {e}");
-                    sentry_ext::capture_error(
-                        &format!("{name} upgrade check failed: {e}"),
-                        &[("service", &name)],
-                    );
                     self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
                         service: name.to_string(),
                         error: e.to_string(),
@@ -349,37 +360,25 @@ impl ServiceManager {
         match &mut self.backend {
             ServiceBackend::Inline(states) => {
                 for state in states {
-                    if !state.upgrade_pending {
-                        let name = state.service.name();
-                        sentry_ext::set_tag("service", &name);
-                        match state.service.check_and_upgrade() {
-                            Ok(true) => {
-                                state.upgrade_pending = true;
-                                sentry_ext::breadcrumb(
-                                    "upgrade",
-                                    &format!("{name} upgrade pending"),
-                                    &[("service", &name)],
-                                );
-                            }
-                            Ok(false) => {}
-                            Err(e) => {
-                                tracing::warn!("{name} upgrade check failed: {e}");
-                                sentry_ext::capture_error(
-                                    &format!("{name} upgrade check failed: {e}"),
-                                    &[("service", &name)],
-                                );
-                                self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
-                                    service: name.to_string(),
-                                    error: e.to_string(),
-                                });
-                            }
+                    if state.upgrade_pending {
+                        continue;
+                    }
+                    let name = state.service.name();
+                    sentry_ext::set_tag("service", &name);
+                    match state.service.check_and_upgrade() {
+                        Ok(true) => { state.upgrade_pending = true; }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!("{name} upgrade check failed: {e}");
+                            self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
+                                service: name.to_string(),
+                                error: e.to_string(),
+                            });
                         }
                     }
                 }
             }
             ServiceBackend::External(states) => {
-                // Daemon handles nix upgrades, then marks restart pending
-                // so health_tick sends Upgrade (restart) to the wrapper.
                 for state in states {
                     if state.upgrade_pending {
                         continue;
@@ -387,21 +386,10 @@ impl ServiceManager {
                     let name = state.service.name();
                     sentry_ext::set_tag("service", &name);
                     match state.service.check_and_upgrade() {
-                        Ok(true) => {
-                            state.upgrade_pending = true;
-                            sentry_ext::breadcrumb(
-                                "upgrade",
-                                &format!("{name} upgrade pending"),
-                                &[("service", &name)],
-                            );
-                        }
+                        Ok(true) => { state.upgrade_pending = true; }
                         Ok(false) => {}
                         Err(e) => {
                             tracing::warn!("{name} upgrade check failed: {e}");
-                            sentry_ext::capture_error(
-                                &format!("{name} upgrade check failed: {e}"),
-                                &[("service", &name)],
-                            );
                             self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
                                 service: name.to_string(),
                                 error: e.to_string(),
@@ -413,7 +401,7 @@ impl ServiceManager {
         }
     }
 
-    // ── Inline respawn helper ────────────────────────────────────────
+    // ── Inline respawn ───────────────────────────────────────────────
 
     fn respawn_inline(state: &mut InlineServiceState, log_buf: &LogBuffer) -> bool {
         if let Some(ref mut child) = state.child {
@@ -424,7 +412,6 @@ impl ServiceManager {
             task.abort();
         }
         let name = state.service.name();
-        // Re-apply configuration before spawning.
         if let Err(e) = state.service.configure() {
             tracing::warn!("{name} configure before respawn failed: {e}");
         }
@@ -438,10 +425,6 @@ impl ServiceManager {
             }
             Err(e) => {
                 tracing::error!("{name} spawn failed: {e}");
-                sentry_ext::capture_error(
-                    &format!("{name} spawn failed: {e}"),
-                    &[("service", &name)],
-                );
                 false
             }
         }
@@ -449,31 +432,15 @@ impl ServiceManager {
 
     // ── Health tick ──────────────────────────────────────────────────
 
-    /// Run health checks, restart crashed services, apply pending upgrades.
     pub async fn health_tick(&mut self, metrics: &Arc<Metrics>, in_upgrade_window: bool) {
         match &mut self.backend {
             ServiceBackend::Inline(states) => {
-                Self::health_tick_inline(
-                    states,
-                    &self.log_buf,
-                    &self.dispatcher,
-                    metrics,
-                    in_upgrade_window,
-                );
+                Self::health_tick_inline(states, &self.log_buf, &self.dispatcher, metrics, in_upgrade_window);
             }
             ServiceBackend::External(states) => {
-                Self::health_tick_external(
-                    states,
-                    &self.dispatcher,
-                    &self.log_buf,
-                    metrics,
-                    in_upgrade_window,
-                )
-                .await;
+                Self::health_tick_external(states, &self.dispatcher, &self.log_buf, metrics, in_upgrade_window).await;
             }
         }
-
-        // Run connectors when dependencies are ready.
         self.run_connectors();
     }
 
@@ -488,48 +455,23 @@ impl ServiceManager {
             let name = state.service.name().to_string();
             sentry_ext::set_tag("service", &name);
 
-            if state.child.is_none() {
-                continue;
-            }
+            if state.child.is_none() { continue; }
 
-            // Restart if exited.
+            // Check if exited.
             let exit_status = state.child.as_mut().unwrap().try_wait();
             match exit_status {
                 Ok(Some(status)) => {
                     state.consecutive_crashes += 1;
-                    tracing::warn!(
-                        "{name} exited with {status}, restarting (crash #{})",
-                        state.consecutive_crashes
-                    );
-                    let code = status
-                        .code()
-                        .map(|c| c.to_string())
-                        .unwrap_or("signal".to_string());
-                    sentry_ext::capture_error(
-                        &format!("{name} process exited unexpectedly"),
-                        &[("service", &name), ("exit_code", &code)],
-                    );
-
-                    log_buf.push(format!(
-                        "[{name}] crashed with {status} (#{crashes})",
-                        crashes = state.consecutive_crashes
-                    ));
+                    tracing::warn!("{name} exited with {status} (crash #{})", state.consecutive_crashes);
+                    log_buf.push(format!("[{name}] crashed with {status} (#{crashes})", crashes = state.consecutive_crashes));
                     dispatcher.dispatch(&DaemonEvent::ServiceCrashed {
                         service: name.to_string(),
                         exit_code: status.code(),
                     });
 
                     if state.consecutive_crashes >= 2 {
-                        tracing::warn!(
-                            "{name} crashed {} times, attempting repair before respawn",
-                            state.consecutive_crashes
-                        );
                         if let Err(e) = state.service.repair() {
                             tracing::error!("{name} repair failed: {e}");
-                            sentry_ext::capture_error(
-                                &format!("{name} repair failed: {e}"),
-                                &[("service", &name)],
-                            );
                         }
                     }
 
@@ -541,101 +483,56 @@ impl ServiceManager {
                 Err(e) => tracing::error!("failed to check {name} status: {e}"),
             }
 
-            // Apply pending restart (config change) when idle.
+            // Pending restart when idle.
             if state.restart_pending {
-                match state.service.is_busy() {
-                    Ok(false) => {
-                        tracing::info!("{name} is idle, restarting for config change");
-                        if Self::respawn_inline(state, log_buf) {
-                            state.restart_pending = false;
-                            state.upgrade_pending = false;
-                        }
+                let busy = state.service.is_busy().unwrap_or(false);
+                if !busy || in_upgrade_window {
+                    if Self::respawn_inline(state, log_buf) {
+                        state.restart_pending = false;
+                        state.upgrade_pending = false;
                     }
-                    Ok(true) => tracing::info!("{name} is busy, deferring restart"),
-                    Err(e) => tracing::warn!("{name} busy check for restart failed: {e}"),
                 }
             }
 
-            // Apply pending upgrade when idle.
+            // Pending upgrade when idle.
             let busy = if state.upgrade_pending && in_upgrade_window {
-                match state.service.is_busy() {
-                    Ok(false) => {
-                        tracing::info!("{name} is idle, restarting to apply upgrade");
-                        if Self::respawn_inline(state, log_buf) {
-                            state.upgrade_pending = false;
-                            sentry_ext::breadcrumb(
-                                "upgrade",
-                                &format!("{name} restarted for upgrade"),
-                                &[("service", &name)],
-                            );
-                            dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
-                                service: name.to_string(),
-                            });
-                        }
-                        false
-                    }
-                    Ok(true) => {
-                        tracing::info!("{name} is busy, deferring upgrade restart");
-                        true
-                    }
-                    Err(e) => {
-                        tracing::warn!("{name} busy check failed: {e}");
-                        false
+                let busy = state.service.is_busy().unwrap_or(false);
+                if !busy {
+                    if Self::respawn_inline(state, log_buf) {
+                        state.upgrade_pending = false;
+                        dispatcher.dispatch(&DaemonEvent::UpgradeInstalled { service: name.to_string() });
                     }
                 }
-            } else {
-                false
-            };
+                busy
+            } else { false };
 
             // Health check.
             state.healthy = if state.skip_health_check {
-                tracing::info!("skipping health check, {name} recently started");
                 state.skip_health_check = false;
                 true
             } else {
                 match state.service.check_health() {
                     Ok(true) => {
-                        tracing::info!("{name} is healthy");
-                        log_buf.push(format!("[{name}] healthy"));
                         state.consecutive_crashes = 0;
                         if state.was_unhealthy {
                             state.was_unhealthy = false;
-                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
-                                service: name.to_string(),
-                            });
+                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.to_string() });
                         }
                         if !state.post_start_done {
                             if let Err(e) = state.service.post_start() {
                                 tracing::error!("{name} post_start failed: {e}");
-                                sentry_ext::capture_error(
-                                    &format!("{name} post_start failed: {e}"),
-                                    &[("service", &name)],
-                                );
                             }
                             state.post_start_done = true;
                         }
                         true
                     }
                     Ok(false) => {
-                        tracing::warn!("{name} is unhealthy, attempting repair");
-                        log_buf.push(format!("[{name}] unhealthy, attempting repair"));
-                        sentry_ext::breadcrumb(
-                            "health",
-                            &format!("{name} unhealthy, repairing"),
-                            &[("service", &name)],
-                        );
                         if !state.was_unhealthy {
                             state.was_unhealthy = true;
-                            dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy {
-                                service: name.to_string(),
-                            });
+                            dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.to_string() });
                         }
                         if let Err(e) = state.service.repair() {
                             tracing::error!("{name} repair failed: {e}");
-                            sentry_ext::capture_error(
-                                &format!("{name} repair failed: {e}"),
-                                &[("service", &name)],
-                            );
                         }
                         false
                     }
@@ -661,112 +558,73 @@ impl ServiceManager {
             let name = state.service_name.clone();
             sentry_ext::set_tag("service", &name);
 
-            // Ensure wrapper is connected.
+            // Reconnect if disconnected, re-send Spawn.
             if state.client.is_none() {
                 let path = crate::service_ipc::socket_path(&name);
                 match ManagedClient::connect(&path, Duration::from_secs(5)).await {
-                    Ok(c) => {
+                    Ok(client) => {
                         tracing::info!("reconnected to {name} wrapper");
-                        state.client = Some(c);
+                        state.client = Some(client);
+                        // Re-send Spawn so the wrapper has a child running.
+                        if let Err(e) = state.service.configure() {
+                            tracing::warn!("{name} configure on reconnect: {e}");
+                        }
+                        state.spawn_via_wrapper().await;
                     }
                     Err(_) => {
-                        tracing::warn!("{name} wrapper not reachable, trying to restart unit");
-                        if let Err(e) = crate::service::start_managed_service(&name) {
-                            tracing::error!("failed to start {name} unit: {e}");
-                        }
+                        tracing::warn!("{name} wrapper not reachable, restarting unit");
+                        let _ = crate::service::start_managed_service(&name);
+                        state.healthy = false;
+                        Self::update_metrics(metrics, &name, false, state.upgrade_pending, false);
                         continue;
                     }
                 }
             }
 
-            let client = state.client.as_mut().unwrap();
+            // Drain notifications (logs, crashes).
+            state.drain_notifications(&name, log_buf, dispatcher);
 
-            // Drain log and crash notifications from the wrapper.
-            while let Some(notif) = client.try_recv_notification() {
-                match notif {
-                    IpcNotification::Crashed { exit_code } => {
-                        state.consecutive_crashes += 1;
-                        tracing::warn!("{name} crashed (#{}, exit: {exit_code:?})", state.consecutive_crashes);
-                        dispatcher.dispatch(&DaemonEvent::ServiceCrashed {
-                            service: name.clone(),
-                            exit_code,
-                        });
-                        state.healthy = false;
-                        state.post_start_done = false;
-
-                        if state.consecutive_crashes >= 2 {
-                            if let Err(e) = state.service.repair() {
-                                tracing::error!("{name} repair failed: {e}");
-                            }
-                        }
-                    }
-                    IpcNotification::Log { line, .. } => {
-                        log_buf.push(format!("[{name}] {line}"));
-                    }
-                }
+            // Check wrapper is still alive by peeking at the notification channel.
+            // If the background reader task ended (EOF), the channel is closed.
+            if state.client.as_mut().is_some_and(|c| c.is_disconnected()) {
+                tracing::warn!("{name} wrapper connection lost");
+                state.client = None;
+                state.healthy = false;
+                Self::update_metrics(metrics, &name, false, state.upgrade_pending, false);
+                continue;
             }
 
-            // Apply pending restart (config change) when idle.
             let busy = state.service.is_busy().unwrap_or(false);
-            if state.restart_pending {
-                if !busy || in_upgrade_window {
-                    tracing::info!("{name} restarting for config change");
-                    if let Err(e) = state.service.configure() {
-                        tracing::warn!("{name} configure failed: {e}");
-                    }
-                    let spec = state.service.spawn_spec();
-                    state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
-                    match client.request(&IpcRequest::Spawn(spec)).await {
-                        Ok(IpcResponse::Ok) => {
-                            state.restart_pending = false;
-                            state.upgrade_pending = false;
-                            state.skip_health_check = true;
-                        }
-                        _ => {}
-                    }
-                } else {
-                    tracing::info!("{name} is busy, deferring restart");
+
+            // Pending restart.
+            if state.restart_pending && (!busy || in_upgrade_window) {
+                if let Err(e) = state.service.configure() {
+                    tracing::warn!("{name} configure failed: {e}");
+                }
+                state.spawn_via_wrapper().await;
+                state.restart_pending = false;
+                state.upgrade_pending = false;
+            }
+
+            // Pending upgrade.
+            if state.upgrade_pending && in_upgrade_window && (!busy || in_upgrade_window) {
+                state.spawn_via_wrapper().await;
+                if state.skip_health_check { // spawn succeeded
+                    state.upgrade_pending = false;
+                    dispatcher.dispatch(&DaemonEvent::UpgradeInstalled { service: name.clone() });
                 }
             }
 
-            // Apply pending upgrade when idle.
-            if state.upgrade_pending && in_upgrade_window {
-                if !busy || in_upgrade_window {
-                    tracing::info!("{name} restarting for upgrade");
-                    let spec = state.service.spawn_spec();
-                    state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
-                    match client.request(&IpcRequest::Spawn(spec)).await {
-                        Ok(IpcResponse::Ok) => {
-                            state.upgrade_pending = false;
-                            state.skip_health_check = true;
-                            dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
-                                service: name.clone(),
-                            });
-                        }
-                        Ok(IpcResponse::Error { message }) => {
-                            dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
-                                service: name.clone(),
-                                error: message,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            // Detect service binary store path drift.
+            // Binary store path drift.
             let current_store = crate::nix::binary_store_path(state.service.binary_name());
             if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
                 if old != new && (!busy || in_upgrade_window) {
                     tracing::info!("{name} binary changed ({old} → {new}), restarting");
-                    let spec = state.service.spawn_spec();
-                    state.running_store_path = current_store;
-                    let _ = client.request(&IpcRequest::Spawn(spec)).await;
-                    state.skip_health_check = true;
+                    state.spawn_via_wrapper().await;
                 }
             }
 
-            // Health check (daemon calls it directly, not the wrapper).
+            // Health check.
             if state.skip_health_check {
                 state.skip_health_check = false;
             } else {
@@ -776,9 +634,7 @@ impl ServiceManager {
                         state.consecutive_crashes = 0;
                         if state.was_unhealthy {
                             state.was_unhealthy = false;
-                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
-                                service: name.clone(),
-                            });
+                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.clone() });
                         }
                         if !state.post_start_done {
                             if let Err(e) = state.service.post_start() {
@@ -791,9 +647,7 @@ impl ServiceManager {
                         state.healthy = false;
                         if !state.was_unhealthy {
                             state.was_unhealthy = true;
-                            dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy {
-                                service: name.clone(),
-                            });
+                            dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
                         }
                         if let Err(e) = state.service.repair() {
                             tracing::error!("{name} repair failed: {e}");
@@ -806,10 +660,11 @@ impl ServiceManager {
                 }
             }
 
-            // Retry deferred update-self when idle.
+            // Deferred update-self.
             if state.update_self_pending && !busy {
-                tracing::info!("{name} is now idle, sending deferred update-self");
-                Self::do_send_update_self(client, &name).await;
+                if let Some(ref mut client) = state.client {
+                    Self::do_send_update_self(client, &name).await;
+                }
                 state.update_self_pending = false;
             }
 
@@ -819,32 +674,22 @@ impl ServiceManager {
 
     fn run_connectors(&mut self) {
         for cs in &mut self.connectors {
-            if cs.done {
-                continue;
-            }
+            if cs.done { continue; }
             let deps_ready = cs.connector.depends_on().iter().all(|dep| {
                 match &self.backend {
-                    ServiceBackend::Inline(states) => states
-                        .iter()
+                    ServiceBackend::Inline(states) => states.iter()
                         .find(|s| s.service.name() == *dep)
                         .is_some_and(|s| s.post_start_done),
-                    ServiceBackend::External(states) => states
-                        .iter()
+                    ServiceBackend::External(states) => states.iter()
                         .find(|s| s.service_name == *dep)
                         .is_some_and(|s| s.post_start_done),
                 }
             });
-            if !deps_ready {
-                continue;
-            }
+            if !deps_ready { continue; }
             let name = cs.connector.name();
             tracing::info!("running connector: {name}");
             if let Err(e) = cs.connector.connect() {
                 tracing::error!("connector {name} failed: {e}");
-                sentry_ext::capture_error(
-                    &format!("connector {name} failed: {e}"),
-                    &[("connector", name)],
-                );
             }
             cs.done = true;
         }
@@ -858,16 +703,12 @@ impl ServiceManager {
 
     // ── Schedule restart ─────────────────────────────────────────────
 
-    /// Schedule a restart for all managed services (e.g., after config change).
-    /// Services that support hot-reload will have `configure()` called instead
-    /// of being restarted.
     pub async fn schedule_restart(&mut self) {
         match &mut self.backend {
             ServiceBackend::Inline(states) => {
                 for state in states {
                     let name = state.service.name().to_string();
                     if state.service.supports_hot_reload() {
-                        tracing::info!("{name} supports hot reload, running configure");
                         match state.service.configure() {
                             Ok(()) => tracing::info!("{name} configured (no restart needed)"),
                             Err(e) => {
@@ -885,7 +726,6 @@ impl ServiceManager {
                 for state in states {
                     let name = &state.service_name;
                     if state.service.supports_hot_reload() {
-                        tracing::info!("{name} supports hot reload, running configure");
                         match state.service.configure() {
                             Ok(()) => tracing::info!("{name} configured (no restart needed)"),
                             Err(e) => {
@@ -904,98 +744,68 @@ impl ServiceManager {
 
     // ── Status collection ────────────────────────────────────────────
 
-    /// Collect current service statuses for heartbeat reporting.
     pub fn collect_statuses(&self) -> Vec<serde_json::Value> {
         match &self.backend {
-            ServiceBackend::Inline(states) => states
-                .iter()
-                .map(|state| {
-                    let name = state.service.name();
-                    serde_json::json!({
-                        "name": name,
-                        "healthy": state.healthy,
-                        "upgrade_pending": state.upgrade_pending,
-                        "busy": false,
-                    })
+            ServiceBackend::Inline(states) => states.iter().map(|s| {
+                serde_json::json!({
+                    "name": s.service.name(),
+                    "healthy": s.healthy,
+                    "upgrade_pending": s.upgrade_pending,
+                    "busy": false,
                 })
-                .collect(),
-            ServiceBackend::External(states) => states
-                .iter()
-                .map(|state| {
-                    serde_json::json!({
-                        "name": state.service_name,
-                        "healthy": state.healthy,
-                        "upgrade_pending": state.upgrade_pending,
-                        "busy": false,
-                    })
+            }).collect(),
+            ServiceBackend::External(states) => states.iter().map(|s| {
+                serde_json::json!({
+                    "name": s.service_name,
+                    "healthy": s.healthy,
+                    "upgrade_pending": s.upgrade_pending,
+                    "busy": false,
                 })
-                .collect(),
+            }).collect(),
         }
     }
 
     // ── Shutdown ─────────────────────────────────────────────────────
 
-    /// Graceful shutdown. Inline services are killed (they're child processes).
-    /// External services are left running — they survive daemon restarts.
     pub async fn shutdown(&mut self) {
         match &mut self.backend {
             ServiceBackend::Inline(states) => {
-                // SIGTERM all, then SIGKILL after 10s.
                 for state in states.iter() {
                     if let Some(ref child) = state.child {
-                        let name = state.service.name();
                         let pid = child.id();
-                        tracing::info!("sending SIGTERM to {name} (pid {pid})");
-                        unsafe {
-                            libc::kill(pid as i32, libc::SIGTERM);
-                        }
+                        tracing::info!("sending SIGTERM to {} (pid {pid})", state.service.name());
+                        unsafe { libc::kill(pid as i32, libc::SIGTERM); }
                     }
                 }
-
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
                 for state in states.iter_mut() {
-                    let Some(ref mut child) = state.child else {
-                        continue;
-                    };
+                    let Some(ref mut child) = state.child else { continue };
                     let name = state.service.name();
                     loop {
                         match child.try_wait() {
                             Ok(Some(_)) => break,
                             Ok(None) if tokio::time::Instant::now() >= deadline => {
-                                tracing::warn!("{name} did not exit in time, sending SIGKILL");
+                                tracing::warn!("{name} did not exit, SIGKILL");
                                 let _ = child.kill();
                                 let _ = child.wait();
                                 break;
                             }
-                            Ok(None) => {
-                                tokio::time::sleep(Duration::from_millis(100)).await;
-                            }
-                            Err(e) => {
-                                tracing::error!("failed to check {name} exit status: {e}");
-                                break;
-                            }
+                            Ok(None) => tokio::time::sleep(Duration::from_millis(100)).await,
+                            Err(_) => break,
                         }
                     }
-                    if let Some(task) = state.log_task.take() {
-                        task.abort();
-                    }
-                    tracing::info!("{name} stopped");
+                    if let Some(task) = state.log_task.take() { task.abort(); }
                 }
             }
             ServiceBackend::External(_) => {
-                tracing::info!("leaving external services running (they survive daemon restarts)");
+                tracing::info!("leaving external services running");
             }
         }
     }
 
-    /// Request all external wrappers to re-exec with the new binary.
-    /// Defers for busy services — they will be re-exec'd on the next
-    /// health tick when idle. No-op in inline mode.
     #[allow(dead_code)]
     pub async fn send_update_self(&mut self) {
-        let ServiceBackend::External(ref mut states) = self.backend else {
-            return;
-        };
+        let ServiceBackend::External(ref mut states) = self.backend else { return };
         for state in states {
             let name = &state.service_name;
             let busy = state.service.is_busy().unwrap_or(false);
