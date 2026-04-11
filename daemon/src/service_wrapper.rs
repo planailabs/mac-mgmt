@@ -19,6 +19,10 @@ struct WrapperState {
     consecutive_crashes: u32,
     was_unhealthy: bool,
     notif_tx: NotificationSender,
+    /// Store path of the service binary at spawn time.
+    running_store_path: Option<String>,
+    /// Hash of the mac-mgmt binary at startup, for self-update detection.
+    own_binary_hash: Option<Vec<u8>>,
 }
 
 impl WrapperState {
@@ -38,9 +42,11 @@ impl WrapperState {
     }
 
     fn spawn_child(&mut self) -> bool {
+        // Record the current store path before spawning so we can detect drift.
+        self.running_store_path = crate::nix::binary_store_path(self.service.binary_name());
+
         match self.service.spawn() {
             Ok(mut child) => {
-                // Capture logs and also forward them as IPC notifications.
                 let log_task = capture_and_forward(
                     &self.service_name,
                     &mut child,
@@ -63,6 +69,34 @@ impl WrapperState {
     fn respawn(&mut self) -> bool {
         self.kill_child();
         self.spawn_child()
+    }
+
+    /// Check if the service binary's nix store path has changed since we spawned.
+    /// Returns true if the service should be restarted to pick up the new binary.
+    fn service_binary_changed(&self) -> bool {
+        let current = crate::nix::binary_store_path(self.service.binary_name());
+        match (&self.running_store_path, &current) {
+            (Some(old), Some(new)) if old != new => {
+                tracing::info!(
+                    "{}: service binary store path changed ({old} → {new})",
+                    self.service_name
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if our own mac-mgmt binary has changed since startup.
+    fn own_binary_changed(&self) -> bool {
+        let current = hash_current_exe();
+        match (&self.own_binary_hash, &current) {
+            (Some(old), Some(new)) if old != new => {
+                tracing::info!("{}: mac-mgmt binary has changed, need re-exec", self.service_name);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn run_health_check(&mut self) {
@@ -256,6 +290,8 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
         consecutive_crashes: 0,
         was_unhealthy: false,
         notif_tx,
+        running_store_path: None,
+        own_binary_hash: hash_current_exe(),
     };
 
     // Initial spawn.
@@ -296,6 +332,22 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
                 }
                 if state.child.is_some() {
                     state.run_health_check();
+
+                    // Check if the service binary was upgraded in the nix profile.
+                    if !state.busy && state.service_binary_changed() {
+                        tracing::info!("{service_name}: service binary updated, restarting");
+                        state.respawn();
+                    }
+                }
+
+                // Check if our own binary (mac-mgmt) has changed.
+                if state.own_binary_changed() {
+                    if state.busy {
+                        tracing::info!("{service_name}: mac-mgmt binary changed but service is busy, deferring re-exec");
+                    } else {
+                        pending_update_self = true;
+                        break;
+                    }
                 }
             }
             Some((req, resp_tx)) = req_rx.recv() => {
@@ -457,6 +509,14 @@ fn drain_and_forward(
             is_stderr,
         });
     }
+}
+
+/// SHA-256 hash of the currently running mac-mgmt binary.
+fn hash_current_exe() -> Option<Vec<u8>> {
+    use sha2::{Digest, Sha256};
+    let exe = std::env::current_exe().ok()?;
+    let bytes = std::fs::read(&exe).ok()?;
+    Some(Sha256::digest(&bytes).to_vec())
 }
 
 /// Replace the current process image with a fresh exec of ourselves.

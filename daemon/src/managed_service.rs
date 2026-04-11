@@ -20,6 +20,13 @@ pub trait ManagedService {
         ServiceMode::Managed
     }
 
+    /// The binary name this service spawns (e.g., "ollama", "openclaw").
+    /// Used to detect store path drift between the running binary and
+    /// the nix profile. Defaults to `name()`.
+    fn binary_name(&self) -> &str {
+        self.name()
+    }
+
     /// Pre-spawn checks: stop stale instances, clean up locks, etc.
     /// Called once before the first `spawn` if the service is managed.
     fn preflight(&self) -> Result<()> {

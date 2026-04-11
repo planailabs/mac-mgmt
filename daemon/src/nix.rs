@@ -373,6 +373,28 @@ pub fn installed_elements() -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// Resolve a binary name to its nix store path by following symlinks.
+/// Returns the store path prefix (e.g., `/nix/store/abc123-ollama-0.1/`),
+/// or None if the binary isn't in the nix store.
+pub fn binary_store_path(binary_name: &str) -> Option<String> {
+    let output = Command::new("which").arg(binary_name).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let resolved = std::fs::canonicalize(&path).ok()?;
+    let resolved_str = resolved.to_string_lossy();
+    // Nix store paths look like /nix/store/<hash>-<name>-<version>/...
+    if resolved_str.starts_with("/nix/store/") {
+        // Extract the store path prefix (up to and including the first component after /nix/store/)
+        let rest = &resolved_str["/nix/store/".len()..];
+        if let Some(slash) = rest.find('/') {
+            return Some(format!("/nix/store/{}", &rest[..slash]));
+        }
+    }
+    None
+}
+
 /// Install or upgrade a package via `nix profile`.
 pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
     profile_install_with_nix("nix", pkg, upgrade)
