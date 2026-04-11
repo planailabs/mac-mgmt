@@ -82,7 +82,12 @@ async fn health() -> &'static str {
 struct SelfInfo {
     cluster_id: Option<Uuid>,
     cluster_name: Option<String>,
+    #[allow(dead_code)]
+    organization_id: Option<Uuid>,
     token_kind: String,
+    /// All cluster IDs this token can access.
+    #[serde(default)]
+    cluster_ids: Vec<Uuid>,
 }
 
 async fn validate_token(server_api_url: &str, token: &str) -> Result<SelfInfo, StatusCode> {
@@ -444,9 +449,9 @@ async fn list_tunnels(
     };
 
     let mut tunnels = state.registry.list_tunnels();
-    if self_info.token_kind == "setting" {
-        let cid = self_info.cluster_id;
-        tunnels.retain(|t| t.cluster_id == cid);
+    if self_info.token_kind != "admin" {
+        let allowed = &self_info.cluster_ids;
+        tunnels.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
     }
     Json(tunnels).into_response()
 }
@@ -477,9 +482,9 @@ async fn federated_metrics(
     };
 
     let mut tunnels = state.registry.list_tunnels();
-    if self_info.token_kind == "setting" {
-        let cid = self_info.cluster_id;
-        tunnels.retain(|t| t.cluster_id == cid);
+    if self_info.token_kind != "admin" {
+        let allowed = &self_info.cluster_ids;
+        tunnels.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
     }
 
     let registry = state.registry.clone();
