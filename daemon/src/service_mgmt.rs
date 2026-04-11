@@ -32,12 +32,14 @@ struct InlineServiceState {
 
 struct ExternalServiceState {
     service_name: String,
+    service: Box<dyn ManagedService>,
     client: Option<ManagedClient>,
     upgrade_pending: bool,
     post_start_done: bool,
     was_unhealthy: bool,
     last_healthy: bool,
     last_busy: bool,
+    supports_hot_reload: bool,
 }
 
 struct ConnectorState {
@@ -61,6 +63,8 @@ pub struct ServiceManager {
     log_buf: LogBuffer,
     /// Channel for forwarding IPC notifications to the daemon event loop.
     notification_tx: mpsc::Sender<IpcNotification>,
+    /// Serialized config JSON, sent to wrappers on connect.
+    config_json: Option<String>,
 }
 
 impl ServiceManager {
@@ -73,6 +77,11 @@ impl ServiceManager {
         log_buf: LogBuffer,
     ) -> Result<Self> {
         let external = cfg.global.external_processes;
+        let config_json = if external {
+            Some(serde_json::to_string(&*cfg).unwrap_or_default())
+        } else {
+            None
+        };
 
         let global_cfg = std::mem::take(&mut cfg.global);
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
@@ -126,8 +135,11 @@ impl ServiceManager {
                     continue;
                 }
 
+                // Install and setup via nix (done in the daemon, not the wrapper).
+                service.ensure_installed()?;
+                service.ensure_setup()?;
+
                 // Install and start the per-service system unit.
-                // The wrapper handles ensure_installed/ensure_setup/preflight.
                 if let Err(e) = crate::service::install_managed_service(&name) {
                     tracing::error!("failed to install managed service unit for {name}: {e}");
                     sentry_ext::capture_error(
@@ -137,14 +149,17 @@ impl ServiceManager {
                     continue;
                 }
 
+                let hot_reload = service.supports_hot_reload();
                 external_states.push(ExternalServiceState {
                     service_name: name,
+                    service,
                     client: None,
                     upgrade_pending: false,
                     post_start_done: false,
                     was_unhealthy: false,
                     last_healthy: false,
                     last_busy: false,
+                    supports_hot_reload: hot_reload,
                 });
             }
 
@@ -211,7 +226,8 @@ impl ServiceManager {
             connectors,
             dispatcher,
             log_buf,
-            notification_tx: notification_tx,
+            notification_tx,
+            config_json,
         })
     }
 
@@ -251,17 +267,40 @@ impl ServiceManager {
     }
 
     /// Connect to all service wrapper sockets (external mode). No-op in inline mode.
+    /// Sends `SetConfig` to each wrapper after connecting so it can build its
+    /// service and start spawning.
     pub async fn connect_all(&mut self) {
         let ServiceBackend::External(ref mut states) = self.backend else {
             return;
+        };
+        let config_json = match &self.config_json {
+            Some(j) => j.clone(),
+            None => return,
         };
         for state in states {
             let name = &state.service_name;
             let path = crate::service_ipc::socket_path(name);
             tracing::info!("connecting to {name} wrapper at {}", path.display());
             match ManagedClient::connect(&path, Duration::from_secs(30)).await {
-                Ok(client) => {
-                    tracing::info!("connected to {name} wrapper");
+                Ok(mut client) => {
+                    tracing::info!("connected to {name} wrapper, sending config");
+                    match client
+                        .request(&IpcRequest::SetConfig {
+                            config_json: config_json.clone(),
+                        })
+                        .await
+                    {
+                        Ok(IpcResponse::Ack { .. }) => {
+                            tracing::info!("{name} wrapper configured");
+                        }
+                        Ok(IpcResponse::Error { message, .. }) => {
+                            tracing::error!("{name} wrapper rejected config: {message}");
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::error!("{name} SetConfig failed: {e}");
+                        }
+                    }
                     state.client = Some(client);
                 }
                 Err(e) => {
@@ -342,14 +381,36 @@ impl ServiceManager {
                 }
             }
             ServiceBackend::External(states) => {
-                // Send Upgrade command to each wrapper.
+                // Daemon handles nix upgrades, then marks restart pending
+                // so health_tick sends Upgrade (restart) to the wrapper.
                 for state in states {
-                    if state.upgrade_pending || state.client.is_none() {
+                    if state.upgrade_pending {
                         continue;
                     }
-                    // We can't await here (not async), so mark pending and
-                    // let health_tick send the actual command.
-                    state.upgrade_pending = true;
+                    let name = state.service.name();
+                    sentry_ext::set_tag("service", &name);
+                    match state.service.check_and_upgrade() {
+                        Ok(true) => {
+                            state.upgrade_pending = true;
+                            sentry_ext::breadcrumb(
+                                "upgrade",
+                                &format!("{name} upgrade pending"),
+                                &[("service", &name)],
+                            );
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!("{name} upgrade check failed: {e}");
+                            sentry_ext::capture_error(
+                                &format!("{name} upgrade check failed: {e}"),
+                                &[("service", &name)],
+                            );
+                            self.dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
+                                service: name.to_string(),
+                                error: e.to_string(),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -366,6 +427,10 @@ impl ServiceManager {
             task.abort();
         }
         let name = state.service.name();
+        // Re-apply configuration before spawning.
+        if let Err(e) = state.service.configure() {
+            tracing::warn!("{name} configure before respawn failed: {e}");
+        }
         match state.service.spawn() {
             Ok(mut child) => {
                 state.log_task = Some(crate::log_capture::capture(name, &mut child, log_buf));
@@ -404,6 +469,7 @@ impl ServiceManager {
                     states,
                     &self.dispatcher,
                     &self.notification_tx,
+                    &self.log_buf,
                     metrics,
                     in_upgrade_window,
                 )
@@ -603,6 +669,7 @@ impl ServiceManager {
         states: &mut [ExternalServiceState],
         dispatcher: &Dispatcher,
         _notification_tx: &mpsc::Sender<IpcNotification>,
+        log_buf: &LogBuffer,
         metrics: &Metrics,
         in_upgrade_window: bool,
     ) {
@@ -654,6 +721,9 @@ impl ServiceManager {
                             });
                         }
                     }
+                    IpcNotification::Log { service, line, .. } => {
+                        log_buf.push(format!("[{service}] {line}"));
+                    }
                 }
             }
 
@@ -689,11 +759,13 @@ impl ServiceManager {
                     busy,
                     upgrade_pending,
                     post_start_done,
+                    supports_hot_reload,
                     ..
                 }) => {
                     state.last_healthy = healthy;
                     state.last_busy = busy;
                     state.post_start_done = post_start_done;
+                    state.supports_hot_reload = supports_hot_reload;
                     if upgrade_pending {
                         state.upgrade_pending = true;
                     }
@@ -758,28 +830,57 @@ impl ServiceManager {
     // ── Schedule restart ─────────────────────────────────────────────
 
     /// Schedule a restart for all managed services (e.g., after config change).
+    /// Services that support hot-reload will have `configure()` called instead
+    /// of being restarted.
     pub async fn schedule_restart(&mut self) {
         match &mut self.backend {
             ServiceBackend::Inline(states) => {
                 for state in states {
-                    state.restart_pending = true;
-                    tracing::info!("{} restart pending (config change)", state.service.name());
+                    let name = state.service.name().to_string();
+                    if state.service.supports_hot_reload() {
+                        tracing::info!("{name} supports hot reload, running configure");
+                        match state.service.configure() {
+                            Ok(()) => tracing::info!("{name} configured (no restart needed)"),
+                            Err(e) => {
+                                tracing::warn!("{name} configure failed, scheduling restart: {e}");
+                                state.restart_pending = true;
+                            }
+                        }
+                    } else {
+                        state.restart_pending = true;
+                        tracing::info!("{name} restart pending (config change)");
+                    }
                 }
             }
             ServiceBackend::External(states) => {
                 for state in states {
                     let name = &state.service_name;
                     if let Some(ref mut client) = state.client {
-                        match client.request(&IpcRequest::Restart).await {
+                        // First try Configure. If the service supports hot
+                        // reload, the wrapper will apply the config without
+                        // restarting the process.
+                        let use_configure = state.supports_hot_reload;
+                        let cmd = if use_configure {
+                            IpcRequest::Configure
+                        } else {
+                            IpcRequest::Restart
+                        };
+                        let cmd_name = if use_configure { "configure" } else { "restart" };
+                        match client.request(&cmd).await {
                             Ok(IpcResponse::Ack { .. }) => {
-                                tracing::info!("{name} restart sent via IPC");
+                                tracing::info!("{name} {cmd_name} sent via IPC");
                             }
                             Ok(IpcResponse::Error { message, .. }) => {
-                                tracing::warn!("{name} restart failed: {message}");
+                                tracing::warn!("{name} {cmd_name} failed: {message}");
+                                // Fall back to restart if configure failed.
+                                if use_configure {
+                                    tracing::info!("{name} falling back to restart");
+                                    let _ = client.request(&IpcRequest::Restart).await;
+                                }
                             }
                             Ok(_) => {}
                             Err(e) => {
-                                tracing::warn!("{name} restart IPC failed: {e}");
+                                tracing::warn!("{name} {cmd_name} IPC failed: {e}");
                                 state.client = None;
                             }
                         }

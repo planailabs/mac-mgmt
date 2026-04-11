@@ -4,12 +4,20 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IpcRequest {
+    /// Provide the service config to the wrapper. Sent by the daemon on
+    /// connect. The wrapper waits for this before spawning.
+    SetConfig {
+        /// Serialized full DaemonConfig as JSON.
+        config_json: String,
+    },
     /// Query current health and busy status.
     Health,
     /// Kill the managed service process and respawn it.
     Restart,
     /// Run `check_and_upgrade()`, then respawn if an upgrade was installed.
     Upgrade,
+    /// Re-apply configuration to the running service.
+    Configure,
     /// Graceful shutdown: stop the service and exit the wrapper.
     Shutdown,
     /// Re-exec the wrapper binary itself (for daemon self-update).
@@ -30,6 +38,7 @@ pub enum IpcResponse {
         upgrade_pending: bool,
         pid: Option<u32>,
         post_start_done: bool,
+        supports_hot_reload: bool,
     },
     /// Command was accepted and executed.
     Ack {
@@ -58,6 +67,12 @@ pub enum IpcNotification {
     /// Service became unhealthy.
     Unhealthy {
         service: String,
+    },
+    /// Log line from the service's stdout or stderr.
+    Log {
+        service: String,
+        line: String,
+        is_stderr: bool,
     },
 }
 

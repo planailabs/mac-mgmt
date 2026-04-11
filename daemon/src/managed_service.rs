@@ -56,4 +56,18 @@ pub trait ManagedService {
     fn is_busy(&self) -> Result<bool> {
         Ok(false)
     }
+
+    /// Re-apply configuration to a running service. Called when the daemon
+    /// config changes and the service needs to pick up new settings.
+    /// The default implementation is a no-op.
+    fn configure(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Whether the service can pick up config changes without a restart.
+    /// If true, `schedule_restart` will call `configure()` instead of
+    /// killing and respawning the process.
+    fn supports_hot_reload(&self) -> bool {
+        false
+    }
 }

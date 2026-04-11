@@ -98,6 +98,70 @@ impl OpenClaw {
         }
     }
 
+    /// Build and apply a config patch from the managed OpenClawConfig.
+    fn apply_config_patch(&self) -> Result<()> {
+        let config_path = dirs::home_dir()
+            .context("HOME not set")?
+            .join(".openclaw/openclaw.json");
+
+        let mut patch = serde_json::json!({});
+
+        if let Some(gw) = &self.config.gateway {
+            let mut gw_cfg = serde_json::json!({ "port": gw.port });
+            if gw.host != "127.0.0.1" && gw.host != "localhost" {
+                gw_cfg["bind"] = serde_json::json!("custom");
+                gw_cfg["customBindHost"] = serde_json::json!(gw.host);
+            }
+            patch["gateway"] = gw_cfg;
+        }
+
+        if let Some(skills) = &self.config.skills {
+            patch["skills"] = serde_json::json!({ "load": { "watch": skills.auto_update } });
+        }
+
+        if let Some(tg) = &self.config.telegram {
+            let mut tg_cfg = serde_json::json!({ "enabled": tg.enabled });
+            if !tg.bot_token.is_empty() {
+                tg_cfg["botToken"] = serde_json::json!(tg.bot_token);
+            }
+            if !tg.allowed_chat_ids.is_empty() {
+                tg_cfg["allowFrom"] = serde_json::json!(tg.allowed_chat_ids);
+            }
+            patch["channels"] = serde_json::json!({ "telegram": tg_cfg });
+        }
+
+        if let Some(extra) = &self.config.extra_config {
+            merge_json(&mut patch, extra);
+        }
+
+        // Add skills directory
+        let skills_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/root"))
+            .join(".plan-ai-skills");
+        if skills_dir.exists() {
+            let skills_dir_str = skills_dir.to_string_lossy().to_string();
+            let current = std::fs::read_to_string(&config_path).unwrap_or_default();
+            let current_json: serde_json::Value =
+                serde_json::from_str(&current).unwrap_or_default();
+            let already_has = current_json
+                .pointer("/skills/load/extraDirs")
+                .and_then(|v| v.as_array())
+                .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(&skills_dir_str)));
+            if !already_has {
+                patch["skills"] = serde_json::json!({ "load": { "extraDirs": [skills_dir_str] } });
+            }
+        }
+
+        if patch.as_object().is_some_and(|o| !o.is_empty()) {
+            match merge_and_validate(&config_path, &patch) {
+                Ok(()) => tracing::info!("openclaw config updated and validated"),
+                Err(e) => tracing::warn!("openclaw config merge failed: {e}"),
+            }
+        }
+
+        Ok(())
+    }
+
     /// Stop any existing openclaw gateway so we don't conflict on ports.
     fn stop_existing_gateway(phase: &str) {
         let output = Command::new("openclaw").args(["gateway", "stop"]).output();
@@ -170,64 +234,18 @@ impl ManagedService for OpenClaw {
             tracing::info!("openclaw config found at {}", config_path.display());
         }
 
-        // Build a patch from managed config
-        let mut patch = serde_json::json!({});
-
-        if let Some(gw) = &self.config.gateway {
-            let mut gw_cfg = serde_json::json!({ "port": gw.port });
-            if gw.host != "127.0.0.1" && gw.host != "localhost" {
-                gw_cfg["bind"] = serde_json::json!("custom");
-                gw_cfg["customBindHost"] = serde_json::json!(gw.host);
-            }
-            patch["gateway"] = gw_cfg;
-        }
-
-        if let Some(skills) = &self.config.skills {
-            patch["skills"] = serde_json::json!({ "load": { "watch": skills.auto_update } });
-        }
-
-        if let Some(tg) = &self.config.telegram {
-            let mut tg_cfg = serde_json::json!({ "enabled": tg.enabled });
-            if !tg.bot_token.is_empty() {
-                tg_cfg["botToken"] = serde_json::json!(tg.bot_token);
-            }
-            if !tg.allowed_chat_ids.is_empty() {
-                tg_cfg["allowFrom"] = serde_json::json!(tg.allowed_chat_ids);
-            }
-            patch["channels"] = serde_json::json!({ "telegram": tg_cfg });
-        }
-
-        if let Some(extra) = &self.config.extra_config {
-            merge_json(&mut patch, extra);
-        }
-
-        // Add skills directory
-        let skills_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/root"))
-            .join(".plan-ai-skills");
-        if skills_dir.exists() {
-            let skills_dir_str = skills_dir.to_string_lossy().to_string();
-            // Read current extraDirs to avoid duplicates
-            let current = std::fs::read_to_string(&config_path).unwrap_or_default();
-            let current_json: serde_json::Value = serde_json::from_str(&current).unwrap_or_default();
-            let already_has = current_json
-                .pointer("/skills/load/extraDirs")
-                .and_then(|v| v.as_array())
-                .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(&skills_dir_str)));
-            if !already_has {
-                patch["skills"] = serde_json::json!({ "load": { "extraDirs": [skills_dir_str] } });
-            }
-        }
-
-        // Only merge+validate if there's something to apply
-        if patch.as_object().is_some_and(|o| !o.is_empty()) {
-            match merge_and_validate(&config_path, &patch) {
-                Ok(()) => tracing::info!("openclaw config updated and validated"),
-                Err(e) => tracing::warn!("openclaw config merge failed: {e}"),
-            }
-        }
-
+        self.apply_config_patch()?;
         Ok(())
+    }
+
+    fn configure(&self) -> Result<()> {
+        tracing::info!("openclaw: re-applying config (hot reload)");
+        self.apply_config_patch()?;
+        Ok(())
+    }
+
+    fn supports_hot_reload(&self) -> bool {
+        true
     }
 
     fn spawn(&self) -> Result<std::process::Child> {

@@ -40,8 +40,13 @@ impl WrapperState {
     fn spawn_child(&mut self) -> bool {
         match self.service.spawn() {
             Ok(mut child) => {
-                let log_task =
-                    crate::log_capture::capture(&self.service_name, &mut child, &self.log_buf);
+                // Capture logs and also forward them as IPC notifications.
+                let log_task = capture_and_forward(
+                    &self.service_name,
+                    &mut child,
+                    &self.log_buf,
+                    &self.notif_tx,
+                );
                 tracing::info!("{} spawned (pid: {})", self.service_name, child.id());
                 self.child = Some(child);
                 self.log_task = Some(log_task);
@@ -156,6 +161,7 @@ impl WrapperState {
             upgrade_pending: self.upgrade_pending,
             pid: self.child_pid(),
             post_start_done: self.post_start_done,
+            supports_hot_reload: self.service.supports_hot_reload(),
         }
     }
 }
@@ -178,28 +184,67 @@ fn find_service(service_name: &str, cfg: &crate::config::Config) -> Result<Box<d
 pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
     tracing::info!("service wrapper starting for {service_name}");
 
-    let cfg = crate::config::load().await?;
-    let service = find_service(service_name, &cfg)?;
-
-    if service.service_mode() == ServiceMode::InstallOnly {
-        anyhow::bail!("{service_name} is install-only and cannot be launched as a wrapper");
-    }
-
-    // Install, setup, and preflight (these may call nix commands).
-    tracing::info!("{service_name}: ensure_installed");
-    service.ensure_installed()?;
-    tracing::info!("{service_name}: ensure_setup");
-    service.ensure_setup()?;
-    tracing::info!("{service_name}: preflight");
-    service.preflight()?;
-
-    // Bind the IPC socket.
+    // Bind the IPC socket first — the daemon will connect and send config.
     let socket_path = crate::service_ipc::socket_path(service_name);
     let listener = IpcListener::bind(&socket_path)
         .with_context(|| format!("bind IPC socket at {}", socket_path.display()))?;
-    tracing::info!("IPC socket bound at {}", socket_path.display());
+    tracing::info!("IPC socket bound at {}, waiting for config from daemon", socket_path.display());
 
     let (mut req_rx, notif_tx) = spawn_listener(listener);
+
+    // Wait for the daemon to send SetConfig with the full DaemonConfig.
+    let service = loop {
+        match req_rx.recv().await {
+            Some((IpcRequest::SetConfig { config_json }, resp_tx)) => {
+                match serde_json::from_str::<crate::config::Config>(&config_json) {
+                    Ok(cfg) => {
+                        match find_service(service_name, &cfg) {
+                            Ok(svc) => {
+                                if svc.service_mode() == ServiceMode::InstallOnly {
+                                    let _ = resp_tx.send(IpcResponse::Error {
+                                        command: "set_config".into(),
+                                        message: format!("{service_name} is install-only"),
+                                    }).await;
+                                    anyhow::bail!("{service_name} is install-only");
+                                }
+                                let _ = resp_tx.send(IpcResponse::Ack {
+                                    command: "set_config".into(),
+                                }).await;
+                                break svc;
+                            }
+                            Err(e) => {
+                                let _ = resp_tx.send(IpcResponse::Error {
+                                    command: "set_config".into(),
+                                    message: e.to_string(),
+                                }).await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = resp_tx.send(IpcResponse::Error {
+                            command: "set_config".into(),
+                            message: format!("invalid config JSON: {e}"),
+                        }).await;
+                    }
+                }
+            }
+            Some((other, resp_tx)) => {
+                // Not ready yet — reject other requests until configured.
+                let _ = resp_tx.send(IpcResponse::Error {
+                    command: format!("{other:?}"),
+                    message: "wrapper not yet configured, send SetConfig first".into(),
+                }).await;
+            }
+            None => {
+                anyhow::bail!("IPC channel closed before receiving config");
+            }
+        }
+    };
+
+    tracing::info!("{service_name}: configure");
+    service.configure()?;
+    tracing::info!("{service_name}: preflight");
+    service.preflight()?;
 
     let mut state = WrapperState {
         service_name: service_name.to_string(),
@@ -292,14 +337,40 @@ pub async fn run(service_name: &str, log_buf: LogBuffer) -> Result<()> {
 async fn handle_request(state: &mut WrapperState, req: IpcRequest) -> IpcResponse {
     let name = state.service_name.clone();
     match req {
+        IpcRequest::SetConfig { config_json } => {
+            tracing::info!("{name}: set_config received");
+            match serde_json::from_str::<crate::config::Config>(&config_json) {
+                Ok(cfg) => match find_service(&name, &cfg) {
+                    Ok(new_svc) => {
+                        state.service = new_svc;
+                        IpcResponse::Ack { command: "set_config".into() }
+                    }
+                    Err(e) => IpcResponse::Error {
+                        command: "set_config".into(),
+                        message: e.to_string(),
+                    },
+                },
+                Err(e) => IpcResponse::Error {
+                    command: "set_config".into(),
+                    message: format!("invalid config JSON: {e}"),
+                },
+            }
+        }
         IpcRequest::Health => state.build_status_response(),
+        IpcRequest::Configure => {
+            tracing::info!("{name}: configure requested");
+            match state.service.configure() {
+                Ok(()) => IpcResponse::Ack { command: "configure".into() },
+                Err(e) => IpcResponse::Error {
+                    command: "configure".into(),
+                    message: e.to_string(),
+                },
+            }
+        }
         IpcRequest::Restart => {
             tracing::info!("{name}: restart requested");
-            // Re-read config to pick up changes.
-            if let Ok(cfg) = crate::config::load().await {
-                if let Ok(new_svc) = find_service(&name, &cfg) {
-                    state.service = new_svc;
-                }
+            if let Err(e) = state.service.configure() {
+                tracing::warn!("{name}: configure before restart failed: {e}");
             }
             if state.respawn() {
                 state.upgrade_pending = false;
@@ -312,19 +383,20 @@ async fn handle_request(state: &mut WrapperState, req: IpcRequest) -> IpcRespons
             }
         }
         IpcRequest::Upgrade => {
-            tracing::info!("{name}: upgrade requested");
-            match state.service.check_and_upgrade() {
-                Ok(true) => {
-                    tracing::info!("{name}: upgrade installed, restarting");
-                    state.respawn();
-                    state.upgrade_pending = false;
-                    IpcResponse::Ack { command: "upgrade".into() }
-                }
-                Ok(false) => IpcResponse::Ack { command: "upgrade".into() },
-                Err(e) => IpcResponse::Error {
+            // The main daemon handles the actual nix upgrade. The wrapper
+            // just restarts the service to pick up the new binary.
+            tracing::info!("{name}: upgrade restart requested");
+            if let Err(e) = state.service.configure() {
+                tracing::warn!("{name}: configure before upgrade restart failed: {e}");
+            }
+            if state.respawn() {
+                state.upgrade_pending = false;
+                IpcResponse::Ack { command: "upgrade".into() }
+            } else {
+                IpcResponse::Error {
                     command: "upgrade".into(),
-                    message: e.to_string(),
-                },
+                    message: "spawn failed".into(),
+                }
             }
         }
         IpcRequest::Shutdown => {
@@ -339,6 +411,63 @@ async fn handle_request(state: &mut WrapperState, req: IpcRequest) -> IpcRespons
             // The main loop breaks after this and calls do_update_self().
         }
     }
+}
+
+/// Like `log_capture::capture` but also sends each line as an IPC Log notification.
+fn capture_and_forward(
+    service_name: &str,
+    child: &mut std::process::Child,
+    buf: &LogBuffer,
+    notif_tx: &NotificationSender,
+) -> tokio::task::JoinHandle<()> {
+    use std::io::BufRead;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let name = service_name.to_string();
+    let buf = buf.clone();
+    let notif_tx = notif_tx.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let stderr_thread = stderr.map(|stderr| {
+            let name = name.clone();
+            let buf = buf.clone();
+            let notif_tx = notif_tx.clone();
+            std::thread::spawn(move || {
+                for line in std::io::BufReader::new(stderr).lines() {
+                    let Ok(line) = line else { break };
+                    let clean = strip_ansi_escapes::strip(&line);
+                    let clean = String::from_utf8(clean).unwrap_or_else(|_| line.clone());
+                    tracing::warn!(target: "service", "[{name}] {clean}");
+                    buf.push(format!("[{name}] {clean}"));
+                    notif_tx.send(IpcNotification::Log {
+                        service: name.clone(),
+                        line: clean,
+                        is_stderr: true,
+                    });
+                }
+            })
+        });
+
+        if let Some(stdout) = stdout {
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                let clean = strip_ansi_escapes::strip(&line);
+                let clean = String::from_utf8(clean).unwrap_or_else(|_| line.clone());
+                tracing::info!(target: "service", "[{name}] {clean}");
+                buf.push(format!("[{name}] {clean}"));
+                notif_tx.send(IpcNotification::Log {
+                    service: name.clone(),
+                    line: clean,
+                    is_stderr: false,
+                });
+            }
+        }
+
+        if let Some(t) = stderr_thread {
+            let _ = t.join();
+        }
+    })
 }
 
 /// Replace the current process image with a fresh exec of ourselves.
