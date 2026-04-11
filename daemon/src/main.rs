@@ -198,7 +198,7 @@ async fn main() -> Result<()> {
         }
         Commands::DaemonServiceLaunch { service } => {
             #[cfg(feature = "services")]
-            service_wrapper::run(&service, log_buf).await?;
+            service_wrapper::run(&service).await?;
             #[cfg(not(feature = "services"))]
             anyhow::bail!("services feature is not enabled");
         }

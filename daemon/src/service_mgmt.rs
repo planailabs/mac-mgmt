@@ -288,14 +288,13 @@ impl ServiceManager {
                 let spec = state.service.spawn_spec();
                 state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
                 match client.request(&IpcRequest::Spawn(spec)).await {
-                    Ok(IpcResponse::Ack { .. }) => {
+                    Ok(IpcResponse::Ok) => {
                         tracing::info!("{name} spawned via wrapper");
                         state.skip_health_check = true;
                     }
-                    Ok(IpcResponse::Error { message, .. }) => {
+                    Ok(IpcResponse::Error { message }) => {
                         tracing::error!("{name} Spawn failed: {message}");
                     }
-                    Ok(_) => {}
                     Err(e) => {
                         tracing::error!("{name} Spawn IPC failed: {e}");
                     }
@@ -718,7 +717,7 @@ impl ServiceManager {
                     let spec = state.service.spawn_spec();
                     state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
                     match client.request(&IpcRequest::Spawn(spec)).await {
-                        Ok(IpcResponse::Ack { .. }) => {
+                        Ok(IpcResponse::Ok) => {
                             state.restart_pending = false;
                             state.upgrade_pending = false;
                             state.skip_health_check = true;
@@ -737,14 +736,14 @@ impl ServiceManager {
                     let spec = state.service.spawn_spec();
                     state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
                     match client.request(&IpcRequest::Spawn(spec)).await {
-                        Ok(IpcResponse::Ack { .. }) => {
+                        Ok(IpcResponse::Ok) => {
                             state.upgrade_pending = false;
                             state.skip_health_check = true;
                             dispatcher.dispatch(&DaemonEvent::UpgradeInstalled {
                                 service: name.clone(),
                             });
                         }
-                        Ok(IpcResponse::Error { message, .. }) => {
+                        Ok(IpcResponse::Error { message }) => {
                             dispatcher.dispatch(&DaemonEvent::UpgradeFailed {
                                 service: name.clone(),
                                 error: message,
@@ -1015,16 +1014,9 @@ impl ServiceManager {
 
     async fn do_send_update_self(client: &mut ManagedClient, name: &str) {
         match client.request(&IpcRequest::UpdateSelf).await {
-            Ok(IpcResponse::Ack { .. }) => {
-                tracing::info!("{name} update-self sent");
-            }
-            Ok(IpcResponse::Error { message, .. }) => {
-                tracing::warn!("{name} update-self failed: {message}");
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!("{name} update-self IPC failed: {e}");
-            }
+            Ok(IpcResponse::Ok) => tracing::info!("{name} update-self sent"),
+            Ok(IpcResponse::Error { message }) => tracing::warn!("{name} update-self failed: {message}"),
+            Err(e) => tracing::warn!("{name} update-self IPC failed: {e}"),
         }
     }
 }
