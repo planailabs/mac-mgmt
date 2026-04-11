@@ -38,4 +38,6 @@ pub mod token_list;
 pub mod organization_detail;
 pub mod organization_form;
 pub mod organization_list;
+pub mod user_detail;
+pub mod user_form;
 pub mod user_list;

@@ -26,6 +26,8 @@ use super::components::daemon_version_detail::DaemonVersionDetail;
 use super::components::organization_detail::OrganizationDetail;
 use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
+use super::components::user_detail::UserDetail;
+use super::components::user_form::UserForm;
 use super::components::user_list::UserList;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -87,6 +89,10 @@ pub enum Route {
     OrganizationDetail { id: String },
     #[route("/users")]
     UserList {},
+    #[route("/users/new")]
+    UserForm {},
+    #[route("/users/:id")]
+    UserDetail { id: String },
 }
 
 const THEME_INIT_SCRIPT: &str = r#"

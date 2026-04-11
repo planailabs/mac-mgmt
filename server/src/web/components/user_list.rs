@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, TableToolbar};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -76,10 +77,17 @@ async fn list_users() -> Result<Vec<UserRow>, ServerFnError> {
 async fn toggle_user_admin(user_id: String, is_admin: bool) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
-    let pool = crate::server_pool()?;
+
     let uid: uuid::Uuid = user_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    // Prevent de-admining yourself
+    if uid == user.id && !is_admin {
+        return Err(ServerFnError::new("cannot remove your own admin status"));
+    }
+
+    let pool = crate::server_pool()?;
     sqlx::query("UPDATE users SET is_admin = $2 WHERE id = $1")
         .bind(uid)
         .bind(is_admin)
@@ -94,7 +102,14 @@ pub fn UserList() -> Element {
     let mut users_future = use_server_future(list_users)?;
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "Users" }
+        div { class: "flex items-center justify-between mb-4",
+            h2 { class: "text-2xl font-bold", "Users" }
+            Link {
+                to: Route::UserForm {},
+                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                "New User"
+            }
+        }
         {match &*users_future.read() {
             Some(Ok(list)) => {
                 let search = use_signal(String::new);
@@ -136,7 +151,13 @@ pub fn UserList() -> Element {
                                         let orgs_display = user.org_names.join(", ");
                                         rsx! {
                                             tr { key: "{user.id}",
-                                                td { class: "px-6 py-4 text-sm font-medium", "{user.email}" }
+                                                td { class: "px-6 py-4 text-sm font-medium",
+                                                    Link {
+                                                        to: Route::UserDetail { id: user.id.clone() },
+                                                        class: "text-blue-600 dark:text-blue-400 hover:underline",
+                                                        "{user.email}"
+                                                    }
+                                                }
                                                 td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300", "{user.name}" }
                                                 td { class: "px-6 py-4 text-sm",
                                                     input {
