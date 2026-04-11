@@ -110,6 +110,7 @@ pub fn spawn_listener(
         loop {
             match listener.accept().await {
                 Ok(conn) => {
+                    tracing::info!("IPC: daemon connected");
                     let req_tx = req_tx.clone();
                     let notif_sender = notif_sender_clone.clone();
                     tokio::spawn(handle_connection(conn, req_tx, notif_sender));
@@ -148,15 +149,19 @@ async fn handle_connection(
                             }
                         }
                     }
-                    Ok(None) => break, // EOF
+                    Ok(None) => {
+                        tracing::info!("IPC: daemon disconnected (EOF)");
+                        break;
+                    }
                     Err(e) => {
-                        tracing::warn!("IPC recv error: {e}");
+                        tracing::warn!("IPC: recv error: {e}");
                         break;
                     }
                 }
             }
             Ok(notif) = notif_rx.recv() => {
                 if conn.send_notification(notif).await.is_err() {
+                    tracing::debug!("IPC: notification send failed, daemon disconnected");
                     break;
                 }
             }

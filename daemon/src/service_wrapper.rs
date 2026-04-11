@@ -26,10 +26,12 @@ pub async fn run(service_name: &str) -> Result<()> {
     let mut spec = loop {
         match req_rx.recv().await {
             Some((IpcRequest::Spawn(spec), resp_tx)) => {
+                tracing::info!("IPC: received initial Spawn ({} {})", spec.program, spec.args.join(" "));
                 let _ = resp_tx.send(IpcResponse::Ok).await;
                 break spec;
             }
-            Some((_, resp_tx)) => {
+            Some((req, resp_tx)) => {
+                tracing::warn!("IPC: rejected {req:?} (waiting for initial Spawn)");
                 let _ = resp_tx
                     .send(IpcResponse::Error { message: "send Spawn first".into() })
                     .await;
@@ -54,8 +56,8 @@ pub async fn run(service_name: &str) -> Result<()> {
 
     loop {
         tokio::select! {
-            _ = sigterm.recv() => break,
-            _ = sigint.recv() => break,
+            _ = sigterm.recv() => { tracing::info!("received SIGTERM"); break; }
+            _ = sigint.recv() => { tracing::info!("received SIGINT"); break; }
             _ = child_tick.tick() => {
                 check_child(&mut child, &mut log_task, service_name, &spec, &notif_tx);
             }
@@ -158,15 +160,18 @@ fn handle(
 ) -> (IpcResponse, Action) {
     match req {
         IpcRequest::Spawn(new_spec) => {
+            tracing::info!("IPC: Spawn ({} {})", new_spec.program, new_spec.args.join(" "));
             *spec = new_spec;
             spawn(child, log_task, name, spec, notif_tx);
             (IpcResponse::Ok, Action::Continue)
         }
         IpcRequest::Shutdown => {
+            tracing::info!("IPC: Shutdown");
             kill(child, log_task);
             (IpcResponse::Ok, Action::Shutdown)
         }
         IpcRequest::UpdateSelf => {
+            tracing::info!("IPC: UpdateSelf");
             kill(child, log_task);
             (IpcResponse::Ok, Action::UpdateSelf)
         }
