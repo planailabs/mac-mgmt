@@ -35,6 +35,7 @@ struct ExternalServiceState {
     service: Box<dyn ManagedService>,
     client: Option<ManagedClient>,
     upgrade_pending: bool,
+    update_self_pending: bool,
     post_start_done: bool,
     was_unhealthy: bool,
     last_healthy: bool,
@@ -151,6 +152,7 @@ impl ServiceManager {
                     service,
                     client: None,
                     upgrade_pending: false,
+                    update_self_pending: false,
                     post_start_done: false,
                     was_unhealthy: false,
                     last_healthy: false,
@@ -762,6 +764,15 @@ impl ServiceManager {
                 }
             }
 
+            // Retry deferred update-self when no longer busy.
+            if state.update_self_pending && !state.last_busy {
+                if let Some(ref mut client) = state.client {
+                    tracing::info!("{name} is now idle, sending deferred update-self");
+                    Self::do_send_update_self(client, name).await;
+                    state.update_self_pending = false;
+                }
+            }
+
             Self::update_metrics(metrics, name, state.last_healthy, state.upgrade_pending, state.last_busy);
         }
     }
@@ -977,8 +988,9 @@ impl ServiceManager {
         }
     }
 
-    /// Send UpdateSelf to all external wrappers (for daemon self-update).
-    /// No-op in inline mode.
+    /// Request all external wrappers to re-exec with the new binary.
+    /// Defers for busy services — they will be re-exec'd on the next
+    /// health tick when idle. No-op in inline mode.
     #[allow(dead_code)]
     pub async fn send_update_self(&mut self) {
         let ServiceBackend::External(ref mut states) = self.backend else {
@@ -986,19 +998,30 @@ impl ServiceManager {
         };
         for state in states {
             let name = &state.service_name;
-            if let Some(ref mut client) = state.client {
-                match client.request(&IpcRequest::UpdateSelf).await {
-                    Ok(IpcResponse::Ack { .. }) => {
-                        tracing::info!("{name} update-self sent");
-                    }
-                    Ok(IpcResponse::Error { message, .. }) => {
-                        tracing::warn!("{name} update-self failed: {message}");
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!("{name} update-self IPC failed: {e}");
-                    }
-                }
+            let Some(ref mut client) = state.client else {
+                state.update_self_pending = true;
+                continue;
+            };
+            if state.last_busy {
+                tracing::info!("{name} is busy, deferring update-self");
+                state.update_self_pending = true;
+                continue;
+            }
+            Self::do_send_update_self(client, name).await;
+        }
+    }
+
+    async fn do_send_update_self(client: &mut ManagedClient, name: &str) {
+        match client.request(&IpcRequest::UpdateSelf).await {
+            Ok(IpcResponse::Ack { .. }) => {
+                tracing::info!("{name} update-self sent");
+            }
+            Ok(IpcResponse::Error { message, .. }) => {
+                tracing::warn!("{name} update-self failed: {message}");
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("{name} update-self IPC failed: {e}");
             }
         }
     }
