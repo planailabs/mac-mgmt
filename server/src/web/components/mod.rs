@@ -19,6 +19,7 @@ pub mod customer_ssh_keys;
 pub mod daemon_version_list;
 pub mod daemon_version_detail;
 pub mod layout;
+pub mod navbar;
 pub mod mcp_bundle_detail;
 pub mod mcp_bundle_form;
 pub mod mcp_bundle_list;
