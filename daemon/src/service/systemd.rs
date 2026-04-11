@@ -238,10 +238,29 @@ fn ensure_template_unit() -> Result<()> {
     Ok(())
 }
 
+/// Check if a per-service systemd user unit instance is enabled.
+pub fn is_managed_service_installed(service_name: &str) -> bool {
+    let unit = instance_unit_name(service_name);
+    Command::new("systemctl")
+        .args(["--user", "is-enabled", "--quiet", &unit])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 pub fn install_managed_service(service_name: &str) -> Result<()> {
     ensure_template_unit()?;
 
     let unit = instance_unit_name(service_name);
+
+    // If already enabled, just ensure it's running.
+    if is_managed_service_installed(service_name) {
+        tracing::info!("managed service {service_name} already enabled, ensuring running");
+        let _ = Command::new("systemctl")
+            .args(["--user", "start", &unit])
+            .status();
+        return Ok(());
+    }
+
     let status = Command::new("systemctl")
         .args(["--user", "enable", "--now", &unit])
         .status()

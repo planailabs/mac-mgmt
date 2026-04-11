@@ -51,7 +51,17 @@ pub fn restart() -> Result<()> {
 
 // ── Per-service managed unit operations ──────────────────────────────
 
+/// Check if a per-service system unit is already installed.
+#[allow(dead_code)]
+pub fn is_managed_service_installed(name: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    return launchd::is_managed_service_installed(name);
+    #[cfg(not(target_os = "macos"))]
+    return systemd::is_managed_service_installed(name);
+}
+
 /// Install and start a per-service system unit (user-level).
+/// If already installed with identical config, just ensures it's running.
 pub fn install_managed_service(name: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     return launchd::install_managed_service(name);

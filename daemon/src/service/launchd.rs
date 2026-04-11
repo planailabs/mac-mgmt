@@ -60,13 +60,23 @@ fn plist_contents() -> Result<String> {
 
 pub fn install() -> Result<()> {
     let path = plist_path();
-
-    // Bootout any existing service first (ignore errors if not loaded)
-    let _ = sudo(&["launchctl", "bootout", &service_target()]);
-
     let contents = plist_contents()?;
 
-    // Write plist via sudo since /Library/LaunchDaemons requires root
+    // If plist exists with identical contents, just ensure it's loaded.
+    if path.exists() {
+        if let Ok(output) = sudo(&["cat", &path.display().to_string()]) {
+            if output.status.success() && String::from_utf8_lossy(&output.stdout) == contents {
+                tracing::info!("plist unchanged, ensuring loaded");
+                let _ = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()]);
+                println!("Service already installed: {}", path.display());
+                return Ok(());
+            }
+        }
+        // Contents changed — bootout before rewriting.
+        tracing::info!("plist changed, updating");
+        let _ = sudo(&["launchctl", "bootout", &service_target()]);
+    }
+
     let status = Command::new("sudo")
         .args(["tee", &path.display().to_string()])
         .stdin(std::process::Stdio::piped())
@@ -251,22 +261,39 @@ fn managed_plist_contents(service_name: &str) -> Result<String> {
     ))
 }
 
+/// Check if a per-service LaunchAgent plist is installed.
+pub fn is_managed_service_installed(service_name: &str) -> bool {
+    managed_plist_path(service_name).exists()
+}
+
 pub fn install_managed_service(service_name: &str) -> Result<()> {
     let path = managed_plist_path(service_name);
     let domain = managed_gui_domain();
+    let contents = managed_plist_contents(service_name)?;
 
-    // Ensure ~/Library/LaunchAgents exists.
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create {}", parent.display()))?;
     }
 
-    // Bootout any existing instance first (ignore errors).
-    let _ = Command::new("launchctl")
-        .args(["bootout", &managed_gui_target(service_name)])
-        .output();
+    // If already installed with identical contents, just ensure it's running.
+    if path.exists() {
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        if existing == contents {
+            tracing::info!("managed service {service_name} plist unchanged, ensuring running");
+            // bootstrap is a no-op if already loaded, but succeeds.
+            let _ = Command::new("launchctl")
+                .args(["bootstrap", &domain, &path.display().to_string()])
+                .output();
+            return Ok(());
+        }
+        // Contents changed — bootout the old one before rewriting.
+        tracing::info!("managed service {service_name} plist changed, updating");
+        let _ = Command::new("launchctl")
+            .args(["bootout", &managed_gui_target(service_name)])
+            .output();
+    }
 
-    let contents = managed_plist_contents(service_name)?;
     std::fs::write(&path, &contents)
         .with_context(|| format!("write {}", path.display()))?;
     tracing::info!("wrote {}", path.display());
