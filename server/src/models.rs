@@ -17,6 +17,7 @@ pub struct Cluster {
 pub struct Token {
     pub id: Uuid,
     pub cluster_id: Option<Uuid>,
+    pub organization_id: Option<Uuid>,
     pub token_hash: String,
     pub label: String,
     pub kind: String,
