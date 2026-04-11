@@ -40,13 +40,10 @@ pub async fn run(service_name: &str) -> Result<()> {
 
     let mut child: Option<std::process::Child> = None;
     let mut log_task: Option<tokio::task::JoinHandle<()>> = None;
-    let exe_mtime = exe_modified();
 
     spawn(&mut child, &mut log_task, service_name, &spec, &notif_tx);
 
     let mut child_tick = tokio::time::interval(Duration::from_secs(2));
-    let mut self_tick = tokio::time::interval(Duration::from_secs(60));
-    self_tick.tick().await; // skip immediate
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("SIGTERM")?;
@@ -61,13 +58,6 @@ pub async fn run(service_name: &str) -> Result<()> {
             _ = sigint.recv() => break,
             _ = child_tick.tick() => {
                 check_child(&mut child, &mut log_task, service_name, &spec, &notif_tx);
-            }
-            _ = self_tick.tick() => {
-                if exe_mtime != exe_modified() {
-                    tracing::info!("{service_name}: binary changed, re-exec");
-                    do_update_self = true;
-                    break;
-                }
             }
             Some((req, resp_tx)) = req_rx.recv() => {
                 let (resp, action) = handle(
@@ -223,11 +213,7 @@ fn drain(reader: impl std::io::BufRead, name: &str, is_stderr: bool, tx: &Notifi
     }
 }
 
-// ── Self-update ──────────────────────────────────────────────────────
-
-fn exe_modified() -> Option<std::time::SystemTime> {
-    std::env::current_exe().ok().and_then(|p| std::fs::metadata(&p).ok()?.modified().ok())
-}
+// ── Self-update (only triggered by explicit UpdateSelf IPC command) ──
 
 fn reexec() {
     use std::os::unix::process::CommandExt;
