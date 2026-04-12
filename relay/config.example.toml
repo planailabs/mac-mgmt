@@ -13,4 +13,4 @@ server_api_url = "http://localhost:7378"
 proxy_hostname = "localhost"
 
 # Directory for persistent data (port reservations).
-# data_dir = "/var/lib/mac-mgmt-relay"
+data_dir = "/tmp/mac-mgmt-relay"
