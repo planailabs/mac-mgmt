@@ -58,4 +58,4 @@ Example:
 
 ## Remote SSH access
 
-When `relay.url` is configured and `relay.remote_ssh_enabled` is `true`, you can SSH into clusters through the relay server. Authorized SSH keys are managed per cluster through the web UI.
+When `relay.url` is configured and `relay.remote_ssh_enabled` is `true`, you can SSH into clusters through the relay server. See [Remote SSH](/docs/remote-ssh) for setup and usage.
