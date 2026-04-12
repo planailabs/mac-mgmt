@@ -394,7 +394,7 @@ impl ManagedService for OpenClaw {
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
         let gw = self.config.gateway.as_ref().cloned().unwrap_or_default();
         let host = if gw.host.is_empty() { "127.0.0.1".to_string() } else { gw.host };
-        let port = if gw.port == 0 { 8080 } else { gw.port };
+        let port = if gw.port == 0 { 18789 } else { gw.port };
         vec![TunnelDef {
             name: "openclaw".into(),
             host,

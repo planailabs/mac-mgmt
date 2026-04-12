@@ -513,7 +513,7 @@ impl CloudConfig {
 // ── OpenClaw ────────────────────────────────────────────────────────────
 
 fn default_gateway_port() -> u16 {
-    8080
+    18789
 }
 
 fn default_gateway_host() -> String {
