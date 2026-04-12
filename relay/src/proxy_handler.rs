@@ -86,14 +86,15 @@ async fn proxy_iframe(
     headers: HeaderMap,
     State(state): State<ProxyState>,
 ) -> axum::response::Response {
-    let Some((_instance_id, _tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
+    let Some((instance_id, tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    // Don't check tunnel existence here — serve the iframe page regardless.
-    // The service worker's /proxy_request calls will fail with a clear error
-    // if the daemon or tunnel isn't available.
-    let html = PROXY_IFRAME_HTML;
+    if state.registry.find_tunnel(&instance_id, &tunnel_name).is_none() {
+        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
+    }
+
+    let html = PROXY_IFRAME_HTML.replace("{{TUNNEL_NAME}}", &tunnel_name);
 
     axum::response::Response::builder()
         .status(StatusCode::OK)
@@ -104,19 +105,48 @@ async fn proxy_iframe(
 }
 
 const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Tunnel Proxy</title></head>
-<body style="margin:0;padding:0;overflow:hidden">
-<iframe id="frame" style="width:100%;height:100vh;border:none"></iframe>
+<html><head><meta charset="utf-8"><title>Tunnel Proxy</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
+  #bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px;
+    background: #1e1e2e; border-bottom: 1px solid #313244;
+  }
+  #bar .label {
+    color: #89b4fa; font-size: 12px; font-weight: 600;
+    white-space: nowrap; user-select: none;
+  }
+  #url {
+    flex: 1; padding: 5px 10px;
+    background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+    border-radius: 6px; font-size: 13px; font-family: ui-monospace, monospace;
+    outline: none;
+  }
+  #url:focus { border-color: #89b4fa; }
+  #frame { flex: 1; border: none; width: 100%; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span class="label">{{TUNNEL_NAME}}</span>
+  <input id="url" type="text" spellcheck="false" autocomplete="off">
+</div>
+<iframe id="frame"></iframe>
 <script type="module">
+  const tunnelName = '{{TUNNEL_NAME}}';
   const proxyToken = new URLSearchParams(location.search).get('proxy_token');
   if (!proxyToken) {
     document.body.textContent = 'Missing proxy_token parameter';
     throw new Error('missing proxy_token');
   }
 
+  const urlBar = document.getElementById('url');
+  const frame = document.getElementById('frame');
+
   const reg = await navigator.serviceWorker.register('/proxy_sw.js', { type: 'module' });
 
-  // Wait for the service worker to be active
   await new Promise((resolve) => {
     const sw = reg.active ?? reg.installing ?? reg.waiting;
     if (sw.state === 'activated') { resolve(); return; }
@@ -125,14 +155,41 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
     });
   });
 
-  // Send token to SW via message channel
   const sw = reg.active;
   sw.postMessage({ type: 'init', proxyToken });
-
-  // Small delay so the SW processes the message before the iframe starts fetching
   await new Promise(r => setTimeout(r, 50));
 
-  document.getElementById('frame').src = '/proxy_content/';
+  function toDisplayUrl(realPath) {
+    return `${tunnelName}:/${realPath.replace(/^\/proxy_content/, '') || '/'}`;
+  }
+
+  function toRealPath(display) {
+    // Strip "tunnelName:/" prefix to get the path
+    const stripped = display.replace(new RegExp(`^${tunnelName}:/`), '/');
+    return `/proxy_content${stripped === '/' ? '/' : stripped}`;
+  }
+
+  function navigate(path) {
+    frame.src = path;
+    urlBar.value = toDisplayUrl(path);
+  }
+
+  urlBar.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      navigate(toRealPath(urlBar.value));
+    }
+  });
+
+  // Track iframe navigation
+  frame.addEventListener('load', () => {
+    try {
+      const loc = frame.contentWindow.location.pathname + frame.contentWindow.location.search;
+      urlBar.value = toDisplayUrl(loc);
+    } catch (_) { /* cross-origin, ignore */ }
+  });
+
+  navigate('/proxy_content/');
 </script>
 </body></html>"#;
 
