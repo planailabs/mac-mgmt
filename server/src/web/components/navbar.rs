@@ -168,6 +168,7 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
     let common_links: Vec<(Route, &str)> = vec![
         (Route::ClusterList {}, "Clusters"),
         (Route::FleetDashboard {}, "Fleet"),
+        (Route::DocList {}, "Docs"),
     ];
 
     // Links visible only to admins

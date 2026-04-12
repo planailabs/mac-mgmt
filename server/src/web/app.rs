@@ -26,6 +26,7 @@ use super::components::daemon_version_detail::DaemonVersionDetail;
 use super::components::organization_detail::OrganizationDetail;
 use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
+use super::components::docs::{DocList, DocPage};
 use super::components::profile::Profile;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
@@ -96,6 +97,10 @@ pub enum Route {
     UserForm {},
     #[route("/users/:id")]
     UserDetail { id: String },
+    #[route("/docs")]
+    DocList {},
+    #[route("/docs/:slug")]
+    DocPage { slug: String },
 }
 
 const THEME_INIT_SCRIPT: &str = r#"

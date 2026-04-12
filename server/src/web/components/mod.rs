@@ -18,6 +18,7 @@ pub mod cluster_skills;
 pub mod cluster_ssh_keys;
 pub mod daemon_version_list;
 pub mod daemon_version_detail;
+pub mod docs;
 pub mod layout;
 pub mod navbar;
 pub mod mcp_bundle_detail;
