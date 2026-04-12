@@ -86,15 +86,13 @@ async fn proxy_iframe(
     headers: HeaderMap,
     State(state): State<ProxyState>,
 ) -> axum::response::Response {
-    let Some((instance_id, tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
+    let Some((_instance_id, _tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    // Verify the tunnel exists on the daemon
-    if state.registry.find_tunnel(&instance_id, &tunnel_name).is_none() {
-        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
-    }
-
+    // Don't check tunnel existence here — serve the iframe page regardless.
+    // The service worker's /proxy_request calls will fail with a clear error
+    // if the daemon or tunnel isn't available.
     let html = PROXY_IFRAME_HTML;
 
     axum::response::Response::builder()

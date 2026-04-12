@@ -33,6 +33,8 @@ pub struct Manager {
     server_token: Option<String>,
     tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
     relay_proxy_hostname: Arc<RwLock<Option<String>>>,
+    /// Shared channel to send messages on the relay WS (for tunnel re-advertisements).
+    ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>>,
 }
 
 impl Manager {
@@ -51,6 +53,8 @@ impl Manager {
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
         let tunnel_defs = Arc::new(RwLock::new(HashMap::new()));
         let relay_proxy_hostname = Arc::new(RwLock::new(None));
+        let ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>> =
+            Arc::new(RwLock::new(None));
 
         let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move {
@@ -71,10 +75,11 @@ impl Manager {
             let allowed = Arc::clone(&ssh_allowed);
             let tdefs = Arc::clone(&tunnel_defs);
             let rph = Arc::clone(&relay_proxy_hostname);
+            let wstx = Arc::clone(&ws_outgoing_tx);
             tokio::spawn(async move {
                 let hk = Arc::unwrap_or_clone(host_key);
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph,
+                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph, wstx,
                 ).await {
                     tracing::error!("relay client exited: {e:#}");
                 }
@@ -91,6 +96,7 @@ impl Manager {
             server_token,
             tunnel_defs,
             relay_proxy_hostname,
+            ws_outgoing_tx,
         }
     }
 
@@ -117,12 +123,27 @@ impl Manager {
         self.relay_proxy_hostname.read().await.clone()
     }
 
-    /// Update the tunnel definitions (called after services change).
+    /// Update the tunnel definitions and re-advertise to the relay.
     pub async fn update_tunnel_defs(&self, defs: Vec<crate::managed_service::TunnelDef>) {
+        let tunnels_json: Vec<serde_json::Value> = defs
+            .iter()
+            .map(|t| serde_json::json!({ "name": t.name, "tcp_port": t.tcp_port }))
+            .collect();
+
         let mut map = self.tunnel_defs.write().await;
         map.clear();
         for d in defs {
             map.insert(d.name.clone(), TunnelTarget { host: d.host, port: d.tcp_port });
+        }
+        drop(map);
+
+        // Re-advertise to the relay if connected.
+        if let Some(tx) = self.ws_outgoing_tx.read().await.as_ref() {
+            let advert = serde_json::json!({
+                "type": "tunnel_advertisement",
+                "tunnels": tunnels_json,
+            });
+            let _ = tx.send(advert.to_string()).await;
         }
     }
 

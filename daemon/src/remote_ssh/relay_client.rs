@@ -54,6 +54,7 @@ pub async fn run(
     metrics_port: u16,
     tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
     relay_proxy_hostname: Arc<RwLock<Option<String>>>,
+    ws_outgoing_tx: Arc<RwLock<Option<mpsc::Sender<String>>>>,
 ) -> Result<()> {
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
@@ -80,6 +81,9 @@ pub async fn run(
 
     let (incoming_tx, mut incoming_rx) = mpsc::channel(64);
     let (outgoing_tx, outgoing_rx) = mpsc::channel(64);
+
+    // Share the outgoing channel so the Manager can send tunnel advertisements.
+    *ws_outgoing_tx.write().await = Some(outgoing_tx.clone());
 
     let ws_config = WsClientConfig {
         url: ws_url,
