@@ -23,7 +23,7 @@ use crate::metrics_federation::{
 use crate::ssh_listener;
 
 /// Maximum WebSocket message size (256 KB).
-const MAX_WS_MESSAGE_SIZE: usize = 256 * 1024;
+const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 
 #[derive(Clone)]
 struct AppState {
