@@ -134,6 +134,9 @@ pub async fn run(
 
     let mut update_tick = time::interval(update_interval);
     let mut health_tick = time::interval(health_interval);
+    // Heartbeat tick fires at the same rate as health tick but independently,
+    // so heartbeats always go out even if the health tick is blocking on IPC.
+    let mut heartbeat_tick = time::interval(health_interval);
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to register SIGTERM handler")?;
@@ -354,9 +357,56 @@ pub async fn run(
         };
     }
 
+    // Send heartbeat immediately with whatever state we have.
+    // Completely decoupled from the health tick so it never blocks.
+    macro_rules! send_heartbeat_now {
+        () => {
+            if let (Some(url), Some(token)) = (&server_url, &server_token) {
+                #[cfg(feature = "services")]
+                let services = svc_mgr.collect_statuses();
+                #[cfg(not(feature = "services"))]
+                let services: Vec<serde_json::Value> = vec![];
+
+                #[cfg(feature = "services")]
+                let tunnels: Vec<serde_json::Value> = {
+                    let tunnel_defs = svc_mgr.collect_tunnels();
+                    #[cfg(feature = "relay")]
+                    relay_mgr.update_tunnel_defs(tunnel_defs.clone());
+                    tunnel_defs.iter()
+                        .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
+                        .collect()
+                };
+                #[cfg(not(feature = "services"))]
+                let tunnels: Vec<serde_json::Value> = vec![];
+
+                #[cfg(feature = "relay")]
+                let rph = relay_mgr.relay_proxy_hostname();
+                #[cfg(not(feature = "relay"))]
+                let rph: Option<String> = None;
+
+                #[cfg(feature = "services")]
+                if let Some(ref ph) = rph {
+                    svc_mgr.config_store.set("relay", serde_json::json!({
+                        "proxy_hostname": ph,
+                        "instance_id_prefix": &instance_id[..12],
+                    }));
+                }
+
+                let url = url.clone();
+                let token = token.clone();
+                let iid = instance_id.clone();
+                let hk = Arc::clone(&host_key);
+                tokio::spawn(async move {
+                    send_heartbeat(&url, &token, &iid, &hk, services, tunnels, rph).await;
+                });
+            }
+        };
+    }
+
     macro_rules! handle_health_tick {
         () => {
             {
+                // Health tick runs service health checks (can be slow with IPC).
                 #[cfg(feature = "services")]
                 if tokio::time::timeout(
                     std::time::Duration::from_secs(30),
@@ -365,48 +415,8 @@ pub async fn run(
                     tracing::warn!("health tick timed out (30s), continuing");
                 }
 
-                // Send heartbeat if server is configured
-                if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    #[cfg(feature = "services")]
-                    let services = svc_mgr.collect_statuses();
-                    #[cfg(not(feature = "services"))]
-                    let services: Vec<serde_json::Value> = vec![];
-
-                    #[cfg(feature = "services")]
-                    let tunnels: Vec<serde_json::Value> = {
-                        let tunnel_defs = svc_mgr.collect_tunnels();
-                        // Update relay tunnel map.
-                        #[cfg(feature = "relay")]
-                        relay_mgr.update_tunnel_defs(tunnel_defs.clone());
-                        tunnel_defs.iter()
-                            .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
-                            .collect()
-                    };
-                    #[cfg(not(feature = "services"))]
-                    let tunnels: Vec<serde_json::Value> = vec![];
-
-                    #[cfg(feature = "relay")]
-                    let rph = relay_mgr.relay_proxy_hostname();
-                    #[cfg(not(feature = "relay"))]
-                    let rph: Option<String> = None;
-
-                    // Register relay as a config provider so connectors can depend on it.
-                    #[cfg(feature = "services")]
-                    if let Some(ref ph) = rph {
-                        svc_mgr.config_store.set("relay", serde_json::json!({
-                            "proxy_hostname": ph,
-                            "instance_id_prefix": &instance_id[..12],
-                        }));
-                    }
-
-                    let url = url.clone();
-                    let token = token.clone();
-                    let iid = instance_id.clone();
-                    let hk = Arc::clone(&host_key);
-                    tokio::spawn(async move {
-                        send_heartbeat(&url, &token, &iid, &hk, services, tunnels, rph).await;
-                    });
-                }
+                // Send heartbeat after health tick completes.
+                send_heartbeat_now!();
             }
         };
     }
@@ -504,6 +514,7 @@ pub async fn run(
             _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
             _ = update_tick.tick() => { handle_update!(); }
             _ = health_tick.tick() => { handle_health_tick!(); }
+            _ = heartbeat_tick.tick() => { send_heartbeat_now!(); }
             _ = crate::config_watch::recv_debounced(&mut config_rx) => {
                 handle_config_reload!();
             }
@@ -531,7 +542,7 @@ pub async fn run(
                 { std::future::pending::<Option<()>>().await }
             } => {
                 tracing::debug!("relay signalled heartbeat");
-                handle_health_tick!();
+                send_heartbeat_now!();
             }
         }
     }
