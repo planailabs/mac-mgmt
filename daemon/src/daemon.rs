@@ -370,23 +370,20 @@ pub async fn run(
                     #[cfg(feature = "services")]
                     let services = svc_mgr.collect_statuses();
                     #[cfg(not(feature = "services"))]
-                    let services = vec![];
+                    let services: Vec<serde_json::Value> = vec![];
 
                     #[cfg(feature = "services")]
-                    let tunnel_defs = svc_mgr.collect_tunnels();
+                    let tunnels: Vec<serde_json::Value> = {
+                        let tunnel_defs = svc_mgr.collect_tunnels();
+                        // Update relay tunnel map.
+                        #[cfg(feature = "relay")]
+                        relay_mgr.update_tunnel_defs(tunnel_defs.clone());
+                        tunnel_defs.iter()
+                            .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
+                            .collect()
+                    };
                     #[cfg(not(feature = "services"))]
-                    let tunnel_defs = vec![];
-
-                    let tunnels: Vec<serde_json::Value> = tunnel_defs.iter()
-                        .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
-                        .collect();
-
-                    // Update relay tunnel map in background (holds RwLock briefly).
-                    #[cfg(feature = "relay")]
-                    {
-                        let td = tunnel_defs;
-                        relay_mgr.update_tunnel_defs(td);
-                    }
+                    let tunnels: Vec<serde_json::Value> = vec![];
 
                     #[cfg(feature = "relay")]
                     let rph = relay_mgr.relay_proxy_hostname();

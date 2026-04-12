@@ -135,6 +135,7 @@ impl Manager {
 
     /// Update the tunnel definitions and re-advertise to the relay.
     /// All operations are non-blocking to avoid stalling the main event loop.
+    #[cfg(feature = "services")]
     pub fn update_tunnel_defs(&self, defs: Vec<crate::managed_service::TunnelDef>) {
         let tunnels_json: Vec<serde_json::Value> = defs
             .iter()
