@@ -104,7 +104,7 @@ async fn create_fleet_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(15);
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
 
     // For admin users (accessible == None), create an admin-scoped proxy token.
     // For regular users, scope to their first accessible cluster (simplification).
