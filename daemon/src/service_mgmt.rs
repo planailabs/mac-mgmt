@@ -6,7 +6,7 @@ use tokio::task::JoinHandle;
 use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
-use crate::managed_service::{ManagedService, ServiceMode};
+use crate::managed_service::{ManagedService, ServiceMode, TunnelDef};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
 use crate::service_ipc::client::ManagedClient;
@@ -811,6 +811,23 @@ impl ServiceManager {
                     "busy": false,
                 })
             }).collect(),
+        }
+    }
+
+    // ── Tunnel collection ────────────────────────────────────────────
+
+    pub fn collect_tunnels(&self) -> Vec<TunnelDef> {
+        match &self.backend {
+            ServiceBackend::Inline(states) => states
+                .iter()
+                .filter(|s| s.healthy)
+                .flat_map(|s| s.service.expose_tunnels())
+                .collect(),
+            ServiceBackend::External(states) => states
+                .iter()
+                .filter(|s| s.healthy)
+                .flat_map(|s| s.service.expose_tunnels())
+                .collect(),
         }
     }
 

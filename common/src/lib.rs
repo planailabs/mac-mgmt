@@ -26,6 +26,9 @@ pub struct HeartbeatBody {
     #[serde(default)]
     pub environment: String,
     pub services: serde_json::Value,
+    /// Exposed TCP tunnels for browser proxying through the relay.
+    #[serde(default)]
+    pub tunnels: serde_json::Value,
     /// Ed25519 public key bytes (base64-encoded SSH wire format).
     /// The server verifies that SHA-256(public_key) == instance_id.
     #[serde(default)]

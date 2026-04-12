@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::connectors::merge_json;
-use crate::managed_service::ManagedService;
+use crate::managed_service::{ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OpenClawConfig;
 
@@ -389,5 +389,14 @@ impl ManagedService for OpenClaw {
 
     fn collect_metrics(&self) {
         self.active_sessions.set(Self::active_session_count() as i64);
+    }
+
+    fn expose_tunnels(&self) -> Vec<TunnelDef> {
+        let gw = self.config.gateway.as_ref().cloned().unwrap_or_default();
+        vec![TunnelDef {
+            name: "openclaw".into(),
+            host: gw.host,
+            tcp_port: gw.port,
+        }]
     }
 }

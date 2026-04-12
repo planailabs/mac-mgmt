@@ -222,6 +222,8 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::admin_list_clusters,
                 routes::admin_create_token,
                 routes::admin_create_org_token,
+                // Proxy token
+                routes::create_proxy_token,
                 // Admin — skill MCP dependencies
                 routes::admin_list_skill_mcp_deps,
                 routes::admin_add_skill_mcp_dep,

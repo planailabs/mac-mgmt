@@ -6,10 +6,13 @@ pub mod ssh_keys;
 pub mod ssh_server;
 pub mod ws_stream;
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use russh::keys::{PrivateKey, PublicKey};
 use tokio::sync::RwLock;
+
+pub use relay_client::TunnelTarget;
 
 #[derive(Debug)]
 pub enum RemoteSshCommand {
@@ -28,6 +31,7 @@ pub struct Manager {
     server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
     server_url: Option<String>,
     server_token: Option<String>,
+    tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
 }
 
 impl Manager {
@@ -44,6 +48,7 @@ impl Manager {
     ) -> Self {
         let ssh_allowed = Arc::new(AtomicBool::new(remote_ssh_enabled));
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
+        let tunnel_defs = Arc::new(RwLock::new(HashMap::new()));
 
         let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move {
@@ -62,10 +67,11 @@ impl Manager {
             let iid = instance_id.clone();
             let keys = Arc::clone(&server_ssh_keys);
             let allowed = Arc::clone(&ssh_allowed);
+            let tdefs = Arc::clone(&tunnel_defs);
             tokio::spawn(async move {
                 let hk = Arc::unwrap_or_clone(host_key);
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, hk, keys, allowed, metrics_port,
+                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs,
                 ).await {
                     tracing::error!("relay client exited: {e:#}");
                 }
@@ -80,6 +86,7 @@ impl Manager {
             server_ssh_keys,
             server_url,
             server_token,
+            tunnel_defs,
         }
     }
 
@@ -99,6 +106,15 @@ impl Manager {
     /// Receive the next command from the FIFO watcher (async).
     pub async fn recv_cmd(&mut self) -> Option<RemoteSshCommand> {
         self.ssh_cmd_rx.recv().await
+    }
+
+    /// Update the tunnel definitions (called after services change).
+    pub async fn update_tunnel_defs(&self, defs: Vec<crate::managed_service::TunnelDef>) {
+        let mut map = self.tunnel_defs.write().await;
+        map.clear();
+        for d in defs {
+            map.insert(d.name.clone(), TunnelTarget { host: d.host, port: d.tcp_port });
+        }
     }
 
     /// Clean up resources (FIFO) on shutdown.

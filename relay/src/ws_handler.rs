@@ -14,7 +14,9 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::bridge;
-use crate::daemon_registry::{ControlMsg, DaemonConn, DaemonRegistry, MetricsResponse};
+use crate::daemon_registry::{
+    ControlMsg, DaemonConn, DaemonRegistry, MetricsResponse, ProxyResponse, ServiceTunnel,
+};
 use crate::metrics_federation::{
     PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
 };
@@ -79,18 +81,18 @@ async fn health() -> &'static str {
 // ── Token validation ────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct SelfInfo {
-    cluster_id: Option<Uuid>,
-    cluster_name: Option<String>,
+pub struct SelfInfo {
+    pub cluster_id: Option<Uuid>,
+    pub cluster_name: Option<String>,
     #[allow(dead_code)]
-    organization_id: Option<Uuid>,
-    token_kind: String,
+    pub organization_id: Option<Uuid>,
+    pub token_kind: String,
     /// All cluster IDs this token can access.
     #[serde(default)]
-    cluster_ids: Vec<Uuid>,
+    pub cluster_ids: Vec<Uuid>,
 }
 
-async fn validate_token(server_api_url: &str, token: &str) -> Result<SelfInfo, StatusCode> {
+pub async fn validate_token(server_api_url: &str, token: &str) -> Result<SelfInfo, StatusCode> {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{server_api_url}/api/self"))
@@ -194,6 +196,8 @@ struct DaemonWsMessage {
     status: Option<u16>,
     content_type: Option<String>,
     body: Option<String>,
+    headers: Option<Vec<(String, String)>>,
+    tunnels: Option<Vec<ServiceTunnel>>,
 }
 
 async fn handle_daemon_ws(
@@ -233,6 +237,7 @@ async fn handle_daemon_ws(
         connected_at: Utc::now(),
         control_tx,
         listener_handle,
+        tunnels: Vec::new(),
     };
 
     state.registry.register(conn);
@@ -253,6 +258,8 @@ async fn handle_daemon_ws(
     tracing::debug!("sent registration ack to {instance_id} (port {port})");
 
     let mut pending_metrics: HashMap<String, tokio::sync::oneshot::Sender<MetricsResponse>> =
+        HashMap::new();
+    let mut pending_proxy: HashMap<String, tokio::sync::oneshot::Sender<ProxyResponse>> =
         HashMap::new();
 
     // Send periodic WS pings so middleboxes (e.g. nginx proxy_read_timeout)
@@ -282,6 +289,19 @@ async fn handle_daemon_ws(
                         pending_metrics.insert(request_id.clone(), response_tx);
                         serde_json::json!({ "type": "metrics_request", "request_id": request_id, "path": path })
                     }
+                    ControlMsg::ProxyRequest { request_id, tunnel_name, method, path, headers, body, response_tx } => {
+                        tracing::debug!("forwarding proxy request {request_id} ({tunnel_name}{path}) to {instance_id}");
+                        pending_proxy.insert(request_id.clone(), response_tx);
+                        serde_json::json!({
+                            "type": "proxy_request",
+                            "request_id": request_id,
+                            "tunnel_name": tunnel_name,
+                            "method": method,
+                            "path": path,
+                            "headers": headers,
+                            "body": body,
+                        })
+                    }
                 };
                 if ws_sink.send(Message::Text(json.to_string().into())).await.is_err() {
                     break;
@@ -291,22 +311,44 @@ async fn handle_daemon_ws(
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(m) = serde_json::from_str::<DaemonWsMessage>(&text) {
-                            if m.r#type == "metrics_response" {
-                                if let Some(req_id) = m.request_id {
-                                    if let Some(tx) = pending_metrics.remove(&req_id) {
-                                        let status = m.status.unwrap_or(502);
-                                        tracing::debug!("metrics response {req_id} status={status}");
-                                        let _ = tx.send(MetricsResponse {
-                                            status,
-                                            content_type: m.content_type.unwrap_or_else(|| "text/plain".into()),
-                                            body: m.body.unwrap_or_default(),
-                                        });
-                                    } else {
-                                        tracing::warn!("metrics response for unknown request {req_id}");
+                            match m.r#type.as_str() {
+                                "metrics_response" => {
+                                    if let Some(req_id) = m.request_id {
+                                        if let Some(tx) = pending_metrics.remove(&req_id) {
+                                            let status = m.status.unwrap_or(502);
+                                            tracing::debug!("metrics response {req_id} status={status}");
+                                            let _ = tx.send(MetricsResponse {
+                                                status,
+                                                content_type: m.content_type.unwrap_or_else(|| "text/plain".into()),
+                                                body: m.body.unwrap_or_default(),
+                                            });
+                                        } else {
+                                            tracing::warn!("metrics response for unknown request {req_id}");
+                                        }
                                     }
                                 }
-                            } else {
-                                tracing::debug!("unknown daemon msg type: {}", m.r#type);
+                                "proxy_response" => {
+                                    if let Some(req_id) = m.request_id {
+                                        if let Some(tx) = pending_proxy.remove(&req_id) {
+                                            let status = m.status.unwrap_or(502);
+                                            tracing::debug!("proxy response {req_id} status={status}");
+                                            let _ = tx.send(ProxyResponse {
+                                                status,
+                                                headers: m.headers.unwrap_or_default(),
+                                                body: m.body.unwrap_or_default(),
+                                            });
+                                        } else {
+                                            tracing::warn!("proxy response for unknown request {req_id}");
+                                        }
+                                    }
+                                }
+                                "tunnel_advertisement" => {
+                                    let tunnels = m.tunnels.unwrap_or_default();
+                                    state.registry.update_tunnels(&instance_id, tunnels);
+                                }
+                                _ => {
+                                    tracing::debug!("unknown daemon msg type: {}", m.r#type);
+                                }
                             }
                         }
                     }

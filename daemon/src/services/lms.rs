@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
-use crate::managed_service::ManagedService;
+use crate::managed_service::{ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::LmsConfig;
 
@@ -184,5 +184,13 @@ impl ManagedService for Lms {
             tracing::debug!("lms is idle");
         }
         Ok(busy)
+    }
+
+    fn expose_tunnels(&self) -> Vec<TunnelDef> {
+        vec![TunnelDef {
+            name: "lms".into(),
+            host: self.config.host.clone(),
+            tcp_port: self.config.port,
+        }]
     }
 }

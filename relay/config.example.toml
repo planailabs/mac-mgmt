@@ -7,3 +7,7 @@ ssh_port_max = 40000
 
 # mac-mgmt server API URL, used to validate tokens
 server_api_url = "http://localhost:7378"
+
+# Wildcard proxy hostname for browser-based TCP tunnel access.
+# When set, *.relay.plan.ai routes are handled as proxy endpoints.
+# proxy_hostname = "relay.plan.ai"

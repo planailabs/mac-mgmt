@@ -16,6 +16,7 @@ struct FleetEntry {
     environment: String,
     version: String,
     services: serde_json::Value,
+    tunnels: serde_json::Value,
     reported_at: DateTime<Utc>,
 }
 
@@ -33,6 +34,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         environment: String,
         version: String,
         services: serde_json::Value,
+        tunnels: serde_json::Value,
         reported_at: DateTime<Utc>,
     }
 
@@ -40,7 +42,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
 
     let rows = if let Some(ids) = accessible {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.reported_at \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              WHERE dh.cluster_id = ANY($1) \
@@ -52,7 +54,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.reported_at \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.reported_at \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              ORDER BY dh.reported_at DESC",
@@ -72,9 +74,59 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
             environment: r.environment,
             version: r.version,
             services: r.services,
+            tunnels: r.tunnels,
             reported_at: r.reported_at,
         })
         .collect())
+}
+
+#[server]
+async fn get_relay_proxy_hostname() -> Result<Option<String>, ServerFnError> {
+    let cfg = crate::config::config();
+    Ok(cfg.relay.as_ref().map(|r| r.proxy_hostname.clone()))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProxyTokenResult {
+    proxy_token: String,
+}
+
+#[server]
+async fn create_fleet_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+
+    // Get user's accessible clusters for scoping
+    let accessible = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(15);
+
+    // For admin users (accessible == None), create an admin-scoped proxy token.
+    // For regular users, scope to their first accessible cluster (simplification).
+    let cluster_id: Option<uuid::Uuid> = accessible.as_ref().and_then(|ids| ids.first().copied());
+
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
+         VALUES ($1, $2, 'proxy', 'proxy', $3)",
+    )
+    .bind(cluster_id)
+    .bind(&hash)
+    .bind(expires_at)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(ProxyTokenResult {
+        proxy_token: raw_token,
+    })
 }
 
 impl Searchable for FleetEntry {
@@ -90,6 +142,7 @@ impl Searchable for FleetEntry {
 #[component]
 pub fn FleetDashboard() -> Element {
     let fleet = use_server_future(move || async move { get_fleet_status().await })?;
+    let relay_hostname = use_server_future(move || async move { get_relay_proxy_hostname().await })?;
 
     match &*fleet.read() {
         Some(Ok(entries)) => {
@@ -142,6 +195,7 @@ pub fn FleetDashboard() -> Element {
                                     SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Status" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Services" }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Tunnels" }
                                     SortableTh { label: "Last Seen".to_string(), sort_key: "last_seen".to_string(), sort }
                                 }
                             }
@@ -209,6 +263,64 @@ pub fn FleetDashboard() -> Element {
                                                         for (name, badge_class) in &services_badges {
                                                             span { class: "inline-block px-2 py-0.5 rounded text-xs font-medium {badge_class}",
                                                                 "{name}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                td { class: "px-6 py-4 text-sm",
+                                                    {
+                                                        let proxy_hostname = relay_hostname.read().as_ref()
+                                                            .and_then(|r| r.as_ref().ok())
+                                                            .and_then(|h| h.clone());
+                                                        let tunnel_names: Vec<String> = entry.tunnels
+                                                            .as_array()
+                                                            .map(|arr| arr.iter().filter_map(|t| {
+                                                                t.get("name").and_then(|v| v.as_str()).map(String::from)
+                                                            }).collect())
+                                                            .unwrap_or_default();
+
+                                                        rsx! {
+                                                            if is_online {
+                                                                if let Some(ref hostname) = proxy_hostname {
+                                                                    div { class: "flex gap-1 flex-wrap",
+                                                                        for tname in &tunnel_names {
+                                                                            {
+                                                                                let iid = entry.instance_id.clone();
+                                                                                let tn = tname.clone();
+                                                                                let ph = hostname.clone();
+                                                                                rsx! {
+                                                                                    button {
+                                                                                        class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
+                                                                                        onclick: move |_| {
+                                                                                            let iid = iid.clone();
+                                                                                            let tn = tn.clone();
+                                                                                            let ph = ph.clone();
+                                                                                            async move {
+                                                                                                match create_fleet_proxy_token().await {
+                                                                                                    Ok(result) => {
+                                                                                                        let url = format!(
+                                                                                                            "https://{iid}-{tn}.{ph}/proxy?proxy_token={}",
+                                                                                                            result.proxy_token
+                                                                                                        );
+                                                                                                        // Open in new tab
+                                                                                                        let _ = document::eval(&format!(
+                                                                                                            "window.open('{}', '_blank')",
+                                                                                                            url
+                                                                                                        ));
+                                                                                                    }
+                                                                                                    Err(e) => {
+                                                                                                        tracing::error!("failed to create proxy token: {e}");
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                        "{tn}"
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }

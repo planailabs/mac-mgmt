@@ -1957,6 +1957,64 @@ pub async fn admin_create_org_token(
     Ok((Status::Created, Json(CreatedToken { token: raw_token })))
 }
 
+// ── Proxy token creation ─────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub struct ProxyTokenResponse {
+    pub proxy_token: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Create a short-lived proxy token for browser-based tunnel access.
+/// Accepts admin or setting tokens. The proxy token inherits the cluster
+/// scope of the creating token.
+#[utoipa::path(
+    post,
+    path = "/api/proxy-token",
+    tag = "Common",
+    summary = "Create a temporary proxy token",
+    description = "Creates a short-lived token (15 minutes) for accessing TCP tunnels through the relay proxy.",
+    security(("bearer" = [])),
+    responses(
+        (status = 201, description = "Proxy token created", body = ProxyTokenResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+    ),
+)]
+#[rocket::post("/proxy-token")]
+pub async fn create_proxy_token(
+    auth: AuthenticatedToken,
+    pool: &State<PgPool>,
+) -> Result<(Status, Json<ProxyTokenResponse>), Status> {
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    if auth.token_kind != "admin" && auth.token_kind != "setting" {
+        return Err(Status::Forbidden);
+    }
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(15);
+
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at) \
+         VALUES ($1, $2, $3, 'proxy', 'proxy', $4)",
+    )
+    .bind(auth.cluster_id)
+    .bind(auth.organization_id)
+    .bind(&hash)
+    .bind(expires_at)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok((Status::Created, Json(ProxyTokenResponse {
+        proxy_token: raw_token,
+        expires_at,
+    })))
+}
+
 // ── Admin — Skill MCP dependencies ───────────────────────────────────
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -2299,10 +2357,10 @@ pub async fn post_heartbeat(
     })?;
 
     sqlx::query(
-        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
+        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) \
          ON CONFLICT (cluster_id, instance_id) \
-         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, reported_at = now()",
+         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, reported_at = now()",
     )
     .bind(auth.cluster_id)
     .bind(&body.instance_id)
@@ -2310,6 +2368,7 @@ pub async fn post_heartbeat(
     .bind(&body.hostname)
     .bind(&body.environment)
     .bind(&body.services)
+    .bind(&body.tunnels)
     .execute(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
-use crate::managed_service::ManagedService;
+use crate::managed_service::{ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OllamaConfig;
 
@@ -212,5 +212,13 @@ impl ManagedService for Ollama {
 
     fn collect_metrics(&self) {
         self.loaded_models.set(self.loaded_model_count() as i64);
+    }
+
+    fn expose_tunnels(&self) -> Vec<TunnelDef> {
+        vec![TunnelDef {
+            name: "ollama".into(),
+            host: self.config.host.clone(),
+            tcp_port: self.config.port,
+        }]
     }
 }

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use russh::keys::PublicKey;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +22,21 @@ enum ControlMessage {
         session_secret: String,
     },
     MetricsRequest { request_id: String, path: String },
+    ProxyRequest {
+        request_id: String,
+        tunnel_name: String,
+        method: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        body: Option<String>,
+    },
+}
+
+/// A tunnel definition used to map tunnel names to local host:port.
+#[derive(Debug, Clone)]
+pub struct TunnelTarget {
+    pub host: String,
+    pub port: u16,
 }
 
 pub async fn run(
@@ -32,6 +48,7 @@ pub async fn run(
     server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
     ssh_allowed: Arc<AtomicBool>,
     metrics_port: u16,
+    tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
 ) -> Result<()> {
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
@@ -81,6 +98,18 @@ pub async fn run(
                 tracing::info!(
                     "relay registered: instance={instance_id} ssh_port={ssh_port}"
                 );
+                // Advertise our tunnels to the relay.
+                let tunnels: Vec<serde_json::Value> = {
+                    let defs = tunnel_defs.read().await;
+                    defs.iter()
+                        .map(|(name, t)| serde_json::json!({ "name": name, "tcp_port": t.port }))
+                        .collect()
+                };
+                let advert = serde_json::json!({
+                    "type": "tunnel_advertisement",
+                    "tunnels": tunnels,
+                });
+                let _ = outgoing_tx.send(advert.to_string()).await;
             }
             ControlMessage::SessionRequest { session_id, session_secret } => {
                 if !ssh_allowed.load(Ordering::Relaxed) {
@@ -105,6 +134,17 @@ pub async fn run(
                 let port = metrics_port;
                 tokio::spawn(async move {
                     handle_metrics_request(&out_tx, &request_id, &path, port).await;
+                });
+            }
+            ControlMessage::ProxyRequest { request_id, tunnel_name, method, path, headers, body } => {
+                tracing::debug!("proxy request {request_id}: {tunnel_name}{path}");
+                let target = {
+                    let defs = tunnel_defs.read().await;
+                    defs.get(&tunnel_name).cloned()
+                };
+                let out_tx = outgoing_tx.clone();
+                tokio::spawn(async move {
+                    handle_proxy_request(&out_tx, &request_id, target, &method, &path, headers, body).await;
                 });
             }
         }
@@ -208,6 +248,91 @@ async fn handle_metrics_request(
         "status": status,
         "content_type": content_type,
         "body": body
+    });
+
+    let _ = out_tx.send(msg.to_string()).await;
+}
+
+async fn handle_proxy_request(
+    out_tx: &mpsc::Sender<String>,
+    request_id: &str,
+    target: Option<TunnelTarget>,
+    method: &str,
+    path: &str,
+    headers: Vec<(String, String)>,
+    body: Option<String>,
+) {
+    let Some(target) = target else {
+        let msg = serde_json::json!({
+            "type": "proxy_response",
+            "request_id": request_id,
+            "status": 404,
+            "headers": [],
+            "body": null,
+        });
+        let _ = out_tx.send(msg.to_string()).await;
+        return;
+    };
+
+    let url = format!("http://{}:{}{path}", target.host, target.port);
+    let client = reqwest::Client::new();
+
+    let mut req = match method {
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        _ => client.get(&url),
+    };
+
+    for (k, v) in &headers {
+        // Skip hop-by-hop headers
+        let lk = k.to_lowercase();
+        if lk == "host" || lk == "connection" || lk == "transfer-encoding" {
+            continue;
+        }
+        req = req.header(k.as_str(), v.as_str());
+    }
+
+    if let Some(b64) = body {
+        use base64::Engine;
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+            req = req.body(bytes);
+        }
+    }
+
+    let (status, resp_headers, resp_body) = match req
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let hdrs: Vec<(String, String)> = resp
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect();
+            let bytes = resp.bytes().await.unwrap_or_default();
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            (status, hdrs, b64)
+        }
+        Err(e) => {
+            tracing::warn!("proxy request to {url} failed: {e}");
+            (502, vec![], String::new())
+        }
+    };
+
+    tracing::debug!("proxy response {request_id} status={status}");
+
+    let msg = serde_json::json!({
+        "type": "proxy_response",
+        "request_id": request_id,
+        "status": status,
+        "headers": resp_headers,
+        "body": resp_body,
     });
 
     let _ = out_tx.send(msg.to_string()).await;

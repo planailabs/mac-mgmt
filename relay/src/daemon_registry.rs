@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use tokio::sync::{mpsc, oneshot};
@@ -19,6 +19,15 @@ pub enum ControlMsg {
         path: String,
         response_tx: oneshot::Sender<MetricsResponse>,
     },
+    ProxyRequest {
+        request_id: String,
+        tunnel_name: String,
+        method: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        body: Option<String>,
+        response_tx: oneshot::Sender<ProxyResponse>,
+    },
 }
 
 /// Response from daemon for a proxied metrics request.
@@ -27,6 +36,21 @@ pub struct MetricsResponse {
     pub status: u16,
     pub content_type: String,
     pub body: String,
+}
+
+/// Response from daemon for a proxied TCP tunnel request.
+#[derive(Debug)]
+pub struct ProxyResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
+/// A TCP tunnel exposed by a managed service on a daemon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceTunnel {
+    pub name: String,
+    pub tcp_port: u16,
 }
 
 /// A connected daemon.
@@ -41,6 +65,8 @@ pub struct DaemonConn {
     pub control_tx: mpsc::Sender<ControlMsg>,
     /// Handle to the TCP listener task so we can abort it on disconnect
     pub listener_handle: tokio::task::JoinHandle<()>,
+    /// TCP tunnels advertised by the daemon's managed services.
+    pub tunnels: Vec<ServiceTunnel>,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,6 +78,7 @@ pub struct TunnelInfo {
     pub hostname: Option<String>,
     pub ssh_port: u16,
     pub connected_at: DateTime<Utc>,
+    pub tunnels: Vec<ServiceTunnel>,
 }
 
 /// A port reserved for a disconnected machine so it gets the same port back.
@@ -230,6 +257,7 @@ impl DaemonRegistry {
                 hostname: d.hostname.clone(),
                 ssh_port: d.ssh_port,
                 connected_at: d.connected_at,
+                tunnels: d.tunnels.clone(),
             })
             .collect()
     }
@@ -237,5 +265,32 @@ impl DaemonRegistry {
     pub fn get_control_tx(&self, instance_id: &str) -> Option<mpsc::Sender<ControlMsg>> {
         let daemons = self.daemons.read().unwrap();
         daemons.get(instance_id).map(|d| d.control_tx.clone())
+    }
+
+    /// Update the advertised tunnels for a connected daemon.
+    pub fn update_tunnels(&self, instance_id: &str, tunnels: Vec<ServiceTunnel>) {
+        let mut daemons = self.daemons.write().unwrap();
+        if let Some(d) = daemons.get_mut(instance_id) {
+            tracing::info!("daemon {instance_id} advertised {} tunnel(s)", tunnels.len());
+            d.tunnels = tunnels;
+        }
+    }
+
+    /// Find a specific tunnel on a daemon. Returns (control_tx, tcp_port) if found.
+    pub fn find_tunnel(
+        &self,
+        instance_id: &str,
+        tunnel_name: &str,
+    ) -> Option<(mpsc::Sender<ControlMsg>, u16)> {
+        let daemons = self.daemons.read().unwrap();
+        let d = daemons.get(instance_id)?;
+        let tunnel = d.tunnels.iter().find(|t| t.name == tunnel_name)?;
+        Some((d.control_tx.clone(), tunnel.tcp_port))
+    }
+
+    /// Return the cluster_id of a connected daemon.
+    pub fn get_cluster_id(&self, instance_id: &str) -> Option<Uuid> {
+        let daemons = self.daemons.read().unwrap();
+        daemons.get(instance_id).and_then(|d| d.cluster_id)
     }
 }

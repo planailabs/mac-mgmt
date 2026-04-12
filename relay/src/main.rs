@@ -7,6 +7,7 @@ mod bridge;
 mod config;
 mod daemon_registry;
 mod metrics_federation;
+mod proxy_handler;
 mod ssh_listener;
 mod ws_handler;
 
@@ -46,10 +47,21 @@ async fn main() -> Result<()> {
         }
     });
 
-    let app = ws_handler::router(
+    let mut app = ws_handler::router(
         Arc::clone(&registry),
         cfg.server_api_url.clone(),
     );
+
+    // If proxy_hostname is configured, mount the browser proxy endpoints.
+    if let Some(ref proxy_hostname) = cfg.proxy_hostname {
+        tracing::info!("proxy hostname configured: *.{proxy_hostname}");
+        let proxy_state = proxy_handler::ProxyState {
+            registry: Arc::clone(&registry),
+            server_api_url: cfg.server_api_url.clone(),
+            proxy_hostname: proxy_hostname.clone(),
+        };
+        app = app.merge(proxy_handler::router(proxy_state));
+    }
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {}", cfg.listen_addr);

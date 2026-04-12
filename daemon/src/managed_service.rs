@@ -1,6 +1,18 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 use crate::service_ipc::protocol::SpawnSpec;
+
+/// A TCP tunnel that a managed service exposes for proxying through the relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelDef {
+    /// Short, URL-safe name (e.g. "ollama", "openclaw").
+    pub name: String,
+    /// Host the service listens on (e.g. "127.0.0.1").
+    pub host: String,
+    /// TCP port the service listens on.
+    pub tcp_port: u16,
+}
 
 /// Whether the daemon should spawn and manage a long-running process,
 /// or only install the package (no child process).
@@ -96,4 +108,10 @@ pub trait ManagedService {
     /// health tick. Services should update the metrics they registered
     /// via `metric_collectors()`.
     fn collect_metrics(&self) {}
+
+    /// Return the TCP tunnels this service exposes for browser proxying
+    /// through the relay. Override to advertise one or more tunnels.
+    fn expose_tunnels(&self) -> Vec<TunnelDef> {
+        Vec::new()
+    }
 }

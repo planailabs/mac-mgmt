@@ -21,6 +21,10 @@ pub struct RelayConfig {
     /// Maximum number of concurrent daemon connections (default: 1000)
     #[serde(default = "default_max_daemons")]
     pub max_daemons: usize,
+
+    /// Wildcard proxy hostname (e.g. "relay.plan.ai" enables *.relay.plan.ai).
+    /// When set, the relay serves browser proxy endpoints for TCP tunnels.
+    pub proxy_hostname: Option<String>,
 }
 
 fn default_listen_addr() -> String {
