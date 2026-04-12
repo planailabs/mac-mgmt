@@ -6,14 +6,13 @@ use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::bridge;
-use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse};
+use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse, ProxyStreamEvent};
 use crate::ws_handler::{SelfInfo, validate_token};
 
 /// Cache validated proxy tokens for 5 minutes to avoid hitting the server API
@@ -315,7 +314,6 @@ async fn proxy_catchall(
         .iter()
         .filter_map(|(k, v)| {
             let lk = k.as_str().to_lowercase();
-            // Skip hop-by-hop and cookie (contains proxy_token)
             if lk == "connection" || lk == "transfer-encoding" || lk == "cookie" {
                 return None;
             }
@@ -329,147 +327,60 @@ async fn proxy_catchall(
         Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response(),
     };
 
-    let has_body = !body_bytes.is_empty();
+    let body_b64 = if body_bytes.is_empty() {
+        None
+    } else {
+        use base64::Engine;
+        Some(base64::engine::general_purpose::STANDARD.encode(&body_bytes))
+    };
 
-    // Create a proxy session for streaming
+    // Send a streaming proxy request over the existing control channel.
+    // No new WS connection needed — responses stream back as tagged messages.
     tracing::debug!("proxy {method} {path} -> {instance_id}/{tunnel_name}");
-    let session_id = Uuid::new_v4().to_string();
-    let session_secret = Uuid::new_v4().to_string();
+    let request_id = Uuid::new_v4().to_string();
+    let (stream_tx, mut stream_rx) = tokio::sync::mpsc::channel::<ProxyStreamEvent>(64);
 
-    // Create a channel to receive the daemon's data WS
-    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel::<axum::extract::ws::WebSocket>();
-
-    // Register the session. When the daemon connects its data WS,
-    // bridge::take_pending_proxy_session returns it in handle_data_session.
-    // But we need direct access here, so we use a different approach:
-    // use a oneshot channel-based pending session.
-    bridge::register_pending_proxy_session_with_callback(
-        session_id.clone(),
-        session_secret.clone(),
-        ws_tx,
-    );
-
-    // Tell daemon to connect
     if control_tx
-        .send(ControlMsg::ProxySessionRequest {
-            session_id: session_id.clone(),
-            session_secret: session_secret.clone(),
+        .send(ControlMsg::ProxyStream {
+            request_id,
             tunnel_name,
-            mode: "stream".to_string(),
-            path: path.clone(),
+            method: method.to_string(),
+            path,
+            headers: fwd_headers,
+            body: body_b64,
+            response_tx: stream_tx,
         })
         .await
         .is_err()
     {
-        bridge::remove_pending_proxy_session(&session_id);
         return StatusCode::BAD_GATEWAY.into_response();
     }
 
-    // Wait for the daemon's data WS to connect
-    let daemon_ws = match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        ws_rx,
+    // Wait for response headers from daemon (first event).
+    let headers_event = match tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        stream_rx.recv(),
     ).await {
-        Ok(Ok(ws)) => ws,
-        _ => {
-            bridge::remove_pending_proxy_session(&session_id);
-            return StatusCode::GATEWAY_TIMEOUT.into_response();
-        }
+        Ok(Some(ProxyStreamEvent::Headers { status, headers })) => (status, headers),
+        _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
     };
 
-    let (mut daemon_sink, mut daemon_stream) = daemon_ws.split();
+    let (status, resp_headers) = headers_event;
 
-    // Send request details to daemon
-    let req_json = serde_json::json!({
-        "method": method.as_str(),
-        "path": path,
-        "headers": serde_json::Value::Object(
-            fwd_headers.into_iter()
-                .map(|(k, v)| (k, serde_json::Value::String(v)))
-                .collect()
-        ),
-        "has_body": has_body,
+    // Stream body chunks as they arrive from daemon via the control channel.
+    let body_stream = futures_util::stream::unfold(stream_rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(ProxyStreamEvent::BodyChunk(data)) => {
+                Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data)), rx))
+            }
+            Some(ProxyStreamEvent::End) | None => None,
+            Some(ProxyStreamEvent::Headers { .. }) => None, // unexpected
+        }
     });
-
-    if daemon_sink
-        .send(axum::extract::ws::Message::Text(req_json.to_string().into()))
-        .await
-        .is_err()
-    {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
-    // Send request body if present (1MB chunks)
-    if has_body {
-        for chunk in body_bytes.chunks(1024 * 1024) {
-            if daemon_sink
-                .send(axum::extract::ws::Message::Binary(chunk.to_vec().into()))
-                .await
-                .is_err()
-            {
-                return StatusCode::BAD_GATEWAY.into_response();
-            }
-        }
-        if daemon_sink
-            .send(axum::extract::ws::Message::Text("end_request".into()))
-            .await
-            .is_err()
-        {
-            return StatusCode::BAD_GATEWAY.into_response();
-        }
-    }
-
-    // Read response headers from daemon (first text message)
-    let resp_headers_msg = match daemon_stream.next().await {
-        Some(Ok(axum::extract::ws::Message::Text(t))) => t,
-        _ => return StatusCode::BAD_GATEWAY.into_response(),
-    };
-
-    let resp_meta: serde_json::Value = match serde_json::from_str(&resp_headers_msg) {
-        Ok(v) => v,
-        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
-    };
-
-    let status = resp_meta["status"].as_u64().unwrap_or(502) as u16;
-    let resp_headers = resp_meta["headers"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|pair| {
-                    let k = pair.get(0)?.as_str()?;
-                    let v = pair.get(1)?.as_str()?;
-                    Some((k.to_string(), v.to_string()))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    // Build the streaming HTTP response from daemon WS body chunks.
-    // The daemon_sink is moved into the closure to keep the WS alive for the
-    // duration of the streaming response.
-    let body_stream = futures_util::stream::unfold(
-        (daemon_stream, Some(daemon_sink)),
-        |(mut stream, sink)| async move {
-            loop {
-                match stream.next().await {
-                    Some(Ok(axum::extract::ws::Message::Binary(data))) => {
-                        return Some((
-                            Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())),
-                            (stream, sink),
-                        ));
-                    }
-                    Some(Ok(axum::extract::ws::Message::Close(_))) | None => return None,
-                    Some(Err(_)) => return None,
-                    _ => continue, // skip text/ping/pong
-                }
-            }
-        },
-    );
 
     let mut builder = axum::response::Response::builder().status(status);
     for (k, v) in &resp_headers {
         let lk = k.to_lowercase();
-        // Strip headers that interfere with the proxy
         if lk == "transfer-encoding" || lk == "content-length" || lk == "content-encoding" {
             continue;
         }

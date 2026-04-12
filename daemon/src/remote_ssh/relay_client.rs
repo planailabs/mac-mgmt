@@ -34,6 +34,15 @@ enum ControlMessage {
         headers: Vec<(String, String)>,
         body: Option<String>,
     },
+    /// Streaming proxy request — response sent as multiple messages on the control channel.
+    ProxyStreamRequest {
+        request_id: String,
+        tunnel_name: String,
+        method: String,
+        path: String,
+        headers: serde_json::Value,
+        body: Option<String>,
+    },
     ProxySessionRequest {
         session_id: String,
         session_secret: String,
@@ -165,6 +174,17 @@ pub async fn run(
                 let out_tx = outgoing_tx.clone();
                 tokio::spawn(async move {
                     handle_proxy_request(&out_tx, &request_id, target, &method, &path, headers, body).await;
+                });
+            }
+            ControlMessage::ProxyStreamRequest { request_id, tunnel_name, method, path, headers, body } => {
+                tracing::debug!("proxy stream {request_id}: {method} {tunnel_name}{path}");
+                let target = {
+                    let defs = tunnel_defs.read().await;
+                    defs.get(&tunnel_name).cloned()
+                };
+                let out_tx = outgoing_tx.clone();
+                tokio::spawn(async move {
+                    handle_proxy_stream_request(&out_tx, &request_id, target, &method, &path, headers, body).await;
                 });
             }
             ControlMessage::ProxySessionRequest { session_id, session_secret, tunnel_name, mode, path } => {
@@ -373,6 +393,123 @@ async fn handle_proxy_request(
     });
 
     let _ = out_tx.send(msg.to_string()).await;
+}
+
+/// Streaming proxy request handler — sends response as multiple messages
+/// on the control channel (headers, base64 body chunks, end).
+async fn handle_proxy_stream_request(
+    out_tx: &mpsc::Sender<String>,
+    request_id: &str,
+    target: Option<TunnelTarget>,
+    method: &str,
+    path: &str,
+    headers_json: serde_json::Value,
+    body_b64: Option<String>,
+) {
+    let Some(target) = target else {
+        let msg = serde_json::json!({
+            "type": "proxy_stream_headers",
+            "request_id": request_id,
+            "status": 404,
+            "headers": [],
+        });
+        let _ = out_tx.send(msg.to_string()).await;
+        let _ = out_tx.send(serde_json::json!({
+            "type": "proxy_stream_end", "request_id": request_id
+        }).to_string()).await;
+        return;
+    };
+
+    let url = format!("http://{}:{}{path}", target.host, target.port);
+    let client = reqwest::Client::new();
+
+    let mut req = match method {
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        _ => client.get(&url),
+    };
+
+    // Forward headers, overriding Host to the actual target.
+    if let Some(hdrs) = headers_json.as_object() {
+        for (k, v) in hdrs {
+            let lk = k.to_lowercase();
+            if lk == "connection" || lk == "transfer-encoding" || lk == "host" { continue; }
+            if let Some(val) = v.as_str() {
+                req = req.header(k.as_str(), val);
+            }
+        }
+    }
+    req = req.header("host", format!("{}:{}", target.host, target.port));
+
+    // Decode and attach request body if present.
+    if let Some(b64) = body_b64 {
+        use base64::Engine;
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+            req = req.body(bytes);
+        }
+    }
+
+    // Make the request.
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("proxy stream {request_id} to {url} failed: {e}");
+            let _ = out_tx.send(serde_json::json!({
+                "type": "proxy_stream_headers",
+                "request_id": request_id,
+                "status": 502,
+                "headers": [],
+            }).to_string()).await;
+            let _ = out_tx.send(serde_json::json!({
+                "type": "proxy_stream_end", "request_id": request_id
+            }).to_string()).await;
+            return;
+        }
+    };
+
+    let status = resp.status().as_u16();
+    let resp_headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    // Send response headers.
+    let _ = out_tx.send(serde_json::json!({
+        "type": "proxy_stream_headers",
+        "request_id": request_id,
+        "status": status,
+        "headers": resp_headers,
+    }).to_string()).await;
+
+    // Stream body chunks as base64.
+    use futures_util::StreamExt;
+    let mut body_stream = resp.bytes_stream();
+    while let Some(chunk) = body_stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let _ = out_tx.send(serde_json::json!({
+                    "type": "proxy_stream_chunk",
+                    "request_id": request_id,
+                    "data": b64,
+                }).to_string()).await;
+            }
+            Err(e) => {
+                tracing::warn!("proxy stream {request_id} chunk error: {e}");
+                break;
+            }
+        }
+    }
+
+    // Signal response complete.
+    let _ = out_tx.send(serde_json::json!({
+        "type": "proxy_stream_end", "request_id": request_id
+    }).to_string()).await;
 }
 
 /// Maximum chunk size for streaming over data WS (must be under relay's WS limit).

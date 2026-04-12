@@ -28,16 +28,35 @@ pub enum ControlMsg {
         body: Option<String>,
         response_tx: oneshot::Sender<ProxyResponse>,
     },
-    /// Request a proxy data session (WS-to-WS bridge or streaming HTTP).
+    /// Request a proxy data session (WS-to-WS bridge).
     ProxySessionRequest {
         session_id: String,
         session_secret: String,
         tunnel_name: String,
-        /// "websocket" or "stream"
         mode: String,
-        /// Target path on the proxied service
         path: String,
     },
+    /// Streaming proxy request multiplexed over the control channel.
+    ProxyStream {
+        request_id: String,
+        tunnel_name: String,
+        method: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        body: Option<String>,
+        response_tx: mpsc::Sender<ProxyStreamEvent>,
+    },
+}
+
+/// Events streamed back from daemon for a proxy stream request.
+#[derive(Debug)]
+pub enum ProxyStreamEvent {
+    /// Response headers (first event).
+    Headers { status: u16, headers: Vec<(String, String)> },
+    /// Body chunk (base64-decoded by the relay).
+    BodyChunk(Vec<u8>),
+    /// Response complete.
+    End,
 }
 
 /// Response from daemon for a proxied metrics request.
@@ -48,7 +67,7 @@ pub struct MetricsResponse {
     pub body: String,
 }
 
-/// Response from daemon for a proxied TCP tunnel request.
+/// Response from daemon for a proxied TCP tunnel request (non-streaming).
 #[derive(Debug)]
 pub struct ProxyResponse {
     pub status: u16,

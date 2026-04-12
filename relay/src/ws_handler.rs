@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use crate::bridge;
 use crate::daemon_registry::{
-    ControlMsg, DaemonConn, DaemonRegistry, MetricsResponse, ProxyResponse, ServiceTunnel,
+    ControlMsg, DaemonConn, DaemonRegistry, MetricsResponse, ProxyResponse, ProxyStreamEvent,
+    ServiceTunnel,
 };
 use crate::metrics_federation::{
     PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
@@ -200,6 +201,8 @@ struct DaemonWsMessage {
     body: Option<String>,
     headers: Option<Vec<(String, String)>>,
     tunnels: Option<Vec<ServiceTunnel>>,
+    /// Base64-encoded body chunk for proxy_stream_chunk messages.
+    data: Option<String>,
 }
 
 async fn handle_daemon_ws(
@@ -267,6 +270,8 @@ async fn handle_daemon_ws(
         HashMap::new();
     let mut pending_proxy: HashMap<String, tokio::sync::oneshot::Sender<ProxyResponse>> =
         HashMap::new();
+    let mut pending_streams: HashMap<String, tokio::sync::mpsc::Sender<ProxyStreamEvent>> =
+        HashMap::new();
 
     // Send periodic WS pings so middleboxes (e.g. nginx proxy_read_timeout)
     // don't silently drop idle control connections.
@@ -300,6 +305,19 @@ async fn handle_daemon_ws(
                         pending_proxy.insert(request_id.clone(), response_tx);
                         serde_json::json!({
                             "type": "proxy_request",
+                            "request_id": request_id,
+                            "tunnel_name": tunnel_name,
+                            "method": method,
+                            "path": path,
+                            "headers": headers,
+                            "body": body,
+                        })
+                    }
+                    ControlMsg::ProxyStream { request_id, tunnel_name, method, path, headers, body, response_tx } => {
+                        tracing::debug!("forwarding proxy stream {request_id} ({method} {tunnel_name}{path}) to {instance_id}");
+                        pending_streams.insert(request_id.clone(), response_tx);
+                        serde_json::json!({
+                            "type": "proxy_stream_request",
                             "request_id": request_id,
                             "tunnel_name": tunnel_name,
                             "method": method,
@@ -356,6 +374,34 @@ async fn handle_daemon_ws(
                                             });
                                         } else {
                                             tracing::warn!("proxy response for unknown request {req_id}");
+                                        }
+                                    }
+                                }
+                                "proxy_stream_headers" => {
+                                    if let Some(req_id) = m.request_id {
+                                        if let Some(tx) = pending_streams.get(&req_id) {
+                                            let status = m.status.unwrap_or(502);
+                                            let headers = m.headers.unwrap_or_default();
+                                            let _ = tx.try_send(ProxyStreamEvent::Headers { status, headers });
+                                        }
+                                    }
+                                }
+                                "proxy_stream_chunk" => {
+                                    if let Some(req_id) = m.request_id {
+                                        if let Some(tx) = pending_streams.get(&req_id) {
+                                            if let Some(data) = m.data {
+                                                use base64::Engine;
+                                                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&data) {
+                                                    let _ = tx.try_send(ProxyStreamEvent::BodyChunk(bytes));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                "proxy_stream_end" => {
+                                    if let Some(req_id) = m.request_id {
+                                        if let Some(tx) = pending_streams.remove(&req_id) {
+                                            let _ = tx.try_send(ProxyStreamEvent::End);
                                         }
                                     }
                                 }
