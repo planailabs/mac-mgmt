@@ -27,8 +27,9 @@ node_modules/
 # Generated CSS
 server/public/tailwind.css
 
-# Server config (contains secrets)
+# Config files (contain secrets)
 config.toml
+relay.toml
 
 # Test scripts
 test-*.sh
