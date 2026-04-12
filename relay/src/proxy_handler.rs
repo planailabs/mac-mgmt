@@ -170,10 +170,44 @@ async fn proxy_bootstrap(
         .status(StatusCode::OK)
         .header("set-cookie", cookie)
         .header("content-type", "text/html; charset=utf-8")
-        .body(Body::from("<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"0;url=/\"></head><body>Redirecting...</body></html>"))
+        .body(Body::from(PROXY_BOOTSTRAP_HTML))
         .unwrap()
         .into_response()
 }
+
+const PROXY_BOOTSTRAP_HTML: &str = r#"<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0;url=/">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 3px solid #313244;
+    border-top-color: #89b4fa;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .text { font-size: 14px; color: #6c7086; letter-spacing: 0.02em; }
+</style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <div class="text">Connecting to tunnel...</div>
+</body>
+</html>"#;
 
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
 
