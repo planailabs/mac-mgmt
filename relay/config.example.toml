@@ -1,5 +1,5 @@
 # Address to listen on for WebSocket + REST API
-listen_addr = "0.0.0.0:8080"
+listen_addr = "0.0.0.0:7379"
 
 # Port range for dynamically allocated SSH tunnels
 ssh_port_min = 30000
