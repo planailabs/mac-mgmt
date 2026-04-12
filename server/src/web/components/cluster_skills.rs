@@ -182,7 +182,7 @@ async fn add_cluster_skill(cluster_id: String, skill_channel_id: String) -> Resu
     let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
         if !ids.contains(&cid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -212,7 +212,7 @@ async fn remove_cluster_skill(cluster_skill_id: String) -> Result<(), ServerFnEr
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
             if !ids.contains(&owner_cid) {
                 return Err(ServerFnError::new("access denied"));
             }
@@ -236,7 +236,7 @@ async fn add_cluster_bundle(cluster_id: String, bundle_id: String) -> Result<(),
     let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
         if !ids.contains(&cid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -291,7 +291,7 @@ async fn remove_cluster_bundle(cluster_bundle_id: String) -> Result<(), ServerFn
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
             if !ids.contains(&owner_cid) {
                 return Err(ServerFnError::new("access denied"));
             }
@@ -311,7 +311,7 @@ async fn remove_cluster_bundle(cluster_bundle_id: String) -> Result<(), ServerFn
 }
 
 #[component]
-pub fn ClusterSkills(cluster_id: String) -> Element {
+pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
     let cid_skills = cluster_id.clone();
     let mut skills = use_server_future(move || {
         let cid = cid_skills.clone();
@@ -344,43 +344,45 @@ pub fn ClusterSkills(cluster_id: String) -> Element {
         // Direct skill assignments
         div { class: "mb-4",
             h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Direct Skills" }
-            form {
-                class: "flex gap-2 mb-3",
-                onsubmit: move |evt: FormEvent| {
-                    evt.prevent_default();
-                    let cid = cid_add_skill.clone();
-                    let scid = selected_sc.read().clone();
-                    spawn(async move {
-                        if !scid.is_empty() {
-                            if add_cluster_skill(cid, scid).await.is_ok() {
-                                selected_sc.set(String::new());
-                                skills.restart();
-                            }
-                        }
-                    });
-                },
-                select {
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
-                    value: "{selected_sc}",
-                    onchange: move |evt| selected_sc.set(evt.value()),
-                    option { value: "", "Select skill/channel..." }
-                    {match &*available_sc.read() {
-                        Some(Ok(list)) => rsx! {
-                            for sc in list {
-                                {
-                                    let val = sc.id.to_string();
-                                    let label = format!("{} / {}", sc.skill_slug, sc.channel);
-                                    rsx! { option { value: "{val}", "{label}" } }
+            if !read_only {
+                form {
+                    class: "flex gap-2 mb-3",
+                    onsubmit: move |evt: FormEvent| {
+                        evt.prevent_default();
+                        let cid = cid_add_skill.clone();
+                        let scid = selected_sc.read().clone();
+                        spawn(async move {
+                            if !scid.is_empty() {
+                                if add_cluster_skill(cid, scid).await.is_ok() {
+                                    selected_sc.set(String::new());
+                                    skills.restart();
                                 }
                             }
-                        },
-                        _ => rsx! {},
-                    }}
-                }
-                button {
-                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                    r#type: "submit",
-                    "Add"
+                        });
+                    },
+                    select {
+                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                        value: "{selected_sc}",
+                        onchange: move |evt| selected_sc.set(evt.value()),
+                        option { value: "", "Select skill/channel..." }
+                        {match &*available_sc.read() {
+                            Some(Ok(list)) => rsx! {
+                                for sc in list {
+                                    {
+                                        let val = sc.id.to_string();
+                                        let label = format!("{} / {}", sc.skill_slug, sc.channel);
+                                        rsx! { option { value: "{val}", "{label}" } }
+                                    }
+                                }
+                            },
+                            _ => rsx! {},
+                        }}
+                    }
+                    button {
+                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
+                        r#type: "submit",
+                        "Add"
+                    }
                 }
             }
             {match &*skills.read() {
@@ -396,17 +398,19 @@ pub fn ClusterSkills(cluster_id: String) -> Element {
                                 rsx! {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{label}" }
-                                        button {
-                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
-                                            onclick: move |_| {
-                                                let csid = csid.clone();
-                                                spawn(async move {
-                                                    if remove_cluster_skill(csid).await.is_ok() {
-                                                        skills.restart();
-                                                    }
-                                                });
-                                            },
-                                            "Remove"
+                                        if !read_only {
+                                            button {
+                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                                onclick: move |_| {
+                                                    let csid = csid.clone();
+                                                    spawn(async move {
+                                                        if remove_cluster_skill(csid).await.is_ok() {
+                                                            skills.restart();
+                                                        }
+                                                    });
+                                                },
+                                                "Remove"
+                                            }
                                         }
                                     }
                                 }
@@ -460,49 +464,51 @@ pub fn ClusterSkills(cluster_id: String) -> Element {
             if let Some(err) = &*bundle_error.read() {
                 p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
             }
-            form {
-                class: "flex gap-2 mb-3",
-                onsubmit: move |evt: FormEvent| {
-                    evt.prevent_default();
-                    let cid = cid_add_bundle.clone();
-                    let bid = selected_bundle.read().clone();
-                    spawn(async move {
-                        if !bid.is_empty() {
-                            match add_cluster_bundle(cid, bid).await {
-                                Ok(()) => {
-                                    bundle_error.set(None);
-                                    selected_bundle.set(String::new());
-                                    bundles.restart();
-                                }
-                                Err(e) => {
-                                    bundle_error.set(Some(e.to_string()));
-                                }
-                            }
-                        }
-                    });
-                },
-                select {
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
-                    value: "{selected_bundle}",
-                    onchange: move |evt| selected_bundle.set(evt.value()),
-                    option { value: "", "Select bundle..." }
-                    {match &*available_bundles.read() {
-                        Some(Ok(list)) => rsx! {
-                            for b in list {
-                                {
-                                    let val = b.id.to_string();
-                                    let label = format!("{} ({})", b.name, b.slug);
-                                    rsx! { option { value: "{val}", "{label}" } }
+            if !read_only {
+                form {
+                    class: "flex gap-2 mb-3",
+                    onsubmit: move |evt: FormEvent| {
+                        evt.prevent_default();
+                        let cid = cid_add_bundle.clone();
+                        let bid = selected_bundle.read().clone();
+                        spawn(async move {
+                            if !bid.is_empty() {
+                                match add_cluster_bundle(cid, bid).await {
+                                    Ok(()) => {
+                                        bundle_error.set(None);
+                                        selected_bundle.set(String::new());
+                                        bundles.restart();
+                                    }
+                                    Err(e) => {
+                                        bundle_error.set(Some(e.to_string()));
+                                    }
                                 }
                             }
-                        },
-                        _ => rsx! {},
-                    }}
-                }
-                button {
-                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                    r#type: "submit",
-                    "Add"
+                        });
+                    },
+                    select {
+                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                        value: "{selected_bundle}",
+                        onchange: move |evt| selected_bundle.set(evt.value()),
+                        option { value: "", "Select bundle..." }
+                        {match &*available_bundles.read() {
+                            Some(Ok(list)) => rsx! {
+                                for b in list {
+                                    {
+                                        let val = b.id.to_string();
+                                        let label = format!("{} ({})", b.name, b.slug);
+                                        rsx! { option { value: "{val}", "{label}" } }
+                                    }
+                                }
+                            },
+                            _ => rsx! {},
+                        }}
+                    }
+                    button {
+                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
+                        r#type: "submit",
+                        "Add"
+                    }
                 }
             }
             {match &*bundles.read() {
@@ -518,17 +524,19 @@ pub fn ClusterSkills(cluster_id: String) -> Element {
                                 rsx! {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "text-sm", "{label}" }
-                                        button {
-                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
-                                            onclick: move |_| {
-                                                let cbid = cbid.clone();
-                                                spawn(async move {
-                                                    if remove_cluster_bundle(cbid).await.is_ok() {
-                                                        bundles.restart();
-                                                    }
-                                                });
-                                            },
-                                            "Remove"
+                                        if !read_only {
+                                            button {
+                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                                onclick: move |_| {
+                                                    let cbid = cbid.clone();
+                                                    spawn(async move {
+                                                        if remove_cluster_bundle(cbid).await.is_ok() {
+                                                            bundles.restart();
+                                                        }
+                                                    });
+                                                },
+                                                "Remove"
+                                            }
                                         }
                                     }
                                 }

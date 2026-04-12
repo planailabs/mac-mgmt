@@ -14,6 +14,32 @@ use super::setting_token_list::SettingTokenList;
 use super::token_list::SyncTokenList;
 
 #[server]
+async fn can_write_cluster(cluster_id: String) -> Result<bool, ServerFnError> {
+    let user = current_user().await?;
+    if user.is_admin {
+        return Ok(true);
+    }
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    match user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        Some(ids) => Ok(ids.contains(&uuid)),
+        None => Ok(true),
+    }
+}
+
+#[server]
+async fn is_global_admin() -> Result<bool, ServerFnError> {
+    let user = current_user().await?;
+    Ok(user.is_admin)
+}
+
+#[server]
 async fn get_cluster(id: String) -> Result<Cluster, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -67,11 +93,7 @@ async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnE
     let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
-        if !ids.contains(&uuid) {
-            return Err(ServerFnError::new("access denied"));
-        }
-    }
+    user.require_cluster_write(&pool, uuid).await?;
     let ver = version.trim().to_string();
     if ver.is_empty() {
         sqlx::query("UPDATE clusters SET pinned_version = NULL WHERE id = $1")
@@ -95,11 +117,7 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
     let user = current_user().await?;
     let pool = crate::server_pool()?;
     let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
-        if !ids.contains(&uuid) {
-            return Err(ServerFnError::new("access denied"));
-        }
-    }
+    user.require_cluster_write(&pool, uuid).await?;
     let c = commit.trim().to_string();
     if c.is_empty() {
         sqlx::query("UPDATE clusters SET nixpkgs_commit = NULL WHERE id = $1")
@@ -189,6 +207,17 @@ pub fn ClusterDetail(id: String) -> Element {
         async move { get_cluster(id).await }
     })?;
 
+    let cid_for_write = id.clone();
+    let write_check = use_server_future(move || {
+        let cid = cid_for_write.clone();
+        async move { can_write_cluster(cid).await }
+    })?;
+    let admin_check = use_server_future(is_global_admin)?;
+
+    let can_write = matches!(&*write_check.read(), Some(Ok(true)));
+    let is_admin = matches!(&*admin_check.read(), Some(Ok(true)));
+    let read_only = !can_write;
+
     let mut editing = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
     let mut confirm_delete = use_signal(|| false);
@@ -240,63 +269,65 @@ pub fn ClusterDetail(id: String) -> Element {
                         }
                     } else {
                         h2 { class: "text-2xl font-bold", "{name}" }
-                        button {
-                            class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300",
-                            onclick: move |_| {
-                                draft_name.set(name.clone());
-                                editing.set(true);
-                            },
-                            "Edit"
-                        }
-                        if *confirm_delete.read() {
-                            span { class: "text-red-600 dark:text-red-400 text-sm", "Delete this cluster?" }
+                        if is_admin {
                             button {
-                                class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
-                                onclick: {
-                                    let cid = cid.clone();
-                                    move |_| {
-                                        let cid = cid.clone();
-                                        async move {
-                                            let _ = delete_cluster(cid).await;
-                                            nav.push(Route::ClusterList {});
-                                        }
-                                    }
+                                class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300",
+                                onclick: move |_| {
+                                    draft_name.set(name.clone());
+                                    editing.set(true);
                                 },
-                                "Confirm"
+                                "Edit"
                             }
-                            button {
-                                class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
-                                onclick: move |_| confirm_delete.set(false),
-                                "Cancel"
-                            }
-                        } else {
-                            button {
-                                class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 text-sm",
-                                onclick: move |_| confirm_delete.set(true),
-                                "Delete"
+                            if *confirm_delete.read() {
+                                span { class: "text-red-600 dark:text-red-400 text-sm", "Delete this cluster?" }
+                                button {
+                                    class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                                    onclick: {
+                                        let cid = cid.clone();
+                                        move |_| {
+                                            let cid = cid.clone();
+                                            async move {
+                                                let _ = delete_cluster(cid).await;
+                                                nav.push(Route::ClusterList {});
+                                            }
+                                        }
+                                    },
+                                    "Confirm"
+                                }
+                                button {
+                                    class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
+                                    onclick: move |_| confirm_delete.set(false),
+                                    "Cancel"
+                                }
+                            } else {
+                                button {
+                                    class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 text-sm",
+                                    onclick: move |_| confirm_delete.set(true),
+                                    "Delete"
+                                }
                             }
                         }
                     }
                 }
                 div { class: "text-gray-500 dark:text-gray-400 mb-6 flex items-center gap-4 flex-wrap",
                     span { "Created: {created}" }
-                    PinnedVersion { cluster_id: cid2.clone(), version: pinned.clone(), on_change: move |_| cluster.restart() }
-                    NixpkgsCommit { cluster_id: cid2.clone(), commit: nix_commit.clone(), on_change: move |_| cluster.restart() }
+                    PinnedVersion { cluster_id: cid2.clone(), version: pinned.clone(), read_only, on_change: move |_| cluster.restart() }
+                    NixpkgsCommit { cluster_id: cid2.clone(), commit: nix_commit.clone(), read_only, on_change: move |_| cluster.restart() }
                     ActiveRollouts { cluster_id: cid2.clone() }
                 }
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Sync Tokens" }
-                        SyncTokenList { cluster_id: cid2.clone() }
+                        SyncTokenList { cluster_id: cid2.clone(), read_only }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Setting / Cluster Tokens" }
-                        SettingTokenList { cluster_id: cid2.clone() }
+                        SettingTokenList { cluster_id: cid2.clone(), read_only }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Config" }
-                        ConfigEditor { cluster_id: cid2.clone() }
+                        ConfigEditor { cluster_id: cid2.clone(), read_only }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Config History" }
@@ -304,15 +335,15 @@ pub fn ClusterDetail(id: String) -> Element {
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "Skills" }
-                        ClusterSkills { cluster_id: cid2.clone() }
+                        ClusterSkills { cluster_id: cid2.clone(), read_only }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "MCP Servers" }
-                        ClusterMcpServers { cluster_id: cid2.clone() }
+                        ClusterMcpServers { cluster_id: cid2.clone(), read_only }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "SSH Keys" }
-                        ClusterSshKeys { cluster_id: cid2.clone() }
+                        ClusterSshKeys { cluster_id: cid2.clone(), read_only }
                     }
                 }
             }
@@ -365,7 +396,7 @@ fn ActiveRollouts(cluster_id: String) -> Element {
 }
 
 #[component]
-fn PinnedVersion(cluster_id: String, version: Option<String>, on_change: EventHandler) -> Element {
+fn PinnedVersion(cluster_id: String, version: Option<String>, read_only: bool, on_change: EventHandler) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(String::new);
 
@@ -388,7 +419,7 @@ fn PinnedVersion(cluster_id: String, version: Option<String>, on_change: EventHa
         _ => None,
     };
 
-    if *editing.read() {
+    if !read_only && *editing.read() {
         let cid = cluster_id.clone();
         rsx! {
             form {
@@ -434,13 +465,15 @@ fn PinnedVersion(cluster_id: String, version: Option<String>, on_change: EventHa
                         "(rollout)"
                     }
                 }
-                button {
-                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
-                    onclick: move |_| {
-                        draft.set(ver_display.clone());
-                        editing.set(true);
-                    },
-                    "Edit"
+                if !read_only {
+                    button {
+                        class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
+                        onclick: move |_| {
+                            draft.set(ver_display.clone());
+                            editing.set(true);
+                        },
+                        "Edit"
+                    }
                 }
             }
         }
@@ -448,13 +481,15 @@ fn PinnedVersion(cluster_id: String, version: Option<String>, on_change: EventHa
         rsx! {
             span { class: "flex items-center gap-1",
                 span { class: "text-gray-400 dark:text-gray-500", "No version pinned" }
-                button {
-                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
-                    onclick: move |_| {
-                        draft.set(String::new());
-                        editing.set(true);
-                    },
-                    "Set"
+                if !read_only {
+                    button {
+                        class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
+                        onclick: move |_| {
+                            draft.set(String::new());
+                            editing.set(true);
+                        },
+                        "Set"
+                    }
                 }
             }
         }
@@ -462,11 +497,11 @@ fn PinnedVersion(cluster_id: String, version: Option<String>, on_change: EventHa
 }
 
 #[component]
-fn NixpkgsCommit(cluster_id: String, commit: Option<String>, on_change: EventHandler) -> Element {
+fn NixpkgsCommit(cluster_id: String, commit: Option<String>, read_only: bool, on_change: EventHandler) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(String::new);
 
-    if *editing.read() {
+    if !read_only && *editing.read() {
         let cid = cluster_id.clone();
         rsx! {
             form {
@@ -501,18 +536,21 @@ fn NixpkgsCommit(cluster_id: String, commit: Option<String>, on_change: EventHan
         }
     } else if let Some(c) = commit {
         let display = c.clone();
+        let display_for_edit = display.clone();
         let short: String = display.chars().take(12).collect();
         rsx! {
             span { class: "flex items-center gap-1",
                 span { "Nixpkgs: " }
                 span { class: "font-mono font-medium text-gray-700 dark:text-gray-200", title: "{display}", "{short}" }
-                button {
-                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
-                    onclick: move |_| {
-                        draft.set(display.clone());
-                        editing.set(true);
-                    },
-                    "Edit"
+                if !read_only {
+                    button {
+                        class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
+                        onclick: move |_| {
+                            draft.set(display_for_edit.clone());
+                            editing.set(true);
+                        },
+                        "Edit"
+                    }
                 }
             }
         }
@@ -520,13 +558,15 @@ fn NixpkgsCommit(cluster_id: String, commit: Option<String>, on_change: EventHan
         rsx! {
             span { class: "flex items-center gap-1",
                 span { class: "text-gray-400 dark:text-gray-500", "No nixpkgs pin" }
-                button {
-                    class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
-                    onclick: move |_| {
-                        draft.set(String::new());
-                        editing.set(true);
-                    },
-                    "Set"
+                if !read_only {
+                    button {
+                        class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
+                        onclick: move |_| {
+                            draft.set(String::new());
+                            editing.set(true);
+                        },
+                        "Set"
+                    }
                 }
             }
         }

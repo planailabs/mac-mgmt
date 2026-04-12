@@ -41,7 +41,7 @@ async fn add_ssh_key(cluster_id: String, public_key: String) -> Result<(), Serve
     let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
         if !ids.contains(&cid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -94,7 +94,7 @@ async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
             if !ids.contains(&owner_cid) {
                 return Err(ServerFnError::new("access denied"));
             }
@@ -114,7 +114,7 @@ async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
 }
 
 #[component]
-pub fn ClusterSshKeys(cluster_id: String) -> Element {
+pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
     let cid_list = cluster_id.clone();
     let mut keys = use_server_future(move || {
         let cid = cid_list.clone();
@@ -127,41 +127,43 @@ pub fn ClusterSshKeys(cluster_id: String) -> Element {
     let cid_add = cluster_id.clone();
 
     rsx! {
-        if let Some(err) = &*error_msg.read() {
-            p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
-        }
-        form {
-            class: "flex gap-2 mb-3",
-            onsubmit: move |evt: FormEvent| {
-                evt.prevent_default();
-                let cid = cid_add.clone();
-                let pk = key_input.read().clone();
-                spawn(async move {
-                    if !pk.trim().is_empty() {
-                        match add_ssh_key(cid, pk).await {
-                            Ok(()) => {
-                                error_msg.set(None);
-                                key_input.set(String::new());
-                                keys.restart();
-                            }
-                            Err(e) => {
-                                error_msg.set(Some(e.to_string()));
+        if !read_only {
+            if let Some(err) = &*error_msg.read() {
+                p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
+            }
+            form {
+                class: "flex gap-2 mb-3",
+                onsubmit: move |evt: FormEvent| {
+                    evt.prevent_default();
+                    let cid = cid_add.clone();
+                    let pk = key_input.read().clone();
+                    spawn(async move {
+                        if !pk.trim().is_empty() {
+                            match add_ssh_key(cid, pk).await {
+                                Ok(()) => {
+                                    error_msg.set(None);
+                                    key_input.set(String::new());
+                                    keys.restart();
+                                }
+                                Err(e) => {
+                                    error_msg.set(Some(e.to_string()));
+                                }
                             }
                         }
-                    }
-                });
-            },
-            textarea {
-                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
-                rows: 2,
-                placeholder: "ssh-ed25519 AAAA... user@host",
-                value: "{key_input}",
-                oninput: move |e| key_input.set(e.value()),
-            }
-            button {
-                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 self-start",
-                r#type: "submit",
-                "Add"
+                    });
+                },
+                textarea {
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                    rows: 2,
+                    placeholder: "ssh-ed25519 AAAA... user@host",
+                    value: "{key_input}",
+                    oninput: move |e| key_input.set(e.value()),
+                }
+                button {
+                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 self-start",
+                    r#type: "submit",
+                    "Add"
+                }
             }
         }
         {match &*keys.read() {
@@ -183,17 +185,19 @@ pub fn ClusterSshKeys(cluster_id: String) -> Element {
                                             span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{comment}" }
                                         }
                                     }
-                                    button {
-                                        class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
-                                        onclick: move |_| {
-                                            let kid = kid.clone();
-                                            spawn(async move {
-                                                if remove_ssh_key(kid).await.is_ok() {
-                                                    keys.restart();
-                                                }
-                                            });
-                                        },
-                                        "Remove"
+                                    if !read_only {
+                                        button {
+                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                            onclick: move |_| {
+                                                let kid = kid.clone();
+                                                spawn(async move {
+                                                    if remove_ssh_key(kid).await.is_ok() {
+                                                        keys.restart();
+                                                    }
+                                                });
+                                            },
+                                            "Remove"
+                                        }
                                     }
                                 }
                             }

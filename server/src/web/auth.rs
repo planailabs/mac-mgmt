@@ -16,7 +16,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::config;
-use super::user::WebUser;
+use super::user::{OrgMembership, WebUser};
 
 /// Extract the email from a JWT ID token's payload (base64url-decoded, no verification needed
 /// since the OIDC client already validated it).
@@ -146,20 +146,23 @@ async fn resolve_user(
         .await?
     };
 
-    // Load organization memberships
-    let org_ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM organization_members WHERE user_id = $1",
+    // Load organization memberships with roles
+    let org_memberships = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT organization_id, role FROM organization_members WHERE user_id = $1",
     )
     .bind(user.0)
     .fetch_all(pool)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|(org_id, role)| OrgMembership { org_id, role })
+    .collect();
 
     Ok(WebUser {
         id: user.0,
         email: user.1,
         name: user.2,
         is_admin: user.3,
-        org_ids,
+        org_memberships,
         impersonating_from: None,
     })
 }
@@ -201,20 +204,23 @@ async fn try_impersonate(
 
     match target {
         Ok(Some(user)) => {
-            let org_ids = sqlx::query_scalar::<_, Uuid>(
-                "SELECT organization_id FROM organization_members WHERE user_id = $1",
+            let org_memberships = sqlx::query_as::<_, (Uuid, String)>(
+                "SELECT organization_id, role FROM organization_members WHERE user_id = $1",
             )
             .bind(user.0)
             .fetch_all(pool)
             .await
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(org_id, role)| OrgMembership { org_id, role })
+            .collect();
 
             WebUser {
                 id: user.0,
                 email: user.1,
                 name: user.2,
                 is_admin: user.3,
-                org_ids,
+                org_memberships,
                 impersonating_from: Some(admin_id),
             }
         }
@@ -258,20 +264,23 @@ pub async fn require_auth(
 
             match result {
                 Ok(user) => {
-                    let org_ids = sqlx::query_scalar::<_, Uuid>(
-                        "SELECT organization_id FROM organization_members WHERE user_id = $1",
+                    let org_memberships = sqlx::query_as::<_, (Uuid, String)>(
+                        "SELECT organization_id, role FROM organization_members WHERE user_id = $1",
                     )
                     .bind(user.0)
                     .fetch_all(&pool)
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(org_id, role)| OrgMembership { org_id, role })
+                    .collect();
 
                     let mut web_user = WebUser {
                         id: user.0,
                         email: user.1,
                         name: user.2,
                         is_admin: user.3,
-                        org_ids,
+                        org_memberships,
                         impersonating_from: None,
                     };
                     // Impersonation support in dev mode too

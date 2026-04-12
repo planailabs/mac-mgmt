@@ -40,7 +40,7 @@ async fn save_config(cluster_id: String, config_json: String) -> Result<(), Serv
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -65,7 +65,7 @@ async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
 }
 
 #[component]
-pub fn ConfigEditor(cluster_id: String) -> Element {
+pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
     let mut config = use_server_future(move || {
         let cid = cid.clone();
@@ -149,15 +149,17 @@ pub fn ConfigEditor(cluster_id: String) -> Element {
                     None => rsx! { p { class: "text-sm", "Loading schema..." } },
                 }}
             }
-            button {
-                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                r#type: "button",
-                onclick: move |evt| {
-                    evt.prevent_default();
-                    evt.stop_propagation();
-                    do_save();
-                },
-                "Save Config"
+            if !read_only {
+                button {
+                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                    r#type: "button",
+                    onclick: move |evt| {
+                        evt.prevent_default();
+                        evt.stop_propagation();
+                        do_save();
+                    },
+                    "Save Config"
+                }
             }
         }
 

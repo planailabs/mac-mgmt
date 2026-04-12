@@ -19,6 +19,7 @@ struct UserInfo {
 struct UserOrgEntry {
     organization_id: String,
     name: String,
+    role: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,10 +70,11 @@ async fn get_user_orgs(user_id: String) -> Result<Vec<UserOrgEntry>, ServerFnErr
     struct Row {
         organization_id: uuid::Uuid,
         name: String,
+        role: String,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT om.organization_id, o.name \
+        "SELECT om.organization_id, o.name, om.role \
          FROM organization_members om \
          JOIN organizations o ON o.id = om.organization_id \
          WHERE om.user_id = $1 \
@@ -88,6 +90,7 @@ async fn get_user_orgs(user_id: String) -> Result<Vec<UserOrgEntry>, ServerFnErr
         .map(|r| UserOrgEntry {
             organization_id: r.organization_id.to_string(),
             name: r.name,
+            role: r.role,
         })
         .collect())
 }
@@ -132,7 +135,7 @@ async fn add_user_to_org(user_id: String, org_id: String) -> Result<(), ServerFn
     let uid: uuid::Uuid = user_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let oid: uuid::Uuid = org_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    sqlx::query("INSERT INTO organization_members (user_id, organization_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+    sqlx::query("INSERT INTO organization_members (user_id, organization_id, role) VALUES ($1, $2, 'read') ON CONFLICT DO NOTHING")
         .bind(uid)
         .bind(oid)
         .execute(&pool)
@@ -374,12 +377,21 @@ pub fn UserDetail(id: String) -> Element {
                                     let oid = o.organization_id.clone();
                                     let uid = id.clone();
                                     let oname = o.name.clone();
+                                    let role = o.role.clone();
+                                    let badge_class = match o.role.as_str() {
+                                        "admin" => "bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300",
+                                        "write" => "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                                        _ => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                    };
                                     rsx! {
                                         div { class: "flex justify-between items-center py-2",
-                                            Link {
-                                                to: Route::OrganizationDetail { id: oid.clone() },
-                                                class: "text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium",
-                                                "{oname}"
+                                            div { class: "flex items-center gap-2",
+                                                Link {
+                                                    to: Route::OrganizationDetail { id: oid.clone() },
+                                                    class: "text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium",
+                                                    "{oname}"
+                                                }
+                                                span { class: "text-xs px-1.5 py-0.5 rounded {badge_class}", "{role}" }
                                             }
                                             button {
                                                 class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",

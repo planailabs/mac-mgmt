@@ -16,6 +16,7 @@ struct ProfileInfo {
 struct ProfileOrg {
     id: String,
     name: String,
+    role: String,
 }
 
 #[server]
@@ -37,10 +38,11 @@ async fn get_profile_orgs() -> Result<Vec<ProfileOrg>, ServerFnError> {
     struct Row {
         id: uuid::Uuid,
         name: String,
+        role: String,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT o.id, o.name \
+        "SELECT o.id, o.name, om.role \
          FROM organization_members om \
          JOIN organizations o ON o.id = om.organization_id \
          WHERE om.user_id = $1 \
@@ -56,6 +58,7 @@ async fn get_profile_orgs() -> Result<Vec<ProfileOrg>, ServerFnError> {
         .map(|r| ProfileOrg {
             id: r.id.to_string(),
             name: r.name,
+            role: r.role,
         })
         .collect())
 }
@@ -129,11 +132,21 @@ pub fn Profile() -> Element {
                         } else {
                             div { class: "divide-y divide-gray-200 dark:divide-gray-700",
                                 for o in &orgs {
-                                    div { class: "py-2",
-                                        Link {
-                                            to: Route::OrganizationDetail { id: o.id.clone() },
-                                            class: "text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium",
-                                            "{o.name}"
+                                    {
+                                        let badge_class = match o.role.as_str() {
+                                            "admin" => "bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300",
+                                            "write" => "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                                            _ => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                        };
+                                        rsx! {
+                                            div { class: "flex items-center justify-between py-2",
+                                                Link {
+                                                    to: Route::OrganizationDetail { id: o.id.clone() },
+                                                    class: "text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium",
+                                                    "{o.name}"
+                                                }
+                                                span { class: "text-xs px-1.5 py-0.5 rounded {badge_class}", "{o.role}" }
+                                            }
                                         }
                                     }
                                 }

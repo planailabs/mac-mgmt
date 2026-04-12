@@ -42,7 +42,7 @@ async fn create_token(cluster_id: String, label: String) -> Result<String, Serve
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -78,7 +78,7 @@ async fn revoke_token(token_id: String) -> Result<(), ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
             if !ids.contains(&owner_cid) {
                 return Err(ServerFnError::new("access denied"));
             }
@@ -93,7 +93,7 @@ async fn revoke_token(token_id: String) -> Result<(), ServerFnError> {
 }
 
 #[component]
-pub fn SyncTokenList(cluster_id: String) -> Element {
+pub fn SyncTokenList(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
     let mut tokens = use_server_future(move || {
         let cid = cid.clone();
@@ -121,26 +121,28 @@ pub fn SyncTokenList(cluster_id: String) -> Element {
     };
 
     rsx! {
-        if let Some(raw) = &*new_token.read() {
-            div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
-                p { class: "text-sm font-medium text-green-800 dark:text-green-300", "New token (copy now, shown once):" }
-                code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
+        if !read_only {
+            if let Some(raw) = &*new_token.read() {
+                div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
+                    p { class: "text-sm font-medium text-green-800 dark:text-green-300", "New token (copy now, shown once):" }
+                    code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
+                }
             }
-        }
 
-        form { onsubmit: on_create, class: "flex gap-2 mb-4",
-            input {
-                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
-                r#type: "text",
-                required: true,
-                placeholder: "Sync token label",
-                value: "{label}",
-                oninput: move |evt| label.set(evt.value()),
-            }
-            button {
-                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                r#type: "submit",
-                "Create Sync Token"
+            form { onsubmit: on_create, class: "flex gap-2 mb-4",
+                input {
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                    r#type: "text",
+                    required: true,
+                    placeholder: "Sync token label",
+                    value: "{label}",
+                    oninput: move |evt| label.set(evt.value()),
+                }
+                button {
+                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
+                    r#type: "submit",
+                    "Create Sync Token"
+                }
             }
         }
 
@@ -166,7 +168,7 @@ pub fn SyncTokenList(cluster_id: String) -> Element {
                                             span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
                                         }
                                     }
-                                    if !revoked {
+                                    if !revoked && !read_only {
                                         button {
                                             class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                             onclick: move |_| {
