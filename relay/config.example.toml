@@ -11,3 +11,6 @@ server_api_url = "http://localhost:7378"
 # Wildcard proxy hostname for browser-based TCP tunnel access.
 # When set, *.relay.plan.ai routes are handled as proxy endpoints.
 proxy_hostname = "localhost"
+
+# Directory for persistent data (port reservations).
+# data_dir = "/var/lib/mac-mgmt-relay"

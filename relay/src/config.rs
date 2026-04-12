@@ -25,6 +25,15 @@ pub struct RelayConfig {
     /// Wildcard proxy hostname (e.g. "relay.plan.ai" enables *.relay.plan.ai).
     /// When set, the relay serves browser proxy endpoints for TCP tunnels.
     pub proxy_hostname: Option<String>,
+
+    /// Directory for persistent data (port reservations, etc.).
+    /// Defaults to the current working directory.
+    #[serde(default = "default_data_dir")]
+    pub data_dir: String,
+}
+
+fn default_data_dir() -> String {
+    ".".to_string()
 }
 
 fn default_listen_addr() -> String {

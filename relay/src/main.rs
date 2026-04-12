@@ -39,10 +39,12 @@ async fn main() -> Result<()> {
         cfg.listen_addr, cfg.ssh_port_min, cfg.ssh_port_max
     );
 
-    let registry = Arc::new(daemon_registry::DaemonRegistry::new(
+    let data_dir = std::path::Path::new(&cfg.data_dir);
+    let registry = Arc::new(daemon_registry::DaemonRegistry::with_data_dir(
         cfg.ssh_port_min,
         cfg.ssh_port_max,
         cfg.max_daemons,
+        Some(data_dir),
     ));
 
     bridge::spawn_cleanup_task();

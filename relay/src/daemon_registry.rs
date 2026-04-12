@@ -92,9 +92,16 @@ pub struct TunnelInfo {
 }
 
 /// A port reserved for a disconnected machine so it gets the same port back.
+#[derive(Serialize, Deserialize)]
 struct PortReservation {
     port: u16,
     reserved_at: DateTime<Utc>,
+}
+
+/// On-disk format for port reservations.
+#[derive(Serialize, Deserialize, Default)]
+struct ReservationsFile {
+    reservations: HashMap<String, PortReservation>,
 }
 
 pub struct DaemonRegistry {
@@ -105,17 +112,58 @@ pub struct DaemonRegistry {
     used_ports: RwLock<std::collections::HashSet<u16>>,
     /// instance_id → reserved port (kept for up to 30 days after disconnect).
     reservations: RwLock<HashMap<String, PortReservation>>,
+    /// Path to the reservations file on disk.
+    reservations_path: Option<std::path::PathBuf>,
 }
 
 impl DaemonRegistry {
     pub fn new(port_min: u16, port_max: u16, max_daemons: usize) -> Self {
+        Self::with_data_dir(port_min, port_max, max_daemons, None)
+    }
+
+    pub fn with_data_dir(
+        port_min: u16,
+        port_max: u16,
+        max_daemons: usize,
+        data_dir: Option<&std::path::Path>,
+    ) -> Self {
+        let reservations_path = data_dir.map(|d| d.join("port_reservations.json"));
+
+        // Load existing reservations from disk.
+        let (reservations, used_ports) = if let Some(ref path) = reservations_path {
+            match std::fs::read_to_string(path) {
+                Ok(contents) => {
+                    let file: ReservationsFile =
+                        serde_json::from_str(&contents).unwrap_or_default();
+                    let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
+                    let valid: HashMap<String, PortReservation> = file
+                        .reservations
+                        .into_iter()
+                        .filter(|(_, r)| r.reserved_at >= cutoff)
+                        .collect();
+                    let ports: std::collections::HashSet<u16> =
+                        valid.values().map(|r| r.port).collect();
+                    tracing::info!(
+                        "loaded {} port reservation(s) from {}",
+                        valid.len(),
+                        path.display()
+                    );
+                    (valid, ports)
+                }
+                Err(_) => (HashMap::new(), std::collections::HashSet::new()),
+            }
+        } else {
+            (HashMap::new(), std::collections::HashSet::new())
+        };
+
         Self {
             daemons: RwLock::new(HashMap::new()),
             port_min,
             port_max,
             max_daemons,
-            used_ports: RwLock::new(std::collections::HashSet::new()),
-            reservations: RwLock::new(HashMap::new()),
+            used_ports: RwLock::new(used_ports),
+            reservations: RwLock::new(reservations),
+            reservations_path,
         }
     }
 
@@ -201,6 +249,30 @@ impl DaemonRegistry {
             },
         );
         tracing::info!("reserved port {port} for {instance_id} (up to {RESERVATION_TTL_DAYS} days)");
+        self.save_reservations();
+    }
+
+    /// Persist reservations to disk (best-effort).
+    fn save_reservations(&self) {
+        let Some(ref path) = self.reservations_path else { return; };
+        let reservations = self.reservations.read().unwrap();
+        let file = ReservationsFile {
+            reservations: reservations
+                .iter()
+                .map(|(k, v)| (k.clone(), PortReservation { port: v.port, reserved_at: v.reserved_at }))
+                .collect(),
+        };
+        match serde_json::to_string_pretty(&file) {
+            Ok(json) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(path, json) {
+                    tracing::warn!("failed to save reservations to {}: {e}", path.display());
+                }
+            }
+            Err(e) => tracing::warn!("failed to serialize reservations: {e}"),
+        }
     }
 
     /// Remove expired reservations and free their ports.
@@ -208,6 +280,7 @@ impl DaemonRegistry {
         let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
         let mut reservations = self.reservations.write().unwrap();
         let mut used = self.used_ports.write().unwrap();
+        let before = reservations.len();
         reservations.retain(|id, res| {
             if res.reserved_at < cutoff {
                 used.remove(&res.port);
@@ -217,6 +290,11 @@ impl DaemonRegistry {
                 true
             }
         });
+        drop(used);
+        drop(reservations);
+        if before != self.reservations.read().unwrap().len() {
+            self.save_reservations();
+        }
     }
 
     pub fn is_full(&self) -> bool {
