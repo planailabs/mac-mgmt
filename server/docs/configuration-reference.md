@@ -1,3 +1,7 @@
+---
+audience: user
+---
+
 # Configuration Reference
 
 Each cluster has a JSON configuration managed through the web UI or the Setting API. This document describes every available section and field.

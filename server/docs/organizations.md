@@ -1,6 +1,10 @@
+---
+audience: admin
+---
+
 # Organizations
 
-Organizations group clusters and users together for multi-tenant management.
+Organizations group clusters and users together for multi-tenant management. Managing organizations requires admin access.
 
 ## Structure
 

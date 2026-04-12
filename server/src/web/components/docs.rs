@@ -7,6 +7,7 @@ use crate::web::app::Route;
 pub struct DocEntry {
     pub slug: String,
     pub title: String,
+    pub audience: String,
 }
 
 #[cfg(feature = "server")]
@@ -19,10 +20,36 @@ mod embedded {
     pub struct DocsAssets;
 }
 
+/// Parse YAML frontmatter from markdown content.
+/// Returns (frontmatter_pairs, body_without_frontmatter).
+#[cfg(feature = "server")]
+fn parse_frontmatter(content: &str) -> (Vec<(String, String)>, &str) {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return (vec![], content);
+    }
+    // Find closing ---
+    if let Some(end) = trimmed[3..].find("\n---") {
+        let front = &trimmed[3..3 + end];
+        let body_start = 3 + end + 4; // skip past "\n---"
+        let body = trimmed[body_start..].trim_start_matches('\n');
+        let pairs = front
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let (key, val) = line.split_once(':')?;
+                Some((key.trim().to_string(), val.trim().to_string()))
+            })
+            .collect();
+        (pairs, body)
+    } else {
+        (vec![], content)
+    }
+}
+
 #[server]
 async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
     use embedded::DocsAssets;
-    use rust_embed::RustEmbed;
 
     let mut entries: Vec<DocEntry> = DocsAssets::iter()
         .filter_map(|path| {
@@ -33,13 +60,22 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
             let slug = path_str.trim_end_matches(".md").to_string();
             let content = DocsAssets::get(path_str)?;
             let text = std::str::from_utf8(content.data.as_ref()).ok()?;
-            // Extract title from first H1 heading, or use slug
-            let title = text
+            let (frontmatter, body) = parse_frontmatter(text);
+            let audience = frontmatter
+                .iter()
+                .find(|(k, _)| k == "audience")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            let title = body
                 .lines()
                 .find(|l| l.starts_with("# "))
                 .map(|l| l.trim_start_matches("# ").to_string())
                 .unwrap_or_else(|| slug.replace('-', " "));
-            Some(DocEntry { slug, title })
+            Some(DocEntry {
+                slug,
+                title,
+                audience,
+            })
         })
         .collect();
     entries.sort_by(|a, b| a.title.cmp(&b.title));
@@ -47,10 +83,9 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
 }
 
 #[server]
-async fn get_doc(slug: String) -> Result<(String, String), ServerFnError> {
+async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError> {
     use embedded::DocsAssets;
     use pulldown_cmark::{Options, Parser, html};
-    use rust_embed::RustEmbed;
 
     let filename = format!("{slug}.md");
     let file = DocsAssets::get(&filename)
@@ -58,7 +93,14 @@ async fn get_doc(slug: String) -> Result<(String, String), ServerFnError> {
     let markdown = std::str::from_utf8(file.data.as_ref())
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let title = markdown
+    let (frontmatter, body) = parse_frontmatter(markdown);
+    let audience = frontmatter
+        .iter()
+        .find(|(k, _)| k == "audience")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+
+    let title = body
         .lines()
         .find(|l| l.starts_with("# "))
         .map(|l| l.trim_start_matches("# ").to_string())
@@ -67,11 +109,28 @@ async fn get_doc(slug: String) -> Result<(String, String), ServerFnError> {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS;
-    let parser = Parser::new_ext(markdown, options);
+    let parser = Parser::new_ext(body, options);
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
 
-    Ok((title, html_output))
+    Ok((title, html_output, audience))
+}
+
+#[component]
+fn AudienceBadge(audience: String) -> Element {
+    match audience.as_str() {
+        "admin" => rsx! {
+            span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+                "Admin"
+            }
+        },
+        "user" => rsx! {
+            span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+                "User"
+            }
+        },
+        _ => rsx! {},
+    }
 }
 
 #[component]
@@ -82,24 +141,69 @@ pub fn DocList() -> Element {
         div {
             h2 { class: "text-2xl font-bold mb-4", "Documentation" }
             {match &*docs.read() {
-                Some(Ok(entries)) => rsx! {
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700",
-                        for entry in entries {
-                            Link {
-                                key: "{entry.slug}",
-                                to: Route::DocPage { slug: entry.slug.clone() },
-                                class: "block px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
-                                h3 { class: "text-lg font-medium text-blue-600 dark:text-blue-400", "{entry.title}" }
-                                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{entry.slug}" }
+                Some(Ok(entries)) => {
+                    let user_docs: Vec<_> = entries.iter().filter(|e| e.audience == "user").collect();
+                    let admin_docs: Vec<_> = entries.iter().filter(|e| e.audience == "admin").collect();
+                    let other_docs: Vec<_> = entries.iter().filter(|e| e.audience != "user" && e.audience != "admin").collect();
+                    rsx! {
+                        if !user_docs.is_empty() {
+                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", "User Guides" }
+                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700 mb-6",
+                                for entry in &user_docs {
+                                    Link {
+                                        key: "{entry.slug}",
+                                        to: Route::DocPage { slug: entry.slug.clone() },
+                                        class: "flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                        div {
+                                            h4 { class: "text-lg font-medium text-blue-600 dark:text-blue-400", "{entry.title}" }
+                                            p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{entry.slug}" }
+                                        }
+                                        AudienceBadge { audience: entry.audience.clone() }
+                                    }
+                                }
+                            }
+                        }
+                        if !admin_docs.is_empty() {
+                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", "Administration" }
+                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700 mb-6",
+                                for entry in &admin_docs {
+                                    Link {
+                                        key: "{entry.slug}",
+                                        to: Route::DocPage { slug: entry.slug.clone() },
+                                        class: "flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                        div {
+                                            h4 { class: "text-lg font-medium text-blue-600 dark:text-blue-400", "{entry.title}" }
+                                            p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{entry.slug}" }
+                                        }
+                                        AudienceBadge { audience: entry.audience.clone() }
+                                    }
+                                }
+                            }
+                        }
+                        if !other_docs.is_empty() {
+                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700",
+                                for entry in &other_docs {
+                                    Link {
+                                        key: "{entry.slug}",
+                                        to: Route::DocPage { slug: entry.slug.clone() },
+                                        class: "flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                        div {
+                                            h4 { class: "text-lg font-medium text-blue-600 dark:text-blue-400", "{entry.title}" }
+                                            p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{entry.slug}" }
+                                        }
+                                    }
+                                }
                             }
                         }
                         if entries.is_empty() {
-                            p { class: "px-6 py-8 text-gray-500 dark:text-gray-400 text-center",
-                                "No documentation pages found. Add "
-                                code { ".md" }
-                                " files to the "
-                                code { "server/docs/" }
-                                " directory."
+                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                                p { class: "px-6 py-8 text-gray-500 dark:text-gray-400 text-center",
+                                    "No documentation pages found. Add "
+                                    code { ".md" }
+                                    " files to the "
+                                    code { "server/docs/" }
+                                    " directory."
+                                }
                             }
                         }
                     }
@@ -121,11 +225,16 @@ pub fn DocPage(slug: String) -> Element {
             Link {
                 to: Route::DocList {},
                 class: "text-sm text-blue-600 dark:text-blue-400 hover:underline mb-4 inline-block",
-                "← Back to docs"
+                "\u{2190} Back to docs"
             }
             {match &*doc.read() {
-                Some(Ok((title, html_content))) => rsx! {
+                Some(Ok((_, html_content, audience))) => rsx! {
                     div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 px-8 py-6",
+                        if !audience.is_empty() {
+                            div { class: "mb-4",
+                                AudienceBadge { audience: audience.clone() }
+                            }
+                        }
                         article {
                             class: "prose dark:prose-invert max-w-none",
                             dangerous_inner_html: "{html_content}",

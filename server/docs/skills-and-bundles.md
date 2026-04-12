@@ -1,6 +1,10 @@
+---
+audience: admin
+---
+
 # Skills and Bundles
 
-Skills and bundles are the primary way to deploy software to clusters.
+Skills and bundles are the primary way to deploy software to clusters. Managing skills, bundles, MCP servers, and their assignments requires admin access.
 
 ## Skills
 

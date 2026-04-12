@@ -1,6 +1,10 @@
+---
+audience: admin
+---
+
 # Rollouts
 
-Rollouts provide staged, controlled updates across your fleet. They let you push daemon version upgrades and nixpkgs pin changes to groups of clusters in sequence.
+Rollouts provide staged, controlled updates across your fleet. They let you push daemon version upgrades and nixpkgs pin changes to groups of clusters in sequence. Managing rollouts requires admin access.
 
 ## Concepts
 

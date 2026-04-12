@@ -1,3 +1,7 @@
+---
+audience: user
+---
+
 # Cluster Setup
 
 ## Setting up OpenClaw standalone (not managed by the daemon)
