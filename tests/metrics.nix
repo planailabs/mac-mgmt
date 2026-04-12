@@ -11,7 +11,7 @@
 # The test asserts that prometheus successfully scrapes the relay and
 # stores the synthetic federation metrics (`mac_mgmt_relay_scrape_up`,
 # `mac_mgmt_relay_scrape_targets`) carrying `instance_id`, `hostname`
-# and `customer_id` labels for the connected daemon.
+# and `cluster_id` labels for the connected daemon.
 #
 # Run with:  nix build .#checks.x86_64-linux.metrics-federation -L
 {
@@ -23,7 +23,7 @@
 let
   syncToken = "test-sync-token-abc123";
   settingToken = "test-setting-token-abc123";
-  customerId = "550e8400-e29b-41d4-a716-446655440000";
+  clusterId = "550e8400-e29b-41d4-a716-446655440000";
 
   # Daemon without the services feature — it skips ollama/openclaw/mcporter
   # but keeps the `relay` feature so the relay client (always-on, metrics
@@ -79,11 +79,11 @@ let
     setting_hash = hashlib.sha256(b"${settingToken}").hexdigest()
 
     sql = f"""
-    INSERT INTO customers (id, name) VALUES ('${customerId}', 'test-customer');
-    INSERT INTO tokens (customer_id, token_hash, kind, label)
-      VALUES ('${customerId}', '{sync_hash}', 'sync', 'test-sync');
-    INSERT INTO tokens (customer_id, token_hash, kind, label)
-      VALUES ('${customerId}', '{setting_hash}', 'setting', 'test-setting');
+    INSERT INTO clusters (id, name) VALUES ('${clusterId}', 'test-cluster');
+    INSERT INTO tokens (cluster_id, token_hash, kind, label)
+      VALUES ('${clusterId}', '{sync_hash}', 'sync', 'test-sync');
+    INSERT INTO tokens (cluster_id, token_hash, kind, label)
+      VALUES ('${clusterId}', '{setting_hash}', 'setting', 'test-setting');
     """
 
     result = subprocess.run(
@@ -176,7 +176,7 @@ pkgs.testers.nixosTest {
     self_json = machine.succeed(
         "curl -sf -H 'Authorization: Bearer ${settingToken}' http://127.0.0.1:7378/api/self"
     )
-    assert json.loads(self_json)["customer_name"] == "test-customer"
+    assert json.loads(self_json)["cluster_name"] == "test-cluster"
     machine.log("Token validation verified via mac-mgmt-server")
 
     # Start the relay
@@ -250,8 +250,8 @@ pkgs.testers.nixosTest {
         f"expected scrape_up series in body:\n{direct}"
     assert f'instance_id="{instance_id}"' in direct, \
         f"expected instance_id label in body:\n{direct}"
-    assert 'customer_id="${customerId}"' in direct, \
-        f"expected customer_id label in body:\n{direct}"
+    assert 'cluster_id="${clusterId}"' in direct, \
+        f"expected cluster_id label in body:\n{direct}"
     machine.log("Direct /metrics body carries federation labels")
 
     # Wait for Prometheus to scrape successfully at least once.
@@ -290,7 +290,7 @@ pkgs.testers.nixosTest {
     # Query mac_mgmt_relay_scrape_up filtered by the daemon we registered.
     up_q = (
         f'mac_mgmt_relay_scrape_up{{instance_id="{instance_id}",'
-        'customer_id="${customerId}"}'
+        'cluster_id="${clusterId}"}'
     )
     up_value = 0.0
     series_labels: dict = {}
@@ -308,8 +308,8 @@ pkgs.testers.nixosTest {
         f"mac_mgmt_relay_scrape_up did not reach 1 for our daemon: value={up_value}"
     assert series_labels.get("instance_id") == instance_id, \
         f"unexpected instance_id label: {series_labels}"
-    assert series_labels.get("customer_id") == "${customerId}", \
-        f"unexpected customer_id label: {series_labels}"
+    assert series_labels.get("cluster_id") == "${clusterId}", \
+        f"unexpected cluster_id label: {series_labels}"
     assert "hostname" in series_labels, \
         f"hostname label missing: {series_labels}"
     machine.log(

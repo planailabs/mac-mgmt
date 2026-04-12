@@ -1,7 +1,7 @@
 # NixOS integration test for the SSH relay.
 #
 # Tests the full relay flow using real mac-mgmt components:
-#   1. PostgreSQL database with seeded customer + token
+#   1. PostgreSQL database with seeded cluster + token
 #   2. mac-mgmt-server validates tokens via DB (managed by NixOS module)
 #   3. mac-mgmt-relay bridges SSH ↔ WebSocket
 #   4. mac-mgmt daemon connects to relay, provides SSH via russh
@@ -18,7 +18,7 @@
 let
   syncToken = "test-sync-token-abc123";
   settingToken = "test-setting-token-abc123";
-  customerId = "550e8400-e29b-41d4-a716-446655440000";
+  clusterId = "550e8400-e29b-41d4-a716-446655440000";
 
   # Build the daemon without the services feature so it skips
   # ollama/openclaw/mcporter management — only relay + SSH are needed.
@@ -68,7 +68,7 @@ let
     remote_ssh_enabled = true
   '';
 
-  # Seed script — inserts customer + hashed token into PostgreSQL
+  # Seed script — inserts cluster + hashed token into PostgreSQL
   seedScript = pkgs.writeScript "seed-db.py" ''
     #!${pkgs.python3}/bin/python3
     import hashlib, subprocess, sys
@@ -77,11 +77,11 @@ let
     setting_hash = hashlib.sha256(b"${settingToken}").hexdigest()
 
     sql = f"""
-    INSERT INTO customers (id, name) VALUES ('${customerId}', 'test-customer');
-    INSERT INTO tokens (customer_id, token_hash, kind, label)
-      VALUES ('${customerId}', '{sync_hash}', 'sync', 'test-sync');
-    INSERT INTO tokens (customer_id, token_hash, kind, label)
-      VALUES ('${customerId}', '{setting_hash}', 'setting', 'test-setting');
+    INSERT INTO clusters (id, name) VALUES ('${clusterId}', 'test-cluster');
+    INSERT INTO tokens (cluster_id, token_hash, kind, label)
+      VALUES ('${clusterId}', '{sync_hash}', 'sync', 'test-sync');
+    INSERT INTO tokens (cluster_id, token_hash, kind, label)
+      VALUES ('${clusterId}', '{setting_hash}', 'setting', 'test-setting');
     """
 
     result = subprocess.run(
@@ -137,16 +137,16 @@ pkgs.testers.nixosTest {
     machine.wait_for_open_port(7378)
     machine.log("mac-mgmt-server API started on port 7378")
 
-    # Seed customer + token into the database
+    # Seed cluster + token into the database
     machine.succeed("sudo -u postgres ${seedScript}")
-    machine.log("Database seeded with test customer and token")
+    machine.log("Database seeded with test cluster and token")
 
     # Verify token works via /api/self
     self_json = machine.succeed(
         "curl -sf -H 'Authorization: Bearer ${settingToken}' http://127.0.0.1:7378/api/self"
     )
     self_info = json.loads(self_json)
-    assert self_info["customer_name"] == "test-customer", f"unexpected self info: {self_info}"
+    assert self_info["cluster_name"] == "test-cluster", f"unexpected self info: {self_info}"
     assert self_info["token_kind"] == "setting", f"unexpected token kind: {self_info}"
     machine.log("Token validation via mac-mgmt-server verified")
 
@@ -205,7 +205,7 @@ pkgs.testers.nixosTest {
     # Verify tunnel metadata from real server
     tunnels = json.loads(tunnels_json)
     assert len(tunnels) == 1, f"expected 1 tunnel, got {len(tunnels)}: {tunnels}"
-    assert tunnels[0]["customer_name"] == "test-customer"
+    assert tunnels[0]["cluster_name"] == "test-cluster"
     machine.log("Tunnel list API verified with real server auth")
 
     # SSH through the relay to the daemon's russh server
