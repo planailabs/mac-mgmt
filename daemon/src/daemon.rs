@@ -187,28 +187,30 @@ pub async fn run(
         None
     };
 
-    // Fetch environment from server for self-update channel
+    // Run startup sync in background to avoid blocking the main loop.
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        fetch_target_version(url, token).await;
+        let u = url.clone(); let t = token.clone();
+        tokio::spawn(async move { fetch_target_version(&u, &t).await; });
     }
 
-    // Run immediate update check and skills/MCP/SSH-key sync on startup
     #[cfg(feature = "self-update")]
     if in_upgrade_window!() {
         let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
-        // Notify external wrappers to re-exec with the (possibly new) binary.
         #[cfg(feature = "services")]
         svc_mgr.send_update_self().await;
     } else {
         tracing::info!("outside upgrade window, skipping initial self-update");
     }
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
-            tracing::warn!("initial skills sync failed: {e}");
-        }
-        if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
-            tracing::warn!("initial MCP servers sync failed: {e}");
-        }
+        let u = url.clone(); let t = token.clone(); let sd = skills_dir.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
+                tracing::warn!("initial skills sync failed: {e}");
+            }
+            if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
+                tracing::warn!("initial MCP servers sync failed: {e}");
+            }
+        });
     }
     #[cfg(feature = "relay")]
     relay_mgr.sync_ssh_keys().await;
@@ -216,10 +218,14 @@ pub async fn run(
     macro_rules! handle_update {
         () => {
             {
-                // Fetch environment from server before self-update
+                // Network-heavy operations run in background tasks.
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    fetch_target_version(url, token).await;
-                    fetch_nixpkgs_pin(url, token).await;
+                    let u = url.clone();
+                    let t = token.clone();
+                    tokio::spawn(async move {
+                        fetch_target_version(&u, &t).await;
+                        fetch_nixpkgs_pin(&u, &t).await;
+                    });
                 }
 
                 if in_upgrade_window!() {
@@ -229,18 +235,23 @@ pub async fn run(
                         #[cfg(feature = "services")]
                         svc_mgr.send_update_self().await;
                     }
-                    let _ = tokio::task::spawn_blocking(upgrade_nix).await;
+                    tokio::task::spawn_blocking(upgrade_nix);
                 } else {
                     tracing::info!("outside upgrade window, skipping upgrades");
                 }
 
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
-                        tracing::warn!("skills sync failed: {e}");
-                    }
-                    if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
-                        tracing::warn!("MCP servers sync failed: {e}");
-                    }
+                    let u = url.clone();
+                    let t = token.clone();
+                    let sd = skills_dir.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
+                            tracing::warn!("skills sync failed: {e}");
+                        }
+                        if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
+                            tracing::warn!("MCP servers sync failed: {e}");
+                        }
+                    });
                 }
 
                 #[cfg(feature = "relay")]
@@ -347,14 +358,16 @@ pub async fn run(
                     #[cfg(not(feature = "services"))]
                     let tunnel_defs = vec![];
 
-                    // Update the relay client's tunnel map so it can advertise them.
-                    #[cfg(feature = "relay")]
-                    relay_mgr.update_tunnel_defs(tunnel_defs.clone()).await;
-
-                    let tunnels: Vec<serde_json::Value> = tunnel_defs
-                        .into_iter()
+                    let tunnels: Vec<serde_json::Value> = tunnel_defs.iter()
                         .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
                         .collect();
+
+                    // Update relay tunnel map in background (holds RwLock briefly).
+                    #[cfg(feature = "relay")]
+                    {
+                        let td = tunnel_defs;
+                        relay_mgr.update_tunnel_defs(td).await;
+                    }
 
                     #[cfg(feature = "relay")]
                     let rph = relay_mgr.relay_proxy_hostname().await;
@@ -392,16 +405,22 @@ pub async fn run(
                     }
                     crate::server_push::PushCommand::SyncSkills => {
                         if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
-                                tracing::warn!("push skills sync failed: {e}");
-                            }
+                            let u = url.clone(); let t = token.clone(); let sd = skills_dir.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
+                                    tracing::warn!("push skills sync failed: {e}");
+                                }
+                            });
                         }
                     }
                     crate::server_push::PushCommand::SyncMcpServers => {
                         if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
-                                tracing::warn!("push MCP sync failed: {e}");
-                            }
+                            let u = url.clone(); let t = token.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
+                                    tracing::warn!("push MCP sync failed: {e}");
+                                }
+                            });
                         }
                     }
                     crate::server_push::PushCommand::SyncSshKeys => {
@@ -411,7 +430,8 @@ pub async fn run(
                     crate::server_push::PushCommand::SelfUpdate => {
                         tracing::info!("server push: self-update requested");
                         if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            fetch_target_version(url, token).await;
+                            let u = url.clone(); let t = token.clone();
+                            tokio::spawn(async move { fetch_target_version(&u, &t).await; });
                         }
                         if in_upgrade_window!() {
                             #[cfg(feature = "self-update")]
@@ -427,7 +447,8 @@ pub async fn run(
                     crate::server_push::PushCommand::SyncNixpkgs => {
                         tracing::info!("server push: sync nixpkgs pin");
                         if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            fetch_nixpkgs_pin(url, token).await;
+                            let u = url.clone(); let t = token.clone();
+                            tokio::spawn(async move { fetch_nixpkgs_pin(&u, &t).await; });
                         }
                         #[cfg(feature = "services")]
                         svc_mgr.check_upgrades();
@@ -442,12 +463,15 @@ pub async fn run(
             {
                 tracing::info!("local sync requested");
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    if let Err(e) = crate::skills::sync_skills(url, token, &skills_dir).await {
-                        tracing::warn!("local skills sync failed: {e}");
-                    }
-                    if let Err(e) = crate::mcp_servers::sync_mcp_servers(url, token).await {
-                        tracing::warn!("local MCP servers sync failed: {e}");
-                    }
+                    let u = url.clone(); let t = token.clone(); let sd = skills_dir.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
+                            tracing::warn!("local skills sync failed: {e}");
+                        }
+                        if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
+                            tracing::warn!("local MCP servers sync failed: {e}");
+                        }
+                    });
                 }
                 #[cfg(feature = "relay")]
                 relay_mgr.sync_ssh_keys().await;
