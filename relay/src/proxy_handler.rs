@@ -138,8 +138,9 @@ struct ProxyBootstrapQuery {
     proxy_token: String,
 }
 
-/// Store the proxy_token as an HttpOnly, SameSite=Lax cookie scoped to
-/// this subdomain, then redirect to /.
+/// Store the proxy_token as an HttpOnly, SameSite=Strict cookie scoped to
+/// this subdomain. Serves a small HTML page that navigates to / client-side
+/// so the browser treats it as a same-site navigation (required for Strict).
 async fn proxy_bootstrap(
     headers: HeaderMap,
     Query(query): Query<ProxyBootstrapQuery>,
@@ -158,15 +159,18 @@ async fn proxy_bootstrap(
     let host_no_port = host.split(':').next().unwrap_or(host);
 
     let cookie = format!(
-        "{PROXY_TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Domain={host_no_port}; Max-Age=21600",
+        "{PROXY_TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Domain={host_no_port}; Max-Age=21600",
         query.proxy_token,
     );
 
+    // Serve an HTML page instead of a 302 redirect. A redirect after cross-site
+    // navigation doesn't send SameSite=Strict cookies. Client-side navigation
+    // from within the page is same-site and works correctly.
     axum::response::Response::builder()
-        .status(StatusCode::FOUND)
-        .header("location", "/")
+        .status(StatusCode::OK)
         .header("set-cookie", cookie)
-        .body(Body::empty())
+        .header("content-type", "text/html; charset=utf-8")
+        .body(Body::from("<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"0;url=/\"></head><body>Redirecting...</body></html>"))
         .unwrap()
         .into_response()
 }
