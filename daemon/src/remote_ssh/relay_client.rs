@@ -325,7 +325,7 @@ async fn handle_proxy_request(
     for (k, v) in &headers {
         // Skip hop-by-hop headers
         let lk = k.to_lowercase();
-        if lk == "host" || lk == "connection" || lk == "transfer-encoding" {
+        if lk == "connection" || lk == "transfer-encoding" {
             continue;
         }
         req = req.header(k.as_str(), v.as_str());
@@ -551,7 +551,7 @@ async fn proxy_session_stream(
     if let Some(headers) = req_json["headers"].as_object() {
         for (k, v) in headers {
             let lk = k.to_lowercase();
-            if lk == "host" || lk == "connection" || lk == "transfer-encoding" { continue; }
+            if lk == "connection" || lk == "transfer-encoding" { continue; }
             if let Some(val) = v.as_str() {
                 req = req.header(k.as_str(), val);
             }
