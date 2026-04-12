@@ -1,3 +1,3 @@
-server: cargo run --package mac-mgmt-server
-relay: cargo run --package mac-mgmt-relay
+server: cd server && dx serve
+relay: cd relay && cargo watch -- cargo run
 tailwind: cd server && npm run tailwind

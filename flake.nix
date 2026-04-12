@@ -72,6 +72,7 @@
 
             # Dev tools
             overmind
+            cargo-watch
 
             # For WASM
             wasm-pack
