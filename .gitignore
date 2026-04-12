@@ -28,7 +28,7 @@ node_modules/
 server/public/tailwind.css
 
 # Server config (contains secrets)
-server/config.toml
+config.toml
 
 # Test scripts
 test-*.sh
