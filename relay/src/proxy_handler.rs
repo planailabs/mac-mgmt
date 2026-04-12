@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Json, Query, Request, State};
+use axum::extract::{FromRequest, Json, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
@@ -33,7 +33,7 @@ pub fn router(state: ProxyState) -> Router {
         .route("/proxy_request", post(proxy_request))
         // WebSocket tunneling
         .route("/proxy_ws", any(proxy_ws))
-        // Catch-all: reverse proxy for all other requests
+        // Catch-all: reverse proxy for HTTP, and WS upgrade handler
         .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
         .with_state(state)
@@ -173,8 +173,9 @@ async fn proxy_bootstrap(
 
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
 
-/// Handles all non-special requests by proxying them to the daemon's tunnel
-/// via a streaming proxy session.
+/// Handles all non-special requests by proxying them to the daemon's tunnel.
+/// Detects WebSocket upgrades and routes them through proxy sessions.
+/// Regular HTTP (including SSE) is streamed via a proxy session.
 async fn proxy_catchall(
     State(state): State<ProxyState>,
     req: Request,
@@ -196,6 +197,48 @@ async fn proxy_catchall(
     let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     };
+
+    // WebSocket upgrade: route through proxy session bridge
+    let is_ws_upgrade = headers
+        .get("upgrade")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+
+    if is_ws_upgrade {
+        let ws = match WebSocketUpgrade::from_request(req, &state).await {
+            Ok(ws) => ws,
+            Err(e) => return e.into_response(),
+        };
+
+        let session_id = Uuid::new_v4().to_string();
+        let session_secret = Uuid::new_v4().to_string();
+
+        return ws.on_upgrade(move |socket| async move {
+            tracing::info!("WS upgrade for tunnel {tunnel_name} path {path}");
+
+            bridge::register_pending_proxy_session(
+                session_id.clone(),
+                session_secret.clone(),
+                socket,
+            );
+
+            if control_tx
+                .send(ControlMsg::ProxySessionRequest {
+                    session_id: session_id.clone(),
+                    session_secret: session_secret.clone(),
+                    tunnel_name,
+                    mode: "websocket".to_string(),
+                    path,
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!("proxy catchall WS: daemon control channel closed");
+                bridge::remove_pending_proxy_session(&session_id);
+            }
+        })
+        .into_response();
+    }
 
     // Collect request headers to forward
     let fwd_headers: Vec<(String, String)> = headers
