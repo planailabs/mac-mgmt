@@ -212,15 +212,13 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
                                 "{label}"
                             }
                         }
-                        // Swagger UI link (admin-only, external)
-                        if is_admin {
-                            if let Some(ref url) = swagger_url {
-                                a {
-                                    href: "{url}",
-                                    target: "_blank",
-                                    class: "whitespace-nowrap px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
-                                    "API Docs"
-                                }
+                        // Swagger UI link (external)
+                        if let Some(ref url) = swagger_url {
+                            a {
+                                href: "{url}",
+                                target: "_blank",
+                                class: "whitespace-nowrap px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
+                                "API Docs"
                             }
                         }
                         // Impersonation control (only for real admins)
@@ -328,14 +326,12 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
                                 "{label}"
                             }
                         }
-                        if is_admin {
-                            if let Some(ref url) = swagger_url {
-                                a {
-                                    href: "{url}",
-                                    target: "_blank",
-                                    class: "block px-3 py-2 rounded-md text-base font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
-                                    "API Docs"
-                                }
+                        if let Some(ref url) = swagger_url {
+                            a {
+                                href: "{url}",
+                                target: "_blank",
+                                class: "block px-3 py-2 rounded-md text-base font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                "API Docs"
                             }
                         }
                     }
