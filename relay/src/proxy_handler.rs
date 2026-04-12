@@ -278,6 +278,33 @@ async function ensureToken() {
   }
 }
 
+// Script injected into HTML responses to patch WebSocket and EventSource
+// so they route through the relay proxy endpoints.
+const WS_PATCH_SCRIPT = `<script>
+(function() {
+  const proxyToken = '__PROXY_TOKEN__';
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const proxyWsBase = wsProto + '//' + location.host + '/proxy_ws?proxy_token=' + encodeURIComponent(proxyToken);
+
+  const OrigWebSocket = window.WebSocket;
+  window.WebSocket = function(url, protocols) {
+    const parsed = new URL(url, location.href);
+    // Only rewrite connections to the same host (the proxied service)
+    if (parsed.host === location.host || parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+      const path = parsed.pathname + parsed.search;
+      const proxyUrl = proxyWsBase + '&path=' + encodeURIComponent(path);
+      return new OrigWebSocket(proxyUrl, protocols);
+    }
+    return new OrigWebSocket(url, protocols);
+  };
+  window.WebSocket.prototype = OrigWebSocket.prototype;
+  window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+  window.WebSocket.OPEN = OrigWebSocket.OPEN;
+  window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
+  window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+})();
+</script>`;
+
 const STRIPPED_HEADERS = new Set([
   'content-encoding', 'transfer-encoding', 'content-length',
   'x-frame-options', 'content-security-policy', 'x-content-type-options',
@@ -343,11 +370,28 @@ async function proxyFetch(request, url) {
           const data = JSON.parse(event.data);
           respStatus = data.status ?? 200;
           const respHeaders = new Headers();
+          let isHtml = false;
           for (const [k, v] of (data.headers ?? [])) {
             if (STRIPPED_HEADERS.has(k.toLowerCase())) continue;
+            if (k.toLowerCase() === 'content-type' && v.includes('text/html')) isHtml = true;
             try { respHeaders.append(k, v); } catch(_) {}
           }
-          resolve(new Response(bodyStream, { status: respStatus, headers: respHeaders }));
+
+          if (isHtml) {
+            // For HTML responses, inject a WebSocket patch script that rewrites
+            // WS connections to go through /proxy_ws on the relay.
+            const patchScript = WS_PATCH_SCRIPT.replace('__PROXY_TOKEN__', proxyToken);
+            const patchBytes = new TextEncoder().encode(patchScript);
+            const patchedStream = new ReadableStream({
+              start(c) {
+                c.enqueue(patchBytes);
+                controller = c;
+              },
+            });
+            resolve(new Response(patchedStream, { status: respStatus, headers: respHeaders }));
+          } else {
+            resolve(new Response(bodyStream, { status: respStatus, headers: respHeaders }));
+          }
         } catch (e) {
           resolve(new Response('Proxy error: invalid headers', { status: 502 }));
           ws.close();
