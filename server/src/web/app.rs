@@ -26,6 +26,7 @@ use super::components::daemon_version_detail::DaemonVersionDetail;
 use super::components::organization_detail::OrganizationDetail;
 use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
+use super::components::profile::Profile;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
 use super::components::user_list::UserList;
@@ -87,6 +88,8 @@ pub enum Route {
     OrganizationForm {},
     #[route("/organizations/:id")]
     OrganizationDetail { id: String },
+    #[route("/profile")]
+    Profile {},
     #[route("/users")]
     UserList {},
     #[route("/users/new")]

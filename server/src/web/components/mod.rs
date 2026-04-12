@@ -36,6 +36,7 @@ pub mod rollout_group_list;
 pub mod rollout_list;
 pub mod token_list;
 pub mod organization_detail;
+pub mod profile;
 pub mod organization_form;
 pub mod organization_list;
 pub mod user_detail;

@@ -90,7 +90,7 @@ fn ThemeIcon(mode: ThemeMode) -> Element {
 }
 
 #[component]
-pub fn Navbar(is_admin: bool, real_is_admin: bool) -> Element {
+pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Element {
     // State for the mobile hamburger menu
     let mut is_open = use_signal(|| false);
     // Theme state
@@ -226,6 +226,27 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool) -> Element {
                         if real_is_admin {
                             ImpersonateSelector {}
                         }
+                        // Logged-in user display (links to profile)
+                        if !display_name.is_empty() {
+                            Link {
+                                to: Route::Profile {},
+                                class: "ml-3 flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
+                                active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                                svg {
+                                    class: "h-5 w-5 shrink-0",
+                                    fill: "none",
+                                    stroke: "currentColor",
+                                    stroke_width: "1.5",
+                                    view_box: "0 0 24 24",
+                                    path {
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        d: "M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+                                    }
+                                }
+                                "{display_name}"
+                            }
+                        }
                         // Desktop theme toggle
                         button {
                             onclick: toggle_theme,
@@ -274,6 +295,27 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool) -> Element {
                 div {
                     id: "mobile-menu",
                     class: "xl:hidden border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg",
+                    if !display_name.is_empty() {
+                        Link {
+                            to: Route::Profile {},
+                            class: "flex items-center gap-2 mx-2 mt-2 px-3 py-2 rounded-md text-base font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                            active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                            onclick: move |_| is_open.set(false),
+                            svg {
+                                class: "h-5 w-5 shrink-0",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "1.5",
+                                view_box: "0 0 24 24",
+                                path {
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    d: "M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+                                }
+                            }
+                            "{display_name}"
+                        }
+                    }
                     div { class: "px-2 pt-2 pb-3 space-y-1 sm:px-3",
                         for (route, label) in all_links.clone() {
                             Link {

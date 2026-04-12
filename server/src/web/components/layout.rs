@@ -12,6 +12,8 @@ struct UserInfo {
     impersonating_email: Option<String>,
     /// True if the real user (before impersonation) is admin.
     real_is_admin: bool,
+    /// Display name of the effective (possibly impersonated) user.
+    display_name: String,
 }
 
 #[server]
@@ -21,16 +23,18 @@ async fn get_current_user_info() -> Result<UserInfo, ServerFnError> {
         Ok(user) => Ok(UserInfo {
             is_admin: user.is_admin,
             impersonating_email: if user.impersonating_from.is_some() {
-                Some(user.email)
+                Some(user.email.clone())
             } else {
                 None
             },
             real_is_admin: user.impersonating_from.is_some() || user.is_admin,
+            display_name: user.name,
         }),
         Err(_) => Ok(UserInfo {
             is_admin: true,
             impersonating_email: None,
             real_is_admin: true,
+            display_name: String::new(),
         }),
     }
 }
@@ -68,9 +72,9 @@ fn LoadingSpinner() -> Element {
 #[component]
 pub fn Layout() -> Element {
     let user_info = use_server_future(get_current_user_info)?;
-    let (is_admin, real_is_admin, impersonating_email) = match &*user_info.read() {
-        Some(Ok(info)) => (info.is_admin, info.real_is_admin, info.impersonating_email.clone()),
-        _ => (false, false, None),
+    let (is_admin, real_is_admin, impersonating_email, display_name) = match &*user_info.read() {
+        Some(Ok(info)) => (info.is_admin, info.real_is_admin, info.impersonating_email.clone(), info.display_name.clone()),
+        _ => (false, false, None, String::new()),
     };
 
     rsx! {
@@ -90,7 +94,7 @@ pub fn Layout() -> Element {
                     }
                 }
             }
-            Navbar { is_admin, real_is_admin }
+            Navbar { is_admin, real_is_admin, display_name }
             main { class: "max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8",
                 SuspenseBoundary {
                     fallback: |_| rsx! { LoadingSpinner {} },
