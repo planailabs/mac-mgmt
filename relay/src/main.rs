@@ -40,11 +40,11 @@ async fn main() -> Result<()> {
     );
 
     let data_dir = std::path::Path::new(&cfg.data_dir);
-    let registry = Arc::new(daemon_registry::DaemonRegistry::with_data_dir(
+    let registry = Arc::new(daemon_registry::DaemonRegistry::new(
         cfg.ssh_port_min,
         cfg.ssh_port_max,
         cfg.max_daemons,
-        Some(data_dir),
+        data_dir,
     ));
 
     bridge::spawn_cleanup_task();

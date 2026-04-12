@@ -113,47 +113,34 @@ pub struct DaemonRegistry {
     /// instance_id → reserved port (kept for up to 30 days after disconnect).
     reservations: RwLock<HashMap<String, PortReservation>>,
     /// Path to the reservations file on disk.
-    reservations_path: Option<std::path::PathBuf>,
+    reservations_path: std::path::PathBuf,
 }
 
 impl DaemonRegistry {
-    pub fn new(port_min: u16, port_max: u16, max_daemons: usize) -> Self {
-        Self::with_data_dir(port_min, port_max, max_daemons, None)
-    }
-
-    pub fn with_data_dir(
-        port_min: u16,
-        port_max: u16,
-        max_daemons: usize,
-        data_dir: Option<&std::path::Path>,
-    ) -> Self {
-        let reservations_path = data_dir.map(|d| d.join("port_reservations.json"));
+    pub fn new(port_min: u16, port_max: u16, max_daemons: usize, data_dir: &std::path::Path) -> Self {
+        let reservations_path = data_dir.join("port_reservations.json");
 
         // Load existing reservations from disk.
-        let (reservations, used_ports) = if let Some(ref path) = reservations_path {
-            match std::fs::read_to_string(path) {
-                Ok(contents) => {
-                    let file: ReservationsFile =
-                        serde_json::from_str(&contents).unwrap_or_default();
-                    let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
-                    let valid: HashMap<String, PortReservation> = file
-                        .reservations
-                        .into_iter()
-                        .filter(|(_, r)| r.reserved_at >= cutoff)
-                        .collect();
-                    let ports: std::collections::HashSet<u16> =
-                        valid.values().map(|r| r.port).collect();
-                    tracing::info!(
-                        "loaded {} port reservation(s) from {}",
-                        valid.len(),
-                        path.display()
-                    );
-                    (valid, ports)
-                }
-                Err(_) => (HashMap::new(), std::collections::HashSet::new()),
+        let (reservations, used_ports) = match std::fs::read_to_string(&reservations_path) {
+            Ok(contents) => {
+                let file: ReservationsFile =
+                    serde_json::from_str(&contents).unwrap_or_default();
+                let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
+                let valid: HashMap<String, PortReservation> = file
+                    .reservations
+                    .into_iter()
+                    .filter(|(_, r)| r.reserved_at >= cutoff)
+                    .collect();
+                let ports: std::collections::HashSet<u16> =
+                    valid.values().map(|r| r.port).collect();
+                tracing::info!(
+                    "loaded {} port reservation(s) from {}",
+                    valid.len(),
+                    reservations_path.display()
+                );
+                (valid, ports)
             }
-        } else {
-            (HashMap::new(), std::collections::HashSet::new())
+            Err(_) => (HashMap::new(), std::collections::HashSet::new()),
         };
 
         Self {
@@ -254,7 +241,7 @@ impl DaemonRegistry {
 
     /// Persist reservations to disk (best-effort).
     fn save_reservations(&self) {
-        let Some(ref path) = self.reservations_path else { return; };
+        let path = &self.reservations_path;
         let reservations = self.reservations.read().unwrap();
         let file = ReservationsFile {
             reservations: reservations
