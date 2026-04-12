@@ -4,7 +4,7 @@ set -euo pipefail
 
 copy_if_missing() {
     local example="$1"
-    local target="${example%.example.toml}.toml"
+    local target="${2:-${example%.example.toml}.toml}"
     if [ -f "$target" ]; then
         echo "skip: $target already exists"
     else
@@ -16,6 +16,6 @@ copy_if_missing() {
 cd "$(dirname "$0")"
 
 copy_if_missing server/config.example.toml
-copy_if_missing relay/config.example.toml
+copy_if_missing relay/config.example.toml relay/relay.toml
 copy_if_missing relay-ssh/config.example.toml
 copy_if_missing daemon/config.example.toml
