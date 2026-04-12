@@ -366,6 +366,7 @@ pub async fn run(
                     if let Some(ref ph) = rph {
                         svc_mgr.set_virtual_service("relay", serde_json::json!({
                             "proxy_hostname": ph,
+                            "instance_id_prefix": &instance_id[..12],
                         }));
                     }
 
