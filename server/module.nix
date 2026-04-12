@@ -64,6 +64,7 @@ in
       wantedBy = [ "multi-user.target" ];
 
       environment.CONFIG_PATH = configFile;
+      path = [ config.nix.package ];
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
