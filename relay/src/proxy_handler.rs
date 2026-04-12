@@ -160,13 +160,12 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   await new Promise(r => setTimeout(r, 50));
 
   function toDisplayUrl(realPath) {
-    return `${tunnelName}:/${realPath.replace(/^\/proxy_content/, '') || '/'}`;
+    return realPath.replace(/^\/proxy_content/, '') || '/';
   }
 
   function toRealPath(display) {
-    // Strip "tunnelName:/" prefix to get the path
-    const stripped = display.replace(new RegExp(`^${tunnelName}:/`), '/');
-    return `/proxy_content${stripped === '/' ? '/' : stripped}`;
+    const path = display.startsWith('/') ? display : '/' + display;
+    return `/proxy_content${path}`;
   }
 
   function navigate(path) {
@@ -182,12 +181,18 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   });
 
   // Track iframe navigation
-  frame.addEventListener('load', () => {
+  function syncUrlBar() {
     try {
       const loc = frame.contentWindow.location.pathname + frame.contentWindow.location.search;
-      urlBar.value = toDisplayUrl(loc);
+      const display = toDisplayUrl(loc);
+      if (urlBar.value !== display && document.activeElement !== urlBar) {
+        urlBar.value = display;
+      }
     } catch (_) { /* cross-origin, ignore */ }
-  });
+  }
+  frame.addEventListener('load', syncUrlBar);
+  // Poll for SPA-style navigation (pushState doesn't fire load)
+  setInterval(syncUrlBar, 500);
 
   navigate('/proxy_content/');
 </script>
