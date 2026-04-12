@@ -128,16 +128,20 @@ async fn get_available_orgs_for_user(user_id: String) -> Result<Vec<OrgOption>, 
 }
 
 #[server]
-async fn add_user_to_org(user_id: String, org_id: String) -> Result<(), ServerFnError> {
+async fn add_user_to_org(user_id: String, org_id: String, role: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
+    if !["admin", "write", "read"].contains(&role.as_str()) {
+        return Err(ServerFnError::new("invalid role"));
+    }
     let pool = crate::server_pool()?;
     let uid: uuid::Uuid = user_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let oid: uuid::Uuid = org_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    sqlx::query("INSERT INTO organization_members (user_id, organization_id, role) VALUES ($1, $2, 'read') ON CONFLICT DO NOTHING")
+    sqlx::query("INSERT INTO organization_members (user_id, organization_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
         .bind(uid)
         .bind(oid)
+        .bind(&role)
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -225,6 +229,7 @@ pub fn UserDetail(id: String) -> Element {
     })?;
 
     let mut selected_org = use_signal(|| Option::<String>::None);
+    let mut selected_org_role = use_signal(|| "read".to_string());
     let mut confirm_delete = use_signal(|| false);
     let nav = navigator();
 
@@ -346,6 +351,14 @@ pub fn UserDetail(id: String) -> Element {
                                 }
                             }
                         }
+                        select {
+                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-24 dark:bg-gray-700 dark:text-white",
+                            value: "{selected_org_role}",
+                            onchange: move |e| selected_org_role.set(e.value()),
+                            option { value: "read", "Read" }
+                            option { value: "write", "Write" }
+                            option { value: "admin", "Admin" }
+                        }
                         button {
                             class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
                             disabled: selected_org.read().is_none(),
@@ -354,9 +367,10 @@ pub fn UserDetail(id: String) -> Element {
                                 move |_| {
                                     let uid = uid.clone();
                                     let oid = selected_org.read().clone();
+                                    let role = selected_org_role.read().clone();
                                     async move {
                                         if let Some(oid) = oid {
-                                            let _ = add_user_to_org(uid, oid).await;
+                                            let _ = add_user_to_org(uid, oid, role).await;
                                             selected_org.set(None);
                                             orgs_future.restart();
                                             avail_future.restart();
