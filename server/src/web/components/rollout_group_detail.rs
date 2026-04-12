@@ -181,6 +181,23 @@ async fn remove_member(member_id: String) -> Result<(), ServerFnError> {
 }
 
 #[server]
+async fn update_description(group_id: String, description: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let gid: Uuid = group_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("UPDATE rollout_groups SET description = $2 WHERE id = $1")
+        .bind(gid)
+        .bind(&description)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
+#[server]
 async fn delete_group(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
@@ -214,6 +231,8 @@ pub fn RolloutGroupDetail(id: String) -> Element {
     })?;
 
     let mut selected_cluster = use_signal(|| Option::<String>::None);
+    let mut editing_desc = use_signal(|| false);
+    let mut draft_desc = use_signal(String::new);
     let nav = navigator();
 
     match &*detail.read() {
@@ -229,7 +248,55 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                 div { class: "flex justify-between items-center mb-4",
                     div {
                         h2 { class: "text-2xl font-bold", "{info.name}" }
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm", "{info.description}" }
+                        if *editing_desc.read() {
+                            form {
+                                class: "flex items-center gap-2 mt-1",
+                                onsubmit: {
+                                    let gid = gid.clone();
+                                    move |evt: FormEvent| {
+                                        evt.prevent_default();
+                                        let gid = gid.clone();
+                                        let desc = draft_desc.read().clone();
+                                        async move {
+                                            let _ = update_description(gid, desc).await;
+                                            editing_desc.set(false);
+                                            detail.restart();
+                                        }
+                                    }
+                                },
+                                input {
+                                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white w-80",
+                                    r#type: "text",
+                                    value: "{draft_desc}",
+                                    oninput: move |e| draft_desc.set(e.value()),
+                                    autofocus: true,
+                                }
+                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", "Save" }
+                                button {
+                                    class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
+                                    r#type: "button",
+                                    onclick: move |_| editing_desc.set(false),
+                                    "Cancel"
+                                }
+                            }
+                        } else {
+                            {
+                                let desc = info.description.clone();
+                                rsx! {
+                                    div { class: "flex items-center gap-2 mt-1",
+                                        p { class: "text-gray-500 dark:text-gray-400 text-sm", "{info.description}" }
+                                        button {
+                                            class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
+                                            onclick: move |_| {
+                                                draft_desc.set(desc.clone());
+                                                editing_desc.set(true);
+                                            },
+                                            "Edit"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     button {
                         class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
