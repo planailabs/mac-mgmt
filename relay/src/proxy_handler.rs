@@ -49,9 +49,10 @@ async fn proxy_security_headers(
 
 // ── Subdomain parsing ──────────────────────────────────────────────────
 
-/// Extract (instance_id, tunnel_name) from the Host header.
-/// Format: `{instance_id}-{tunnel_name}.{proxy_hostname}`
-/// Instance IDs are 64-char hex SHA256 fingerprints.
+/// Extract (instance_id_prefix, tunnel_name) from the Host header.
+/// Format: `{short_id}-{tunnel_name}.{proxy_hostname}`
+/// The short_id is a hex prefix (12+ chars) of the full 64-char SHA256 instance ID.
+/// The relay resolves the prefix to the full ID via `DaemonRegistry::resolve_prefix`.
 fn parse_subdomain(headers: &HeaderMap, proxy_hostname: &str) -> Option<(String, String)> {
     let host = headers
         .get("host")
@@ -63,23 +64,20 @@ fn parse_subdomain(headers: &HeaderMap, proxy_hostname: &str) -> Option<(String,
     // Must end with .{proxy_hostname}
     let subdomain = host_no_port.strip_suffix(&format!(".{proxy_hostname}"))?;
 
-    // Instance ID is 64 hex chars, then '-', then tunnel name
-    if subdomain.len() < 66 {
-        return None;
-    }
-    let instance_id = &subdomain[..64];
-    if !instance_id.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    if subdomain.as_bytes()[64] != b'-' {
-        return None;
-    }
-    let tunnel_name = &subdomain[65..];
-    if tunnel_name.is_empty() {
+    // Split on the last '-' to separate instance_id_prefix from tunnel_name.
+    // Tunnel names are simple identifiers (no hyphens), while instance IDs are hex.
+    let dash_pos = subdomain.rfind('-')?;
+    let instance_prefix = &subdomain[..dash_pos];
+    let tunnel_name = &subdomain[dash_pos + 1..];
+
+    if instance_prefix.len() < 12
+        || !instance_prefix.chars().all(|c| c.is_ascii_hexdigit())
+        || tunnel_name.is_empty()
+    {
         return None;
     }
 
-    Some((instance_id.to_string(), tunnel_name.to_string()))
+    Some((instance_prefix.to_string(), tunnel_name.to_string()))
 }
 
 // ── GET /proxy — iframe bootstrap page ─────────────────────────────────

@@ -279,7 +279,7 @@ pub fn FleetDashboard() -> Element {
                                                                     div { class: "flex gap-1 flex-wrap",
                                                                         for tname in &tunnel_names {
                                                                             {
-                                                                                let iid = entry.instance_id.clone();
+                                                                                let iid = entry.instance_id.chars().take(12).collect::<String>();
                                                                                 let tn = tname.clone();
                                                                                 let ph = hostname.clone();
                                                                                 rsx! {

@@ -276,21 +276,42 @@ impl DaemonRegistry {
         }
     }
 
+    /// Resolve a prefix (or full) instance_id to the full ID.
+    /// Returns `Some(full_id)` if exactly one daemon matches.
+    pub fn resolve_prefix(&self, prefix: &str) -> Option<String> {
+        let daemons = self.daemons.read().unwrap();
+        // Try exact match first.
+        if daemons.contains_key(prefix) {
+            return Some(prefix.to_string());
+        }
+        // Prefix match — must be unambiguous.
+        let mut matches = daemons.keys().filter(|k| k.starts_with(prefix));
+        let first = matches.next()?.clone();
+        if matches.next().is_some() {
+            return None; // ambiguous
+        }
+        Some(first)
+    }
+
     /// Find a specific tunnel on a daemon. Returns (control_tx, tcp_port) if found.
+    /// `instance_id` may be a short prefix.
     pub fn find_tunnel(
         &self,
         instance_id: &str,
         tunnel_name: &str,
     ) -> Option<(mpsc::Sender<ControlMsg>, u16)> {
+        let full_id = self.resolve_prefix(instance_id)?;
         let daemons = self.daemons.read().unwrap();
-        let d = daemons.get(instance_id)?;
+        let d = daemons.get(&full_id)?;
         let tunnel = d.tunnels.iter().find(|t| t.name == tunnel_name)?;
         Some((d.control_tx.clone(), tunnel.tcp_port))
     }
 
     /// Return the cluster_id of a connected daemon.
+    /// `instance_id` may be a short prefix.
     pub fn get_cluster_id(&self, instance_id: &str) -> Option<Uuid> {
+        let full_id = self.resolve_prefix(instance_id)?;
         let daemons = self.daemons.read().unwrap();
-        daemons.get(instance_id).and_then(|d| d.cluster_id)
+        daemons.get(&full_id).and_then(|d| d.cluster_id)
     }
 }
