@@ -326,8 +326,11 @@ pub fn uninstall_managed_service(service_name: &str) -> Result<()> {
     }
 
     // Also clean up the socket file.
-    let sock = crate::service_ipc::socket_path(service_name);
-    std::fs::remove_file(&sock).ok();
+    #[cfg(feature = "services")]
+    {
+        let sock = crate::service_ipc::socket_path(service_name);
+        std::fs::remove_file(&sock).ok();
+    }
 
     Ok(())
 }
