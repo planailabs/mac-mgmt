@@ -164,11 +164,12 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   const frame = document.getElementById('frame');
   const spinner = document.getElementById('spinner');
 
-  // Unregister any stale service workers before registering fresh.
-  const existingRegs = await navigator.serviceWorker.getRegistrations();
-  for (const r of existingRegs) await r.unregister();
-
+  // Register service worker
   const reg = await navigator.serviceWorker.register('/proxy_sw.js', { type: 'module' });
+
+  // If there's already a controlling SW but we got a new one, reload so the
+  // new SW intercepts all requests from the start.
+  const needsReload = navigator.serviceWorker.controller && reg.waiting;
 
   // Wait for the SW to be active
   await new Promise((resolve) => {
@@ -182,11 +183,19 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   // Send token to the active SW
   reg.active.postMessage({ type: 'init', proxyToken });
 
+  // If a stale SW was controlling the page, reload so the new one takes over
+  if (needsReload) {
+    location.reload();
+    throw new Error('reloading for new service worker');
+  }
+
   // Wait for the SW to be controlling this page
   if (!navigator.serviceWorker.controller) {
     await new Promise((resolve) => {
       navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
     });
+    // Re-send token after controller change
+    reg.active.postMessage({ type: 'init', proxyToken });
   }
 
   // Hide spinner, show iframe
