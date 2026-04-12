@@ -323,13 +323,14 @@ async fn handle_proxy_request(
     };
 
     for (k, v) in &headers {
-        // Skip hop-by-hop headers
         let lk = k.to_lowercase();
-        if lk == "connection" || lk == "transfer-encoding" {
+        if lk == "connection" || lk == "transfer-encoding" || lk == "host" {
             continue;
         }
         req = req.header(k.as_str(), v.as_str());
     }
+    // Set Host to the actual target so the service sees the correct host.
+    req = req.header("host", format!("{}:{}", target.host, target.port));
 
     if let Some(b64) = body {
         use base64::Engine;
@@ -547,16 +548,17 @@ async fn proxy_session_stream(
         _ => client.get(&url),
     };
 
-    // Forward headers
+    // Forward headers, overriding Host to the actual target.
     if let Some(headers) = req_json["headers"].as_object() {
         for (k, v) in headers {
             let lk = k.to_lowercase();
-            if lk == "connection" || lk == "transfer-encoding" { continue; }
+            if lk == "connection" || lk == "transfer-encoding" || lk == "host" { continue; }
             if let Some(val) = v.as_str() {
                 req = req.header(k.as_str(), val);
             }
         }
     }
+    req = req.header("host", format!("{}:{}", target.host, target.port));
 
     // Collect request body chunks from data WS until "end_request"
     let has_body = req_json.get("has_body").and_then(|v| v.as_bool()).unwrap_or(false);
