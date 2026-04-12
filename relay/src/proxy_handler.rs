@@ -295,7 +295,7 @@ async function proxyFetch(request, url) {
     body: JSON.stringify({
       proxy_token: proxyToken,
       method: request.method,
-      path: url.pathname + url.search,
+      path: (url.pathname.replace(/^\/proxy_content/, '') || '/') + url.search,
       headers,
       body,
     }),
