@@ -164,12 +164,11 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   const frame = document.getElementById('frame');
   const spinner = document.getElementById('spinner');
 
-  // Register service worker
-  const reg = await navigator.serviceWorker.register('/proxy_sw.js', { type: 'module' });
+  // Unregister any stale service workers before registering fresh.
+  const existingRegs = await navigator.serviceWorker.getRegistrations();
+  for (const r of existingRegs) await r.unregister();
 
-  // If there's already a controlling SW but we got a new one, reload so the
-  // new SW intercepts all requests from the start.
-  const needsReload = navigator.serviceWorker.controller && reg.waiting;
+  const reg = await navigator.serviceWorker.register('/proxy_sw.js', { type: 'module' });
 
   // Wait for the SW to be active
   await new Promise((resolve) => {
@@ -183,23 +182,12 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   // Send token to the active SW
   reg.active.postMessage({ type: 'init', proxyToken });
 
-  // If a stale SW was controlling the page, reload so the new one takes over
-  if (needsReload) {
-    location.reload();
-    throw new Error('reloading for new service worker');
-  }
-
   // Wait for the SW to be controlling this page
   if (!navigator.serviceWorker.controller) {
     await new Promise((resolve) => {
       navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
     });
-    // Re-send token after controller change
-    reg.active.postMessage({ type: 'init', proxyToken });
   }
-
-  // Small delay so the SW processes the init message
-  await new Promise(r => setTimeout(r, 50));
 
   // Hide spinner, show iframe
   spinner.style.display = 'none';
@@ -264,6 +252,19 @@ self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
+// Recover proxy_token from controlled clients if lost (e.g. after SW restart).
+async function ensureToken() {
+  if (proxyToken) return;
+  const clients = await self.clients.matchAll({ type: 'window' });
+  for (const client of clients) {
+    try {
+      const url = new URL(client.url);
+      const token = url.searchParams.get('proxy_token');
+      if (token) { proxyToken = token; return; }
+    } catch (_) {}
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -274,6 +275,8 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function proxyFetch(request, url) {
+  await ensureToken();
+
   const body = ['GET', 'HEAD'].includes(request.method)
     ? null
     : arrayToBase64(new Uint8Array(await request.arrayBuffer()));
