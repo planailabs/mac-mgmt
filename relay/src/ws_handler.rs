@@ -412,15 +412,13 @@ async fn ws_daemon_session(
 async fn handle_data_session(socket: WebSocket, session_id: String, session_secret: String) {
     tracing::debug!("daemon data WS upgraded for session {session_id}");
 
-    // Check for a proxy session first (WS-to-WS bridge)
-    if let Some(browser_ws) = bridge::take_pending_proxy_session(&session_id, &session_secret) {
-        tracing::info!("bridging proxy session {session_id} (ws-ws)");
-        bridge::bridge_ws_ws(browser_ws, socket).await;
+    // Check proxy sessions first, then TCP (SSH) sessions.
+    if bridge::has_pending_proxy_session(&session_id) {
+        bridge::complete_proxy_session(&session_id, &session_secret, socket).await;
         tracing::info!("proxy session {session_id} ended");
         return;
     }
 
-    // Fall back to TCP session (SSH)
     let Some(tcp_stream) = bridge::take_pending_session(&session_id, &session_secret) else {
         tracing::warn!("daemon connected for session {session_id} but no valid pending session");
         return;

@@ -1,10 +1,12 @@
+use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Json, Query, State};
+use axum::extract::{Json, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{any, get, post};
 use axum::Router;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -12,6 +14,8 @@ use uuid::Uuid;
 use crate::bridge;
 use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse};
 use crate::ws_handler::validate_token;
+
+const PROXY_TOKEN_COOKIE: &str = "proxy_token";
 
 #[derive(Clone)]
 pub struct ProxyState {
@@ -23,53 +27,49 @@ pub struct ProxyState {
 /// Build the Axum router for proxy endpoints (served on wildcard subdomains).
 pub fn router(state: ProxyState) -> Router {
     Router::new()
-        .route("/proxy", get(proxy_iframe))
-        .route("/proxy_sw.js", get(proxy_service_worker))
+        // Bootstrap: stores token as cookie, redirects to /
+        .route("/proxy", get(proxy_bootstrap))
+        // JSON request/response API (kept for programmatic use)
         .route("/proxy_request", post(proxy_request))
-        .route("/proxy_stream", any(proxy_stream))
+        // WebSocket tunneling
         .route("/proxy_ws", any(proxy_ws))
+        // Catch-all: reverse proxy for all other requests
+        .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
         .with_state(state)
 }
 
-/// Permissive security headers for proxy pages (must allow iframes and SW).
+/// Security headers that isolate the subdomain.
 async fn proxy_security_headers(
     request: axum::extract::Request,
     next: Next,
 ) -> axum::response::Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(
-        axum::http::header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'self' 'unsafe-inline'; frame-ancestors *"),
-    );
+    // Isolate from other subdomains
     headers.insert(
         axum::http::header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    // Explicitly do NOT set X-Frame-Options — we want to be embeddable.
+    headers.insert(
+        "cross-origin-opener-policy",
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        "cross-origin-resource-policy",
+        HeaderValue::from_static("same-origin"),
+    );
     response
 }
 
 // ── Subdomain parsing ──────────────────────────────────────────────────
 
 /// Extract (instance_id_prefix, tunnel_name) from the Host header.
-/// Format: `{short_id}-{tunnel_name}.{proxy_hostname}`
-/// The short_id is a hex prefix (12+ chars) of the full 64-char SHA256 instance ID.
-/// The relay resolves the prefix to the full ID via `DaemonRegistry::resolve_prefix`.
 fn parse_subdomain(headers: &HeaderMap, proxy_hostname: &str) -> Option<(String, String)> {
-    let host = headers
-        .get("host")
-        .and_then(|v| v.to_str().ok())?;
-
-    // Strip port if present
+    let host = headers.get("host").and_then(|v| v.to_str().ok())?;
     let host_no_port = host.split(':').next().unwrap_or(host);
-
-    // Must end with .{proxy_hostname}
     let subdomain = host_no_port.strip_suffix(&format!(".{proxy_hostname}"))?;
 
-    // Split on the last '-' to separate instance_id_prefix from tunnel_name.
-    // Tunnel names are simple identifiers (no hyphens), while instance IDs are hex.
     let dash_pos = subdomain.rfind('-')?;
     let instance_prefix = &subdomain[..dash_pos];
     let tunnel_name = &subdomain[dash_pos + 1..];
@@ -84,10 +84,65 @@ fn parse_subdomain(headers: &HeaderMap, proxy_hostname: &str) -> Option<(String,
     Some((instance_prefix.to_string(), tunnel_name.to_string()))
 }
 
-// ── GET /proxy — iframe bootstrap page ─────────────────────────────────
+/// Extract proxy_token from cookie.
+fn extract_cookie_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get_all("cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(';'))
+        .map(|s| s.trim())
+        .find_map(|pair| {
+            let (name, value) = pair.split_once('=')?;
+            if name.trim() == PROXY_TOKEN_COOKIE {
+                Some(value.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
 
-async fn proxy_iframe(
+/// Validate the proxy token (from cookie) and check cluster scoping.
+/// Returns the tunnel's control_tx on success.
+async fn authenticate_proxy(
+    headers: &HeaderMap,
+    state: &ProxyState,
+    instance_id: &str,
+) -> Result<(), axum::response::Response> {
+    let token = extract_cookie_token(headers)
+        .ok_or_else(|| {
+            (StatusCode::UNAUTHORIZED, "Missing proxy_token cookie. Visit /proxy?proxy_token=TOKEN first.").into_response()
+        })?;
+
+    let self_info = validate_token(&state.server_api_url, &token)
+        .await
+        .map_err(|s| s.into_response())?;
+
+    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
+        return Err(StatusCode::FORBIDDEN.into_response());
+    }
+
+    if let Some(cid) = state.registry.get_cluster_id(instance_id) {
+        if !self_info.cluster_ids.contains(&cid) {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        }
+    }
+
+    Ok(())
+}
+
+// ── GET /proxy?proxy_token=... — bootstrap ─────────────────────────────
+
+#[derive(Deserialize)]
+struct ProxyBootstrapQuery {
+    proxy_token: String,
+}
+
+/// Store the proxy_token as an HttpOnly, SameSite=Strict cookie scoped to
+/// this subdomain, then redirect to /.
+async fn proxy_bootstrap(
     headers: HeaderMap,
+    Query(query): Query<ProxyBootstrapQuery>,
     State(state): State<ProxyState>,
 ) -> axum::response::Response {
     let Some((instance_id, tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
@@ -98,330 +153,212 @@ async fn proxy_iframe(
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     }
 
-    let html = PROXY_IFRAME_HTML.replace("{{TUNNEL_NAME}}", &tunnel_name);
+    // Build a cookie scoped to this subdomain only.
+    let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let host_no_port = host.split(':').next().unwrap_or(host);
+
+    let cookie = format!(
+        "{PROXY_TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Domain={host_no_port}; Max-Age=21600",
+        query.proxy_token,
+    );
 
     axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "text/html; charset=utf-8")
-        .body(axum::body::Body::from(html))
+        .status(StatusCode::FOUND)
+        .header("location", "/")
+        .header("set-cookie", cookie)
+        .body(Body::empty())
         .unwrap()
         .into_response()
 }
 
-const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Tunnel Proxy</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
-  #bar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 10px;
-    background: #1e1e2e; border-bottom: 1px solid #313244;
-  }
-  #bar .label {
-    color: #89b4fa; font-size: 12px; font-weight: 600;
-    white-space: nowrap; user-select: none;
-  }
-  #url {
-    flex: 1; padding: 5px 10px;
-    background: #313244; color: #cdd6f4; border: 1px solid #45475a;
-    border-radius: 6px; font-size: 13px; font-family: ui-monospace, monospace;
-    outline: none;
-  }
-  #url:focus { border-color: #89b4fa; }
-  #frame { flex: 1; border: none; width: 100%; display: none; }
-  #spinner {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    background: #1e1e2e; color: #6c7086; font-size: 14px; gap: 10px;
-  }
-  #spinner .dot {
-    width: 8px; height: 8px; border-radius: 50%; background: #89b4fa;
-    animation: pulse 1.2s ease-in-out infinite;
-  }
-  #spinner .dot:nth-child(2) { animation-delay: 0.2s; }
-  #spinner .dot:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes pulse {
-    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
-    40% { opacity: 1; transform: scale(1.2); }
-  }
-</style>
-</head>
-<body>
-<div id="bar">
-  <span class="label">{{TUNNEL_NAME}}</span>
-  <input id="url" type="text" spellcheck="false" autocomplete="off">
-</div>
-<div id="spinner">
-  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-  <span>Connecting to tunnel...</span>
-</div>
-<iframe id="frame"></iframe>
-<script type="module">
-  const tunnelName = '{{TUNNEL_NAME}}';
-  const proxyToken = new URLSearchParams(location.search).get('proxy_token');
-  if (!proxyToken) {
-    document.body.textContent = 'Missing proxy_token parameter';
-    throw new Error('missing proxy_token');
-  }
+// ── Catch-all: reverse proxy ───────────────────────────────────────────
 
-  const urlBar = document.getElementById('url');
-  const frame = document.getElementById('frame');
-  const spinner = document.getElementById('spinner');
+/// Handles all non-special requests by proxying them to the daemon's tunnel
+/// via a streaming proxy session.
+async fn proxy_catchall(
+    State(state): State<ProxyState>,
+    req: Request,
+) -> axum::response::Response {
+    let headers = req.headers().clone();
+    let method = req.method().clone();
+    let path = req.uri().path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
 
-  // Register service worker
-  const reg = await navigator.serviceWorker.register('/proxy_sw.js', { type: 'module' });
+    let Some((instance_id, tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
 
-  // If there's already a controlling SW but we got a new one, reload so the
-  // new SW intercepts all requests from the start.
-  const needsReload = navigator.serviceWorker.controller && reg.waiting;
-
-  // Wait for the SW to be active
-  await new Promise((resolve) => {
-    const sw = reg.active ?? reg.installing ?? reg.waiting;
-    if (sw.state === 'activated') { resolve(); return; }
-    sw.addEventListener('statechange', () => {
-      if (sw.state === 'activated') resolve();
-    });
-  });
-
-  // Send token to the active SW
-  reg.active.postMessage({ type: 'init', proxyToken });
-
-  // If a stale SW was controlling the page, reload so the new one takes over
-  if (needsReload) {
-    location.reload();
-    throw new Error('reloading for new service worker');
-  }
-
-  // Wait for the SW to be controlling this page
-  if (!navigator.serviceWorker.controller) {
-    await new Promise((resolve) => {
-      navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
-    });
-    // Re-send token after controller change
-    reg.active.postMessage({ type: 'init', proxyToken });
-  }
-
-  // Hide spinner, show iframe
-  spinner.style.display = 'none';
-  frame.style.display = 'block';
-
-  function navigate(path) {
-    frame.src = path;
-    urlBar.value = path;
-  }
-
-  urlBar.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const path = urlBar.value.startsWith('/') ? urlBar.value : '/' + urlBar.value;
-      navigate(path);
+    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+        return resp;
     }
-  });
 
-  // Track iframe navigation
-  function syncUrlBar() {
-    try {
-      const loc = frame.contentWindow.location.pathname + frame.contentWindow.location.search;
-      if (urlBar.value !== loc && document.activeElement !== urlBar) {
-        urlBar.value = loc;
-      }
-    } catch (_) { /* cross-origin, ignore */ }
-  }
-  frame.addEventListener('load', syncUrlBar);
-  setInterval(syncUrlBar, 500);
+    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
+        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
+    };
 
-  navigate('/');
-</script>
-</body></html>"#;
+    // Collect request headers to forward
+    let fwd_headers: Vec<(String, String)> = headers
+        .iter()
+        .filter_map(|(k, v)| {
+            let lk = k.as_str().to_lowercase();
+            // Skip hop-by-hop and cookie (contains proxy_token)
+            if lk == "connection" || lk == "transfer-encoding" || lk == "cookie" {
+                return None;
+            }
+            Some((k.to_string(), v.to_str().unwrap_or("").to_string()))
+        })
+        .collect();
 
-// ── GET /proxy_sw.js — service worker (ESM) ────────────────────────────
+    // Collect request body
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 16 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response(),
+    };
 
-async fn proxy_service_worker() -> axum::response::Response {
-    axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/javascript; charset=utf-8")
-        .header("service-worker-allowed", "/")
-        .body(axum::body::Body::from(PROXY_SW_JS))
+    let has_body = !body_bytes.is_empty();
+
+    // Create a proxy session for streaming
+    let session_id = Uuid::new_v4().to_string();
+    let session_secret = Uuid::new_v4().to_string();
+
+    // Create a channel to receive the daemon's data WS
+    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel::<axum::extract::ws::WebSocket>();
+
+    // Register the session. When the daemon connects its data WS,
+    // bridge::take_pending_proxy_session returns it in handle_data_session.
+    // But we need direct access here, so we use a different approach:
+    // use a oneshot channel-based pending session.
+    bridge::register_pending_proxy_session_with_callback(
+        session_id.clone(),
+        session_secret.clone(),
+        ws_tx,
+    );
+
+    // Tell daemon to connect
+    if control_tx
+        .send(ControlMsg::ProxySessionRequest {
+            session_id: session_id.clone(),
+            session_secret: session_secret.clone(),
+            tunnel_name,
+            mode: "stream".to_string(),
+            path: "/".to_string(),
+        })
+        .await
+        .is_err()
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    // Wait for the daemon's data WS to connect
+    let daemon_ws = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        ws_rx,
+    ).await {
+        Ok(Ok(ws)) => ws,
+        _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+    };
+
+    let (mut daemon_sink, mut daemon_stream) = daemon_ws.split();
+
+    // Send request details to daemon
+    let req_json = serde_json::json!({
+        "method": method.as_str(),
+        "path": path,
+        "headers": serde_json::Value::Object(
+            fwd_headers.into_iter()
+                .map(|(k, v)| (k, serde_json::Value::String(v)))
+                .collect()
+        ),
+        "has_body": has_body,
+    });
+
+    if daemon_sink
+        .send(axum::extract::ws::Message::Text(req_json.to_string().into()))
+        .await
+        .is_err()
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    // Send request body if present (1MB chunks)
+    if has_body {
+        for chunk in body_bytes.chunks(1024 * 1024) {
+            if daemon_sink
+                .send(axum::extract::ws::Message::Binary(chunk.to_vec().into()))
+                .await
+                .is_err()
+            {
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+        }
+        if daemon_sink
+            .send(axum::extract::ws::Message::Text("end_request".into()))
+            .await
+            .is_err()
+        {
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+    }
+
+    // Read response headers from daemon (first text message)
+    let resp_headers_msg = match daemon_stream.next().await {
+        Some(Ok(axum::extract::ws::Message::Text(t))) => t,
+        _ => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+
+    let resp_meta: serde_json::Value = match serde_json::from_str(&resp_headers_msg) {
+        Ok(v) => v,
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+
+    let status = resp_meta["status"].as_u64().unwrap_or(502) as u16;
+    let resp_headers = resp_meta["headers"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|pair| {
+                    let k = pair.get(0)?.as_str()?;
+                    let v = pair.get(1)?.as_str()?;
+                    Some((k.to_string(), v.to_string()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    // Build the streaming HTTP response from daemon WS body chunks
+    let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
+        loop {
+            match stream.next().await {
+                Some(Ok(axum::extract::ws::Message::Binary(data))) => {
+                    return Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())), stream));
+                }
+                Some(Ok(axum::extract::ws::Message::Close(_))) | None => return None,
+                Some(Err(_)) => return None,
+                _ => continue, // skip text/ping/pong
+            }
+        }
+    });
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (k, v) in &resp_headers {
+        let lk = k.to_lowercase();
+        // Strip headers that interfere with the proxy
+        if lk == "transfer-encoding" || lk == "content-length" || lk == "content-encoding" {
+            continue;
+        }
+        if let Ok(val) = HeaderValue::from_str(v) {
+            builder = builder.header(k.as_str(), val);
+        }
+    }
+
+    builder
+        .body(Body::from_stream(body_stream))
         .unwrap()
         .into_response()
 }
 
-const PROXY_SW_JS: &str = r#"// proxy_sw.js — service worker for tunnel proxy (ESM module)
-let proxyToken = '';
-
-self.addEventListener('message', (e) => {
-  if (e.data.type === 'init') {
-    proxyToken = e.data.proxyToken;
-  }
-});
-
-// Claim clients immediately so the SW is active on first page load.
-self.addEventListener('activate', (e) => {
-  e.waitUntil(self.clients.claim());
-});
-
-self.addEventListener('install', () => {
-  self.skipWaiting();
-});
-
-// Recover proxy_token from controlled clients if lost (e.g. after SW restart).
-async function ensureToken() {
-  if (proxyToken) return;
-  const clients = await self.clients.matchAll({ type: 'window' });
-  for (const client of clients) {
-    try {
-      const url = new URL(client.url);
-      const token = url.searchParams.get('proxy_token');
-      if (token) { proxyToken = token; return; }
-    } catch (_) {}
-  }
-}
-
-// Script injected into HTML responses to patch WebSocket and EventSource
-// so they route through the relay proxy endpoints.
-const WS_PATCH_SCRIPT = `<script>
-(function() {
-  const proxyToken = '__PROXY_TOKEN__';
-  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const proxyWsBase = wsProto + '//' + location.host + '/proxy_ws?proxy_token=' + encodeURIComponent(proxyToken);
-
-  const OrigWebSocket = window.WebSocket;
-  window.WebSocket = function(url, protocols) {
-    const parsed = new URL(url, location.href);
-    // Only rewrite connections to the same host (the proxied service)
-    if (parsed.host === location.host || parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-      const path = parsed.pathname + parsed.search;
-      const proxyUrl = proxyWsBase + '&path=' + encodeURIComponent(path);
-      return new OrigWebSocket(proxyUrl, protocols);
-    }
-    return new OrigWebSocket(url, protocols);
-  };
-  window.WebSocket.prototype = OrigWebSocket.prototype;
-  window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
-  window.WebSocket.OPEN = OrigWebSocket.OPEN;
-  window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
-  window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
-})();
-</script>`;
-
-const STRIPPED_HEADERS = new Set([
-  'content-encoding', 'transfer-encoding', 'content-length',
-  'x-frame-options', 'content-security-policy', 'x-content-type-options',
-  'cross-origin-opener-policy', 'cross-origin-embedder-policy',
-  'cross-origin-resource-policy', 'permissions-policy',
-]);
-
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // Pass through proxy management URLs directly to the relay server
-  if (url.pathname.startsWith('/proxy')) return;
-
-  event.respondWith(proxyFetch(event.request, url));
-});
-
-async function proxyFetch(request, url) {
-  await ensureToken();
-
-  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsProto}//${location.host}/proxy_stream?proxy_token=${encodeURIComponent(proxyToken)}`;
-
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';
-
-    ws.onopen = async () => {
-      const headers = Object.fromEntries(request.headers.entries());
-      const hasBody = !['GET', 'HEAD'].includes(request.method);
-
-      // Send request details
-      ws.send(JSON.stringify({
-        method: request.method,
-        path: url.pathname + url.search,
-        headers,
-        has_body: hasBody,
-      }));
-
-      // Stream request body if present
-      if (hasBody) {
-        const body = new Uint8Array(await request.arrayBuffer());
-        // Send in 1MB chunks
-        for (let i = 0; i < body.length; i += 1024 * 1024) {
-          ws.send(body.slice(i, i + 1024 * 1024));
-        }
-        ws.send('end_request');
-      }
-    };
-
-    let headersReceived = false;
-    let respStatus = 200;
-    let controller;
-
-    const bodyStream = new ReadableStream({
-      start(c) { controller = c; },
-    });
-
-    ws.onmessage = (event) => {
-      if (!headersReceived) {
-        // First text message: response headers
-        headersReceived = true;
-        try {
-          const data = JSON.parse(event.data);
-          respStatus = data.status ?? 200;
-          const respHeaders = new Headers();
-          let isHtml = false;
-          for (const [k, v] of (data.headers ?? [])) {
-            if (STRIPPED_HEADERS.has(k.toLowerCase())) continue;
-            if (k.toLowerCase() === 'content-type' && v.includes('text/html')) isHtml = true;
-            try { respHeaders.append(k, v); } catch(_) {}
-          }
-
-          if (isHtml) {
-            // For HTML responses, inject a WebSocket patch script that rewrites
-            // WS connections to go through /proxy_ws on the relay.
-            const patchScript = WS_PATCH_SCRIPT.replace('__PROXY_TOKEN__', proxyToken);
-            const patchBytes = new TextEncoder().encode(patchScript);
-            const patchedStream = new ReadableStream({
-              start(c) {
-                c.enqueue(patchBytes);
-                controller = c;
-              },
-            });
-            resolve(new Response(patchedStream, { status: respStatus, headers: respHeaders }));
-          } else {
-            resolve(new Response(bodyStream, { status: respStatus, headers: respHeaders }));
-          }
-        } catch (e) {
-          resolve(new Response('Proxy error: invalid headers', { status: 502 }));
-          ws.close();
-        }
-        return;
-      }
-      // Subsequent binary messages: body chunks
-      if (event.data instanceof ArrayBuffer) {
-        controller.enqueue(new Uint8Array(event.data));
-      }
-    };
-
-    ws.onclose = () => {
-      if (!headersReceived) {
-        resolve(new Response('Proxy error: connection closed', { status: 502 }));
-      }
-      try { controller.close(); } catch(_) {}
-    };
-
-    ws.onerror = () => {
-      if (!headersReceived) {
-        resolve(new Response('Proxy error: WebSocket error', { status: 502 }));
-      }
-      try { controller.error(new Error('WS error')); } catch(_) {}
-    };
-  });
-}
-"#;
-
-// ── POST /proxy_request — the main proxy pipe ──────────────────────────
+// ── POST /proxy_request — JSON request/response API ────────────────────
 
 #[derive(Debug, Deserialize)]
 struct ProxyRequestBody {
@@ -437,13 +374,11 @@ async fn proxy_request(
     State(state): State<ProxyState>,
     Json(body): Json<ProxyRequestBody>,
 ) -> axum::response::Response {
-    // Parse subdomain
     let Some((instance_id, tunnel_name)) = parse_subdomain(&req_headers, &state.proxy_hostname)
     else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    // Validate proxy token
     let self_info = match validate_token(&state.server_api_url, &body.proxy_token).await {
         Ok(info) => info,
         Err(status) => return status.into_response(),
@@ -453,24 +388,17 @@ async fn proxy_request(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    // Cluster scoping: verify the daemon's cluster is accessible to the token
-    if let Some(daemon_cluster_id) = state.registry.get_cluster_id(&instance_id) {
-        if !self_info.cluster_ids.contains(&daemon_cluster_id) {
+    if let Some(cid) = state.registry.get_cluster_id(&instance_id) {
+        if !self_info.cluster_ids.contains(&cid) {
             return StatusCode::FORBIDDEN.into_response();
         }
     }
 
-    // Find the tunnel
-    let Some((control_tx, _tcp_port)) = state.registry.find_tunnel(&instance_id, &tunnel_name)
-    else {
+    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     };
 
-    // Build header list for the proxy request
-    let headers: Vec<(String, String)> = body
-        .headers
-        .into_iter()
-        .collect();
+    let headers: Vec<(String, String)> = body.headers.into_iter().collect();
 
     let request_id = Uuid::new_v4().to_string();
     let (response_tx, response_rx) = tokio::sync::oneshot::channel::<ProxyResponse>();
@@ -491,14 +419,11 @@ async fn proxy_request(
         return StatusCode::BAD_GATEWAY.into_response();
     }
 
-    // Wait for response with 60s timeout for long-lived connections
     match tokio::time::timeout(std::time::Duration::from_secs(60), response_rx).await {
         Ok(Ok(resp)) => {
-            let json_headers: Vec<(String, String)> = resp.headers;
-            // Return as JSON for the service worker to reconstruct
             let response = serde_json::json!({
                 "status": resp.status,
-                "headers": json_headers,
+                "headers": resp.headers,
                 "body": if resp.body.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(resp.body) },
             });
             Json(response).into_response()
@@ -508,99 +433,14 @@ async fn proxy_request(
     }
 }
 
-// ── Streaming proxy (/proxy_stream) ────────────────────────────────────
-//
-// The SW opens a WS to /proxy_stream. Protocol:
-// 1. SW sends text: JSON { proxy_token, method, path, headers, has_body }
-// 2. If has_body: SW sends binary chunks, then text "end_request"
-// 3. Relay creates a proxy session, daemon connects data WS
-// 4. Relay bridges SW WS ↔ daemon data WS for the streamed response
-//    (daemon sends text headers, then binary body chunks, then close)
-
-#[derive(Debug, Deserialize)]
-struct ProxyStreamQuery {
-    proxy_token: String,
-}
-
-async fn proxy_stream(
-    ws: WebSocketUpgrade,
-    req_headers: HeaderMap,
-    Query(query): Query<ProxyStreamQuery>,
-    State(state): State<ProxyState>,
-) -> axum::response::Response {
-    let Some((instance_id, tunnel_name)) = parse_subdomain(&req_headers, &state.proxy_hostname)
-    else {
-        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
-    };
-
-    // Validate proxy token
-    let self_info = match validate_token(&state.server_api_url, &query.proxy_token).await {
-        Ok(info) => info,
-        Err(status) => return status.into_response(),
-    };
-
-    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-
-    if let Some(cid) = state.registry.get_cluster_id(&instance_id) {
-        if !self_info.cluster_ids.contains(&cid) {
-            return StatusCode::FORBIDDEN.into_response();
-        }
-    }
-
-    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
-        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
-    };
-
-    ws.on_upgrade(move |socket| handle_proxy_stream(socket, control_tx, tunnel_name))
-        .into_response()
-}
-
-async fn handle_proxy_stream(
-    browser_ws: axum::extract::ws::WebSocket,
-    control_tx: tokio::sync::mpsc::Sender<ControlMsg>,
-    tunnel_name: String,
-) {
-    let session_id = Uuid::new_v4().to_string();
-    let session_secret = Uuid::new_v4().to_string();
-
-    // Register the browser WS BEFORE notifying the daemon to avoid a race
-    // where the daemon connects its data WS before the pending session exists.
-    bridge::register_pending_proxy_session(
-        session_id.clone(),
-        session_secret.clone(),
-        browser_ws,
-    );
-
-    // Now tell the daemon to connect a data WS for this session.
-    if control_tx
-        .send(ControlMsg::ProxySessionRequest {
-            session_id: session_id.clone(),
-            session_secret: session_secret.clone(),
-            tunnel_name,
-            mode: "stream".to_string(),
-            path: "/".to_string(),
-        })
-        .await
-        .is_err()
-    {
-        tracing::warn!("proxy_stream: daemon control channel closed");
-        // Remove the orphaned pending session
-        bridge::take_pending_proxy_session(&session_id, &session_secret);
-    }
-}
-
 // ── WebSocket proxy (/proxy_ws) ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct ProxyWsQuery {
-    proxy_token: String,
+    proxy_token: Option<String>,
     path: Option<String>,
 }
 
-/// WebSocket proxy: upgrades the browser connection, creates a proxy session,
-/// and bridges the browser WS with the daemon's data WS to the local service.
 async fn proxy_ws(
     ws: WebSocketUpgrade,
     req_headers: HeaderMap,
@@ -612,8 +452,14 @@ async fn proxy_ws(
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    // Validate proxy token
-    let self_info = match validate_token(&state.server_api_url, &query.proxy_token).await {
+    // Accept token from query param OR cookie
+    let token = query.proxy_token.clone()
+        .or_else(|| extract_cookie_token(&req_headers));
+    let Some(token) = token else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+
+    let self_info = match validate_token(&state.server_api_url, &token).await {
         Ok(info) => info,
         Err(status) => return status.into_response(),
     };
@@ -622,7 +468,6 @@ async fn proxy_ws(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    // Cluster scoping
     if let Some(cid) = state.registry.get_cluster_id(&instance_id) {
         if !self_info.cluster_ids.contains(&cid) {
             return StatusCode::FORBIDDEN.into_response();
@@ -640,7 +485,6 @@ async fn proxy_ws(
     ws.on_upgrade(move |socket| async move {
         tracing::info!("browser WS upgraded for proxy session (tunnel {tunnel_name})");
 
-        // Register BEFORE notifying daemon to avoid race.
         bridge::register_pending_proxy_session(
             session_id.clone(),
             session_secret.clone(),
@@ -659,7 +503,7 @@ async fn proxy_ws(
             .is_err()
         {
             tracing::warn!("proxy_ws: daemon control channel closed");
-            bridge::take_pending_proxy_session(&session_id, &session_secret);
+            bridge::remove_pending_proxy_session(&session_id);
         }
     })
     .into_response()

@@ -19,11 +19,20 @@ struct PendingSession {
 static PENDING_SESSIONS: LazyLock<Mutex<HashMap<String, PendingSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Pending proxy session: a browser WebSocket waiting for the daemon's data channel.
-struct PendingProxySession {
-    ws: WebSocket,
-    secret: String,
-    created_at: Instant,
+/// Pending proxy session variants.
+enum PendingProxySession {
+    /// A browser WebSocket to be bridged with the daemon's data WS (for /proxy_ws).
+    WebSocket {
+        ws: WebSocket,
+        secret: String,
+        created_at: Instant,
+    },
+    /// A oneshot sender to deliver the daemon's data WS to the caller (for catchall proxy).
+    Callback {
+        tx: tokio::sync::oneshot::Sender<WebSocket>,
+        secret: String,
+        created_at: Instant,
+    },
 }
 
 static PENDING_PROXY_SESSIONS: LazyLock<Mutex<HashMap<String, PendingProxySession>>> =
@@ -31,28 +40,69 @@ static PENDING_PROXY_SESSIONS: LazyLock<Mutex<HashMap<String, PendingProxySessio
 
 pub fn register_pending_proxy_session(session_id: String, secret: String, ws: WebSocket) {
     let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
-    sessions.insert(session_id.clone(), PendingProxySession {
+    sessions.insert(session_id.clone(), PendingProxySession::WebSocket {
         ws,
         secret,
         created_at: Instant::now(),
     });
-    tracing::debug!("registered pending proxy session {session_id}");
+    tracing::debug!("registered pending proxy session {session_id} (ws bridge)");
 }
 
-pub fn take_pending_proxy_session(session_id: &str, secret: &str) -> Option<WebSocket> {
+pub fn register_pending_proxy_session_with_callback(
+    session_id: String,
+    secret: String,
+    tx: tokio::sync::oneshot::Sender<WebSocket>,
+) {
     let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
-    if let Some(pending) = sessions.get(session_id) {
-        if pending.secret != secret {
-            tracing::warn!("proxy session {session_id}: secret mismatch");
-            return None;
+    sessions.insert(session_id.clone(), PendingProxySession::Callback {
+        tx,
+        secret,
+        created_at: Instant::now(),
+    });
+    tracing::debug!("registered pending proxy session {session_id} (callback)");
+}
+
+/// Remove a pending proxy session (used for cleanup on failure).
+pub fn remove_pending_proxy_session(session_id: &str) {
+    PENDING_PROXY_SESSIONS.lock().unwrap().remove(session_id);
+}
+
+/// Check if a pending proxy session exists (without consuming it).
+pub fn has_pending_proxy_session(session_id: &str) -> bool {
+    PENDING_PROXY_SESSIONS.lock().unwrap().contains_key(session_id)
+}
+
+/// Complete a pending proxy session with the daemon's data WS.
+/// For WS bridge sessions: bridges and returns true.
+/// For callback sessions: sends the WS to the caller and returns true.
+/// Returns false if session not found.
+pub async fn complete_proxy_session(session_id: &str, secret: &str, daemon_ws: WebSocket) -> bool {
+    let pending = {
+        let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
+        let Some(pending) = sessions.get(session_id) else { return false; };
+        let (pending_secret, pending_time) = match pending {
+            PendingProxySession::WebSocket { secret: s, created_at, .. } => (s.as_str(), *created_at),
+            PendingProxySession::Callback { secret: s, created_at, .. } => (s.as_str(), *created_at),
+        };
+        if pending_secret != secret || pending_time.elapsed() > SESSION_TTL {
+            return false;
         }
-        if pending.created_at.elapsed() > SESSION_TTL {
-            sessions.remove(session_id);
-            return None;
+        sessions.remove(session_id)
+    };
+
+    match pending {
+        Some(PendingProxySession::WebSocket { ws: browser_ws, .. }) => {
+            tracing::info!("bridging proxy session {session_id} (ws-ws)");
+            bridge_ws_ws(browser_ws, daemon_ws).await;
+            true
         }
-        return sessions.remove(session_id).map(|p| p.ws);
+        Some(PendingProxySession::Callback { tx, .. }) => {
+            tracing::info!("delivering daemon WS for proxy session {session_id}");
+            let _ = tx.send(daemon_ws);
+            true
+        }
+        None => false,
     }
-    None
 }
 
 /// Bridge two WebSockets bidirectionally, forwarding close frames.
@@ -159,7 +209,11 @@ pub fn cleanup_expired() {
     {
         let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
         sessions.retain(|id, s| {
-            let expired = s.created_at.elapsed() > SESSION_TTL;
+            let created_at = match s {
+                PendingProxySession::WebSocket { created_at, .. } => *created_at,
+                PendingProxySession::Callback { created_at, .. } => *created_at,
+            };
+            let expired = created_at.elapsed() > SESSION_TTL;
             if expired { tracing::info!("expiring stale pending proxy session {id}"); }
             !expired
         });
