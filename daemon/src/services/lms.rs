@@ -14,8 +14,16 @@ impl Lms {
         Self { config }
     }
 
+    fn effective_host(&self) -> &str {
+        if self.config.host.is_empty() { "127.0.0.1" } else { &self.config.host }
+    }
+
+    fn effective_port(&self) -> u16 {
+        if self.config.port == 0 { 1234 } else { self.config.port }
+    }
+
     fn base_url(&self) -> String {
-        format!("http://{}:{}", self.config.host, self.config.port)
+        format!("http://{}:{}", self.effective_host(), self.effective_port())
     }
 
     /// Run `lms server start` to (re)start the local API server. Idempotent
@@ -189,8 +197,8 @@ impl ManagedService for Lms {
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
         vec![TunnelDef {
             name: "lms".into(),
-            host: self.config.host.clone(),
-            tcp_port: self.config.port,
+            host: self.effective_host().to_string(),
+            tcp_port: self.effective_port(),
         }]
     }
 }

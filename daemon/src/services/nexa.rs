@@ -14,12 +14,20 @@ impl Nexa {
         Self { config }
     }
 
+    fn effective_host(&self) -> &str {
+        if self.config.host.is_empty() { "127.0.0.1" } else { &self.config.host }
+    }
+
+    fn effective_port(&self) -> u16 {
+        if self.config.port == 0 { 18181 } else { self.config.port }
+    }
+
     fn base_url(&self) -> String {
-        format!("http://{}:{}", self.config.host, self.config.port)
+        format!("http://{}:{}", self.effective_host(), self.effective_port())
     }
 
     fn http_get(&self, path: &str) -> Result<String> {
-        super::http_get(&self.config.host, self.config.port, path)
+        super::http_get(self.effective_host(), self.effective_port(), path)
     }
 }
 
@@ -164,8 +172,8 @@ impl ManagedService for Nexa {
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
         vec![TunnelDef {
             name: "nexa".into(),
-            host: self.config.host.clone(),
-            tcp_port: self.config.port,
+            host: self.effective_host().to_string(),
+            tcp_port: self.effective_port(),
         }]
     }
 }
