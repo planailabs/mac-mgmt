@@ -169,7 +169,7 @@ pub async fn run(
     tracing::info!("instance ID (host key fingerprint): {instance_id}");
 
     #[cfg(feature = "relay")]
-    let mut relay_mgr = crate::remote_ssh::Manager::new(
+    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::Manager::new(
         cfg.relay.url.clone(),
         server_url.clone(),
         server_token.clone(),
@@ -504,6 +504,15 @@ pub async fn run(
             } => {
                 #[cfg(feature = "relay")]
                 relay_mgr.handle_cmd(cmd);
+            }
+            Some(()) = async {
+                #[cfg(feature = "relay")]
+                { relay_heartbeat_rx.recv().await }
+                #[cfg(not(feature = "relay"))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                tracing::debug!("relay signalled heartbeat");
+                handle_health_tick!();
             }
         }
     }

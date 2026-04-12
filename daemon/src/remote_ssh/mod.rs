@@ -35,6 +35,8 @@ pub struct Manager {
     relay_proxy_hostname: Arc<RwLock<Option<String>>>,
     /// Shared channel to send messages on the relay WS (for tunnel re-advertisements).
     ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>>,
+    /// Signal the main loop to send a heartbeat (e.g. after tunnel changes).
+    heartbeat_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl Manager {
@@ -48,13 +50,14 @@ impl Manager {
         host_key: Arc<PrivateKey>,
         metrics_port: u16,
         remote_ssh_enabled: bool,
-    ) -> Self {
+    ) -> (Self, tokio::sync::mpsc::Receiver<()>) {
         let ssh_allowed = Arc::new(AtomicBool::new(remote_ssh_enabled));
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
         let tunnel_defs = Arc::new(RwLock::new(HashMap::new()));
         let relay_proxy_hostname = Arc::new(RwLock::new(None));
         let ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>> =
             Arc::new(RwLock::new(None));
+        let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel(4);
 
         let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move {
@@ -88,7 +91,7 @@ impl Manager {
             tracing::debug!("relay not configured (url or token missing), relay client not spawned");
         }
 
-        Self {
+        (Self {
             ssh_allowed,
             ssh_cmd_rx,
             server_ssh_keys,
@@ -97,7 +100,8 @@ impl Manager {
             tunnel_defs,
             relay_proxy_hostname,
             ws_outgoing_tx,
-        }
+            heartbeat_tx,
+        }, heartbeat_rx)
     }
 
     /// Sync SSH keys from the server. Call periodically (e.g. every hour).
@@ -145,6 +149,9 @@ impl Manager {
             });
             let _ = tx.send(advert.to_string()).await;
         }
+
+        // Signal the main loop to send a heartbeat with the updated tunnels.
+        let _ = self.heartbeat_tx.try_send(());
     }
 
     /// Clean up resources (FIFO) on shutdown.
