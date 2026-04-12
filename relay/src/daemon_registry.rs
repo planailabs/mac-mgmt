@@ -342,12 +342,16 @@ impl DaemonRegistry {
         daemons.get(instance_id).map(|d| d.control_tx.clone())
     }
 
-    /// Update the advertised tunnels for a connected daemon.
+    /// Update the advertised tunnels for a connected daemon. Capped at 100 per daemon.
     pub fn update_tunnels(&self, instance_id: &str, tunnels: Vec<ServiceTunnel>) {
         let mut daemons = self.daemons.write().unwrap();
         if let Some(d) = daemons.get_mut(instance_id) {
-            tracing::info!("daemon {instance_id} advertised {} tunnel(s)", tunnels.len());
-            d.tunnels = tunnels;
+            let count = tunnels.len().min(100);
+            if tunnels.len() > 100 {
+                tracing::warn!("daemon {instance_id} advertised {} tunnels, capping to 100", tunnels.len());
+            }
+            tracing::info!("daemon {instance_id} advertised {count} tunnel(s)");
+            d.tunnels = tunnels.into_iter().take(100).collect();
         }
     }
 

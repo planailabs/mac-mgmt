@@ -126,6 +126,9 @@ async fn authenticate_proxy(
         if !self_info.cluster_ids.contains(&cid) {
             return Err(StatusCode::FORBIDDEN.into_response());
         }
+    } else if self_info.token_kind != "admin" {
+        // Unscoped instance — deny non-admin access.
+        return Err(StatusCode::FORBIDDEN.into_response());
     }
 
     Ok(())
@@ -154,12 +157,11 @@ async fn proxy_bootstrap(
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     }
 
-    // Build a cookie scoped to this subdomain only.
-    let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("");
-    let host_no_port = host.split(':').next().unwrap_or(host);
-
+    // HttpOnly + SameSite=Strict cookie. No Domain attribute — the browser
+    // scopes it to the exact origin (subdomain:port), preventing leakage to
+    // sibling subdomains or the parent domain.
     let cookie = format!(
-        "{PROXY_TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Domain={host_no_port}; Max-Age=21600",
+        "{PROXY_TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=21600",
         query.proxy_token,
     );
 
@@ -323,7 +325,7 @@ async fn proxy_catchall(
             session_secret: session_secret.clone(),
             tunnel_name,
             mode: "stream".to_string(),
-            path: "/".to_string(),
+            path: path.clone(),
         })
         .await
         .is_err()
@@ -530,7 +532,6 @@ async fn proxy_request(
 
 #[derive(Debug, Deserialize)]
 struct ProxyWsQuery {
-    proxy_token: Option<String>,
     path: Option<String>,
 }
 
@@ -545,10 +546,8 @@ async fn proxy_ws(
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    // Accept token from query param OR cookie
-    let token = query.proxy_token.clone()
-        .or_else(|| extract_cookie_token(&req_headers));
-    let Some(token) = token else {
+    // Token from cookie only (never query params — those leak in logs/referrers).
+    let Some(token) = extract_cookie_token(&req_headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
 

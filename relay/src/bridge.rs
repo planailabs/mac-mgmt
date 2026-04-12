@@ -8,6 +8,7 @@ use tokio::net::TcpStream;
 use axum::extract::ws::{Message, WebSocket};
 
 const SESSION_TTL: Duration = Duration::from_secs(60);
+const MAX_PENDING_PROXY_SESSIONS: usize = 1000;
 
 struct PendingSession {
     stream: TcpStream,
@@ -38,28 +39,38 @@ enum PendingProxySession {
 static PENDING_PROXY_SESSIONS: LazyLock<Mutex<HashMap<String, PendingProxySession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub fn register_pending_proxy_session(session_id: String, secret: String, ws: WebSocket) {
+pub fn register_pending_proxy_session(session_id: String, secret: String, ws: WebSocket) -> bool {
     let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
+    if sessions.len() >= MAX_PENDING_PROXY_SESSIONS {
+        tracing::warn!("pending proxy session limit reached ({MAX_PENDING_PROXY_SESSIONS}), rejecting");
+        return false;
+    }
     sessions.insert(session_id.clone(), PendingProxySession::WebSocket {
         ws,
         secret,
         created_at: Instant::now(),
     });
     tracing::debug!("registered pending proxy session {session_id} (ws bridge)");
+    true
 }
 
 pub fn register_pending_proxy_session_with_callback(
     session_id: String,
     secret: String,
     tx: tokio::sync::oneshot::Sender<WebSocket>,
-) {
+) -> bool {
     let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
+    if sessions.len() >= MAX_PENDING_PROXY_SESSIONS {
+        tracing::warn!("pending proxy session limit reached ({MAX_PENDING_PROXY_SESSIONS}), rejecting");
+        return false;
+    }
     sessions.insert(session_id.clone(), PendingProxySession::Callback {
         tx,
         secret,
         created_at: Instant::now(),
     });
     tracing::debug!("registered pending proxy session {session_id} (callback)");
+    true
 }
 
 /// Remove a pending proxy session (used for cleanup on failure).
