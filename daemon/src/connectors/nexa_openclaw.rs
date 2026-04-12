@@ -22,7 +22,7 @@ impl Connector for NexaOpenClaw {
         &["nexa", "openclaw"]
     }
 
-    fn connect(&self) -> Result<()> {
+    fn connect(&self, _virtual_services: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
         tracing::info!("connecting nexa to openclaw (baseUrl={base_url}, model={})", self.default_model);
         sentry_ext::breadcrumb(

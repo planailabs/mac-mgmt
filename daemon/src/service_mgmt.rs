@@ -136,6 +136,8 @@ pub struct ServiceManager {
     connectors: Vec<ConnectorState>,
     dispatcher: Arc<Dispatcher>,
     log_buf: LogBuffer,
+    /// Virtual services (e.g. "relay") that connectors can depend on.
+    virtual_services: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl ServiceManager {
@@ -297,6 +299,7 @@ impl ServiceManager {
             connectors,
             dispatcher,
             log_buf,
+            virtual_services: std::collections::HashMap::new(),
         })
     }
 
@@ -725,6 +728,10 @@ impl ServiceManager {
         for cs in &mut self.connectors {
             if cs.done { continue; }
             let deps_ready = cs.connector.depends_on().iter().all(|dep| {
+                // Check virtual services first
+                if self.virtual_services.contains_key(*dep) {
+                    return true;
+                }
                 match &self.backend {
                     ServiceBackend::Inline(states) => states.iter()
                         .find(|s| s.service.name() == *dep)
@@ -737,7 +744,7 @@ impl ServiceManager {
             if !deps_ready { continue; }
             let name = cs.connector.name();
             tracing::info!("running connector: {name}");
-            if let Err(e) = cs.connector.connect() {
+            if let Err(e) = cs.connector.connect(&self.virtual_services) {
                 tracing::error!("connector {name} failed: {e}");
             }
             cs.done = true;
@@ -812,6 +819,19 @@ impl ServiceManager {
                 })
             }).collect(),
         }
+    }
+
+    // ── Virtual services ─────────────────────────────────────────────
+
+    /// Register a virtual service as ready with associated metadata.
+    /// Connectors that depend on this name will be unblocked.
+    pub fn set_virtual_service(&mut self, name: &str, metadata: serde_json::Value) {
+        self.virtual_services.insert(name.to_string(), metadata);
+    }
+
+    /// Get the metadata for a virtual service, if it's been registered.
+    pub fn get_virtual_service(&self, name: &str) -> Option<&serde_json::Value> {
+        self.virtual_services.get(name)
     }
 
     // ── Tunnel collection ────────────────────────────────────────────

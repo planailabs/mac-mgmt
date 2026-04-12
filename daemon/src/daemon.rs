@@ -361,6 +361,14 @@ pub async fn run(
                     #[cfg(not(feature = "relay"))]
                     let rph: Option<String> = None;
 
+                    // Register relay as a virtual service so connectors can depend on it.
+                    #[cfg(feature = "services")]
+                    if let Some(ref ph) = rph {
+                        svc_mgr.set_virtual_service("relay", serde_json::json!({
+                            "proxy_hostname": ph,
+                        }));
+                    }
+
                     let url = url.clone();
                     let token = token.clone();
                     let iid = instance_id.clone();

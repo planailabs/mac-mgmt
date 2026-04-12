@@ -2,6 +2,7 @@ pub mod cloud_openclaw;
 pub mod lms_openclaw;
 pub mod nexa_openclaw;
 pub mod ollama_openclaw;
+pub mod relay_openclaw;
 
 use anyhow::Result;
 
@@ -13,9 +14,9 @@ use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, Lms
 pub trait Connector: Send {
     fn name(&self) -> &str;
     /// Service names this connector depends on. It runs once all of them
-    /// have completed their `post_start`.
+    /// have completed their `post_start` (or are registered as virtual services).
     fn depends_on(&self) -> &[&str];
-    fn connect(&self) -> Result<()>;
+    fn connect(&self, virtual_services: &std::collections::HashMap<String, serde_json::Value>) -> Result<()>;
 }
 
 /// Build the list of managed services based on global provider settings.
@@ -70,6 +71,8 @@ pub fn build_connectors(
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
     if global.agent_provider == AgentProvider::Openclaw {
+        connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
+
         match global.llm_provider {
             LlmProvider::Ollama => {
                 connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {

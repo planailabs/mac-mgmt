@@ -24,7 +24,7 @@ impl Connector for CloudOpenClaw {
         &["openclaw"]
     }
 
-    fn connect(&self) -> Result<()> {
+    fn connect(&self, _virtual_services: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
         let provider = self.config.provider.as_str();
         // Use the configured model, but fall back to the provider's default if
         // the configured model doesn't belong to this provider (e.g. user switched

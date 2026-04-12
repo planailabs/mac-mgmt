@@ -21,7 +21,7 @@ impl Connector for OllamaOpenClaw {
         &["ollama", "openclaw"]
     }
 
-    fn connect(&self) -> Result<()> {
+    fn connect(&self, _virtual_services: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
         let model = &self.default_model;
         tracing::info!("connecting ollama to openclaw with model {model}");
         sentry_ext::breadcrumb(
