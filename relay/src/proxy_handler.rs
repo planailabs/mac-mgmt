@@ -1,13 +1,15 @@
-use axum::extract::{Json, State};
+use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::{Json, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use axum::Router;
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::bridge;
 use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse};
 use crate::ws_handler::validate_token;
 
@@ -24,6 +26,8 @@ pub fn router(state: ProxyState) -> Router {
         .route("/proxy", get(proxy_iframe))
         .route("/proxy_sw.js", get(proxy_service_worker))
         .route("/proxy_request", post(proxy_request))
+        .route("/proxy_stream", any(proxy_stream))
+        .route("/proxy_ws", any(proxy_ws))
         .layer(middleware::from_fn(proxy_security_headers))
         .with_state(state)
 }
@@ -274,6 +278,13 @@ async function ensureToken() {
   }
 }
 
+const STRIPPED_HEADERS = new Set([
+  'content-encoding', 'transfer-encoding', 'content-length',
+  'x-frame-options', 'content-security-policy', 'x-content-type-options',
+  'cross-origin-opener-policy', 'cross-origin-embedder-policy',
+  'cross-origin-resource-policy', 'permissions-policy',
+]);
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -286,56 +297,83 @@ self.addEventListener('fetch', (event) => {
 async function proxyFetch(request, url) {
   await ensureToken();
 
-  const body = ['GET', 'HEAD'].includes(request.method)
-    ? null
-    : arrayToBase64(new Uint8Array(await request.arrayBuffer()));
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProto}//${location.host}/proxy_stream?proxy_token=${encodeURIComponent(proxyToken)}`;
 
-  const headers = Object.fromEntries(request.headers.entries());
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
 
-  const resp = await fetch('/proxy_request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      proxy_token: proxyToken,
-      method: request.method,
-      path: url.pathname + url.search,
-      headers,
-      body,
-    }),
+    ws.onopen = async () => {
+      const headers = Object.fromEntries(request.headers.entries());
+      const hasBody = !['GET', 'HEAD'].includes(request.method);
+
+      // Send request details
+      ws.send(JSON.stringify({
+        method: request.method,
+        path: url.pathname + url.search,
+        headers,
+        has_body: hasBody,
+      }));
+
+      // Stream request body if present
+      if (hasBody) {
+        const body = new Uint8Array(await request.arrayBuffer());
+        // Send in 1MB chunks
+        for (let i = 0; i < body.length; i += 1024 * 1024) {
+          ws.send(body.slice(i, i + 1024 * 1024));
+        }
+        ws.send('end_request');
+      }
+    };
+
+    let headersReceived = false;
+    let respStatus = 200;
+    let controller;
+
+    const bodyStream = new ReadableStream({
+      start(c) { controller = c; },
+    });
+
+    ws.onmessage = (event) => {
+      if (!headersReceived) {
+        // First text message: response headers
+        headersReceived = true;
+        try {
+          const data = JSON.parse(event.data);
+          respStatus = data.status ?? 200;
+          const respHeaders = new Headers();
+          for (const [k, v] of (data.headers ?? [])) {
+            if (STRIPPED_HEADERS.has(k.toLowerCase())) continue;
+            try { respHeaders.append(k, v); } catch(_) {}
+          }
+          resolve(new Response(bodyStream, { status: respStatus, headers: respHeaders }));
+        } catch (e) {
+          resolve(new Response('Proxy error: invalid headers', { status: 502 }));
+          ws.close();
+        }
+        return;
+      }
+      // Subsequent binary messages: body chunks
+      if (event.data instanceof ArrayBuffer) {
+        controller.enqueue(new Uint8Array(event.data));
+      }
+    };
+
+    ws.onclose = () => {
+      if (!headersReceived) {
+        resolve(new Response('Proxy error: connection closed', { status: 502 }));
+      }
+      try { controller.close(); } catch(_) {}
+    };
+
+    ws.onerror = () => {
+      if (!headersReceived) {
+        resolve(new Response('Proxy error: WebSocket error', { status: 502 }));
+      }
+      try { controller.error(new Error('WS error')); } catch(_) {}
+    };
   });
-
-  if (!resp.ok) {
-    return new Response('Proxy error: ' + resp.status, { status: resp.status });
-  }
-
-  const data = await resp.json();
-  const respHeaders = new Headers();
-  for (const [k, v] of (data.headers ?? [])) {
-    // Skip headers that would conflict with the service worker response
-    const lk = k.toLowerCase();
-    if (lk === 'content-encoding' || lk === 'transfer-encoding' || lk === 'content-length'
-        || lk === 'x-frame-options' || lk === 'content-security-policy'
-        || lk === 'x-content-type-options' || lk === 'cross-origin-opener-policy'
-        || lk === 'cross-origin-embedder-policy' || lk === 'cross-origin-resource-policy'
-        || lk === 'permissions-policy') continue;
-    try { respHeaders.append(k, v); } catch(_) {}
-  }
-  const respBody = data.body ? base64ToArray(data.body) : null;
-
-  return new Response(respBody, { status: data.status, headers: respHeaders });
-}
-
-function arrayToBase64(bytes) {
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
-}
-
-function base64ToArray(b64) {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 "#;
 
@@ -424,4 +462,184 @@ async fn proxy_request(
         Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
+}
+
+// ── Streaming proxy (/proxy_stream) ────────────────────────────────────
+//
+// The SW opens a WS to /proxy_stream. Protocol:
+// 1. SW sends text: JSON { proxy_token, method, path, headers, has_body }
+// 2. If has_body: SW sends binary chunks, then text "end_request"
+// 3. Relay creates a proxy session, daemon connects data WS
+// 4. Relay bridges SW WS ↔ daemon data WS for the streamed response
+//    (daemon sends text headers, then binary body chunks, then close)
+
+#[derive(Debug, Deserialize)]
+struct ProxyStreamQuery {
+    proxy_token: String,
+}
+
+async fn proxy_stream(
+    ws: WebSocketUpgrade,
+    req_headers: HeaderMap,
+    Query(query): Query<ProxyStreamQuery>,
+    State(state): State<ProxyState>,
+) -> axum::response::Response {
+    let Some((instance_id, tunnel_name)) = parse_subdomain(&req_headers, &state.proxy_hostname)
+    else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+
+    // Validate proxy token
+    let self_info = match validate_token(&state.server_api_url, &query.proxy_token).await {
+        Ok(info) => info,
+        Err(status) => return status.into_response(),
+    };
+
+    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    if let Some(cid) = state.registry.get_cluster_id(&instance_id) {
+        if !self_info.cluster_ids.contains(&cid) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
+    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
+        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
+    };
+
+    ws.on_upgrade(move |socket| handle_proxy_stream(socket, control_tx, tunnel_name, state.registry))
+        .into_response()
+}
+
+async fn handle_proxy_stream(
+    browser_ws: axum::extract::ws::WebSocket,
+    control_tx: tokio::sync::mpsc::Sender<ControlMsg>,
+    tunnel_name: String,
+    _registry: Arc<DaemonRegistry>,
+) {
+    use axum::extract::ws::Message;
+    use futures_util::{SinkExt, StreamExt};
+
+    let (mut browser_sink, mut browser_stream) = browser_ws.split();
+
+    // Read the request details from the SW
+    let Some(Ok(Message::Text(req_text))) = browser_stream.next().await else {
+        tracing::warn!("proxy_stream: no request message from SW");
+        return;
+    };
+
+    let session_id = Uuid::new_v4().to_string();
+    let session_secret = Uuid::new_v4().to_string();
+
+    let req_json: serde_json::Value = match serde_json::from_str(&req_text) {
+        Ok(v) => v,
+        Err(_) => { tracing::warn!("proxy_stream: invalid request JSON"); return; }
+    };
+
+    let path = req_json["path"].as_str().unwrap_or("/").to_string();
+
+    // Send proxy session request to daemon
+    if control_tx
+        .send(ControlMsg::ProxySessionRequest {
+            session_id: session_id.clone(),
+            session_secret: session_secret.clone(),
+            tunnel_name,
+            mode: "stream".to_string(),
+            path,
+        })
+        .await
+        .is_err()
+    {
+        let _ = browser_sink.send(Message::Text(
+            serde_json::json!({"status": 502, "headers": []}).to_string().into()
+        )).await;
+        return;
+    }
+
+    // Register this browser WS as a pending proxy session
+    // The daemon will connect a data WS, and the session handler bridges them.
+    // But for streaming, we need to forward the request body from the browser to the daemon.
+    // So we reassemble the browser WS with its remaining messages.
+
+    // Reconstruct the browser WS from sink + stream for bridging
+    let browser_ws_reassembled = browser_sink.reunite(browser_stream)
+        .expect("reunite same split");
+
+    bridge::register_pending_proxy_session(session_id, session_secret, browser_ws_reassembled);
+}
+
+// ── WebSocket proxy (/proxy_ws) ────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ProxyWsQuery {
+    proxy_token: String,
+    path: Option<String>,
+}
+
+/// WebSocket proxy: upgrades the browser connection, creates a proxy session,
+/// and bridges the browser WS with the daemon's data WS to the local service.
+async fn proxy_ws(
+    ws: WebSocketUpgrade,
+    req_headers: HeaderMap,
+    Query(query): Query<ProxyWsQuery>,
+    State(state): State<ProxyState>,
+) -> axum::response::Response {
+    let Some((instance_id, tunnel_name)) = parse_subdomain(&req_headers, &state.proxy_hostname)
+    else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+
+    // Validate proxy token
+    let self_info = match validate_token(&state.server_api_url, &query.proxy_token).await {
+        Ok(info) => info,
+        Err(status) => return status.into_response(),
+    };
+
+    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    // Cluster scoping
+    if let Some(cid) = state.registry.get_cluster_id(&instance_id) {
+        if !self_info.cluster_ids.contains(&cid) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
+    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
+        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
+    };
+
+    let session_id = Uuid::new_v4().to_string();
+    let session_secret = Uuid::new_v4().to_string();
+    let path = query.path.unwrap_or_else(|| "/".to_string());
+
+    let sid = session_id.clone();
+    let ssec = session_secret.clone();
+    let tn = tunnel_name.clone();
+
+    // Send proxy session request to daemon
+    if control_tx
+        .send(ControlMsg::ProxySessionRequest {
+            session_id: session_id.clone(),
+            session_secret: session_secret.clone(),
+            tunnel_name,
+            mode: "websocket".to_string(),
+            path,
+        })
+        .await
+        .is_err()
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    ws.on_upgrade(move |socket| async move {
+        tracing::info!("browser WS upgraded for proxy session {sid} (tunnel {tn})");
+        // Register this browser WS as a pending proxy session.
+        // The daemon will connect a data WS which triggers the bridge.
+        bridge::register_pending_proxy_session(sid, ssec, socket);
+    })
+    .into_response()
 }

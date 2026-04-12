@@ -28,6 +28,16 @@ pub enum ControlMsg {
         body: Option<String>,
         response_tx: oneshot::Sender<ProxyResponse>,
     },
+    /// Request a proxy data session (WS-to-WS bridge or streaming HTTP).
+    ProxySessionRequest {
+        session_id: String,
+        session_secret: String,
+        tunnel_name: String,
+        /// "websocket" or "stream"
+        mode: String,
+        /// Target path on the proxied service
+        path: String,
+    },
 }
 
 /// Response from daemon for a proxied metrics request.

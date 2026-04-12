@@ -34,6 +34,13 @@ enum ControlMessage {
         headers: Vec<(String, String)>,
         body: Option<String>,
     },
+    ProxySessionRequest {
+        session_id: String,
+        session_secret: String,
+        tunnel_name: String,
+        mode: String,
+        path: String,
+    },
 }
 
 /// A tunnel definition used to map tunnel names to local host:port.
@@ -158,6 +165,22 @@ pub async fn run(
                 let out_tx = outgoing_tx.clone();
                 tokio::spawn(async move {
                     handle_proxy_request(&out_tx, &request_id, target, &method, &path, headers, body).await;
+                });
+            }
+            ControlMessage::ProxySessionRequest { session_id, session_secret, tunnel_name, mode, path } => {
+                tracing::info!("proxy session {session_id}: {mode} {tunnel_name}{path}");
+                let target = {
+                    let defs = tunnel_defs.read().await;
+                    defs.get(&tunnel_name).cloned()
+                };
+                let relay = relay_url.to_string();
+                let tok = token.to_string();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_proxy_session(
+                        &relay, &tok, &session_id, &session_secret, target, &mode, &path,
+                    ).await {
+                        tracing::error!("proxy session {session_id} failed: {e:#}");
+                    }
                 });
             }
         }
@@ -349,4 +372,231 @@ async fn handle_proxy_request(
     });
 
     let _ = out_tx.send(msg.to_string()).await;
+}
+
+/// Maximum chunk size for streaming over data WS (must be under relay's WS limit).
+const STREAM_CHUNK_SIZE: usize = 1024 * 1024; // 1 MB
+
+/// Handle a proxy session: connect data WS to relay, then either bridge
+/// to a local WebSocket or stream an HTTP request/response.
+async fn handle_proxy_session(
+    relay_url: &str,
+    token: &str,
+    session_id: &str,
+    session_secret: &str,
+    target: Option<TunnelTarget>,
+    mode: &str,
+    path: &str,
+) -> anyhow::Result<()> {
+    use tokio_tungstenite::tungstenite;
+
+    let Some(target) = target else {
+        anyhow::bail!("tunnel not found");
+    };
+
+    // Connect data WS to relay
+    let ws_url = format!(
+        "{relay_url}/api/daemon/session/{session_id}?session_secret={}",
+        urlencoding::encode(session_secret),
+    );
+    let host = crate::ws_reconnect::extract_host(relay_url)?;
+    let request = tungstenite::http::Request::builder()
+        .uri(ws_url.parse::<tungstenite::http::Uri>()?)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Sec-WebSocket-Key", tungstenite::handshake::client::generate_key())
+        .header("Sec-WebSocket-Version", "13")
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Host", &host)
+        .body(())?;
+
+    let (data_ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .context("proxy session data WS connect failed")?;
+
+    tracing::debug!("proxy session {session_id} data WS connected");
+
+    match mode {
+        "websocket" => proxy_session_websocket(data_ws, &target, path).await,
+        "stream" => proxy_session_stream(data_ws, &target, path).await,
+        _ => anyhow::bail!("unknown proxy session mode: {mode}"),
+    }
+}
+
+/// Bridge relay data WS ↔ local service WS.
+async fn proxy_session_websocket(
+    data_ws: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    target: &TunnelTarget,
+    path: &str,
+) -> anyhow::Result<()> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite;
+
+    let local_url = format!("ws://{}:{}{path}", target.host, target.port);
+    let (local_ws, _) = tokio_tungstenite::connect_async(&local_url)
+        .await
+        .context("local WS connect failed")?;
+
+    tracing::info!("proxy WS session bridging to {local_url}");
+
+    let (mut data_sink, mut data_stream) = data_ws.split();
+    let (mut local_sink, mut local_stream) = local_ws.split();
+
+    let data_to_local = async {
+        while let Some(Ok(msg)) = data_stream.next().await {
+            match msg {
+                tungstenite::Message::Binary(d) => {
+                    if local_sink.send(tungstenite::Message::Binary(d)).await.is_err() { break; }
+                }
+                tungstenite::Message::Text(t) => {
+                    if local_sink.send(tungstenite::Message::Text(t)).await.is_err() { break; }
+                }
+                tungstenite::Message::Close(_) => break,
+                _ => {}
+            }
+        }
+    };
+
+    let local_to_data = async {
+        while let Some(Ok(msg)) = local_stream.next().await {
+            match msg {
+                tungstenite::Message::Binary(d) => {
+                    if data_sink.send(tungstenite::Message::Binary(d)).await.is_err() { break; }
+                }
+                tungstenite::Message::Text(t) => {
+                    if data_sink.send(tungstenite::Message::Text(t)).await.is_err() { break; }
+                }
+                tungstenite::Message::Close(_) => break,
+                _ => {}
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = data_to_local => {}
+        _ = local_to_data => {}
+    }
+    tracing::info!("proxy WS session ended");
+    Ok(())
+}
+
+/// Stream HTTP response from local service through relay data WS.
+///
+/// Protocol:
+/// 1. Daemon reads first text message from relay: JSON `{ method, path, headers, body? }`
+/// 2. If body present, relay sends binary chunks (request body)
+/// 3. Relay sends a text message `"end_request"` to signal request body is complete
+/// 4. Daemon sends text message: JSON `{ status, headers }` (response headers)
+/// 5. Daemon sends binary messages: response body chunks (≤ STREAM_CHUNK_SIZE)
+/// 6. Daemon closes the WS
+async fn proxy_session_stream(
+    data_ws: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    target: &TunnelTarget,
+    path: &str,
+) -> anyhow::Result<()> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite;
+
+    let (mut sink, mut stream) = data_ws.split();
+
+    // Read the request details from the first message
+    let first_msg = stream.next().await
+        .ok_or_else(|| anyhow::anyhow!("data WS closed before request"))?
+        .context("data WS read error")?;
+
+    let req_json: serde_json::Value = match first_msg {
+        tungstenite::Message::Text(t) => serde_json::from_str(&t)?,
+        _ => anyhow::bail!("expected text message with request details"),
+    };
+
+    let method = req_json["method"].as_str().unwrap_or("GET");
+    let req_path = req_json["path"].as_str().unwrap_or(path);
+    let url = format!("http://{}:{}{req_path}", target.host, target.port);
+
+    let client = reqwest::Client::new();
+    let mut req = match method {
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        _ => client.get(&url),
+    };
+
+    // Forward headers
+    if let Some(headers) = req_json["headers"].as_object() {
+        for (k, v) in headers {
+            let lk = k.to_lowercase();
+            if lk == "host" || lk == "connection" || lk == "transfer-encoding" { continue; }
+            if let Some(val) = v.as_str() {
+                req = req.header(k.as_str(), val);
+            }
+        }
+    }
+
+    // Collect request body chunks from data WS until "end_request"
+    let has_body = req_json.get("has_body").and_then(|v| v.as_bool()).unwrap_or(false);
+    if has_body {
+        let mut body_bytes = Vec::new();
+        while let Some(Ok(msg)) = stream.next().await {
+            match msg {
+                tungstenite::Message::Binary(chunk) => body_bytes.extend_from_slice(&chunk),
+                tungstenite::Message::Text(t) if t.as_str() == "end_request" => break,
+                _ => break,
+            }
+        }
+        req = req.body(body_bytes);
+    }
+
+    // Make the request
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let err = serde_json::json!({ "status": 502, "headers": [] });
+            let _ = sink.send(tungstenite::Message::Text(err.to_string().into())).await;
+            anyhow::bail!("local request failed: {e}");
+        }
+    };
+
+    let status = resp.status().as_u16();
+    let headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    // Send response headers
+    let header_msg = serde_json::json!({ "status": status, "headers": headers });
+    sink.send(tungstenite::Message::Text(header_msg.to_string().into()))
+        .await
+        .context("failed to send response headers")?;
+
+    // Stream response body in chunks respecting WS size limit
+    let mut body_stream = resp.bytes_stream();
+    let mut buf = Vec::new();
+    while let Some(chunk) = body_stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                buf.extend_from_slice(&bytes);
+                while buf.len() >= STREAM_CHUNK_SIZE {
+                    let chunk: Vec<u8> = buf.drain(..STREAM_CHUNK_SIZE).collect();
+                    if sink.send(tungstenite::Message::Binary(chunk.into())).await.is_err() {
+                        return Ok(());
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("stream chunk error: {e}");
+                break;
+            }
+        }
+    }
+    // Flush remaining
+    if !buf.is_empty() {
+        let _ = sink.send(tungstenite::Message::Binary(buf.into())).await;
+    }
+
+    let _ = sink.send(tungstenite::Message::Close(None)).await;
+    tracing::debug!("proxy stream session ended");
+    Ok(())
 }

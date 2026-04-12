@@ -19,6 +19,78 @@ struct PendingSession {
 static PENDING_SESSIONS: LazyLock<Mutex<HashMap<String, PendingSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Pending proxy session: a browser WebSocket waiting for the daemon's data channel.
+struct PendingProxySession {
+    ws: WebSocket,
+    secret: String,
+    created_at: Instant,
+}
+
+static PENDING_PROXY_SESSIONS: LazyLock<Mutex<HashMap<String, PendingProxySession>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn register_pending_proxy_session(session_id: String, secret: String, ws: WebSocket) {
+    let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
+    sessions.insert(session_id.clone(), PendingProxySession {
+        ws,
+        secret,
+        created_at: Instant::now(),
+    });
+    tracing::debug!("registered pending proxy session {session_id}");
+}
+
+pub fn take_pending_proxy_session(session_id: &str, secret: &str) -> Option<WebSocket> {
+    let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
+    if let Some(pending) = sessions.get(session_id) {
+        if pending.secret != secret {
+            tracing::warn!("proxy session {session_id}: secret mismatch");
+            return None;
+        }
+        if pending.created_at.elapsed() > SESSION_TTL {
+            sessions.remove(session_id);
+            return None;
+        }
+        return sessions.remove(session_id).map(|p| p.ws);
+    }
+    None
+}
+
+/// Bridge two WebSockets bidirectionally.
+pub async fn bridge_ws_ws(ws_a: WebSocket, ws_b: WebSocket) {
+    let (mut a_sink, mut a_stream) = ws_a.split();
+    let (mut b_sink, mut b_stream) = ws_b.split();
+
+    let a_to_b = async {
+        while let Some(msg) = a_stream.next().await {
+            match msg {
+                Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
+                    if b_sink.send(msg).await.is_err() { break; }
+                }
+                Ok(Message::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+    };
+
+    let b_to_a = async {
+        while let Some(msg) = b_stream.next().await {
+            match msg {
+                Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
+                    if a_sink.send(msg).await.is_err() { break; }
+                }
+                Ok(Message::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = a_to_b => {}
+        _ = b_to_a => {}
+    }
+    tracing::debug!("ws-ws bridge closed");
+}
+
 pub fn register_pending_session(session_id: String, secret: String, stream: TcpStream) {
     let count = {
         let mut sessions = PENDING_SESSIONS.lock().unwrap();
@@ -55,18 +127,24 @@ pub fn take_pending_session(session_id: &str, secret: &str) -> Option<TcpStream>
 
 /// Remove sessions that have been pending longer than the TTL.
 pub fn cleanup_expired() {
-    let mut sessions = PENDING_SESSIONS.lock().unwrap();
-    let before = sessions.len();
-    sessions.retain(|id, s| {
-        let expired = s.created_at.elapsed() > SESSION_TTL;
-        if expired {
-            tracing::info!("expiring stale pending session {id}");
-        }
-        !expired
-    });
-    let removed = before - sessions.len();
-    if removed > 0 {
-        tracing::debug!("cleaned up {removed} expired pending session(s)");
+    {
+        let mut sessions = PENDING_SESSIONS.lock().unwrap();
+        let before = sessions.len();
+        sessions.retain(|id, s| {
+            let expired = s.created_at.elapsed() > SESSION_TTL;
+            if expired { tracing::info!("expiring stale pending session {id}"); }
+            !expired
+        });
+        let removed = before - sessions.len();
+        if removed > 0 { tracing::debug!("cleaned up {removed} expired pending session(s)"); }
+    }
+    {
+        let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
+        sessions.retain(|id, s| {
+            let expired = s.created_at.elapsed() > SESSION_TTL;
+            if expired { tracing::info!("expiring stale pending proxy session {id}"); }
+            !expired
+        });
     }
 }
 
