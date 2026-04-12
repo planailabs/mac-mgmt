@@ -125,13 +125,31 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
     outline: none;
   }
   #url:focus { border-color: #89b4fa; }
-  #frame { flex: 1; border: none; width: 100%; }
+  #frame { flex: 1; border: none; width: 100%; display: none; }
+  #spinner {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    background: #1e1e2e; color: #6c7086; font-size: 14px; gap: 10px;
+  }
+  #spinner .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #89b4fa;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  #spinner .dot:nth-child(2) { animation-delay: 0.2s; }
+  #spinner .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1.2); }
+  }
 </style>
 </head>
 <body>
 <div id="bar">
   <span class="label">{{TUNNEL_NAME}}</span>
   <input id="url" type="text" spellcheck="false" autocomplete="off">
+</div>
+<div id="spinner">
+  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+  <span>Connecting to tunnel...</span>
 </div>
 <iframe id="frame"></iframe>
 <script type="module">
@@ -144,9 +162,16 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
 
   const urlBar = document.getElementById('url');
   const frame = document.getElementById('frame');
+  const spinner = document.getElementById('spinner');
 
+  // Register service worker
   const reg = await navigator.serviceWorker.register('/proxy_sw.js', { type: 'module' });
 
+  // If there's already a controlling SW but we got a new one, reload so the
+  // new SW intercepts all requests from the start.
+  const needsReload = navigator.serviceWorker.controller && reg.waiting;
+
+  // Wait for the SW to be active
   await new Promise((resolve) => {
     const sw = reg.active ?? reg.installing ?? reg.waiting;
     if (sw.state === 'activated') { resolve(); return; }
@@ -155,9 +180,30 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
     });
   });
 
-  const sw = reg.active;
-  sw.postMessage({ type: 'init', proxyToken });
+  // Send token to the active SW
+  reg.active.postMessage({ type: 'init', proxyToken });
+
+  // If a stale SW was controlling the page, reload so the new one takes over
+  if (needsReload) {
+    location.reload();
+    throw new Error('reloading for new service worker');
+  }
+
+  // Wait for the SW to be controlling this page
+  if (!navigator.serviceWorker.controller) {
+    await new Promise((resolve) => {
+      navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+    });
+    // Re-send token after controller change
+    reg.active.postMessage({ type: 'init', proxyToken });
+  }
+
+  // Small delay so the SW processes the init message
   await new Promise(r => setTimeout(r, 50));
+
+  // Hide spinner, show iframe
+  spinner.style.display = 'none';
+  frame.style.display = 'block';
 
   function toDisplayUrl(realPath) {
     return realPath.replace(/^\/proxy_content/, '') || '/';
@@ -191,7 +237,6 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
     } catch (_) { /* cross-origin, ignore */ }
   }
   frame.addEventListener('load', syncUrlBar);
-  // Poll for SPA-style navigation (pushState doesn't fire load)
   setInterval(syncUrlBar, 500);
 
   navigate('/proxy_content/');
