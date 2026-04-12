@@ -4,12 +4,13 @@ Welcome to mac-mgmt! This guide will help you get up and running.
 
 ## Overview
 
-mac-mgmt is a fleet management system for macOS devices. It provides:
+mac-mgmt is a fleet management system for macOS and Linux devices. It provides:
 
-- **Cluster management** — organize devices into clusters
-- **Skill deployment** — push skills to devices
-- **MCP server management** — configure Model Context Protocol servers
+- **Cluster management** — organize devices into clusters with per-cluster configuration
+- **Skill deployment** — push Nix-packaged skills to devices
+- **MCP server management** — configure Model Context Protocol servers for OpenClaw
 - **Rollout control** — staged rollouts with groups and scheduling
+- **Fleet monitoring** — heartbeats, metrics, and notifications
 
 ## Quick Start
 
@@ -22,19 +23,28 @@ mac-mgmt is a fleet management system for macOS devices. It provides:
 
 ### Clusters
 
-A cluster represents a managed macOS or Linux device. Each cluster has a unique identifier
-and can be assigned skills, MCP servers, and configuration.
+A cluster represents a managed macOS or Linux device. Each cluster has a unique identifier and can be assigned skills, MCP servers, and configuration. See [Cluster Setup](/docs/cluster-setup) for setup instructions.
 
-### Skills
+### Configuration
 
-Skills are Nix-packaged tools or applications that can be deployed to clusters.
-They are organized by slug and can have multiple release channels.
+Each cluster has a JSON configuration that controls the daemon, LLM providers, notifications, and more. See the [Configuration Reference](/docs/configuration-reference) for all available settings.
 
-### Bundles
+### Skills and Bundles
 
-Bundles group multiple skills together for easier assignment to clusters.
+Skills are Nix-packaged tools that can be deployed to clusters. Bundles group skills for convenient assignment. See [Skills and Bundles](/docs/skills-and-bundles) for details.
 
-### Rollout Groups
+### Tokens and API
 
-Rollout groups allow you to stage deployments across your fleet, ensuring
-changes are tested on a subset of devices before wider rollout.
+All programmatic access uses bearer tokens with three scope levels. See [Tokens and API](/docs/tokens-and-api) for authentication details.
+
+### Rollouts
+
+Rollouts let you stage daemon version updates across your fleet. See [Rollouts](/docs/rollouts) for the full workflow.
+
+### Organizations
+
+Organizations group clusters and users for multi-tenant management. See [Organizations](/docs/organizations) for details.
+
+### Monitoring
+
+The Fleet dashboard, Prometheus metrics, and Apprise notifications keep you informed. See [Fleet Monitoring](/docs/fleet-monitoring) for setup.
