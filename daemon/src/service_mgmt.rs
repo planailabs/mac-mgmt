@@ -6,6 +6,7 @@ use tokio::task::JoinHandle;
 use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
+use crate::config_providers::{ConfigStore, ConnectorSnapshot};
 use crate::managed_service::{ManagedService, ServiceMode, TunnelDef};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
@@ -122,7 +123,10 @@ impl ExternalServiceState {
 
 struct ConnectorState {
     connector: Box<dyn Connector>,
-    done: bool,
+    /// Snapshot of config provider versions when the connector last ran.
+    last_snapshot: ConnectorSnapshot,
+    /// Whether the connector has run at least once.
+    ran: bool,
 }
 
 enum ServiceBackend {
@@ -136,8 +140,8 @@ pub struct ServiceManager {
     connectors: Vec<ConnectorState>,
     dispatcher: Arc<Dispatcher>,
     log_buf: LogBuffer,
-    /// Virtual services (e.g. "relay") that connectors can depend on.
-    virtual_services: std::collections::HashMap<String, serde_json::Value>,
+    /// Reactive config store for connector dependencies.
+    pub config_store: ConfigStore,
 }
 
 impl ServiceManager {
@@ -154,6 +158,27 @@ impl ServiceManager {
         let nexa_cfg = std::mem::take(&mut cfg.nexa);
         let lms_cfg = std::mem::take(&mut cfg.lms);
         let cloud_cfg = std::mem::take(&mut cfg.cloud);
+
+        // Initialize config store with disk cache for relay/persistent state.
+        let cache_dir = crate::config::config_dir().join("config_providers.json");
+        let mut config_store = ConfigStore::new(Some(cache_dir));
+
+        // Register service configs as providers.
+        if let Ok(v) = serde_json::to_value(&ollama_cfg) {
+            config_store.set("ollama", v);
+        }
+        if let Ok(v) = serde_json::to_value(&nexa_cfg) {
+            config_store.set("nexa", v);
+        }
+        if let Ok(v) = serde_json::to_value(&lms_cfg) {
+            config_store.set("lms", v);
+        }
+        if let Ok(v) = serde_json::to_value(&openclaw_cfg) {
+            config_store.set("openclaw", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cloud_cfg) {
+            config_store.set("cloud", v);
+        }
 
         let connectors = connectors::build_connectors(
             &global_cfg, &ollama_cfg, &nexa_cfg, &lms_cfg, &cloud_cfg,
@@ -290,7 +315,11 @@ impl ServiceManager {
 
         let connectors = connectors
             .into_iter()
-            .map(|c| ConnectorState { connector: c, done: false })
+            .map(|c| ConnectorState {
+                connector: c,
+                last_snapshot: ConnectorSnapshot::default(),
+                ran: false,
+            })
             .collect();
 
         Ok(Self {
@@ -299,7 +328,7 @@ impl ServiceManager {
             connectors,
             dispatcher,
             log_buf,
-            virtual_services: std::collections::HashMap::new(),
+            config_store,
         })
     }
 
@@ -726,10 +755,11 @@ impl ServiceManager {
 
     fn run_connectors(&mut self) {
         for cs in &mut self.connectors {
-            if cs.done { continue; }
-            let deps_ready = cs.connector.depends_on().iter().all(|dep| {
-                // Check virtual services first
-                if self.virtual_services.contains_key(*dep) {
+            let deps = cs.connector.depends_on();
+
+            // All deps must be satisfied: either a running service or a config provider.
+            let deps_ready = deps.iter().all(|dep| {
+                if self.config_store.get(dep).is_some() {
                     return true;
                 }
                 match &self.backend {
@@ -742,12 +772,19 @@ impl ServiceManager {
                 }
             });
             if !deps_ready { continue; }
+
+            // Re-run if never ran, or if any config provider dependency changed.
+            let should_run = !cs.ran || self.config_store.any_changed(deps, &cs.last_snapshot);
+            if !should_run { continue; }
+
             let name = cs.connector.name();
+            let configs = self.config_store.values_for(deps);
             tracing::info!("running connector: {name}");
-            if let Err(e) = cs.connector.connect(&self.virtual_services) {
+            if let Err(e) = cs.connector.connect(&configs) {
                 tracing::error!("connector {name} failed: {e}");
             }
-            cs.done = true;
+            cs.last_snapshot = self.config_store.snapshot(deps);
+            cs.ran = true;
         }
     }
 
@@ -819,19 +856,6 @@ impl ServiceManager {
                 })
             }).collect(),
         }
-    }
-
-    // ── Virtual services ─────────────────────────────────────────────
-
-    /// Register a virtual service as ready with associated metadata.
-    /// Connectors that depend on this name will be unblocked.
-    pub fn set_virtual_service(&mut self, name: &str, metadata: serde_json::Value) {
-        self.virtual_services.insert(name.to_string(), metadata);
-    }
-
-    /// Get the metadata for a virtual service, if it's been registered.
-    pub fn get_virtual_service(&self, name: &str) -> Option<&serde_json::Value> {
-        self.virtual_services.get(name)
     }
 
     // ── Tunnel collection ────────────────────────────────────────────

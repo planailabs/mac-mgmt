@@ -14,6 +14,8 @@ mod log_layer;
 mod events;
 mod logs;
 #[cfg(feature = "services")]
+mod config_providers;
+#[cfg(feature = "services")]
 mod managed_service;
 mod mcp_servers;
 mod metrics;

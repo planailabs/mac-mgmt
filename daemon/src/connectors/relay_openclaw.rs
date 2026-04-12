@@ -18,8 +18,8 @@ impl Connector for RelayOpenClaw {
         &["relay", "openclaw"]
     }
 
-    fn connect(&self, virtual_services: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
-        let Some(relay_meta) = virtual_services.get("relay") else {
+    fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+        let Some(relay_meta) = configs.get("relay") else {
             tracing::warn!("relay virtual service not found, skipping");
             return Ok(());
         };

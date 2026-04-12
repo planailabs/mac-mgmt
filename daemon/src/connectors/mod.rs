@@ -11,12 +11,17 @@ use crate::services::{apprise::Apprise, lms::Lms, mcporter::McPorter, nexa::Nexa
 use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, NexaConfig, OllamaConfig, OpenClawConfig};
 
 /// A connector wires two services together after they are both healthy.
+///
+/// Dependencies are either managed service names (must have post_start done)
+/// or config provider names (must be set in the ConfigStore). When any
+/// dependency changes, the connector is re-run.
 pub trait Connector: Send {
     fn name(&self) -> &str;
-    /// Service names this connector depends on. It runs once all of them
-    /// have completed their `post_start` (or are registered as virtual services).
+    /// Names of services and/or config providers this connector depends on.
     fn depends_on(&self) -> &[&str];
-    fn connect(&self, virtual_services: &std::collections::HashMap<String, serde_json::Value>) -> Result<()>;
+    /// Run the connector. `configs` contains the current values of all
+    /// config provider dependencies.
+    fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()>;
 }
 
 /// Build the list of managed services based on global provider settings.

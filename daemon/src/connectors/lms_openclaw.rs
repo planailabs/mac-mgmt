@@ -22,7 +22,7 @@ impl Connector for LmsOpenClaw {
         &["lms", "openclaw"]
     }
 
-    fn connect(&self, _virtual_services: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+    fn connect(&self, _configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
         tracing::info!(
             "connecting lms to openclaw (baseUrl={base_url}, model={})",
