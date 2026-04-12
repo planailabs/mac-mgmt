@@ -8,6 +8,7 @@ pub struct DocEntry {
     pub slug: String,
     pub title: String,
     pub audience: String,
+    pub ordering_override: Option<i32>,
 }
 
 #[cfg(feature = "server")]
@@ -66,6 +67,10 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
                 .find(|(k, _)| k == "audience")
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
+            let ordering_override = frontmatter
+                .iter()
+                .find(|(k, _)| k == "ordering_override")
+                .and_then(|(_, v)| v.parse::<i32>().ok());
             let title = body
                 .lines()
                 .find(|l| l.starts_with("# "))
@@ -75,10 +80,15 @@ async fn list_docs() -> Result<Vec<DocEntry>, ServerFnError> {
                 slug,
                 title,
                 audience,
+                ordering_override,
             })
         })
         .collect();
-    entries.sort_by(|a, b| a.title.cmp(&b.title));
+    entries.sort_by(|a, b| {
+        let oa = a.ordering_override.unwrap_or(0);
+        let ob = b.ordering_override.unwrap_or(0);
+        oa.cmp(&ob).then_with(|| a.title.cmp(&b.title))
+    });
     Ok(entries)
 }
 
