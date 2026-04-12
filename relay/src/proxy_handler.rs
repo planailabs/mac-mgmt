@@ -138,7 +138,7 @@ struct ProxyBootstrapQuery {
     proxy_token: String,
 }
 
-/// Store the proxy_token as an HttpOnly, SameSite=Strict cookie scoped to
+/// Store the proxy_token as an HttpOnly, SameSite=Lax cookie scoped to
 /// this subdomain, then redirect to /.
 async fn proxy_bootstrap(
     headers: HeaderMap,
@@ -158,7 +158,7 @@ async fn proxy_bootstrap(
     let host_no_port = host.split(':').next().unwrap_or(host);
 
     let cookie = format!(
-        "{PROXY_TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Domain={host_no_port}; Max-Age=21600",
+        "{PROXY_TOKEN_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Domain={host_no_port}; Max-Age=21600",
         query.proxy_token,
     );
 
