@@ -169,6 +169,28 @@ pub fn restart() -> Result<()> {
 const TEMPLATE_UNIT: &str = "mac-mgmt-service@.service";
 const TEMPLATE_INSTANCE_PREFIX: &str = "mac-mgmt-service@";
 
+/// Create a `systemctl --user` command with the D-Bus session env vars set.
+/// If `DBUS_SESSION_BUS_ADDRESS` is missing (e.g. running via sudo or a system
+/// service), derives it from the current user's UID.
+fn systemctl_user(args: &[&str]) -> Command {
+    let mut cmd = Command::new("systemctl");
+    cmd.arg("--user");
+    cmd.args(args);
+
+    // Ensure the user D-Bus session is reachable.
+    let uid = unsafe { libc::getuid() };
+    if std::env::var("XDG_RUNTIME_DIR").is_err() {
+        cmd.env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"));
+    }
+    if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
+        cmd.env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path=/run/user/{uid}/bus"),
+        );
+    }
+    cmd
+}
+
 fn user_unit_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -226,8 +248,7 @@ fn ensure_template_unit() -> Result<()> {
             .with_context(|| format!("write {}", path.display()))?;
         tracing::info!("wrote template unit {}", path.display());
 
-        let status = Command::new("systemctl")
-            .args(["--user", "daemon-reload"])
+        let status = systemctl_user(&["daemon-reload"])
             .status()
             .context("systemctl --user daemon-reload")?;
         if !status.success() {
@@ -241,8 +262,7 @@ fn ensure_template_unit() -> Result<()> {
 /// Check if a per-service systemd user unit instance is enabled.
 pub fn is_managed_service_installed(service_name: &str) -> bool {
     let unit = instance_unit_name(service_name);
-    Command::new("systemctl")
-        .args(["--user", "is-enabled", "--quiet", &unit])
+    systemctl_user(&["is-enabled", "--quiet", &unit])
         .status()
         .is_ok_and(|s| s.success())
 }
@@ -255,14 +275,11 @@ pub fn install_managed_service(service_name: &str) -> Result<()> {
     // If already enabled, just ensure it's running.
     if is_managed_service_installed(service_name) {
         tracing::info!("managed service {service_name} already enabled, ensuring running");
-        let _ = Command::new("systemctl")
-            .args(["--user", "start", &unit])
-            .status();
+        let _ = systemctl_user(&["start", &unit]).status();
         return Ok(());
     }
 
-    let status = Command::new("systemctl")
-        .args(["--user", "enable", "--now", &unit])
+    let status = systemctl_user(&["enable", "--now", &unit])
         .status()
         .with_context(|| format!("systemctl --user enable --now {unit}"))?;
 
@@ -277,9 +294,7 @@ pub fn install_managed_service(service_name: &str) -> Result<()> {
 pub fn uninstall_managed_service(service_name: &str) -> Result<()> {
     let unit = instance_unit_name(service_name);
 
-    let _ = Command::new("systemctl")
-        .args(["--user", "disable", "--now", &unit])
-        .status();
+    let _ = systemctl_user(&["disable", "--now", &unit]).status();
 
     // Clean up socket file.
     #[cfg(feature = "services")]
@@ -296,8 +311,7 @@ pub fn start_managed_service(service_name: &str) -> Result<()> {
     ensure_template_unit()?;
 
     let unit = instance_unit_name(service_name);
-    let status = Command::new("systemctl")
-        .args(["--user", "start", &unit])
+    let status = systemctl_user(&["start", &unit])
         .status()
         .with_context(|| format!("systemctl --user start {unit}"))?;
 
@@ -309,17 +323,13 @@ pub fn start_managed_service(service_name: &str) -> Result<()> {
 
 pub fn stop_managed_service(service_name: &str) -> Result<()> {
     let unit = instance_unit_name(service_name);
-    let _ = Command::new("systemctl")
-        .args(["--user", "stop", &unit])
-        .status();
+    let _ = systemctl_user(&["stop", &unit]).status();
     Ok(())
 }
 
 /// List service names that have enabled per-service systemd user units.
 pub fn list_managed_service_units() -> Result<Vec<String>> {
-    let output = Command::new("systemctl")
-        .args([
-            "--user",
+    let output = systemctl_user(&[
             "list-units",
             &format!("{TEMPLATE_INSTANCE_PREFIX}*"),
             "--no-legend",
