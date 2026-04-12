@@ -213,7 +213,7 @@ pub async fn run(
         });
     }
     #[cfg(feature = "relay")]
-    relay_mgr.sync_ssh_keys().await;
+    relay_mgr.sync_ssh_keys();
 
     macro_rules! handle_update {
         () => {
@@ -255,7 +255,7 @@ pub async fn run(
                 }
 
                 #[cfg(feature = "relay")]
-                relay_mgr.sync_ssh_keys().await;
+                relay_mgr.sync_ssh_keys();
 
                 if in_upgrade_window!() {
                     #[cfg(feature = "services")]
@@ -366,11 +366,11 @@ pub async fn run(
                     #[cfg(feature = "relay")]
                     {
                         let td = tunnel_defs;
-                        relay_mgr.update_tunnel_defs(td).await;
+                        relay_mgr.update_tunnel_defs(td);
                     }
 
                     #[cfg(feature = "relay")]
-                    let rph = relay_mgr.relay_proxy_hostname().await;
+                    let rph = relay_mgr.relay_proxy_hostname();
                     #[cfg(not(feature = "relay"))]
                     let rph: Option<String> = None;
 
@@ -425,7 +425,7 @@ pub async fn run(
                     }
                     crate::server_push::PushCommand::SyncSshKeys => {
                         #[cfg(feature = "relay")]
-                        relay_mgr.sync_ssh_keys().await;
+                        relay_mgr.sync_ssh_keys();
                     }
                     crate::server_push::PushCommand::SelfUpdate => {
                         tracing::info!("server push: self-update requested");
@@ -474,7 +474,7 @@ pub async fn run(
                     });
                 }
                 #[cfg(feature = "relay")]
-                relay_mgr.sync_ssh_keys().await;
+                relay_mgr.sync_ssh_keys();
             }
         };
     }

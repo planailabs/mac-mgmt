@@ -104,16 +104,21 @@ impl Manager {
         }, heartbeat_rx)
     }
 
-    /// Sync SSH keys from the server. Call periodically (e.g. every hour).
-    pub async fn sync_ssh_keys(&self) {
+    /// Sync SSH keys from the server in a background task (non-blocking).
+    pub fn sync_ssh_keys(&self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
-            match ssh_keys::sync(url, token).await {
-                Ok(keys) => {
-                    tracing::debug!("synced {} SSH key(s) from server", keys.len());
-                    *self.server_ssh_keys.write().await = keys;
+            let url = url.clone();
+            let token = token.clone();
+            let keys_store = Arc::clone(&self.server_ssh_keys);
+            tokio::spawn(async move {
+                match ssh_keys::sync(&url, &token).await {
+                    Ok(keys) => {
+                        tracing::debug!("synced {} SSH key(s) from server", keys.len());
+                        *keys_store.write().await = keys;
+                    }
+                    Err(e) => tracing::warn!("SSH keys sync failed: {e}"),
                 }
-                Err(e) => tracing::warn!("SSH keys sync failed: {e}"),
-            }
+            });
         }
     }
 
@@ -123,35 +128,45 @@ impl Manager {
     }
 
     /// Return the relay's proxy hostname (set after registration).
-    pub async fn relay_proxy_hostname(&self) -> Option<String> {
-        self.relay_proxy_hostname.read().await.clone()
+    /// Uses try_read to avoid blocking the main loop.
+    pub fn relay_proxy_hostname(&self) -> Option<String> {
+        self.relay_proxy_hostname.try_read().ok()?.clone()
     }
 
     /// Update the tunnel definitions and re-advertise to the relay.
-    pub async fn update_tunnel_defs(&self, defs: Vec<crate::managed_service::TunnelDef>) {
+    /// All operations are non-blocking to avoid stalling the main event loop.
+    pub fn update_tunnel_defs(&self, defs: Vec<crate::managed_service::TunnelDef>) {
         let tunnels_json: Vec<serde_json::Value> = defs
             .iter()
             .map(|t| serde_json::json!({ "name": t.name, "tcp_port": t.tcp_port }))
             .collect();
 
-        let mut map = self.tunnel_defs.write().await;
+        let Ok(mut map) = self.tunnel_defs.try_write() else {
+            tracing::warn!("tunnel_defs lock contention, skipping update");
+            return;
+        };
         map.clear();
         for d in defs {
             map.insert(d.name.clone(), TunnelTarget { host: d.host, port: d.tcp_port });
         }
         drop(map);
 
-        // Re-advertise to the relay if connected.
-        if let Some(tx) = self.ws_outgoing_tx.read().await.as_ref() {
+        // Re-advertise to the relay if connected (non-blocking to avoid stalling the main loop).
+        let Ok(ws_tx_guard) = self.ws_outgoing_tx.try_read() else { return; };
+        if let Some(tx) = ws_tx_guard.as_ref() {
             let advert = serde_json::json!({
                 "type": "tunnel_advertisement",
                 "tunnels": tunnels_json,
             });
-            let _ = tx.send(advert.to_string()).await;
+            if tx.try_send(advert.to_string()).is_err() {
+                tracing::warn!("relay WS outgoing channel full, tunnel advertisement dropped");
+            }
         }
 
         // Signal the main loop to send a heartbeat with the updated tunnels.
-        let _ = self.heartbeat_tx.try_send(());
+        if self.heartbeat_tx.try_send(()).is_err() {
+            tracing::debug!("heartbeat signal channel full, heartbeat will fire on next tick");
+        }
     }
 
     /// Clean up resources (FIFO) on shutdown.
