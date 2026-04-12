@@ -252,7 +252,13 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
         )
         .mount(
             "/",
-            SwaggerUi::new("/api/swagger-ui/<_..>")
-                .url("/api/openapi.json", ApiDoc::openapi()),
+            {
+                let openapi_url: &'static str = Box::leak(format!(
+                    "{}/api/openapi.json",
+                    crate::config::config().api.external_url.trim_end_matches('/')
+                ).into_boxed_str());
+                SwaggerUi::new("/api/swagger-ui/<_..>")
+                    .url(openapi_url, ApiDoc::openapi())
+            },
         )
 }
