@@ -301,7 +301,11 @@ async function proxyFetch(request, url) {
   for (const [k, v] of (data.headers ?? [])) {
     // Skip headers that would conflict with the service worker response
     const lk = k.toLowerCase();
-    if (lk === 'content-encoding' || lk === 'transfer-encoding' || lk === 'content-length') continue;
+    if (lk === 'content-encoding' || lk === 'transfer-encoding' || lk === 'content-length'
+        || lk === 'x-frame-options' || lk === 'content-security-policy'
+        || lk === 'x-content-type-options' || lk === 'cross-origin-opener-policy'
+        || lk === 'cross-origin-embedder-policy' || lk === 'cross-origin-resource-policy'
+        || lk === 'permissions-policy') continue;
     try { respHeaders.append(k, v); } catch(_) {}
   }
   const respBody = data.body ? base64ToArray(data.body) : null;
