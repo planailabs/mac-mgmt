@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
+#[server]
+async fn get_swagger_url() -> Result<String, ServerFnError> {
+    let cfg = crate::config::config();
+    let base = cfg.api.external_url.trim_end_matches('/');
+    Ok(format!("{base}/api/swagger-ui/"))
+}
+
 /// Theme preference: system (follow OS), light (forced), or dark (forced).
 /// Cycles: system → light → dark → system
 #[derive(Clone, Copy, PartialEq)]
@@ -88,6 +95,16 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool) -> Element {
     let mut is_open = use_signal(|| false);
     // Theme state
     let mut theme = use_signal(|| ThemeMode::System);
+
+    // Fetch swagger URL from config (only meaningful for admins)
+    let swagger_fut = use_server_future(get_swagger_url);
+    let swagger_url: Option<String> = match swagger_fut {
+        Ok(ref fut) => match &*fut.read() {
+            Some(Ok(url)) => Some(url.clone()),
+            _ => None,
+        },
+        Err(_) => None,
+    };
 
     // On mount: read localStorage.theme to sync signal with actual state
     use_effect(move || {
@@ -194,6 +211,17 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool) -> Element {
                                 "{label}"
                             }
                         }
+                        // Swagger UI link (admin-only, external)
+                        if is_admin {
+                            if let Some(ref url) = swagger_url {
+                                a {
+                                    href: "{url}",
+                                    target: "_blank",
+                                    class: "whitespace-nowrap px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
+                                    "API Docs"
+                                }
+                            }
+                        }
                         // Impersonation control (only for real admins)
                         if real_is_admin {
                             ImpersonateSelector {}
@@ -255,6 +283,16 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool) -> Element {
                                 active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
                                 onclick: move |_| is_open.set(false), // Close menu when navigating
                                 "{label}"
+                            }
+                        }
+                        if is_admin {
+                            if let Some(ref url) = swagger_url {
+                                a {
+                                    href: "{url}",
+                                    target: "_blank",
+                                    class: "block px-3 py-2 rounded-md text-base font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                    "API Docs"
+                                }
                             }
                         }
                     }

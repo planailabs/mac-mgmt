@@ -7,6 +7,13 @@ use crate::web::components::table_utils::{SortableTh, TableToolbar};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
+/// Return the configured external API base URL.
+#[server]
+async fn get_api_base_url() -> Result<String, ServerFnError> {
+    let cfg = crate::config::config();
+    Ok(cfg.api.external_url.clone())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionCluster {
     pub id: Uuid,
@@ -180,6 +187,12 @@ async fn get_daemon_store_paths(
 
 #[component]
 pub fn DaemonVersionDetail(version: String) -> Element {
+    let api_base = use_server_future(get_api_base_url)?;
+    let api_base_url: String = match &*api_base.read() {
+        Some(Ok(url)) => url.trim_end_matches('/').to_string(),
+        _ => String::new(),
+    };
+
     let v = version.clone();
     let paths = use_server_future(move || {
         let v = v.clone();
@@ -255,14 +268,29 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                                     tr {
                                         SortableTh { label: "System".to_string(), sort_key: "system".to_string(), sort }
                                         SortableTh { label: "Store Path".to_string(), sort_key: "store_path".to_string(), sort }
+                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider",
+                                            ""
+                                        }
                                     }
                                 }
                                 tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
                                     for p in filtered.into_iter().take(limit_val) {
-                                        tr { key: "{p.system}",
-                                            td { class: "px-6 py-4 font-mono text-sm", "{p.system}" }
-                                            td { class: "px-6 py-4 font-mono text-xs text-gray-600 dark:text-gray-300 break-all",
-                                                "{p.store_path}"
+                                        {
+                                            let dl_url = format!("{}/api/daemon-download/{}/{}", api_base_url, version, p.system);
+                                            rsx! {
+                                                tr { key: "{p.system}",
+                                                    td { class: "px-6 py-4 font-mono text-sm", "{p.system}" }
+                                                    td { class: "px-6 py-4 font-mono text-xs text-gray-600 dark:text-gray-300 break-all",
+                                                        "{p.store_path}"
+                                                    }
+                                                    td { class: "px-6 py-4 text-sm",
+                                                        a {
+                                                            href: "{dl_url}",
+                                                            class: "inline-flex items-center px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700",
+                                                            "Download"
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }

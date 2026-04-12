@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rocket::http::Status;
+use rocket::http::{ContentType, Header, Status};
 use rocket::serde::json::Json;
 use rocket::State;
 use chrono::{DateTime, Utc};
@@ -3233,4 +3233,91 @@ pub async fn admin_get_rollout_group(
             cluster_name: m.cluster_name,
         }).collect(),
     }))
+}
+
+// ── Admin — Daemon binary download ────────────────────────────────────
+
+/// Response wrapper that attaches Content-Disposition and
+/// Content-Type headers to a raw file body.
+pub struct BinaryDownload {
+    body: Vec<u8>,
+    filename: String,
+}
+
+impl<'r> rocket::response::Responder<'r, 'static> for BinaryDownload {
+    fn respond_to(self, _req: &'r rocket::Request<'_>) -> rocket::response::Result<'static> {
+        rocket::Response::build()
+            .header(ContentType::Binary)
+            .header(Header::new(
+                "Content-Disposition",
+                format!("attachment; filename=\"{}\"", self.filename),
+            ))
+            .sized_body(self.body.len(), std::io::Cursor::new(self.body))
+            .ok()
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/daemon-download/{version}/{system}",
+    tag = "Download",
+    summary = "Download daemon binary for a version and system",
+    description = "Resolves the nix store path from xzar for `daemon/{version}/{system}`, realises it, and returns the `bin/mac-mgmt` binary. No authentication required.",
+    params(
+        ("version" = String, Path, description = "Daemon version (e.g., 0.1.6)"),
+        ("system" = String, Path, description = "Nix system (e.g., aarch64-darwin)"),
+    ),
+    responses(
+        (status = 200, description = "Binary file"),
+        (status = 404, description = "No store path found for this version/system"),
+        (status = 500, description = "Realisation or read failed"),
+    ),
+)]
+#[rocket::get("/daemon-download/<version>/<system>")]
+pub async fn download_daemon(
+    version: &str,
+    system: &str,
+) -> Result<BinaryDownload, Status> {
+    let cfg = crate::config::config();
+    let xzar = cfg.xzar.as_ref().ok_or_else(|| {
+        tracing::error!("xzar not configured");
+        Status::InternalServerError
+    })?;
+
+    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
+        .await
+        .map_err(|e| {
+            tracing::error!("xzar fetch failed: {e}");
+            Status::InternalServerError
+        })?;
+
+    let pin_name = format!("daemon/{version}/{system}");
+    let store_path = crate::xzar::store_path_for_pin(&pins, &pin_name).ok_or_else(|| {
+        tracing::warn!("no xzar pin found for {pin_name}");
+        Status::NotFound
+    })?;
+
+    // Realise the store path (downloads from binary cache if needed).
+    let output = tokio::process::Command::new("nix-store")
+        .args(["--realise", &store_path])
+        .output()
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to run nix-store --realise: {e}");
+            Status::InternalServerError
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::error!("nix-store --realise failed: {stderr}");
+        return Err(Status::InternalServerError);
+    }
+
+    let bin_path = std::path::Path::new(&store_path).join("bin").join("mac-mgmt");
+    let body = tokio::fs::read(&bin_path).await.map_err(|e| {
+        tracing::error!("failed to read {}: {e}", bin_path.display());
+        Status::InternalServerError
+    })?;
+
+    let filename = format!("mac-mgmt-{version}-{system}");
+    Ok(BinaryDownload { body, filename })
 }

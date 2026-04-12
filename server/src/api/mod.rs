@@ -244,6 +244,8 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::admin_delete_rollout,
                 routes::admin_delete_rollout_group,
                 routes::admin_get_rollout_group,
+                // Daemon binary download (public)
+                routes::download_daemon,
                 // SSE push
                 push::sse_events,
             ],

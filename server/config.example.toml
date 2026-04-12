@@ -4,6 +4,7 @@ url = "postgresql://planai:changeme123@localhost:5432/planai"
 
 [api]
 port = 7378
+# external_url = "https://mgmt.example.com:7378"  # used by web UI for download links and swagger-ui (default: http://localhost:<port>)
 
 [web]
 port = 7377

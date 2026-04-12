@@ -37,12 +37,21 @@ pub struct DatabaseConfig {
 pub struct ApiConfig {
     #[serde(default = "default_api_port")]
     pub port: u16,
+    /// External base URL for the API (e.g. "https://mgmt.example.com:7378").
+    /// Used by the web UI to build links to API endpoints such as binary
+    /// downloads and swagger-ui.
+    #[serde(default = "default_api_external_url")]
+    pub external_url: String,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
-        Self { port: default_api_port() }
+        Self { port: default_api_port(), external_url: default_api_external_url() }
     }
+}
+
+fn default_api_external_url() -> String {
+    format!("http://localhost:{}", default_api_port())
 }
 
 fn default_api_port() -> u16 {
