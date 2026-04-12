@@ -70,6 +70,9 @@
             openssl
             nodejs
 
+            # Dev tools
+            overmind
+
             # For WASM
             wasm-pack
             wasm-bindgen-cli_0_2_114
