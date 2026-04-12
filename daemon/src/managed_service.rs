@@ -96,6 +96,12 @@ pub trait ManagedService {
         false
     }
 
+    /// Check if the service needs a restart due to external changes
+    /// (e.g. env file updates). Called on each health tick.
+    fn needs_restart(&self) -> bool {
+        false
+    }
+
     /// Return Prometheus metric collectors owned by this service.
     /// Called once during init; the daemon registers them with its Registry.
     /// Services should create and store their metrics in their struct and

@@ -2,6 +2,7 @@ pub mod cloud_openclaw;
 pub mod lms_openclaw;
 pub mod nexa_openclaw;
 pub mod ollama_openclaw;
+pub mod relay_ollama;
 pub mod relay_openclaw;
 
 use anyhow::Result;
@@ -74,6 +75,11 @@ pub fn build_connectors(
     cloud_cfg: &CloudConfig,
 ) -> Vec<Box<dyn Connector>> {
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
+
+    // Relay→ollama connector: sets OLLAMA_ORIGINS for the tunnel proxy.
+    if global.llm_provider == LlmProvider::Ollama {
+        connectors.push(Box::new(relay_ollama::RelayOllama));
+    }
 
     if global.agent_provider == AgentProvider::Openclaw {
         connectors.push(Box::new(relay_openclaw::RelayOpenClaw));

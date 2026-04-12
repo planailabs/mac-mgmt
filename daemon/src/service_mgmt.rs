@@ -552,6 +552,12 @@ impl ServiceManager {
                 Err(e) => tracing::error!("failed to check {name} status: {e}"),
             }
 
+            // Check if the service needs a restart due to external changes.
+            if !state.restart_pending && state.healthy && state.service.needs_restart() {
+                tracing::info!("{name} needs restart (external change detected)");
+                state.restart_pending = true;
+            }
+
             // Pending restart when idle.
             if state.restart_pending {
                 let busy = state.service.is_busy().unwrap_or(false);
@@ -665,6 +671,12 @@ impl ServiceManager {
             }
 
             let busy = state.service.is_busy().unwrap_or(false);
+
+            // Check if the service needs a restart due to external changes.
+            if !state.restart_pending && state.healthy && state.service.needs_restart() {
+                tracing::info!("{name} needs restart (external change detected)");
+                state.restart_pending = true;
+            }
 
             // Pending restart.
             if state.restart_pending && (!busy || in_upgrade_window) {

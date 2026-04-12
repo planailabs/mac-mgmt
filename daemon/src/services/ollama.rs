@@ -29,6 +29,8 @@ fn other_flavour_pkgs(flavour: &str) -> Vec<String> {
 pub struct Ollama {
     config: OllamaConfig,
     loaded_models: prometheus::IntGauge,
+    /// Hash of the ollama-env file at last spawn, to detect changes.
+    last_env_hash: std::cell::Cell<u64>,
 }
 
 impl Ollama {
@@ -38,7 +40,17 @@ impl Ollama {
             "Number of models currently loaded in ollama",
         )
         .unwrap();
-        Self { config, loaded_models }
+        Self { config, loaded_models, last_env_hash: std::cell::Cell::new(0) }
+    }
+
+    fn env_file_hash() -> u64 {
+        use std::hash::{Hash, Hasher};
+        let content = std::fs::read_to_string(
+            crate::config::config_dir().join("ollama-env"),
+        ).unwrap_or_default();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        content.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn effective_host(&self) -> &str {
@@ -113,6 +125,13 @@ impl ManagedService for Ollama {
                 format!("{}:{}", self.config.host, self.config.port),
             );
         }
+        // Load extra env vars from ollama-env file (e.g. OLLAMA_ORIGINS from relay connector).
+        let extra = crate::connectors::relay_ollama::load_env_file();
+        for (k, v) in extra {
+            env.entry(k).or_insert(v);
+        }
+        // Record the env file hash so we can detect changes.
+        self.last_env_hash.set(Self::env_file_hash());
         crate::service_ipc::protocol::SpawnSpec {
             program: "ollama".into(),
             args: vec!["serve".into()],
@@ -212,6 +231,13 @@ impl ManagedService for Ollama {
             tracing::debug!("ollama is idle");
         }
         Ok(count > 0)
+    }
+
+    fn needs_restart(&self) -> bool {
+        let current = Self::env_file_hash();
+        let last = self.last_env_hash.get();
+        // Only trigger if we've spawned at least once (last != 0) and hash changed.
+        last != 0 && current != last
     }
 
     fn metric_collectors(&self) -> Vec<Box<dyn prometheus::core::Collector>> {
