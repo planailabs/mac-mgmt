@@ -205,24 +205,16 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   spinner.style.display = 'none';
   frame.style.display = 'block';
 
-  function toDisplayUrl(realPath) {
-    return realPath.replace(/^\/proxy_content/, '') || '/';
-  }
-
-  function toRealPath(display) {
-    const path = display.startsWith('/') ? display : '/' + display;
-    return `/proxy_content${path}`;
-  }
-
   function navigate(path) {
     frame.src = path;
-    urlBar.value = toDisplayUrl(path);
+    urlBar.value = path;
   }
 
   urlBar.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      navigate(toRealPath(urlBar.value));
+      const path = urlBar.value.startsWith('/') ? urlBar.value : '/' + urlBar.value;
+      navigate(path);
     }
   });
 
@@ -230,16 +222,15 @@ const PROXY_IFRAME_HTML: &str = r#"<!DOCTYPE html>
   function syncUrlBar() {
     try {
       const loc = frame.contentWindow.location.pathname + frame.contentWindow.location.search;
-      const display = toDisplayUrl(loc);
-      if (urlBar.value !== display && document.activeElement !== urlBar) {
-        urlBar.value = display;
+      if (urlBar.value !== loc && document.activeElement !== urlBar) {
+        urlBar.value = loc;
       }
     } catch (_) { /* cross-origin, ignore */ }
   }
   frame.addEventListener('load', syncUrlBar);
   setInterval(syncUrlBar, 500);
 
-  navigate('/proxy_content/');
+  navigate('/');
 </script>
 </body></html>"#;
 
@@ -295,7 +286,7 @@ async function proxyFetch(request, url) {
     body: JSON.stringify({
       proxy_token: proxyToken,
       method: request.method,
-      path: (url.pathname.replace(/^\/proxy_content/, '') || '/') + url.search,
+      path: url.pathname + url.search,
       headers,
       body,
     }),
