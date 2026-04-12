@@ -368,14 +368,10 @@ pub async fn run(
                 let services: Vec<serde_json::Value> = vec![];
 
                 #[cfg(feature = "services")]
-                let tunnels: Vec<serde_json::Value> = {
-                    let tunnel_defs = svc_mgr.collect_tunnels();
-                    #[cfg(feature = "relay")]
-                    relay_mgr.update_tunnel_defs(tunnel_defs.clone());
-                    tunnel_defs.iter()
-                        .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
-                        .collect()
-                };
+                let tunnels: Vec<serde_json::Value> = svc_mgr.collect_tunnels()
+                    .iter()
+                    .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
+                    .collect();
                 #[cfg(not(feature = "services"))]
                 let tunnels: Vec<serde_json::Value> = vec![];
 
@@ -383,14 +379,6 @@ pub async fn run(
                 let rph = relay_mgr.relay_proxy_hostname();
                 #[cfg(not(feature = "relay"))]
                 let rph: Option<String> = None;
-
-                #[cfg(feature = "services")]
-                if let Some(ref ph) = rph {
-                    svc_mgr.config_store.set("relay", serde_json::json!({
-                        "proxy_hostname": ph,
-                        "instance_id_prefix": &instance_id[..12],
-                    }));
-                }
 
                 let url = url.clone();
                 let token = token.clone();
@@ -413,6 +401,23 @@ pub async fn run(
                     svc_mgr.health_tick(&metrics, in_upgrade_window!()),
                 ).await.is_err() {
                     tracing::warn!("health tick timed out (30s), continuing");
+                }
+
+                // Advertise tunnels to relay (only here, not on every heartbeat).
+                #[cfg(all(feature = "services", feature = "relay"))]
+                {
+                    let td = svc_mgr.collect_tunnels();
+                    relay_mgr.update_tunnel_defs(td);
+                }
+
+                // Update relay config provider for connectors.
+                #[cfg(feature = "relay")]
+                if let Some(ph) = relay_mgr.relay_proxy_hostname() {
+                    #[cfg(feature = "services")]
+                    svc_mgr.config_store.set("relay", serde_json::json!({
+                        "proxy_hostname": ph,
+                        "instance_id_prefix": &instance_id[..12],
+                    }));
                 }
 
                 // Send heartbeat after health tick completes.
