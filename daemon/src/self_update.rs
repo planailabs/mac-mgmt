@@ -4,18 +4,7 @@ use std::process::Command;
 
 use crate::sentry_ext;
 
-const UPDATE_BASE: &str = env!("UPDATE_BASE_URL");
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-#[allow(dead_code)]
-const ENVIRONMENT: &str = env!("ENVIRONMENT");
-#[allow(dead_code)]
-const TARGET: &str = env!("TARGET");
-
-/// Effective update base URL: runtime `MAC_MGMT_UPDATE_URL` overrides the
-/// compile-time default. Used by the legacy CLI `apply` path.
-fn update_base() -> String {
-    std::env::var("MAC_MGMT_UPDATE_URL").unwrap_or_else(|_| UPDATE_BASE.to_string())
-}
 
 /// Target the server has assigned: a version, and the nix store path that
 /// contains the binary for our system (resolved by the server from
@@ -211,7 +200,6 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
 /// whatever target the in-process state holds — useful when the daemon
 /// is running and has already fetched a target.
 pub fn apply(force: bool) -> Result<()> {
-    let _ = update_base; // silence dead-code warning for retired path
     let t = target();
     let Some(version) = t.version else {
         println!(
@@ -237,31 +225,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_base_is_set() {
-        assert!(!UPDATE_BASE.is_empty(), "UPDATE_BASE_URL must be set at build time");
-    }
-
-    #[test]
-    fn default_update_base_is_plan_ai() {
-        assert_eq!(UPDATE_BASE, "https://update.plan.ai");
-    }
-
-    #[test]
     fn current_version_is_valid_semver() {
         assert!(
             CURRENT_VERSION.split('.').count() >= 3,
             "CURRENT_VERSION should be semver: {CURRENT_VERSION}"
         );
-    }
-
-    #[test]
-    fn environment_is_set() {
-        assert!(!ENVIRONMENT.is_empty());
-    }
-
-    #[test]
-    fn target_is_set() {
-        assert!(!TARGET.is_empty());
     }
 
     #[test]

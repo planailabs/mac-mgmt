@@ -221,13 +221,13 @@ Both must be set for remote config to be fetched. If either is missing, the daem
 
 ## Self-Update
 
-The daemon checks `https://update.plan.ai/{ENVIRONMENT}/mac-mgmt.version` hourly. If the remote version differs from the compiled version:
+The daemon periodically fetches its target version from the management server via `GET /api/update`. The server resolves the target version in order of priority:
 
-1. Downloads `mac-mgmt.tar.gz` from the update server
-2. Extracts the binary matching the current target triple (`mac-mgmt-{TARGET}`)
-3. Replaces itself in-place via `self-replace`
+1. An active rollout targeting this cluster
+2. The cluster's `pinned_version`
+3. The latest semver version from `daemon_versions` (fallback)
 
-The `ENVIRONMENT` variable (default: `dev`) is embedded at compile time and determines the update channel.
+Once a target version is known, the server resolves the nix store path from xzar (`daemon/{version}/{system}`). The daemon realises the store path via `nix-store --realise` and replaces itself in-place.
 
 ## Service Installation
 

@@ -270,13 +270,25 @@ pub async fn get_update_target(
     let chosen: Option<String> = if let Some(Some(ver)) = rollout_version {
         Some(ver)
     } else {
-        sqlx::query_scalar::<_, Option<String>>(
+        let pinned = sqlx::query_scalar::<_, Option<String>>(
             "SELECT pinned_version FROM clusters WHERE id = $1",
         )
         .bind(auth.cluster_id)
         .fetch_one(pool.inner())
         .await
-        .map_err(|_| Status::InternalServerError)?
+        .map_err(|_| Status::InternalServerError)?;
+
+        match pinned {
+            Some(ver) => Some(ver),
+            // No pinned version: fall back to the latest semver from daemon_versions.
+            None => sqlx::query_scalar::<_, String>(
+                "SELECT version FROM daemon_versions ORDER BY \
+                 string_to_array(version, '.')::int[] DESC LIMIT 1",
+            )
+            .fetch_optional(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?,
+        }
     };
 
     // Resolve nix store path live from xzar (mirrors the skills flow):
