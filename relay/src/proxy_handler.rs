@@ -509,7 +509,7 @@ async fn proxy_stream(
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     };
 
-    ws.on_upgrade(move |socket| handle_proxy_stream(socket, control_tx, tunnel_name, state.registry))
+    ws.on_upgrade(move |socket| handle_proxy_stream(socket, control_tx, tunnel_name))
         .into_response()
 }
 
@@ -517,57 +517,32 @@ async fn handle_proxy_stream(
     browser_ws: axum::extract::ws::WebSocket,
     control_tx: tokio::sync::mpsc::Sender<ControlMsg>,
     tunnel_name: String,
-    _registry: Arc<DaemonRegistry>,
 ) {
-    use axum::extract::ws::Message;
-    use futures_util::{SinkExt, StreamExt};
-
-    let (mut browser_sink, mut browser_stream) = browser_ws.split();
-
-    // Read the request details from the SW
-    let Some(Ok(Message::Text(req_text))) = browser_stream.next().await else {
-        tracing::warn!("proxy_stream: no request message from SW");
-        return;
-    };
-
     let session_id = Uuid::new_v4().to_string();
     let session_secret = Uuid::new_v4().to_string();
 
-    let req_json: serde_json::Value = match serde_json::from_str(&req_text) {
-        Ok(v) => v,
-        Err(_) => { tracing::warn!("proxy_stream: invalid request JSON"); return; }
-    };
-
-    let path = req_json["path"].as_str().unwrap_or("/").to_string();
-
-    // Send proxy session request to daemon
+    // Send proxy session request to daemon via control channel.
+    // The daemon will connect a data WS, and the relay bridges it
+    // with this browser WS. The daemon reads request details (method,
+    // path, headers, body) directly from the bridged WS.
     if control_tx
         .send(ControlMsg::ProxySessionRequest {
             session_id: session_id.clone(),
             session_secret: session_secret.clone(),
             tunnel_name,
             mode: "stream".to_string(),
-            path,
+            path: "/".to_string(),
         })
         .await
         .is_err()
     {
-        let _ = browser_sink.send(Message::Text(
-            serde_json::json!({"status": 502, "headers": []}).to_string().into()
-        )).await;
+        tracing::warn!("proxy_stream: daemon control channel closed");
         return;
     }
 
-    // Register this browser WS as a pending proxy session
-    // The daemon will connect a data WS, and the session handler bridges them.
-    // But for streaming, we need to forward the request body from the browser to the daemon.
-    // So we reassemble the browser WS with its remaining messages.
-
-    // Reconstruct the browser WS from sink + stream for bridging
-    let browser_ws_reassembled = browser_sink.reunite(browser_stream)
-        .expect("reunite same split");
-
-    bridge::register_pending_proxy_session(session_id, session_secret, browser_ws_reassembled);
+    // Register the browser WS as-is. The daemon data WS will be bridged
+    // with it, so all messages flow through transparently.
+    bridge::register_pending_proxy_session(session_id, session_secret, browser_ws);
 }
 
 // ── WebSocket proxy (/proxy_ws) ────────────────────────────────────────
