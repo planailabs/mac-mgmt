@@ -521,10 +521,15 @@ async fn handle_proxy_stream(
     let session_id = Uuid::new_v4().to_string();
     let session_secret = Uuid::new_v4().to_string();
 
-    // Send proxy session request to daemon via control channel.
-    // The daemon will connect a data WS, and the relay bridges it
-    // with this browser WS. The daemon reads request details (method,
-    // path, headers, body) directly from the bridged WS.
+    // Register the browser WS BEFORE notifying the daemon to avoid a race
+    // where the daemon connects its data WS before the pending session exists.
+    bridge::register_pending_proxy_session(
+        session_id.clone(),
+        session_secret.clone(),
+        browser_ws,
+    );
+
+    // Now tell the daemon to connect a data WS for this session.
     if control_tx
         .send(ControlMsg::ProxySessionRequest {
             session_id: session_id.clone(),
@@ -537,12 +542,9 @@ async fn handle_proxy_stream(
         .is_err()
     {
         tracing::warn!("proxy_stream: daemon control channel closed");
-        return;
+        // Remove the orphaned pending session
+        bridge::take_pending_proxy_session(&session_id, &session_secret);
     }
-
-    // Register the browser WS as-is. The daemon data WS will be bridged
-    // with it, so all messages flow through transparently.
-    bridge::register_pending_proxy_session(session_id, session_secret, browser_ws);
 }
 
 // ── WebSocket proxy (/proxy_ws) ────────────────────────────────────────
@@ -591,30 +593,30 @@ async fn proxy_ws(
     let session_secret = Uuid::new_v4().to_string();
     let path = query.path.unwrap_or_else(|| "/".to_string());
 
-    let sid = session_id.clone();
-    let ssec = session_secret.clone();
-    let tn = tunnel_name.clone();
-
-    // Send proxy session request to daemon
-    if control_tx
-        .send(ControlMsg::ProxySessionRequest {
-            session_id: session_id.clone(),
-            session_secret: session_secret.clone(),
-            tunnel_name,
-            mode: "websocket".to_string(),
-            path,
-        })
-        .await
-        .is_err()
-    {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
     ws.on_upgrade(move |socket| async move {
-        tracing::info!("browser WS upgraded for proxy session {sid} (tunnel {tn})");
-        // Register this browser WS as a pending proxy session.
-        // The daemon will connect a data WS which triggers the bridge.
-        bridge::register_pending_proxy_session(sid, ssec, socket);
+        tracing::info!("browser WS upgraded for proxy session (tunnel {tunnel_name})");
+
+        // Register BEFORE notifying daemon to avoid race.
+        bridge::register_pending_proxy_session(
+            session_id.clone(),
+            session_secret.clone(),
+            socket,
+        );
+
+        if control_tx
+            .send(ControlMsg::ProxySessionRequest {
+                session_id: session_id.clone(),
+                session_secret: session_secret.clone(),
+                tunnel_name,
+                mode: "websocket".to_string(),
+                path,
+            })
+            .await
+            .is_err()
+        {
+            tracing::warn!("proxy_ws: daemon control channel closed");
+            bridge::take_pending_proxy_session(&session_id, &session_secret);
+        }
     })
     .into_response()
 }

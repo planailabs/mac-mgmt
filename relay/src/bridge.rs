@@ -55,7 +55,7 @@ pub fn take_pending_proxy_session(session_id: &str, secret: &str) -> Option<WebS
     None
 }
 
-/// Bridge two WebSockets bidirectionally.
+/// Bridge two WebSockets bidirectionally, forwarding close frames.
 pub async fn bridge_ws_ws(ws_a: WebSocket, ws_b: WebSocket) {
     let (mut a_sink, mut a_stream) = ws_a.split();
     let (mut b_sink, mut b_stream) = ws_b.split();
@@ -63,11 +63,17 @@ pub async fn bridge_ws_ws(ws_a: WebSocket, ws_b: WebSocket) {
     let a_to_b = async {
         while let Some(msg) = a_stream.next().await {
             match msg {
-                Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
+                Ok(msg @ (Message::Binary(_) | Message::Text(_) | Message::Ping(_) | Message::Pong(_))) => {
                     if b_sink.send(msg).await.is_err() { break; }
                 }
-                Ok(Message::Close(_)) | Err(_) => break,
-                _ => {}
+                Ok(Message::Close(frame)) => {
+                    let _ = b_sink.send(Message::Close(frame)).await;
+                    break;
+                }
+                Err(_) => {
+                    let _ = b_sink.send(Message::Close(None)).await;
+                    break;
+                }
             }
         }
     };
@@ -75,18 +81,30 @@ pub async fn bridge_ws_ws(ws_a: WebSocket, ws_b: WebSocket) {
     let b_to_a = async {
         while let Some(msg) = b_stream.next().await {
             match msg {
-                Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
+                Ok(msg @ (Message::Binary(_) | Message::Text(_) | Message::Ping(_) | Message::Pong(_))) => {
                     if a_sink.send(msg).await.is_err() { break; }
                 }
-                Ok(Message::Close(_)) | Err(_) => break,
-                _ => {}
+                Ok(Message::Close(frame)) => {
+                    let _ = a_sink.send(Message::Close(frame)).await;
+                    break;
+                }
+                Err(_) => {
+                    let _ = a_sink.send(Message::Close(None)).await;
+                    break;
+                }
             }
         }
     };
 
     tokio::select! {
-        _ = a_to_b => {}
-        _ = b_to_a => {}
+        _ = a_to_b => {
+            // a->b finished; send close to a if not already closed
+            let _ = a_sink.send(Message::Close(None)).await;
+        }
+        _ = b_to_a => {
+            // b->a finished; send close to b if not already closed
+            let _ = b_sink.send(Message::Close(None)).await;
+        }
     }
     tracing::debug!("ws-ws bridge closed");
 }

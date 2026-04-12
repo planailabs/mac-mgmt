@@ -451,7 +451,16 @@ async fn proxy_session_websocket(
                 tungstenite::Message::Text(t) => {
                     if local_sink.send(tungstenite::Message::Text(t)).await.is_err() { break; }
                 }
-                tungstenite::Message::Close(_) => break,
+                tungstenite::Message::Ping(d) => {
+                    if local_sink.send(tungstenite::Message::Ping(d)).await.is_err() { break; }
+                }
+                tungstenite::Message::Pong(d) => {
+                    if local_sink.send(tungstenite::Message::Pong(d)).await.is_err() { break; }
+                }
+                tungstenite::Message::Close(frame) => {
+                    let _ = local_sink.send(tungstenite::Message::Close(frame)).await;
+                    break;
+                }
                 _ => {}
             }
         }
@@ -466,15 +475,30 @@ async fn proxy_session_websocket(
                 tungstenite::Message::Text(t) => {
                     if data_sink.send(tungstenite::Message::Text(t)).await.is_err() { break; }
                 }
-                tungstenite::Message::Close(_) => break,
+                tungstenite::Message::Ping(d) => {
+                    if data_sink.send(tungstenite::Message::Ping(d)).await.is_err() { break; }
+                }
+                tungstenite::Message::Pong(d) => {
+                    if data_sink.send(tungstenite::Message::Pong(d)).await.is_err() { break; }
+                }
+                tungstenite::Message::Close(frame) => {
+                    let _ = data_sink.send(tungstenite::Message::Close(frame)).await;
+                    break;
+                }
                 _ => {}
             }
         }
     };
 
     tokio::select! {
-        _ = data_to_local => {}
-        _ = local_to_data => {}
+        _ = data_to_local => {
+            let _ = data_sink.send(tungstenite::Message::Close(None)).await;
+            let _ = local_sink.send(tungstenite::Message::Close(None)).await;
+        }
+        _ = local_to_data => {
+            let _ = local_sink.send(tungstenite::Message::Close(None)).await;
+            let _ = data_sink.send(tungstenite::Message::Close(None)).await;
+        }
     }
     tracing::info!("proxy WS session ended");
     Ok(())
