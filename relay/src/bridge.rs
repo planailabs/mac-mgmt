@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 
 use axum::extract::ws::{Message, WebSocket};
 
-const SESSION_TTL: Duration = Duration::from_secs(30);
+const SESSION_TTL: Duration = Duration::from_secs(60);
 
 struct PendingSession {
     stream: TcpStream,

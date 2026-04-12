@@ -328,6 +328,7 @@ async fn proxy_catchall(
         .await
         .is_err()
     {
+        bridge::remove_pending_proxy_session(&session_id);
         return StatusCode::BAD_GATEWAY.into_response();
     }
 
@@ -337,7 +338,10 @@ async fn proxy_catchall(
         ws_rx,
     ).await {
         Ok(Ok(ws)) => ws,
-        _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+        _ => {
+            bridge::remove_pending_proxy_session(&session_id);
+            return StatusCode::GATEWAY_TIMEOUT.into_response();
+        }
     };
 
     let (mut daemon_sink, mut daemon_stream) = daemon_ws.split();
@@ -407,19 +411,27 @@ async fn proxy_catchall(
         })
         .unwrap_or_default();
 
-    // Build the streaming HTTP response from daemon WS body chunks
-    let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
-        loop {
-            match stream.next().await {
-                Some(Ok(axum::extract::ws::Message::Binary(data))) => {
-                    return Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())), stream));
+    // Build the streaming HTTP response from daemon WS body chunks.
+    // The daemon_sink is moved into the closure to keep the WS alive for the
+    // duration of the streaming response.
+    let body_stream = futures_util::stream::unfold(
+        (daemon_stream, Some(daemon_sink)),
+        |(mut stream, sink)| async move {
+            loop {
+                match stream.next().await {
+                    Some(Ok(axum::extract::ws::Message::Binary(data))) => {
+                        return Some((
+                            Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())),
+                            (stream, sink),
+                        ));
+                    }
+                    Some(Ok(axum::extract::ws::Message::Close(_))) | None => return None,
+                    Some(Err(_)) => return None,
+                    _ => continue, // skip text/ping/pong
                 }
-                Some(Ok(axum::extract::ws::Message::Close(_))) | None => return None,
-                Some(Err(_)) => return None,
-                _ => continue, // skip text/ping/pong
             }
-        }
-    });
+        },
+    );
 
     let mut builder = axum::response::Response::builder().status(status);
     for (k, v) in &resp_headers {
