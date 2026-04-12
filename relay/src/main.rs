@@ -50,6 +50,7 @@ async fn main() -> Result<()> {
     let mut app = ws_handler::router(
         Arc::clone(&registry),
         cfg.server_api_url.clone(),
+        cfg.proxy_hostname.clone(),
     );
 
     // If proxy_hostname is configured, mount the browser proxy endpoints.

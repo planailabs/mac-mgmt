@@ -16,7 +16,11 @@ use crate::ws_reconnect::{self, WsClientConfig};
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 enum ControlMessage {
-    Registered { ssh_port: u16 },
+    Registered {
+        ssh_port: u16,
+        #[serde(default)]
+        proxy_hostname: Option<String>,
+    },
     SessionRequest {
         session_id: String,
         session_secret: String,
@@ -49,6 +53,7 @@ pub async fn run(
     ssh_allowed: Arc<AtomicBool>,
     metrics_port: u16,
     tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
+    relay_proxy_hostname: Arc<RwLock<Option<String>>>,
 ) -> Result<()> {
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
@@ -94,10 +99,14 @@ pub async fn run(
         };
 
         match control {
-            ControlMessage::Registered { ssh_port } => {
+            ControlMessage::Registered { ssh_port, proxy_hostname } => {
                 tracing::info!(
-                    "relay registered: instance={instance_id} ssh_port={ssh_port}"
+                    "relay registered: instance={instance_id} ssh_port={ssh_port} proxy_hostname={proxy_hostname:?}"
                 );
+                // Store the relay's proxy hostname for heartbeats.
+                if let Some(ph) = proxy_hostname {
+                    *relay_proxy_hostname.write().await = Some(ph);
+                }
                 // Advertise our tunnels to the relay.
                 let tunnels: Vec<serde_json::Value> = {
                     let defs = tunnel_defs.read().await;

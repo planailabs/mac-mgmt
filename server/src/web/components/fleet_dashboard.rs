@@ -17,6 +17,7 @@ struct FleetEntry {
     version: String,
     services: serde_json::Value,
     tunnels: serde_json::Value,
+    relay_proxy_hostname: Option<String>,
     reported_at: DateTime<Utc>,
 }
 
@@ -35,6 +36,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         version: String,
         services: serde_json::Value,
         tunnels: serde_json::Value,
+        relay_proxy_hostname: Option<String>,
         reported_at: DateTime<Utc>,
     }
 
@@ -42,7 +44,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
 
     let rows = if let Some(ids) = accessible {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.reported_at \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              WHERE dh.cluster_id = ANY($1) \
@@ -54,7 +56,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.reported_at \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              ORDER BY dh.reported_at DESC",
@@ -75,15 +77,10 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
             version: r.version,
             services: r.services,
             tunnels: r.tunnels,
+            relay_proxy_hostname: r.relay_proxy_hostname,
             reported_at: r.reported_at,
         })
         .collect())
-}
-
-#[server]
-async fn get_relay_proxy_hostname() -> Result<Option<String>, ServerFnError> {
-    let cfg = crate::config::config();
-    Ok(cfg.relay.as_ref().map(|r| r.proxy_hostname.clone()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,7 +139,6 @@ impl Searchable for FleetEntry {
 #[component]
 pub fn FleetDashboard() -> Element {
     let fleet = use_server_future(move || async move { get_fleet_status().await })?;
-    let relay_hostname = use_server_future(move || async move { get_relay_proxy_hostname().await })?;
 
     match &*fleet.read() {
         Some(Ok(entries)) => {
@@ -269,9 +265,7 @@ pub fn FleetDashboard() -> Element {
                                                 }
                                                 td { class: "px-6 py-4 text-sm",
                                                     {
-                                                        let proxy_hostname = relay_hostname.read().as_ref()
-                                                            .and_then(|r| r.as_ref().ok())
-                                                            .and_then(|h| h.clone());
+                                                        let proxy_hostname = entry.relay_proxy_hostname.clone();
                                                         let tunnel_names: Vec<String> = entry.tunnels
                                                             .as_array()
                                                             .map(|arr| arr.iter().filter_map(|t| {

@@ -13,14 +13,6 @@ pub struct ServerConfig {
     pub oidc: Option<OidcConfig>,
     pub xzar: Option<XzarConfig>,
     pub anthropic: Option<AnthropicConfig>,
-    pub relay: Option<RelayProxyConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RelayProxyConfig {
-    /// Hostname for the relay proxy (e.g. "relay.plan.ai").
-    /// Tunnel URLs are formed as: {instance_id}-{tunnel_name}.{proxy_hostname}
-    pub proxy_hostname: String,
 }
 
 #[derive(Debug, Deserialize)]

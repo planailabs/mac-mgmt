@@ -32,6 +32,7 @@ pub struct Manager {
     server_url: Option<String>,
     server_token: Option<String>,
     tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
+    relay_proxy_hostname: Arc<RwLock<Option<String>>>,
 }
 
 impl Manager {
@@ -49,6 +50,7 @@ impl Manager {
         let ssh_allowed = Arc::new(AtomicBool::new(remote_ssh_enabled));
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
         let tunnel_defs = Arc::new(RwLock::new(HashMap::new()));
+        let relay_proxy_hostname = Arc::new(RwLock::new(None));
 
         let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move {
@@ -68,10 +70,11 @@ impl Manager {
             let keys = Arc::clone(&server_ssh_keys);
             let allowed = Arc::clone(&ssh_allowed);
             let tdefs = Arc::clone(&tunnel_defs);
+            let rph = Arc::clone(&relay_proxy_hostname);
             tokio::spawn(async move {
                 let hk = Arc::unwrap_or_clone(host_key);
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs,
+                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph,
                 ).await {
                     tracing::error!("relay client exited: {e:#}");
                 }
@@ -87,6 +90,7 @@ impl Manager {
             server_url,
             server_token,
             tunnel_defs,
+            relay_proxy_hostname,
         }
     }
 
@@ -106,6 +110,11 @@ impl Manager {
     /// Receive the next command from the FIFO watcher (async).
     pub async fn recv_cmd(&mut self) -> Option<RemoteSshCommand> {
         self.ssh_cmd_rx.recv().await
+    }
+
+    /// Return the relay's proxy hostname (set after registration).
+    pub async fn relay_proxy_hostname(&self) -> Option<String> {
+        self.relay_proxy_hostname.read().await.clone()
     }
 
     /// Update the tunnel definitions (called after services change).

@@ -351,12 +351,17 @@ pub async fn run(
                     #[cfg(not(feature = "services"))]
                     let tunnels = vec![];
 
+                    #[cfg(feature = "relay")]
+                    let rph = relay_mgr.relay_proxy_hostname().await;
+                    #[cfg(not(feature = "relay"))]
+                    let rph: Option<String> = None;
+
                     let url = url.clone();
                     let token = token.clone();
                     let iid = instance_id.clone();
                     let hk = Arc::clone(&host_key);
                     tokio::spawn(async move {
-                        send_heartbeat(&url, &token, &iid, &hk, services, tunnels).await;
+                        send_heartbeat(&url, &token, &iid, &hk, services, tunnels, rph).await;
                     });
                 }
             }
@@ -551,6 +556,7 @@ async fn send_heartbeat(
     host_key: &russh::keys::PrivateKey,
     services: Vec<serde_json::Value>,
     tunnels: Vec<serde_json::Value>,
+    relay_proxy_hostname: Option<String>,
 ) {
     use russh::keys::PublicKeyBase64;
     use russh::keys::signature::Signer;
@@ -583,6 +589,7 @@ async fn send_heartbeat(
         environment: ENVIRONMENT.to_string(),
         services: serde_json::Value::Array(services),
         tunnels: serde_json::Value::Array(tunnels),
+        relay_proxy_hostname,
         public_key: public_key_b64,
         signature: sig_b64,
         signed_at,

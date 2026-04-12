@@ -29,6 +29,9 @@ pub struct HeartbeatBody {
     /// Exposed TCP tunnels for browser proxying through the relay.
     #[serde(default)]
     pub tunnels: serde_json::Value,
+    /// Relay proxy hostname (e.g. "relay.plan.ai"), received from the relay.
+    #[serde(default)]
+    pub relay_proxy_hostname: Option<String>,
     /// Ed25519 public key bytes (base64-encoded SSH wire format).
     /// The server verifies that SHA-256(public_key) == instance_id.
     #[serde(default)]

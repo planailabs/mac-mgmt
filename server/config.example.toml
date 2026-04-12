@@ -25,7 +25,3 @@ token = "xzar-api-token-here"
 # Optional: enables "Generate with AI" buttons in the admin UI
 # [anthropic]
 # api_key = "sk-ant-xxx"
-
-# Optional: relay proxy hostname for browser-based TCP tunnel access
-# [relay]
-# proxy_hostname = "relay.plan.ai"

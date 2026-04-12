@@ -29,12 +29,14 @@ const MAX_WS_MESSAGE_SIZE: usize = 256 * 1024;
 struct AppState {
     registry: Arc<DaemonRegistry>,
     server_api_url: String,
+    proxy_hostname: Option<String>,
 }
 
-pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String) -> Router {
+pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, proxy_hostname: Option<String>) -> Router {
     let state = AppState {
         registry,
         server_api_url,
+        proxy_hostname,
     };
 
     Router::new()
@@ -245,8 +247,12 @@ async fn handle_daemon_ws(
 
     let (mut ws_sink, mut ws_stream) = socket.split();
 
-    // Send registration confirmation
-    let reg_msg = serde_json::json!({ "type": "registered", "ssh_port": port });
+    // Send registration confirmation (include proxy_hostname if configured)
+    let mut reg_msg = serde_json::json!({ "type": "registered", "ssh_port": port });
+    if let Some(ref ph) = state.proxy_hostname {
+        reg_msg["proxy_hostname"] = serde_json::Value::String(ph.clone());
+    }
+    let reg_msg = reg_msg;
     if let Err(e) = ws_sink
         .send(Message::Text(reg_msg.to_string().into()))
         .await
