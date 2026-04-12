@@ -106,35 +106,37 @@ The server (`mac-mgmt-server`) is a Dioxus fullstack application that provides:
 - PostgreSQL database
 - [Dioxus CLI](https://dioxuslabs.com/) (`dx`)
 
-### Running the server
+### Running locally
 
 From the repo root inside `nix develop` (which provides `dx`, `node`,
-`cargo`, and the wasm toolchain):
+`cargo`, `overmind`, and the wasm toolchain):
 
 ```bash
 # 1. Enter the dev shell
 nix develop
 
-# 2. Create config.toml from the example (edit as needed)
-cp server/config.example.toml server/config.toml
+# 2. Copy example configs (won't overwrite existing ones)
+./setup-configs.sh
 
-# 3. (Optional) If you don't have Postgres, start one via docker compose.
-#    The connection URL is already wired up in the example config.
-docker compose up -d
+# 3. Install JS deps (first time only)
+cd server && npm install && cd ..
 
-# 4. Install JS deps and build the Tailwind stylesheet
-#    (re-run npm run tailwind whenever styles change; or leave it running)
-cd server && npm install && npm run tailwind
-
-# 5. Start the Dioxus fullstack dev server
-#    (web UI on :3000, daemon API on :8080, hot-reload enabled,
-#     migrations run automatically on startup)
-cd server && dx serve
+# 4. Start everything with overmind (server, relay, tailwind)
+overmind start
 ```
 
-For a production build, use `dx build --release` instead of `dx serve`.
+This runs all services defined in the `Procfile`:
 
-Migrations run automatically on startup. The server creates three tables: `customers`, `tokens`, and `customer_configs`.
+| Process | Command | Port |
+|---------|---------|------|
+| **server** | `dx serve` (Dioxus fullstack + Rocket API) | Web UI: 8080, API: 7378 |
+| **relay** | `cargo watch -- cargo run` | 7379 |
+| **tailwind** | `npm run tailwind` | — |
+
+Migrations run automatically on startup. The server uses `DEV_ONLY_NO_AUTH=1`
+to bypass OIDC and create a dev admin user.
+
+For a production build, use `dx build --release` instead of `dx serve`.
 
 ### Web UI routes
 
