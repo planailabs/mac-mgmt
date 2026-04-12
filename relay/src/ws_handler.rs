@@ -50,7 +50,7 @@ pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, proxy_hostn
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
         .layer(middleware::from_fn(security_headers))
-        .layer(tower::limit::ConcurrencyLimitLayer::new(256))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(4096))
         .with_state(state)
 }
 
@@ -82,7 +82,7 @@ async fn health() -> &'static str {
 
 // ── Token validation ────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SelfInfo {
     pub cluster_id: Option<Uuid>,
     pub cluster_name: Option<String>,

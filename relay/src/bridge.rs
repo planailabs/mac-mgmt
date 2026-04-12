@@ -90,15 +90,21 @@ pub fn has_pending_proxy_session(session_id: &str) -> bool {
 pub async fn complete_proxy_session(session_id: &str, secret: &str, daemon_ws: WebSocket) -> bool {
     let pending = {
         let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
-        let Some(pending) = sessions.get(session_id) else { return false; };
-        let (pending_secret, pending_time) = match pending {
+        // Always remove the session to prevent orphans.
+        let Some(pending) = sessions.remove(session_id) else { return false; };
+        let (pending_secret, pending_time) = match &pending {
             PendingProxySession::WebSocket { secret: s, created_at, .. } => (s.as_str(), *created_at),
             PendingProxySession::Callback { secret: s, created_at, .. } => (s.as_str(), *created_at),
         };
-        if pending_secret != secret || pending_time.elapsed() > SESSION_TTL {
+        if pending_secret != secret {
+            tracing::warn!("proxy session {session_id}: secret mismatch, dropping");
             return false;
         }
-        sessions.remove(session_id)
+        if pending_time.elapsed() > SESSION_TTL {
+            tracing::warn!("proxy session {session_id}: expired ({:.1}s old), dropping", pending_time.elapsed().as_secs_f64());
+            return false;
+        }
+        Some(pending)
     };
 
     match pending {

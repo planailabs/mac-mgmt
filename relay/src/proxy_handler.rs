@@ -8,12 +8,44 @@ use axum::routing::{get, post};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::bridge;
 use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse};
-use crate::ws_handler::validate_token;
+use crate::ws_handler::{SelfInfo, validate_token};
+
+/// Cache validated proxy tokens for 5 minutes to avoid hitting the server API
+/// on every single proxied request.
+static TOKEN_CACHE: std::sync::LazyLock<
+    tokio::sync::RwLock<HashMap<String, (SelfInfo, std::time::Instant)>>,
+> = std::sync::LazyLock::new(|| tokio::sync::RwLock::new(HashMap::new()));
+
+const TOKEN_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+async fn validate_token_cached(server_api_url: &str, token: &str) -> Result<SelfInfo, StatusCode> {
+    // Check cache first.
+    {
+        let cache = TOKEN_CACHE.read().await;
+        if let Some((info, created)) = cache.get(token) {
+            if created.elapsed() < TOKEN_CACHE_TTL {
+                return Ok(info.clone());
+            }
+        }
+    }
+    // Cache miss — validate against server.
+    let info = validate_token(server_api_url, token).await?;
+    {
+        let mut cache = TOKEN_CACHE.write().await;
+        cache.insert(token.to_string(), (info.clone(), std::time::Instant::now()));
+        // Evict expired entries periodically.
+        if cache.len() > 1000 {
+            cache.retain(|_, (_, t)| t.elapsed() < TOKEN_CACHE_TTL);
+        }
+    }
+    Ok(info)
+}
 
 const PROXY_TOKEN_COOKIE: &str = "proxy_token";
 
@@ -112,7 +144,7 @@ async fn authenticate_proxy(
             (StatusCode::UNAUTHORIZED, "Missing proxy_token cookie. Visit /proxy?proxy_token=TOKEN first.").into_response()
         })?;
 
-    let self_info = validate_token(&state.server_api_url, &token)
+    let self_info = validate_token_cached(&state.server_api_url, &token)
         .await
         .map_err(|s| s.into_response())?;
 
@@ -300,6 +332,7 @@ async fn proxy_catchall(
     let has_body = !body_bytes.is_empty();
 
     // Create a proxy session for streaming
+    tracing::debug!("proxy {method} {path} -> {instance_id}/{tunnel_name}");
     let session_id = Uuid::new_v4().to_string();
     let session_secret = Uuid::new_v4().to_string();
 
