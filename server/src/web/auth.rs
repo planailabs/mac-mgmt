@@ -250,20 +250,17 @@ pub async fn require_auth(
         return next.run(request).await;
     }
 
-    // DEV_ONLY_NO_AUTH: skip OIDC, create a dummy admin user
+    // DEV_ONLY_NO_AUTH: skip OIDC, look up the dev admin user (created at startup).
     if std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1") {
         if let Ok(pool) = crate::server_pool() {
-            // Upsert dev admin user directly (bypass admin_emails config check)
             let result = sqlx::query_as::<_, (Uuid, String, String, bool)>(
-                "INSERT INTO users (email, name, is_admin) VALUES ('dev@localhost', 'Dev Admin', true) \
-                 ON CONFLICT (email) DO UPDATE SET is_admin = true \
-                 RETURNING id, email, name, is_admin",
+                "SELECT id, email, name, is_admin FROM users WHERE email = 'dev@localhost'",
             )
-            .fetch_one(&pool)
+            .fetch_optional(&pool)
             .await;
 
             match result {
-                Ok(user) => {
+                Ok(Some(user)) => {
                     let org_memberships = sqlx::query_as::<_, (Uuid, String)>(
                         "SELECT organization_id, role FROM organization_members WHERE user_id = $1",
                     )
@@ -288,8 +285,11 @@ pub async fn require_auth(
                     web_user = try_impersonate(&pool, web_user, imp_id).await;
                     request.extensions_mut().insert(web_user);
                 }
+                Ok(None) => {
+                    tracing::error!("DEV_ONLY_NO_AUTH: dev user not found — was it created at startup?");
+                }
                 Err(e) => {
-                    tracing::error!("DEV_ONLY_NO_AUTH: failed to create dev user: {e}");
+                    tracing::error!("DEV_ONLY_NO_AUTH: failed to look up dev user: {e}");
                 }
             }
         }

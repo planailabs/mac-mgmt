@@ -132,6 +132,17 @@ fn main() {
 
                 let auth_layer = if dev_no_auth {
                     tracing::warn!("DEV_ONLY_NO_AUTH=1 — OIDC disabled, using dev admin user");
+                    // Insert dev user once at startup.
+                    if let Ok(pool) = crate::server_pool() {
+                        if let Err(e) = sqlx::query(
+                            "INSERT INTO users (email, name, is_admin) VALUES ('dev@localhost', 'Dev Admin', true) \
+                             ON CONFLICT (email) DO UPDATE SET is_admin = true",
+                        )
+                        .execute(&pool)
+                        .await {
+                            tracing::error!("failed to create dev user: {e}");
+                        }
+                    }
                     None
                 } else if cfg.oidc.is_some() {
                     let (layer, _cache) =
