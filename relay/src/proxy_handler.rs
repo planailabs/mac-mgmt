@@ -4,7 +4,7 @@ use axum::extract::{FromRequest, Json, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
-use axum::routing::{any, get, post};
+use axum::routing::{get, post};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -31,9 +31,7 @@ pub fn router(state: ProxyState) -> Router {
         .route("/proxy", get(proxy_bootstrap))
         // JSON request/response API (kept for programmatic use)
         .route("/proxy_request", post(proxy_request))
-        // WebSocket tunneling
-        .route("/proxy_ws", any(proxy_ws))
-        // Catch-all: reverse proxy for HTTP, and WS upgrade handler
+        // Catch-all: reverse proxy for HTTP and WS upgrades
         .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
         .with_state(state)
@@ -526,77 +524,4 @@ async fn proxy_request(
         Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
-}
-
-// ── WebSocket proxy (/proxy_ws) ────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct ProxyWsQuery {
-    path: Option<String>,
-}
-
-async fn proxy_ws(
-    ws: WebSocketUpgrade,
-    req_headers: HeaderMap,
-    Query(query): Query<ProxyWsQuery>,
-    State(state): State<ProxyState>,
-) -> axum::response::Response {
-    let Some((instance_id, tunnel_name)) = parse_subdomain(&req_headers, &state.proxy_hostname)
-    else {
-        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
-    };
-
-    // Token from cookie only (never query params — those leak in logs/referrers).
-    let Some(token) = extract_cookie_token(&req_headers) else {
-        return StatusCode::UNAUTHORIZED.into_response();
-    };
-
-    let self_info = match validate_token(&state.server_api_url, &token).await {
-        Ok(info) => info,
-        Err(status) => return status.into_response(),
-    };
-
-    if self_info.token_kind != "proxy" && self_info.token_kind != "admin" {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-
-    if let Some(cid) = state.registry.get_cluster_id(&instance_id) {
-        if !self_info.cluster_ids.contains(&cid) {
-            return StatusCode::FORBIDDEN.into_response();
-        }
-    }
-
-    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
-        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
-    };
-
-    let session_id = Uuid::new_v4().to_string();
-    let session_secret = Uuid::new_v4().to_string();
-    let path = query.path.unwrap_or_else(|| "/".to_string());
-
-    ws.on_upgrade(move |socket| async move {
-        tracing::info!("browser WS upgraded for proxy session (tunnel {tunnel_name})");
-
-        bridge::register_pending_proxy_session(
-            session_id.clone(),
-            session_secret.clone(),
-            socket,
-        );
-
-        if control_tx
-            .send(ControlMsg::ProxySessionRequest {
-                session_id: session_id.clone(),
-                session_secret: session_secret.clone(),
-                tunnel_name,
-                mode: "websocket".to_string(),
-                path,
-            })
-            .await
-            .is_err()
-        {
-            tracing::warn!("proxy_ws: daemon control channel closed");
-            bridge::remove_pending_proxy_session(&session_id);
-        }
-    })
-    .into_response()
 }
