@@ -195,7 +195,10 @@ pub async fn run(
 
     #[cfg(feature = "self-update")]
     if in_upgrade_window!() {
-        let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
+        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(120),
+                            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
+                        ).await;
         #[cfg(feature = "services")]
         svc_mgr.send_update_self().await;
     } else {
@@ -231,7 +234,10 @@ pub async fn run(
                 if in_upgrade_window!() {
                     #[cfg(feature = "self-update")]
                     {
-                        let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(120),
+                            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
+                        ).await;
                         #[cfg(feature = "services")]
                         svc_mgr.send_update_self().await;
                     }
@@ -269,8 +275,17 @@ pub async fn run(
         () => {
             {
                 tracing::info!("config file changed, reloading");
-                match crate::config::reload().await {
-                    Ok(new_cfg) => {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    crate::config::reload(),
+                ).await {
+                    Err(_) => {
+                        tracing::warn!("config reload timed out (10s), keeping old config");
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("config reload failed: {e}");
+                    }
+                    Ok(Ok(new_cfg)) => {
                         if let Err(e) = new_cfg.daemon.validate() {
                             tracing::warn!("new config invalid, keeping old: {e}");
                         } else {
@@ -324,7 +339,6 @@ pub async fn run(
                             current_cfg = new_cfg;
                         }
                     }
-                    Err(e) => tracing::warn!("config reload failed: {e}"),
                 }
             }
         };
@@ -344,7 +358,12 @@ pub async fn run(
         () => {
             {
                 #[cfg(feature = "services")]
-                svc_mgr.health_tick(&metrics, in_upgrade_window!()).await;
+                if tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    svc_mgr.health_tick(&metrics, in_upgrade_window!()),
+                ).await.is_err() {
+                    tracing::warn!("health tick timed out (30s), continuing");
+                }
 
                 // Send heartbeat if server is configured
                 if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -436,7 +455,10 @@ pub async fn run(
                         if in_upgrade_window!() {
                             #[cfg(feature = "self-update")]
                             {
-                                let _ = tokio::task::spawn_blocking(crate::self_update::check_and_apply).await;
+                                let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(120),
+                            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
+                        ).await;
                                 #[cfg(feature = "services")]
                                 svc_mgr.send_update_self().await;
                             }
