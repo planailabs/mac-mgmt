@@ -138,7 +138,22 @@ impl Searchable for FleetEntry {
 
 #[component]
 pub fn FleetDashboard() -> Element {
-    let fleet = use_server_future(move || async move { get_fleet_status().await })?;
+    let mut generation = use_signal(|| 0u64);
+    let mut last_refreshed = use_signal(|| Utc::now());
+
+    let fleet = use_server_future(move || {
+        let _gen = generation();
+        async move { get_fleet_status().await }
+    })?;
+
+    // Auto-refresh every 5 seconds.
+    use_future(move || async move {
+        loop {
+            let _ = document::eval("new Promise(r => setTimeout(r, 5000))").await;
+            generation += 1;
+            last_refreshed.set(Utc::now());
+        }
+    });
 
     match &*fleet.read() {
         Some(Ok(entries)) => {
@@ -175,8 +190,19 @@ pub fn FleetDashboard() -> Element {
             let limit_val = *limit.read();
             let shown = filtered_count.min(limit_val);
 
+            let refreshed_at = *last_refreshed.read();
+            let refresh_ago = {
+                let secs = Utc::now().signed_duration_since(refreshed_at).num_seconds();
+                if secs < 5 { "just now".to_string() } else { format!("{secs}s ago") }
+            };
+
             rsx! {
-                h2 { class: "text-2xl font-bold mb-4", "Fleet Dashboard" }
+                div { class: "flex items-center justify-between mb-4",
+                    h2 { class: "text-2xl font-bold", "Fleet Dashboard" }
+                    span { class: "text-xs text-gray-400 dark:text-gray-500",
+                        "Last refreshed: {refresh_ago}"
+                    }
+                }
                 if entries.is_empty() {
                     p { class: "text-gray-500 dark:text-gray-400 text-sm", "No daemons have reported in yet." }
                 } else {
