@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time;
 
@@ -18,6 +19,304 @@ const TARGET: &str = match option_env!("TARGET") {
     None => "unknown",
 };
 
+// ── Daemon state ─────────────────────────────────────────────────────
+
+struct Daemon {
+    server_url: Option<String>,
+    server_token: Option<String>,
+    skills_dir: PathBuf,
+    dispatcher: Arc<Dispatcher>,
+    metrics: Arc<Metrics>,
+    upgrade_window: Option<(chrono::NaiveTime, chrono::NaiveTime)>,
+    current_cfg: config::Config,
+    instance_id: String,
+    host_key: Arc<russh::keys::PrivateKey>,
+    #[cfg(feature = "services")]
+    svc_mgr: crate::service_mgmt::ServiceManager,
+}
+
+impl Daemon {
+    fn in_upgrade_window(&self) -> bool {
+        self.upgrade_window
+            .map_or(true, |(start, end)| mac_mgmt_common::is_within_window(start, end))
+    }
+
+    /// Spawn a background task to sync skills and MCP servers.
+    fn spawn_sync_skills_and_mcp(&self) {
+        if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            let u = url.clone();
+            let t = token.clone();
+            let sd = self.skills_dir.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
+                    tracing::warn!("skills sync failed: {e}");
+                }
+                if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
+                    tracing::warn!("MCP servers sync failed: {e}");
+                }
+            });
+        }
+    }
+
+    // ── Event handlers ───────────────────────────────────────────────
+
+    async fn handle_update(&mut self) {
+        // Network-heavy operations run in background tasks.
+        if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            let u = url.clone();
+            let t = token.clone();
+            tokio::spawn(async move {
+                fetch_target_version(&u, &t).await;
+                fetch_nixpkgs_pin(&u, &t).await;
+            });
+        }
+
+        if self.in_upgrade_window() {
+            #[cfg(feature = "self-update")]
+            {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    tokio::task::spawn_blocking(crate::self_update::check_and_apply),
+                )
+                .await;
+                #[cfg(feature = "services")]
+                self.svc_mgr.send_update_self().await;
+            }
+            tokio::task::spawn_blocking(upgrade_nix);
+        } else {
+            tracing::info!("outside upgrade window, skipping upgrades");
+        }
+
+        self.spawn_sync_skills_and_mcp();
+
+        if self.in_upgrade_window() {
+            #[cfg(feature = "services")]
+            self.svc_mgr.check_upgrades();
+        }
+    }
+
+    async fn handle_config_reload(
+        &mut self,
+        update_tick: &mut time::Interval,
+        health_tick: &mut time::Interval,
+        set_log_level: &dyn Fn(&str),
+    ) {
+        tracing::info!("config file changed, reloading");
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            crate::config::reload(),
+        )
+        .await
+        {
+            Err(_) => {
+                tracing::warn!("config reload timed out (10s), keeping old config");
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("config reload failed: {e}");
+            }
+            Ok(Ok(new_cfg)) => {
+                if let Err(e) = new_cfg.daemon.validate() {
+                    tracing::warn!("new config invalid, keeping old: {e}");
+                    return;
+                }
+
+                if new_cfg.daemon.update_interval != self.current_cfg.daemon.update_interval {
+                    if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.update_interval) {
+                        *update_tick = time::interval(d);
+                        tracing::info!("update_interval changed to {}", new_cfg.daemon.update_interval);
+                    }
+                }
+                if new_cfg.daemon.health_interval != self.current_cfg.daemon.health_interval {
+                    if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.health_interval) {
+                        *health_tick = time::interval(d);
+                        tracing::info!("health_interval changed to {}", new_cfg.daemon.health_interval);
+                    }
+                }
+
+                let new_window = new_cfg.daemon.upgrade_window.as_ref().map(|w| {
+                    mac_mgmt_common::parse_time_window(w).expect("already validated")
+                });
+                if new_window != self.upgrade_window {
+                    self.upgrade_window = new_window;
+                    tracing::info!("upgrade_window updated");
+                }
+
+                self.dispatcher.reconfigure(
+                    new_cfg.notifications.urls.clone(),
+                    new_cfg.notifications.events.clone(),
+                );
+
+                // Schedule service restart for changes that require it.
+                let needs_restart = new_cfg.global.llm_provider != self.current_cfg.global.llm_provider
+                    || new_cfg.global.agent_provider != self.current_cfg.global.agent_provider
+                    || format!("{:?}", new_cfg.ollama) != format!("{:?}", self.current_cfg.ollama)
+                    || format!("{:?}", new_cfg.nexa) != format!("{:?}", self.current_cfg.nexa)
+                    || format!("{:?}", new_cfg.openclaw) != format!("{:?}", self.current_cfg.openclaw);
+
+                if needs_restart {
+                    tracing::info!("service config changed, scheduling restart");
+                    #[cfg(feature = "services")]
+                    self.svc_mgr.schedule_restart().await;
+                }
+                if new_cfg.metrics.port != self.current_cfg.metrics.port {
+                    tracing::warn!("metrics.port changed \u{2014} daemon restart required to apply");
+                }
+                if new_cfg.daemon.log_level != self.current_cfg.daemon.log_level {
+                    tracing::info!("log_level changed to {}", new_cfg.daemon.log_level);
+                    set_log_level(&new_cfg.daemon.log_level);
+                }
+
+                self.current_cfg = new_cfg;
+            }
+        }
+    }
+
+    fn handle_shutdown(&self, signal: &str) {
+        tracing::info!("received {signal}, shutting down");
+        sentry_ext::breadcrumb("daemon", &format!("{signal} received, shutting down"), &[]);
+        self.dispatcher.dispatch(&DaemonEvent::DaemonStopped);
+    }
+
+    fn send_heartbeat(&self, relay_proxy_hostname: Option<String>) {
+        if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            #[cfg(feature = "services")]
+            let services = self.svc_mgr.collect_statuses();
+            #[cfg(not(feature = "services"))]
+            let services: Vec<serde_json::Value> = vec![];
+
+            #[cfg(feature = "services")]
+            let tunnels: Vec<serde_json::Value> = self
+                .svc_mgr
+                .collect_tunnels()
+                .iter()
+                .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
+                .collect();
+            #[cfg(not(feature = "services"))]
+            let tunnels: Vec<serde_json::Value> = vec![];
+
+            let url = url.clone();
+            let token = token.clone();
+            let iid = self.instance_id.clone();
+            let hk = Arc::clone(&self.host_key);
+            tokio::spawn(async move {
+                do_send_heartbeat(&url, &token, &iid, &hk, services, tunnels, relay_proxy_hostname)
+                    .await;
+            });
+        }
+    }
+
+    async fn handle_health_tick(&mut self) {
+        #[cfg(feature = "services")]
+        if tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.svc_mgr
+                .health_tick(&self.metrics, self.in_upgrade_window()),
+        )
+        .await
+        .is_err()
+        {
+            tracing::warn!("health tick timed out (30s), continuing");
+        }
+    }
+
+    /// Handle a push command. Returns true if SSH keys should be synced.
+    /// Note: SyncConfig is handled directly in the event loop (needs interval refs).
+    async fn handle_push_cmd(&mut self, cmd: crate::server_push::PushCommand) -> bool {
+        use crate::server_push::PushCommand;
+        match cmd {
+            PushCommand::SyncConfig => {
+                unreachable!("SyncConfig handled in event loop")
+            }
+            PushCommand::SyncSkills => {
+                self.spawn_sync_skills_and_mcp();
+                false
+            }
+            PushCommand::SyncMcpServers => {
+                if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+                    let u = url.clone();
+                    let t = token.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
+                            tracing::warn!("push MCP sync failed: {e}");
+                        }
+                    });
+                }
+                false
+            }
+            PushCommand::SyncSshKeys => true,
+            PushCommand::SelfUpdate => {
+                tracing::info!("server push: self-update requested");
+                if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+                    let u = url.clone();
+                    let t = token.clone();
+                    tokio::spawn(async move {
+                        fetch_target_version(&u, &t).await;
+                    });
+                }
+                if self.in_upgrade_window() {
+                    #[cfg(feature = "self-update")]
+                    {
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(120),
+                            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
+                        )
+                        .await;
+                        #[cfg(feature = "services")]
+                        self.svc_mgr.send_update_self().await;
+                    }
+                } else {
+                    tracing::info!("outside upgrade window, deferring self-update");
+                }
+                false
+            }
+            PushCommand::SyncNixpkgs => {
+                tracing::info!("server push: sync nixpkgs pin");
+                if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+                    let u = url.clone();
+                    let t = token.clone();
+                    tokio::spawn(async move {
+                        fetch_nixpkgs_pin(&u, &t).await;
+                    });
+                }
+                #[cfg(feature = "services")]
+                self.svc_mgr.check_upgrades();
+                false
+            }
+        }
+    }
+
+    fn handle_local_sync(&self) {
+        tracing::info!("local sync requested");
+        self.spawn_sync_skills_and_mcp();
+    }
+
+    #[cfg(all(feature = "services", feature = "relay"))]
+    fn update_relay_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+        let td = self.svc_mgr.collect_tunnels();
+        relay_mgr.update_tunnel_defs(td);
+    }
+
+    #[cfg(feature = "services")]
+    fn update_relay_config(&mut self, proxy_hostname: Option<String>) {
+        if let Some(ph) = proxy_hostname {
+            self.svc_mgr.config_store.set(
+                "relay",
+                serde_json::json!({
+                    "proxy_hostname": ph,
+                    "instance_id_prefix": &self.instance_id[..12],
+                }),
+            );
+        }
+    }
+
+    #[cfg(feature = "services")]
+    async fn shutdown(&mut self) {
+        self.svc_mgr.shutdown().await;
+    }
+}
+
+// ── Entry point ──────────────────────────────────────────────────────
+
 pub async fn run(
     log_buf: crate::log_buffer::LogBuffer,
     set_log_level: Box<dyn Fn(&str) + Send>,
@@ -25,8 +324,8 @@ pub async fn run(
     // Acquire lockfile to ensure only one daemon instance runs at a time.
     let lock_path = config::config_dir().join("daemon.lock");
     std::fs::create_dir_all(lock_path.parent().unwrap()).ok();
-    let lock_file = std::fs::File::create(&lock_path)
-        .context("failed to create lockfile")?;
+    let lock_file =
+        std::fs::File::create(&lock_path).context("failed to create lockfile")?;
     match lock_file.try_lock() {
         Ok(()) => {}
         Err(std::fs::TryLockError::WouldBlock) => {
@@ -39,7 +338,6 @@ pub async fn run(
             return Err(e).context("failed to lock lockfile");
         }
     }
-    // lock_file is held for the lifetime of run(); the OS releases the lock on drop/exit.
 
     sentry_ext::set_tag("environment", ENVIRONMENT);
     sentry_ext::set_tag("target", TARGET);
@@ -49,8 +347,7 @@ pub async fn run(
         ("target", TARGET),
     ]);
 
-    // Migration: remove legacy UUID-based instance-id file (replaced by
-    // host key fingerprint).
+    // Migration: remove legacy UUID-based instance-id file.
     let legacy_id_path = config::config_dir().join("instance-id");
     if legacy_id_path.exists() {
         if let Err(e) = std::fs::remove_file(&legacy_id_path) {
@@ -61,22 +358,16 @@ pub async fn run(
     }
 
     let mut cfg = config::load().await?;
-    let mut current_cfg = cfg.clone();
+    let current_cfg = cfg.clone();
 
-    let update_interval = humantime::parse_duration(&cfg.daemon.update_interval)
-        .context("invalid update_interval")?;
-    let health_interval = humantime::parse_duration(&cfg.daemon.health_interval)
-        .context("invalid health_interval")?;
+    let update_interval =
+        humantime::parse_duration(&cfg.daemon.update_interval).context("invalid update_interval")?;
+    let health_interval =
+        humantime::parse_duration(&cfg.daemon.health_interval).context("invalid health_interval")?;
 
-    let mut upgrade_window = cfg.daemon.upgrade_window.as_ref().map(|w| {
+    let upgrade_window = cfg.daemon.upgrade_window.as_ref().map(|w| {
         mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
     });
-
-    macro_rules! in_upgrade_window {
-        () => {
-            upgrade_window.map_or(true, |(start, end)| mac_mgmt_common::is_within_window(start, end))
-        };
-    }
 
     tracing::info!(
         "daemon started, update interval: {:?}, health interval: {:?}",
@@ -99,14 +390,14 @@ pub async fn run(
 
     dispatcher.dispatch(&DaemonEvent::DaemonStarted);
 
-    // Fetch the cluster's nixpkgs pin (if any) before ServiceManager::init runs
-    // ensure_installed(), so the very first install uses the pinned URL.
+    // Fetch the cluster's nixpkgs pin before ServiceManager::init runs.
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         fetch_nixpkgs_pin(url, token).await;
     }
 
     #[cfg(feature = "services")]
-    let mut svc_mgr = crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher), log_buf.clone())?;
+    let mut svc_mgr =
+        crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher), log_buf.clone())?;
 
     #[cfg(not(feature = "services"))]
     tracing::info!("services feature disabled, skipping service management");
@@ -116,16 +407,24 @@ pub async fn run(
     #[cfg(feature = "services")]
     svc_mgr.register_metrics(&metrics);
 
-    // Channel for local sync requests (e.g. from `mac-mgmt sync` via /sync)
+    // Channel for local sync requests (e.g. from `mac-mgmt sync` via /sync).
     let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
     let _sync_tx_keepalive = sync_tx.clone();
 
-    // Spawn the metrics server
+    // Spawn the metrics server.
     let metrics_clone = Arc::clone(&metrics);
     let log_buf_clone = log_buf.clone();
     let sync_tx_clone = sync_tx.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::metrics_server::build_rocket(metrics_clone, log_buf_clone, sync_tx_clone, metrics_port).launch().await {
+        if let Err(e) = crate::metrics_server::build_rocket(
+            metrics_clone,
+            log_buf_clone,
+            sync_tx_clone,
+            metrics_port,
+        )
+        .launch()
+        .await
+        {
             tracing::error!("metrics server failed: {e}");
             sentry_ext::capture_error(&format!("metrics server failed: {e}"), &[]);
         }
@@ -134,8 +433,6 @@ pub async fn run(
 
     let mut update_tick = time::interval(update_interval);
     let mut health_tick = time::interval(health_interval);
-    // Heartbeat tick fires at the same rate as health tick but independently,
-    // so heartbeats always go out even if the health tick is blocking on IPC.
     let mut heartbeat_tick = time::interval(health_interval);
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -144,30 +441,31 @@ pub async fn run(
         .context("failed to register SIGINT handler")?;
 
     // Now that signal handlers are registered, spawn/connect all services.
-    // If a SIGTERM arrives during spawn, the handler will catch it.
     #[cfg(feature = "services")]
     {
         svc_mgr.spawn_all();
         svc_mgr.connect_all().await;
     }
 
-    // Set up config file watcher
+    // Set up config file watcher.
     let (config_tx, mut config_rx) = tokio::sync::mpsc::channel(4);
     let _config_tx_keepalive = config_tx.clone();
-    let _config_watcher = match crate::config_watch::watch(&crate::config::config_path(), config_tx) {
-        Ok(w) => {
-            tracing::info!("watching config file for changes");
-            Some(w)
-        }
-        Err(e) => {
-            tracing::warn!("failed to set up config watcher: {e}");
-            None
-        }
-    };
+    let _config_watcher =
+        match crate::config_watch::watch(&crate::config::config_path(), config_tx) {
+            Ok(w) => {
+                tracing::info!("watching config file for changes");
+                Some(w)
+            }
+            Err(e) => {
+                tracing::warn!("failed to set up config watcher: {e}");
+                None
+            }
+        };
 
     // Derive a stable instance ID from the ed25519 host key fingerprint.
-    let host_key = Arc::new(crate::host_keys::load_or_generate()
-        .context("failed to load/generate SSH host key")?);
+    let host_key = Arc::new(
+        crate::host_keys::load_or_generate().context("failed to load/generate SSH host key")?,
+    );
     let instance_id = crate::host_keys::fingerprint_hex(&host_key);
     tracing::info!("instance ID (host key fingerprint): {instance_id}");
 
@@ -182,7 +480,7 @@ pub async fn run(
         cfg.relay.remote_ssh_enabled,
     );
 
-    // Start server push WebSocket if server is configured
+    // Start server push WebSocket if server is configured.
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
         let (_handle, rx) = crate::server_push::start(url, token);
         Some(rx)
@@ -190,347 +488,114 @@ pub async fn run(
         None
     };
 
-    // Run startup sync in background to avoid blocking the main loop.
-    if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        let u = url.clone(); let t = token.clone();
-        tokio::spawn(async move { fetch_target_version(&u, &t).await; });
+    // Build the Daemon struct with all long-lived state.
+    let mut daemon = Daemon {
+        server_url,
+        server_token,
+        skills_dir: skills_dir.clone(),
+        dispatcher,
+        metrics,
+        upgrade_window,
+        current_cfg,
+        instance_id,
+        host_key,
+        #[cfg(feature = "services")]
+        svc_mgr,
+    };
+
+    // Run startup sync in background.
+    if let (Some(url), Some(token)) = (&daemon.server_url, &daemon.server_token) {
+        let u = url.clone();
+        let t = token.clone();
+        tokio::spawn(async move {
+            fetch_target_version(&u, &t).await;
+        });
     }
 
     #[cfg(feature = "self-update")]
-    if in_upgrade_window!() {
+    if daemon.in_upgrade_window() {
         let _ = tokio::time::timeout(
-                            std::time::Duration::from_secs(120),
-                            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
-                        ).await;
+            std::time::Duration::from_secs(120),
+            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
+        )
+        .await;
         #[cfg(feature = "services")]
-        svc_mgr.send_update_self().await;
+        daemon.svc_mgr.send_update_self().await;
     } else {
         tracing::info!("outside upgrade window, skipping initial self-update");
     }
-    if let (Some(url), Some(token)) = (&server_url, &server_token) {
-        let u = url.clone(); let t = token.clone(); let sd = skills_dir.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
-                tracing::warn!("initial skills sync failed: {e}");
-            }
-            if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
-                tracing::warn!("initial MCP servers sync failed: {e}");
-            }
-        });
-    }
+
+    daemon.spawn_sync_skills_and_mcp();
+
     #[cfg(feature = "relay")]
     relay_mgr.sync_ssh_keys();
 
-    macro_rules! handle_update {
-        () => {
+    // Helper macro purely for cfg-gated relay proxy hostname access.
+    macro_rules! relay_proxy_hostname {
+        () => {{
+            #[cfg(feature = "relay")]
             {
-                // Network-heavy operations run in background tasks.
-                if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    let u = url.clone();
-                    let t = token.clone();
-                    tokio::spawn(async move {
-                        fetch_target_version(&u, &t).await;
-                        fetch_nixpkgs_pin(&u, &t).await;
-                    });
-                }
-
-                if in_upgrade_window!() {
-                    #[cfg(feature = "self-update")]
-                    {
-                        let _ = tokio::time::timeout(
-                            std::time::Duration::from_secs(120),
-                            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
-                        ).await;
-                        #[cfg(feature = "services")]
-                        svc_mgr.send_update_self().await;
-                    }
-                    tokio::task::spawn_blocking(upgrade_nix);
-                } else {
-                    tracing::info!("outside upgrade window, skipping upgrades");
-                }
-
-                if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    let u = url.clone();
-                    let t = token.clone();
-                    let sd = skills_dir.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
-                            tracing::warn!("skills sync failed: {e}");
-                        }
-                        if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
-                            tracing::warn!("MCP servers sync failed: {e}");
-                        }
-                    });
-                }
-
-                #[cfg(feature = "relay")]
-                relay_mgr.sync_ssh_keys();
-
-                if in_upgrade_window!() {
-                    #[cfg(feature = "services")]
-                    svc_mgr.check_upgrades();
-                }
+                relay_mgr.relay_proxy_hostname()
             }
-        };
-    }
-
-    macro_rules! handle_config_reload {
-        () => {
+            #[cfg(not(feature = "relay"))]
             {
-                tracing::info!("config file changed, reloading");
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    crate::config::reload(),
-                ).await {
-                    Err(_) => {
-                        tracing::warn!("config reload timed out (10s), keeping old config");
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!("config reload failed: {e}");
-                    }
-                    Ok(Ok(new_cfg)) => {
-                        if let Err(e) = new_cfg.daemon.validate() {
-                            tracing::warn!("new config invalid, keeping old: {e}");
-                        } else {
-                            if new_cfg.daemon.update_interval != current_cfg.daemon.update_interval {
-                                if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.update_interval) {
-                                    update_tick = time::interval(d);
-                                    tracing::info!("update_interval changed to {}", new_cfg.daemon.update_interval);
-                                }
-                            }
-                            if new_cfg.daemon.health_interval != current_cfg.daemon.health_interval {
-                                if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.health_interval) {
-                                    health_tick = time::interval(d);
-                                    tracing::info!("health_interval changed to {}", new_cfg.daemon.health_interval);
-                                }
-                            }
-
-                            let new_window = new_cfg.daemon.upgrade_window.as_ref().map(|w| {
-                                mac_mgmt_common::parse_time_window(w).expect("already validated")
-                            });
-                            if new_window != upgrade_window {
-                                upgrade_window = new_window;
-                                tracing::info!("upgrade_window updated");
-                            }
-
-                            dispatcher.reconfigure(
-                                new_cfg.notifications.urls.clone(),
-                                new_cfg.notifications.events.clone(),
-                            );
-
-                            // Schedule service restart for changes that require it
-                            let needs_restart =
-                                new_cfg.global.llm_provider != current_cfg.global.llm_provider
-                                || new_cfg.global.agent_provider != current_cfg.global.agent_provider
-                                || format!("{:?}", new_cfg.ollama) != format!("{:?}", current_cfg.ollama)
-                                || format!("{:?}", new_cfg.nexa) != format!("{:?}", current_cfg.nexa)
-                                || format!("{:?}", new_cfg.openclaw) != format!("{:?}", current_cfg.openclaw);
-
-                            if needs_restart {
-                                tracing::info!("service config changed, scheduling restart");
-                                #[cfg(feature = "services")]
-                                svc_mgr.schedule_restart().await;
-                            }
-                            if new_cfg.metrics.port != current_cfg.metrics.port {
-                                tracing::warn!("metrics.port changed \u{2014} daemon restart required to apply");
-                            }
-                            if new_cfg.daemon.log_level != current_cfg.daemon.log_level {
-                                tracing::info!("log_level changed to {}", new_cfg.daemon.log_level);
-                                set_log_level(&new_cfg.daemon.log_level);
-                            }
-
-                            current_cfg = new_cfg;
-                        }
-                    }
-                }
+                None::<String>
             }
-        };
+        }};
     }
 
-    macro_rules! handle_shutdown {
-        ($signal:expr) => {
-            {
-                tracing::info!("received {}, shutting down", $signal);
-                sentry_ext::breadcrumb("daemon", &format!("{} received, shutting down", $signal), &[]);
-                dispatcher.dispatch(&DaemonEvent::DaemonStopped);
-            }
-        };
-    }
-
-    // Send heartbeat immediately with whatever state we have.
-    // Completely decoupled from the health tick so it never blocks.
-    macro_rules! send_heartbeat_now {
-        () => {
-            if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                #[cfg(feature = "services")]
-                let services = svc_mgr.collect_statuses();
-                #[cfg(not(feature = "services"))]
-                let services: Vec<serde_json::Value> = vec![];
-
-                #[cfg(feature = "services")]
-                let tunnels: Vec<serde_json::Value> = svc_mgr.collect_tunnels()
-                    .iter()
-                    .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
-                    .collect();
-                #[cfg(not(feature = "services"))]
-                let tunnels: Vec<serde_json::Value> = vec![];
-
-                #[cfg(feature = "relay")]
-                let rph = relay_mgr.relay_proxy_hostname();
-                #[cfg(not(feature = "relay"))]
-                let rph: Option<String> = None;
-
-                let url = url.clone();
-                let token = token.clone();
-                let iid = instance_id.clone();
-                let hk = Arc::clone(&host_key);
-                tokio::spawn(async move {
-                    send_heartbeat(&url, &token, &iid, &hk, services, tunnels, rph).await;
-                });
-            }
-        };
-    }
-
-    macro_rules! handle_health_tick {
-        () => {
-            {
-                // Health tick runs service health checks (can be slow with IPC).
-                #[cfg(feature = "services")]
-                if tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    svc_mgr.health_tick(&metrics, in_upgrade_window!()),
-                ).await.is_err() {
-                    tracing::warn!("health tick timed out (30s), continuing");
-                }
-
-                // Advertise tunnels to relay (only here, not on every heartbeat).
-                #[cfg(all(feature = "services", feature = "relay"))]
-                {
-                    let td = svc_mgr.collect_tunnels();
-                    relay_mgr.update_tunnel_defs(td);
-                }
-
-                // Update relay config provider for connectors.
-                #[cfg(feature = "relay")]
-                if let Some(ph) = relay_mgr.relay_proxy_hostname() {
-                    #[cfg(feature = "services")]
-                    svc_mgr.config_store.set("relay", serde_json::json!({
-                        "proxy_hostname": ph,
-                        "instance_id_prefix": &instance_id[..12],
-                    }));
-                }
-
-                // Send heartbeat after health tick completes.
-                send_heartbeat_now!();
-            }
-        };
-    }
-
-    macro_rules! handle_push_cmd {
-        ($cmd:expr) => {
-            {
-                match $cmd {
-                    crate::server_push::PushCommand::SyncConfig => {
-                        tracing::info!("server push: sync config");
-                        handle_config_reload!();
-                    }
-                    crate::server_push::PushCommand::SyncSkills => {
-                        if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            let u = url.clone(); let t = token.clone(); let sd = skills_dir.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
-                                    tracing::warn!("push skills sync failed: {e}");
-                                }
-                            });
-                        }
-                    }
-                    crate::server_push::PushCommand::SyncMcpServers => {
-                        if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            let u = url.clone(); let t = token.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
-                                    tracing::warn!("push MCP sync failed: {e}");
-                                }
-                            });
-                        }
-                    }
-                    crate::server_push::PushCommand::SyncSshKeys => {
-                        #[cfg(feature = "relay")]
-                        relay_mgr.sync_ssh_keys();
-                    }
-                    crate::server_push::PushCommand::SelfUpdate => {
-                        tracing::info!("server push: self-update requested");
-                        if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            let u = url.clone(); let t = token.clone();
-                            tokio::spawn(async move { fetch_target_version(&u, &t).await; });
-                        }
-                        if in_upgrade_window!() {
-                            #[cfg(feature = "self-update")]
-                            {
-                                let _ = tokio::time::timeout(
-                            std::time::Duration::from_secs(120),
-                            tokio::task::spawn_blocking(crate::self_update::check_and_apply),
-                        ).await;
-                                #[cfg(feature = "services")]
-                                svc_mgr.send_update_self().await;
-                            }
-                        } else {
-                            tracing::info!("outside upgrade window, deferring self-update");
-                        }
-                    }
-                    crate::server_push::PushCommand::SyncNixpkgs => {
-                        tracing::info!("server push: sync nixpkgs pin");
-                        if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                            let u = url.clone(); let t = token.clone();
-                            tokio::spawn(async move { fetch_nixpkgs_pin(&u, &t).await; });
-                        }
-                        #[cfg(feature = "services")]
-                        svc_mgr.check_upgrades();
-                    }
-                }
-            }
-        };
-    }
-
-    macro_rules! handle_local_sync {
-        () => {
-            {
-                tracing::info!("local sync requested");
-                if let (Some(url), Some(token)) = (&server_url, &server_token) {
-                    let u = url.clone(); let t = token.clone(); let sd = skills_dir.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = crate::skills::sync_skills(&u, &t, &sd).await {
-                            tracing::warn!("local skills sync failed: {e}");
-                        }
-                        if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
-                            tracing::warn!("local MCP servers sync failed: {e}");
-                        }
-                    });
-                }
-                #[cfg(feature = "relay")]
-                relay_mgr.sync_ssh_keys();
-            }
-        };
-    }
+    // ── Main event loop ──────────────────────────────────────────────
 
     loop {
         tokio::select! {
-            _ = sigterm.recv() => { handle_shutdown!("SIGTERM"); break; }
-            _ = sigint.recv() => { handle_shutdown!("SIGINT"); break; }
-            _ = update_tick.tick() => { handle_update!(); }
-            _ = health_tick.tick() => { handle_health_tick!(); }
-            _ = heartbeat_tick.tick() => { send_heartbeat_now!(); }
-            _ = crate::config_watch::recv_debounced(&mut config_rx) => {
-                handle_config_reload!();
+            _ = sigterm.recv() => { daemon.handle_shutdown("SIGTERM"); break; }
+            _ = sigint.recv() => { daemon.handle_shutdown("SIGINT"); break; }
+
+            _ = update_tick.tick() => {
+                daemon.handle_update().await;
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys();
             }
+
+            _ = health_tick.tick() => {
+                daemon.handle_health_tick().await;
+                #[cfg(all(feature = "services", feature = "relay"))]
+                daemon.update_relay_tunnel_defs(&relay_mgr);
+                #[cfg(feature = "services")]
+                daemon.update_relay_config(relay_proxy_hostname!());
+                daemon.send_heartbeat(relay_proxy_hostname!());
+            }
+
+            _ = heartbeat_tick.tick() => {
+                daemon.send_heartbeat(relay_proxy_hostname!());
+            }
+
+            _ = crate::config_watch::recv_debounced(&mut config_rx) => {
+                daemon.handle_config_reload(&mut update_tick, &mut health_tick, &*set_log_level).await;
+            }
+
             Some(cmd) = async {
                 if let Some(rx) = &mut push_rx { rx.recv().await } else { std::future::pending().await }
             } => {
-                handle_push_cmd!(cmd);
+                // SyncConfig needs special handling (needs interval refs).
+                if matches!(cmd, crate::server_push::PushCommand::SyncConfig) {
+                    tracing::info!("server push: sync config");
+                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &*set_log_level).await;
+                } else {
+                    let needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
+                    #[cfg(feature = "relay")]
+                    if needs_ssh_sync { relay_mgr.sync_ssh_keys(); }
+                    #[cfg(not(feature = "relay"))]
+                    let _ = needs_ssh_sync;
+                }
             }
+
             Some(()) = sync_rx.recv() => {
-                handle_local_sync!();
+                daemon.handle_local_sync();
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys();
             }
+
             Some(cmd) = async {
                 #[cfg(feature = "relay")]
                 { relay_mgr.recv_cmd().await }
@@ -540,6 +605,7 @@ pub async fn run(
                 #[cfg(feature = "relay")]
                 relay_mgr.handle_cmd(cmd);
             }
+
             Some(()) = async {
                 #[cfg(feature = "relay")]
                 { relay_heartbeat_rx.recv().await }
@@ -547,13 +613,13 @@ pub async fn run(
                 { std::future::pending::<Option<()>>().await }
             } => {
                 tracing::debug!("relay signalled heartbeat");
-                send_heartbeat_now!();
+                daemon.send_heartbeat(relay_proxy_hostname!());
             }
         }
     }
 
     #[cfg(feature = "services")]
-    svc_mgr.shutdown().await;
+    daemon.shutdown().await;
 
     #[cfg(feature = "relay")]
     relay_mgr.cleanup();
@@ -563,6 +629,8 @@ pub async fn run(
 
     Ok(())
 }
+
+// ── Free functions ───────────────────────────────────────────────────
 
 /// Fetch the target version from the server and set it for self-update.
 async fn fetch_target_version(server_url: &str, server_token: &str) {
@@ -601,9 +669,7 @@ async fn fetch_target_version(server_url: &str, server_token: &str) {
     }
 }
 
-/// Fetch the cluster's nixpkgs commit pin from the server and apply it
-/// in-process. Subsequent `nix profile` operations will use this commit's
-/// GitLab archive tarball as the flake source.
+/// Fetch the cluster's nixpkgs commit pin from the server and apply it.
 async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
     let client = reqwest::Client::new();
     let url = format!("{server_url}/api/nixpkgs");
@@ -631,7 +697,7 @@ async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
     }
 }
 
-async fn send_heartbeat(
+async fn do_send_heartbeat(
     server_url: &str,
     server_token: &str,
     instance_id: &str,
@@ -640,8 +706,8 @@ async fn send_heartbeat(
     tunnels: Vec<serde_json::Value>,
     relay_proxy_hostname: Option<String>,
 ) {
-    use russh::keys::PublicKeyBase64;
     use russh::keys::signature::Signer;
+    use russh::keys::PublicKeyBase64;
 
     let client = reqwest::Client::new();
     let hostname = hostname::get()
@@ -707,9 +773,6 @@ fn upgrade_nix() {
     tracing::info!("checking for nix upgrade");
     if let Err(e) = crate::nix::upgrade_nix() {
         tracing::warn!("nix upgrade failed: {e}");
-        sentry_ext::capture_error(
-            &format!("nix upgrade failed: {e}"),
-            &[],
-        );
+        sentry_ext::capture_error(&format!("nix upgrade failed: {e}"), &[]);
     }
 }

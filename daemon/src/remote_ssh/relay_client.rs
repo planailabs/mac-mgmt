@@ -59,6 +59,73 @@ pub struct TunnelTarget {
     pub port: u16,
 }
 
+// ── Shared proxy helpers ─────────────────────────────────────────────
+
+/// Build a reqwest request for the given HTTP method against a tunnel target.
+fn build_proxy_request(
+    client: &reqwest::Client,
+    target: &TunnelTarget,
+    method: &str,
+    path: &str,
+) -> reqwest::RequestBuilder {
+    let url = format!("http://{}:{}{path}", target.host, target.port);
+    let mut req = match method {
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        _ => client.get(&url),
+    };
+    req = req.header("host", format!("{}:{}", target.host, target.port));
+    req
+}
+
+/// Apply request headers from a Vec, filtering hop-by-hop headers.
+fn apply_headers_vec(
+    mut req: reqwest::RequestBuilder,
+    headers: &[(String, String)],
+) -> reqwest::RequestBuilder {
+    for (k, v) in headers {
+        let lk = k.to_lowercase();
+        if lk == "connection" || lk == "transfer-encoding" || lk == "host" {
+            continue;
+        }
+        req = req.header(k.as_str(), v.as_str());
+    }
+    req
+}
+
+/// Apply request headers from a JSON object, filtering hop-by-hop headers.
+fn apply_headers_json(
+    mut req: reqwest::RequestBuilder,
+    headers: &serde_json::Value,
+) -> reqwest::RequestBuilder {
+    if let Some(hdrs) = headers.as_object() {
+        for (k, v) in hdrs {
+            let lk = k.to_lowercase();
+            if lk == "connection" || lk == "transfer-encoding" || lk == "host" {
+                continue;
+            }
+            if let Some(val) = v.as_str() {
+                req = req.header(k.as_str(), val);
+            }
+        }
+    }
+    req
+}
+
+/// Decode a base64-encoded body and attach it to the request.
+fn apply_body_b64(req: reqwest::RequestBuilder, body_b64: Option<String>) -> reqwest::RequestBuilder {
+    if let Some(b64) = body_b64 {
+        use base64::Engine;
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+            return req.body(bytes);
+        }
+    }
+    req
+}
+
 pub async fn run(
     relay_url: &str,
     token: &str,
@@ -330,34 +397,10 @@ async fn handle_proxy_request(
         return;
     };
 
-    let url = format!("http://{}:{}{path}", target.host, target.port);
     let client = reqwest::Client::new();
-
-    let mut req = match method {
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "DELETE" => client.delete(&url),
-        "PATCH" => client.patch(&url),
-        "HEAD" => client.head(&url),
-        _ => client.get(&url),
-    };
-
-    for (k, v) in &headers {
-        let lk = k.to_lowercase();
-        if lk == "connection" || lk == "transfer-encoding" || lk == "host" {
-            continue;
-        }
-        req = req.header(k.as_str(), v.as_str());
-    }
-    // Set Host to the actual target so the service sees the correct host.
-    req = req.header("host", format!("{}:{}", target.host, target.port));
-
-    if let Some(b64) = body {
-        use base64::Engine;
-        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
-            req = req.body(bytes);
-        }
-    }
+    let req = build_proxy_request(&client, &target, method, path);
+    let req = apply_headers_vec(req, &headers);
+    let req = apply_body_b64(req, body);
 
     let (status, resp_headers, resp_body) = match req
         .timeout(Duration::from_secs(60))
@@ -377,7 +420,7 @@ async fn handle_proxy_request(
             (status, hdrs, b64)
         }
         Err(e) => {
-            tracing::warn!("proxy request to {url} failed: {e}");
+            tracing::warn!("proxy request to {}:{}{path} failed: {e}", target.host, target.port);
             (502, vec![], String::new())
         }
     };
@@ -420,43 +463,15 @@ async fn handle_proxy_stream_request(
         return;
     };
 
-    let url = format!("http://{}:{}{path}", target.host, target.port);
     let client = reqwest::Client::new();
+    let req = build_proxy_request(&client, &target, method, path);
+    let req = apply_headers_json(req, &headers_json);
+    let req = apply_body_b64(req, body_b64);
 
-    let mut req = match method {
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "DELETE" => client.delete(&url),
-        "PATCH" => client.patch(&url),
-        "HEAD" => client.head(&url),
-        _ => client.get(&url),
-    };
-
-    // Forward headers, overriding Host to the actual target.
-    if let Some(hdrs) = headers_json.as_object() {
-        for (k, v) in hdrs {
-            let lk = k.to_lowercase();
-            if lk == "connection" || lk == "transfer-encoding" || lk == "host" { continue; }
-            if let Some(val) = v.as_str() {
-                req = req.header(k.as_str(), val);
-            }
-        }
-    }
-    req = req.header("host", format!("{}:{}", target.host, target.port));
-
-    // Decode and attach request body if present.
-    if let Some(b64) = body_b64 {
-        use base64::Engine;
-        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
-            req = req.body(bytes);
-        }
-    }
-
-    // Make the request.
     let resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!("proxy stream {request_id} to {url} failed: {e}");
+            tracing::warn!("proxy stream {request_id} to {}:{}{path} failed: {e}", target.host, target.port);
             let _ = out_tx.send(serde_json::json!({
                 "type": "proxy_stream_headers",
                 "request_id": request_id,
@@ -580,51 +595,25 @@ async fn proxy_session_websocket(
     let (mut data_sink, mut data_stream) = data_ws.split();
     let (mut local_sink, mut local_stream) = local_ws.split();
 
+    // Forward: relay data WS → local service WS
     let data_to_local = async {
         while let Some(Ok(msg)) = data_stream.next().await {
-            match msg {
-                tungstenite::Message::Binary(d) => {
-                    if local_sink.send(tungstenite::Message::Binary(d)).await.is_err() { break; }
-                }
-                tungstenite::Message::Text(t) => {
-                    if local_sink.send(tungstenite::Message::Text(t)).await.is_err() { break; }
-                }
-                tungstenite::Message::Ping(d) => {
-                    if local_sink.send(tungstenite::Message::Ping(d)).await.is_err() { break; }
-                }
-                tungstenite::Message::Pong(d) => {
-                    if local_sink.send(tungstenite::Message::Pong(d)).await.is_err() { break; }
-                }
-                tungstenite::Message::Close(frame) => {
-                    let _ = local_sink.send(tungstenite::Message::Close(frame)).await;
-                    break;
-                }
-                _ => {}
+            if matches!(msg, tungstenite::Message::Close(_)) {
+                let _ = local_sink.send(msg).await;
+                break;
             }
+            if local_sink.send(msg).await.is_err() { break; }
         }
     };
 
+    // Forward: local service WS → relay data WS
     let local_to_data = async {
         while let Some(Ok(msg)) = local_stream.next().await {
-            match msg {
-                tungstenite::Message::Binary(d) => {
-                    if data_sink.send(tungstenite::Message::Binary(d)).await.is_err() { break; }
-                }
-                tungstenite::Message::Text(t) => {
-                    if data_sink.send(tungstenite::Message::Text(t)).await.is_err() { break; }
-                }
-                tungstenite::Message::Ping(d) => {
-                    if data_sink.send(tungstenite::Message::Ping(d)).await.is_err() { break; }
-                }
-                tungstenite::Message::Pong(d) => {
-                    if data_sink.send(tungstenite::Message::Pong(d)).await.is_err() { break; }
-                }
-                tungstenite::Message::Close(frame) => {
-                    let _ = data_sink.send(tungstenite::Message::Close(frame)).await;
-                    break;
-                }
-                _ => {}
+            if matches!(msg, tungstenite::Message::Close(_)) {
+                let _ = data_sink.send(msg).await;
+                break;
             }
+            if data_sink.send(msg).await.is_err() { break; }
         }
     };
 
@@ -673,29 +662,10 @@ async fn proxy_session_stream(
 
     let method = req_json["method"].as_str().unwrap_or("GET");
     let req_path = req_json["path"].as_str().unwrap_or(path);
-    let url = format!("http://{}:{}{req_path}", target.host, target.port);
 
     let client = reqwest::Client::new();
-    let mut req = match method {
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "DELETE" => client.delete(&url),
-        "PATCH" => client.patch(&url),
-        "HEAD" => client.head(&url),
-        _ => client.get(&url),
-    };
-
-    // Forward headers, overriding Host to the actual target.
-    if let Some(headers) = req_json["headers"].as_object() {
-        for (k, v) in headers {
-            let lk = k.to_lowercase();
-            if lk == "connection" || lk == "transfer-encoding" || lk == "host" { continue; }
-            if let Some(val) = v.as_str() {
-                req = req.header(k.as_str(), val);
-            }
-        }
-    }
-    req = req.header("host", format!("{}:{}", target.host, target.port));
+    let mut req = build_proxy_request(&client, &target, method, req_path);
+    req = apply_headers_json(req, &req_json["headers"]);
 
     // Collect request body chunks from data WS until "end_request"
     let has_body = req_json.get("has_body").and_then(|v| v.as_bool()).unwrap_or(false);
