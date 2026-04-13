@@ -174,6 +174,7 @@ impl ServiceManager {
     ) -> Result<Self> {
         let external = cfg.global.external_processes;
 
+        #[cfg(target_os = "linux")]
         if external {
             let uid = unsafe { libc::getuid() };
             let bus_path = format!("/run/user/{uid}/bus");
