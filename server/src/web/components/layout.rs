@@ -72,7 +72,7 @@ fn LoadingSpinner() -> Element {
 #[component]
 pub fn Layout() -> Element {
     let user_info = use_server_future(get_current_user_info)?;
-    let (is_admin, real_is_admin, impersonating_email, display_name) = match &*user_info.read() {
+    let (is_admin, _real_is_admin, impersonating_email, display_name) = match &*user_info.read() {
         Some(Ok(info)) => (info.is_admin, info.real_is_admin, info.impersonating_email.clone(), info.display_name.clone()),
         _ => (false, false, None, String::new()),
     };
@@ -80,7 +80,7 @@ pub fn Layout() -> Element {
     rsx! {
         div { class: "h-screen w-full flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden",
             // Top Nav
-            Navbar { is_admin, real_is_admin, display_name: display_name.clone() }
+            Navbar { is_admin, display_name: display_name.clone() }
 
             // Impersonation banner
             if let Some(email) = &impersonating_email {

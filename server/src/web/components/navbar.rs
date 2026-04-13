@@ -201,7 +201,7 @@ pub fn Sidebar(is_admin: bool) -> Element {
 }
 
 #[component]
-pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Element {
+pub fn Navbar(is_admin: bool, display_name: String) -> Element {
     let mut is_open = use_signal(|| false);
     let mut theme = use_signal(|| ThemeMode::System);
 
@@ -285,12 +285,6 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
 
                     // Right side: Profile & Theme (Desktop & Mobile share some parts)
                     div { class: "flex space-x-1 items-center",
-                        // Impersonation control
-                        if real_is_admin {
-                            div { class: "hidden sm:block",
-                                ImpersonateSelector {}
-                            }
-                        }
                         
                         // Desktop user icon
                         if !display_name.is_empty() {
@@ -392,11 +386,7 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
                                         }
                                     }
                                 }
-                                if real_is_admin {
-                                    div { class: "mt-3 sm:hidden",
-                                        ImpersonateSelector {}
-                                    }
-                                }
+
                             }
                         }
                         
@@ -454,76 +444,3 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
     }
 }
 
-// -- Impersonation selector --
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ImpersonateUser {
-    id: String,
-    email: String,
-}
-
-#[server]
-async fn get_impersonation_targets() -> Result<Vec<ImpersonateUser>, ServerFnError> {
-    use crate::web::user::current_user;
-    let user = current_user().await?;
-    if !user.is_admin || user.impersonating_from.is_some() {
-        return Ok(vec![]);
-    }
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row { id: uuid::Uuid, email: String }
-
-    let rows = sqlx::query_as::<_, Row>("SELECT id, email FROM users ORDER BY email")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows.into_iter().map(|r| ImpersonateUser { id: r.id.to_string(), email: r.email }).collect())
-}
-
-#[component]
-fn ImpersonateSelector() -> Element {
-    let targets = use_server_future(get_impersonation_targets);
-
-    let (is_loading, users) = match targets {
-        Ok(ref fut) => match &*fut.read() {
-            Some(Ok(list)) => (false, list.clone()),
-            Some(Err(_)) => (false, vec![]),
-            None => (true, vec![]),
-        },
-        Err(_) => (false, vec![]),
-    };
-
-    if !is_loading && users.is_empty() {
-        return rsx! {};
-    }
-
-    rsx! {
-        select {
-            class: "ml-2 border border-gray-300 dark:border-gray-600 rounded px-1 py-1 text-xs bg-white dark:bg-gray-700 dark:text-white max-w-[160px] disabled:opacity-50 disabled:cursor-wait",
-            disabled: is_loading,
-            onchange: move |e| {
-                let val = e.value();
-                if val.is_empty() {
-                    document::eval(
-                        "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
-                    );
-                } else {
-                    let js = format!(
-                        "document.cookie = 'impersonate_user_id={val}; Path=/; SameSite=Lax'; window.location.reload();"
-                    );
-                    document::eval(&js);
-                }
-            },
-            if is_loading {
-                option { value: "", "Loading…" }
-            } else {
-                option { value: "", "Impersonate…" }
-                for u in &users {
-                    option { value: "{u.id}", key: "{u.id}", "{u.email}" }
-                }
-            }
-        }
-    }
-}
