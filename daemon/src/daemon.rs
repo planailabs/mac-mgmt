@@ -563,7 +563,11 @@ pub async fn run(
                 daemon.update_relay_tunnel_defs(&relay_mgr);
                 #[cfg(feature = "services")]
                 daemon.update_relay_config(relay_proxy_hostname!());
+                // Send heartbeat BEFORE connectors — connectors run blocking
+                // CLI commands that can hang for minutes.
                 daemon.send_heartbeat(relay_proxy_hostname!());
+                #[cfg(feature = "services")]
+                tokio::task::block_in_place(|| daemon.svc_mgr.run_connectors_tick());
             }
 
             _ = heartbeat_tick.tick() => {

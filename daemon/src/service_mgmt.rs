@@ -539,6 +539,11 @@ impl ServiceManager {
                 Self::health_tick_external(states, &self.dispatcher, &self.log_buf, metrics, in_upgrade_window).await;
             }
         }
+    }
+
+    /// Run connectors separately from health checks. Connectors execute
+    /// blocking CLI commands, so call this AFTER sending the heartbeat.
+    pub fn run_connectors_tick(&mut self) {
         self.run_connectors();
     }
 
