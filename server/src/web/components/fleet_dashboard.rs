@@ -158,7 +158,9 @@ pub fn FleetDashboard() -> Element {
                     }
                 }
                 last_refreshed.set(Some(Utc::now()));
-                let _ = document::eval("new Promise(r => setTimeout(r, 5000))").await;
+                let _ = document::eval("setTimeout(() => dioxus.send(null), 5000)")
+                    .recv::<serde_json::Value>()
+                    .await;
             }
         })
     });
