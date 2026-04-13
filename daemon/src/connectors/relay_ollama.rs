@@ -35,7 +35,7 @@ impl Connector for RelayOllama {
     }
 
     fn depends_on(&self) -> &[&str] {
-        &["relay"]
+        &["relay", "ollama"]
     }
 
     fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
@@ -49,9 +49,17 @@ impl Connector for RelayOllama {
             return Ok(());
         };
 
+        let port = configs
+            .get("ollama")
+            .and_then(|v| v.get("port"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(11434);
+
         let origin_http = format!("http://{instance_prefix}-ollama.{proxy_hostname}");
         let origin_https = format!("https://{instance_prefix}-ollama.{proxy_hostname}");
-        let new_origins = format!("{origin_http},{origin_https}");
+        let new_origins = format!(
+            "{origin_http},{origin_https},http://127.0.0.1:{port},http://[::1]:{port},http://localhost:{port}"
+        );
 
         let path = env_file_path();
 

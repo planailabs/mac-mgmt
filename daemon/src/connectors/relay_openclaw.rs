@@ -42,9 +42,19 @@ impl Connector for RelayOpenClaw {
         // Build the exact origin: http(s)://{prefix}-openclaw.{proxy_hostname}
         // Use both http and https variants since we don't know the scheme.
         let origin = format!("{instance_prefix}-openclaw.{proxy_hostname}");
+
+        let port = configs
+            .get("openclaw")
+            .and_then(|v| v.pointer("/gateway/port"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(18789);
+
         let origins_to_add = vec![
             format!("http://{origin}"),
             format!("https://{origin}"),
+            format!("http://127.0.0.1:{port}"),
+            format!("http://[::1]:{port}"),
+            format!("http://localhost:{port}"),
         ];
 
         // Read current config
