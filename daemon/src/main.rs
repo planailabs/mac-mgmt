@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod cmd;
 mod config;
 mod config_watch;
 #[cfg(feature = "services")]

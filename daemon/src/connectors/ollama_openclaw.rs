@@ -30,10 +30,10 @@ impl Connector for OllamaOpenClaw {
             &[("connector", "ollama→openclaw"), ("model", model)],
         );
 
-        let output = Command::new("ollama")
-            .args(["launch", "--yes", "--config", "--model", model, "openclaw"])
-            .output()
-            .with_context(|| format!("failed to run ollama launch --model {model}"))?;
+        let output = crate::cmd::output_with_timeout(
+            Command::new("ollama").args(["launch", "--yes", "--config", "--model", model, "openclaw"]),
+            crate::cmd::DEFAULT_TIMEOUT,
+        ).with_context(|| format!("failed to run ollama launch --model {model}"))?;
 
         if output.status.success() {
             tracing::info!("ollama→openclaw connected successfully");

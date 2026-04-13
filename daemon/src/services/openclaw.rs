@@ -297,10 +297,10 @@ impl ManagedService for OpenClaw {
     }
 
     fn check_health(&self) -> Result<bool> {
-        let output = Command::new("openclaw")
-            .args(["health", "--json"])
-            .output()
-            .context("failed to run openclaw health")?;
+        let output = crate::cmd::output_with_timeout(
+            Command::new("openclaw").args(["health", "--json"]),
+            crate::cmd::DEFAULT_TIMEOUT,
+        ).context("failed to run openclaw health")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -329,10 +329,10 @@ impl ManagedService for OpenClaw {
         tracing::info!("running openclaw doctor --fix");
         sentry_ext::breadcrumb("repair", "running openclaw doctor --fix", &[("service", "openclaw")]);
 
-        let output = Command::new("openclaw")
-            .args(["doctor", "--fix"])
-            .output()
-            .context("failed to run openclaw doctor --fix")?;
+        let output = crate::cmd::output_with_timeout(
+            Command::new("openclaw").args(["doctor", "--fix"]),
+            std::time::Duration::from_secs(60),
+        ).context("failed to run openclaw doctor --fix")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);

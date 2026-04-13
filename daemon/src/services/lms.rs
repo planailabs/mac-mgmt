@@ -107,10 +107,10 @@ impl ManagedService for Lms {
     fn check_health(&self) -> Result<bool> {
         // `lms server status --json` prints `{"running": bool, "port": number}`
         // on stdout — see ~/lms/src/subcommands/server.ts.
-        let output = Command::new("lms")
-            .args(["server", "status", "--json"])
-            .output()
-            .context("failed to run `lms server status --json`")?;
+        let output = crate::cmd::output_with_timeout(
+            Command::new("lms").args(["server", "status", "--json"]),
+            crate::cmd::DEFAULT_TIMEOUT,
+        ).context("failed to run `lms server status --json`")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!("`lms server status --json` failed: {}", stderr.trim());
