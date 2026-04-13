@@ -140,11 +140,24 @@ impl Searchable for FleetEntry {
 pub fn FleetDashboard() -> Element {
     let mut generation = use_signal(|| 0u64);
     let mut last_refreshed = use_signal(|| Utc::now());
+    let mut cached: Signal<Option<Result<Vec<FleetEntry>, String>>> = use_signal(|| None);
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal(|| ("last_seen".to_string(), false));
 
     let fleet = use_server_future(move || {
         let _gen = generation();
         async move { get_fleet_status().await }
     })?;
+
+    // Stash latest result so re-fetches don't flash "Loading...".
+    if let Some(result) = &*fleet.read() {
+        let new_cached = match result {
+            Ok(entries) => Ok(entries.clone()),
+            Err(e) => Err(e.to_string()),
+        };
+        cached.set(Some(new_cached));
+    }
 
     // Auto-refresh every 5 seconds.
     use_future(move || async move {
@@ -155,12 +168,16 @@ pub fn FleetDashboard() -> Element {
         }
     });
 
-    match &*fleet.read() {
-        Some(Ok(entries)) => {
-            let search = use_signal(String::new);
-            let limit = use_signal(|| 20usize);
-            let sort = use_signal(|| ("last_seen".to_string(), false));
+    let refreshed_at = *last_refreshed.read();
+    let refresh_ago = {
+        let secs = Utc::now().signed_duration_since(refreshed_at).num_seconds();
+        if secs < 5 { "just now".to_string() } else { format!("{secs}s ago") }
+    };
 
+    // Use cached data to avoid flicker; fall back to "Loading..." on first load.
+    let snapshot = cached.read();
+    match snapshot.as_ref() {
+        Some(Ok(entries)) => {
             let entries_clone = entries.clone();
             let mut filtered: Vec<FleetEntry> = {
                 let q = search.read().to_lowercase();
@@ -189,12 +206,6 @@ pub fn FleetDashboard() -> Element {
             let filtered_count = filtered.len();
             let limit_val = *limit.read();
             let shown = filtered_count.min(limit_val);
-
-            let refreshed_at = *last_refreshed.read();
-            let refresh_ago = {
-                let secs = Utc::now().signed_duration_since(refreshed_at).num_seconds();
-                if secs < 5 { "just now".to_string() } else { format!("{secs}s ago") }
-            };
 
             rsx! {
                 div { class: "flex items-center justify-between mb-4",
