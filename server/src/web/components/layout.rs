@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
-use super::navbar::Navbar;
+use super::navbar::{Navbar, Sidebar};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UserInfo {
@@ -43,7 +43,7 @@ async fn get_current_user_info() -> Result<UserInfo, ServerFnError> {
 #[component]
 fn LoadingSpinner() -> Element {
     rsx! {
-        div { class: "flex items-center justify-center py-20",
+        div { class: "flex items-center justify-center py-20 w-full h-full",
             div { class: "flex flex-col items-center gap-3",
                 svg {
                     class: "animate-spin h-8 w-8 text-blue-600 dark:text-blue-400",
@@ -78,10 +78,13 @@ pub fn Layout() -> Element {
     };
 
     rsx! {
-        div { class: "min-h-screen bg-gray-50 dark:bg-gray-900",
+        div { class: "h-screen w-full flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden",
+            // Top Nav
+            Navbar { is_admin, real_is_admin, display_name: display_name.clone() }
+
             // Impersonation banner
             if let Some(email) = &impersonating_email {
-                div { class: "bg-yellow-500 text-yellow-900 text-center text-sm py-1.5 px-4 flex items-center justify-center gap-3",
+                div { class: "shrink-0 bg-yellow-500 text-yellow-900 text-center text-sm py-1.5 px-4 flex items-center justify-center gap-3 relative z-10",
                     span { "Impersonating " strong { "{email}" } }
                     button {
                         class: "bg-yellow-700 text-yellow-100 px-2 py-0.5 rounded text-xs hover:bg-yellow-800",
@@ -94,11 +97,18 @@ pub fn Layout() -> Element {
                     }
                 }
             }
-            Navbar { is_admin, real_is_admin, display_name }
-            main { class: "max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8",
-                SuspenseBoundary {
-                    fallback: |_| rsx! { LoadingSpinner {} },
-                    Outlet::<Route> {}
+
+            // Body flex container
+            div { class: "flex flex-1 overflow-hidden relative",
+                // Sidebar (Desktop)
+                Sidebar { is_admin }
+                
+                // Main content
+                main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-gray-50 dark:bg-gray-900",
+                    SuspenseBoundary {
+                        fallback: |_| rsx! { LoadingSpinner {} },
+                        Outlet::<Route> {}
+                    }
                 }
             }
         }
