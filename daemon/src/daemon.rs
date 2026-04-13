@@ -751,7 +751,7 @@ async fn do_send_heartbeat(
     };
 
     let url = format!("{server_url}/api/heartbeat");
-    tracing::info!(
+    tracing::debug!(
         "heartbeat → {url} instance={instance_id} host={hostname} signed_at={signed_at} services={svc_count} tunnels={tunnel_count}"
     );
     match tokio::time::timeout(
@@ -765,7 +765,7 @@ async fn do_send_heartbeat(
     .await
     {
         Ok(Ok(resp)) if resp.status().is_success() => {
-            tracing::info!("heartbeat accepted");
+            tracing::debug!("heartbeat accepted");
         }
         Ok(Ok(resp)) => {
             let status = resp.status();
