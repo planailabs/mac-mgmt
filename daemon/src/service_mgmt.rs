@@ -542,6 +542,9 @@ impl ServiceManager {
         self.run_connectors();
     }
 
+    /// Per-service health check timeout.
+    const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
     async fn health_tick_inline(
         states: &mut [InlineServiceState],
         log_buf: &LogBuffer,
@@ -549,13 +552,16 @@ impl ServiceManager {
         metrics: &Metrics,
         in_upgrade_window: bool,
     ) {
-        for state in states {
+        // ── Phase 1: Process management (sequential) ─────────────
+        // Crash detection, restart/upgrade handling — modifies state.
+        let mut busy_flags = vec![false; states.len()];
+        for (i, state) in states.iter_mut().enumerate() {
             let name = state.service.name().to_string();
             sentry_ext::set_tag("service", &name);
 
             if state.phase == ServicePhase::Stopped { continue; }
 
-            // ── Detect crash (process exited) ────────────────────────
+            // Detect crash (process exited).
             if let Some(ref mut child) = state.child {
                 if let Ok(Some(status)) = child.try_wait() {
                     state.consecutive_crashes += 1;
@@ -573,21 +579,19 @@ impl ServiceManager {
                         }
                     }
 
-                    // Immediate respawn attempt.
                     if Self::respawn_inline(state, log_buf) {
                         state.upgrade_pending = false;
                     }
-                    // phase is now Starting (respawn) or still Crashed (failed)
                 }
             }
 
-            // ── Check if service needs a restart due to external changes
+            // Check if the service needs a restart due to external changes.
             if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
                 tracing::info!("{name} needs restart (external change detected)");
                 state.restart_pending = true;
             }
 
-            // ── Pending restart when idle ─────────────────────────────
+            // Pending restart when idle.
             if state.restart_pending {
                 let busy = state.service.is_busy().unwrap_or(false);
                 if !busy || in_upgrade_window {
@@ -598,8 +602,8 @@ impl ServiceManager {
                 }
             }
 
-            // ── Pending upgrade when idle ─────────────────────────────
-            let busy = if state.upgrade_pending && in_upgrade_window {
+            // Pending upgrade when idle.
+            busy_flags[i] = if state.upgrade_pending && in_upgrade_window {
                 let busy = state.service.is_busy().unwrap_or(false);
                 if !busy {
                     if Self::respawn_inline(state, log_buf) {
@@ -610,50 +614,71 @@ impl ServiceManager {
                 busy
             } else { false };
 
-            // ── Phase transitions (health check) ─────────────────────
-            let prev_phase = state.phase;
-            match state.phase {
-                ServicePhase::Starting => {
-                    // Grace period: assume healthy, real check next tick.
-                    state.phase = ServicePhase::Healthy;
+            // Grace period: Starting → Healthy (no real check this tick).
+            if state.phase == ServicePhase::Starting {
+                state.phase = ServicePhase::Healthy;
+            }
+        }
+
+        // ── Phase 2: Health checks (concurrent, with timeout) ────
+        use std::pin::Pin;
+        use std::future::Future;
+        let check_results: Vec<(usize, ServicePhase, Result<bool>)> = {
+            let mut futs: Vec<Pin<Box<dyn Future<Output = (usize, ServicePhase, Result<bool>)> + '_>>> = Vec::new();
+            for (i, state) in states.iter().enumerate() {
+                if matches!(state.phase, ServicePhase::Healthy | ServicePhase::Unhealthy) {
+                    let prev = state.phase;
+                    let fut = state.service.check_health_async();
+                    futs.push(Box::pin(async move {
+                        let result = tokio::time::timeout(Self::HEALTH_CHECK_TIMEOUT, fut).await;
+                        let result = match result {
+                            Ok(r) => r,
+                            Err(_) => Err(anyhow::anyhow!("health check timed out")),
+                        };
+                        (i, prev, result)
+                    }));
                 }
-                ServicePhase::Healthy | ServicePhase::Unhealthy => {
-                    match state.service.check_health_async().await {
-                        Ok(true) => {
-                            state.consecutive_crashes = 0;
-                            state.phase = ServicePhase::Healthy;
-                            if prev_phase == ServicePhase::Unhealthy {
-                                dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.to_string() });
-                            }
-                            if !state.post_start_done {
-                                if let Err(e) = state.service.post_start() {
-                                    tracing::error!("{name} post_start failed: {e}");
-                                }
-                                state.post_start_done = true;
-                            }
+            }
+            futures_util::future::join_all(futs).await
+        };
+
+        // ── Phase 3: Apply results + metrics (sequential) ────────
+        for (i, prev_phase, result) in check_results {
+            let state = &mut states[i];
+            let name = state.service.name().to_string();
+
+            match result {
+                Ok(true) => {
+                    state.consecutive_crashes = 0;
+                    state.phase = ServicePhase::Healthy;
+                    if prev_phase == ServicePhase::Unhealthy {
+                        dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.clone() });
+                    }
+                    if !state.post_start_done {
+                        if let Err(e) = state.service.post_start() {
+                            tracing::error!("{name} post_start failed: {e}");
                         }
-                        Ok(false) => {
-                            state.phase = ServicePhase::Unhealthy;
-                            if prev_phase != ServicePhase::Unhealthy {
-                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.to_string() });
-                            }
-                            if let Err(e) = state.service.repair() {
-                                tracing::error!("{name} repair failed: {e}");
-                            }
-                        }
-                        Err(e) => {
-                            // Transient check failure — keep previous phase
-                            // unchanged so a single failed probe doesn't
-                            // trigger Unhealthy events or repair.
-                            tracing::warn!("{name} health check failed: {e}");
-                        }
+                        state.post_start_done = true;
                     }
                 }
-                ServicePhase::Crashed | ServicePhase::Stopped => {}
+                Ok(false) => {
+                    state.phase = ServicePhase::Unhealthy;
+                    if prev_phase != ServicePhase::Unhealthy {
+                        dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
+                    }
+                    if let Err(e) = state.service.repair() {
+                        tracing::error!("{name} repair failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("{name} health check failed: {e}");
+                }
             }
+        }
 
+        for (i, state) in states.iter().enumerate() {
             state.service.collect_metrics();
-            Self::update_metrics(metrics, &name, state.phase.is_healthy(), state.upgrade_pending, busy);
+            Self::update_metrics(metrics, state.service.name(), state.phase.is_healthy(), state.upgrade_pending, busy_flags[i]);
         }
     }
 
@@ -664,11 +689,13 @@ impl ServiceManager {
         metrics: &Metrics,
         in_upgrade_window: bool,
     ) {
-        for state in states {
+        // ── Phase 1: IPC management (sequential, async) ──────────
+        let mut busy_flags = vec![false; states.len()];
+        for (i, state) in states.iter_mut().enumerate() {
             let name = state.service_name.clone();
             sentry_ext::set_tag("service", &name);
 
-            // ── Reconnect if disconnected, re-send Spawn ─────────────
+            // Reconnect if disconnected, re-send Spawn.
             if state.client.is_none() {
                 let path = crate::service_ipc::socket_path(&name);
                 match ManagedClient::connect(&path, Duration::from_secs(5)).await {
@@ -691,10 +718,10 @@ impl ServiceManager {
                 }
             }
 
-            // ── Drain notifications (logs, crashes) ──────────────────
+            // Drain notifications (logs, crashes).
             state.drain_notifications(&name, log_buf, dispatcher);
 
-            // Check wrapper is still alive by peeking at the notification channel.
+            // Check wrapper is still alive.
             if state.client.as_mut().is_some_and(|c| c.is_disconnected()) {
                 tracing::warn!("{name} wrapper connection lost");
                 state.client = None;
@@ -704,14 +731,13 @@ impl ServiceManager {
             }
 
             let busy = state.service.is_busy().unwrap_or(false);
+            busy_flags[i] = busy;
 
-            // ── Check if service needs a restart due to external changes
             if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
                 tracing::info!("{name} needs restart (external change detected)");
                 state.restart_pending = true;
             }
 
-            // ── Pending restart ──────────────────────────────────────
             if state.restart_pending && (!busy || in_upgrade_window) {
                 if let Err(e) = state.service.configure() {
                     tracing::warn!("{name} configure failed: {e}");
@@ -721,16 +747,14 @@ impl ServiceManager {
                 state.upgrade_pending = false;
             }
 
-            // ── Pending upgrade ──────────────────────────────────────
             if state.upgrade_pending && in_upgrade_window && (!busy || in_upgrade_window) {
                 state.spawn_via_wrapper().await;
-                if state.phase == ServicePhase::Starting { // spawn succeeded
+                if state.phase == ServicePhase::Starting {
                     state.upgrade_pending = false;
                     dispatcher.dispatch(&DaemonEvent::UpgradeInstalled { service: name.clone() });
                 }
             }
 
-            // ── Binary store path drift ──────────────────────────────
             let current_store = crate::nix::binary_store_path(state.service.binary_name());
             if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
                 if old != new && (!busy || in_upgrade_window) {
@@ -739,47 +763,12 @@ impl ServiceManager {
                 }
             }
 
-            // ── Phase transitions (health check) ─────────────────────
-            let prev_phase = state.phase;
-            match state.phase {
-                ServicePhase::Starting => {
-                    // Grace period: assume healthy, real check next tick.
-                    state.phase = ServicePhase::Healthy;
-                }
-                ServicePhase::Healthy | ServicePhase::Unhealthy => {
-                    match state.service.check_health_async().await {
-                        Ok(true) => {
-                            state.consecutive_crashes = 0;
-                            state.phase = ServicePhase::Healthy;
-                            if prev_phase == ServicePhase::Unhealthy {
-                                dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.clone() });
-                            }
-                            if !state.post_start_done {
-                                if let Err(e) = state.service.post_start() {
-                                    tracing::error!("{name} post_start failed: {e}");
-                                }
-                                state.post_start_done = true;
-                            }
-                        }
-                        Ok(false) => {
-                            state.phase = ServicePhase::Unhealthy;
-                            if prev_phase != ServicePhase::Unhealthy {
-                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
-                            }
-                            if let Err(e) = state.service.repair() {
-                                tracing::error!("{name} repair failed: {e}");
-                            }
-                        }
-                        Err(e) => {
-                            // Transient check failure — keep previous phase.
-                            tracing::warn!("{name} health check failed: {e}");
-                        }
-                    }
-                }
-                ServicePhase::Crashed | ServicePhase::Stopped => {}
+            // Grace period.
+            if state.phase == ServicePhase::Starting {
+                state.phase = ServicePhase::Healthy;
             }
 
-            // ── Detect wrapper running an outdated mac-mgmt binary ───
+            // Detect wrapper running an outdated mac-mgmt binary.
             if !state.update_self_pending {
                 let current_hash = hash_current_exe();
                 if state.wrapper_binary_hash != current_hash {
@@ -788,7 +777,7 @@ impl ServiceManager {
                 }
             }
 
-            // ── Deferred update-self when idle ───────────────────────
+            // Deferred update-self when idle.
             if state.update_self_pending && !busy {
                 if let Some(ref mut client) = state.client {
                     Self::do_send_update_self(client, &name).await;
@@ -796,9 +785,67 @@ impl ServiceManager {
                 }
                 state.update_self_pending = false;
             }
+        }
 
+        // ── Phase 2: Health checks (concurrent, with timeout) ────
+        use std::pin::Pin;
+        use std::future::Future;
+        let check_results: Vec<(usize, ServicePhase, Result<bool>)> = {
+            let mut futs: Vec<Pin<Box<dyn Future<Output = (usize, ServicePhase, Result<bool>)> + '_>>> = Vec::new();
+            for (i, state) in states.iter().enumerate() {
+                if matches!(state.phase, ServicePhase::Healthy | ServicePhase::Unhealthy) {
+                    let prev = state.phase;
+                    let fut = state.service.check_health_async();
+                    futs.push(Box::pin(async move {
+                        let result = tokio::time::timeout(Self::HEALTH_CHECK_TIMEOUT, fut).await;
+                        let result = match result {
+                            Ok(r) => r,
+                            Err(_) => Err(anyhow::anyhow!("health check timed out")),
+                        };
+                        (i, prev, result)
+                    }));
+                }
+            }
+            futures_util::future::join_all(futs).await
+        };
+
+        // ── Phase 3: Apply results + metrics (sequential) ────────
+        for (i, prev_phase, result) in check_results {
+            let state = &mut states[i];
+            let name = state.service_name.clone();
+
+            match result {
+                Ok(true) => {
+                    state.consecutive_crashes = 0;
+                    state.phase = ServicePhase::Healthy;
+                    if prev_phase == ServicePhase::Unhealthy {
+                        dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.clone() });
+                    }
+                    if !state.post_start_done {
+                        if let Err(e) = state.service.post_start() {
+                            tracing::error!("{name} post_start failed: {e}");
+                        }
+                        state.post_start_done = true;
+                    }
+                }
+                Ok(false) => {
+                    state.phase = ServicePhase::Unhealthy;
+                    if prev_phase != ServicePhase::Unhealthy {
+                        dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
+                    }
+                    if let Err(e) = state.service.repair() {
+                        tracing::error!("{name} repair failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("{name} health check failed: {e}");
+                }
+            }
+        }
+
+        for (i, state) in states.iter().enumerate() {
             state.service.collect_metrics();
-            Self::update_metrics(metrics, &name, state.phase.is_healthy(), state.upgrade_pending, busy);
+            Self::update_metrics(metrics, &state.service_name, state.phase.is_healthy(), state.upgrade_pending, busy_flags[i]);
         }
     }
 
