@@ -21,18 +21,38 @@ fn hash_current_exe() -> Option<Vec<u8>> {
     Some(Sha256::digest(&bytes).to_vec())
 }
 
+// ── Service lifecycle state machine ──────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServicePhase {
+    /// Not spawned / not connected.
+    Stopped,
+    /// Just spawned, grace period before first real health check.
+    Starting,
+    /// Running, health checks passing.
+    Healthy,
+    /// Running, health checks failing.
+    Unhealthy,
+    /// Process exited unexpectedly, awaiting respawn.
+    Crashed,
+}
+
+impl ServicePhase {
+    fn is_healthy(self) -> bool {
+        self == Self::Healthy
+    }
+}
+
 // ── Inline (child-process) backend state ─────────────────────────────
 
 struct InlineServiceState {
     service: Box<dyn ManagedService>,
     child: Option<std::process::Child>,
-    healthy: bool,
+    phase: ServicePhase,
     upgrade_pending: bool,
     restart_pending: bool,
-    skip_health_check: bool,
     post_start_done: bool,
     consecutive_crashes: u32,
-    was_unhealthy: bool,
     log_task: Option<JoinHandle<()>>,
 }
 
@@ -42,14 +62,12 @@ struct ExternalServiceState {
     service_name: String,
     service: Box<dyn ManagedService>,
     client: Option<ManagedClient>,
-    healthy: bool,
+    phase: ServicePhase,
     upgrade_pending: bool,
     update_self_pending: bool,
     restart_pending: bool,
-    skip_health_check: bool,
     post_start_done: bool,
     consecutive_crashes: u32,
-    was_unhealthy: bool,
     running_store_path: Option<String>,
     /// Hash of the mac-mgmt binary when the wrapper was last connected/spawned.
     /// Compared on each health tick to detect stale wrappers after self-update.
@@ -85,7 +103,7 @@ impl ExternalServiceState {
                         service: name.to_string(),
                         exit_code,
                     });
-                    self.healthy = false;
+                    self.phase = ServicePhase::Crashed;
                     self.post_start_done = false;
 
                     if self.consecutive_crashes >= 2 {
@@ -110,7 +128,7 @@ impl ExternalServiceState {
         match self.send(&IpcRequest::Spawn(spec)).await {
             Some(IpcResponse::Ok) => {
                 tracing::info!("{name} spawned via wrapper");
-                self.skip_health_check = true;
+                self.phase = ServicePhase::Starting;
                 self.post_start_done = false;
             }
             Some(IpcResponse::Error { message }) => {
@@ -261,14 +279,12 @@ impl ServiceManager {
                     service_name: name,
                     service,
                     client: None,
-                    healthy: false,
+                    phase: ServicePhase::Stopped,
                     upgrade_pending: false,
                     update_self_pending: false,
                     restart_pending: false,
-                    skip_health_check: true,
                     post_start_done: false,
                     consecutive_crashes: 0,
-                    was_unhealthy: false,
                     running_store_path: None,
                     wrapper_binary_hash: None,
                 });
@@ -312,13 +328,11 @@ impl ServiceManager {
                 inline_states.push(InlineServiceState {
                     service,
                     child: None,
-                    healthy: false,
+                    phase: ServicePhase::Stopped,
                     upgrade_pending: false,
                     restart_pending: false,
-                    skip_health_check: true,
                     post_start_done: false,
                     consecutive_crashes: 0,
-                    was_unhealthy: false,
                     log_task: None,
                 });
             }
@@ -375,6 +389,7 @@ impl ServiceManager {
                     tracing::info!("{name} spawned (pid: {})", child.id());
                     state.child = Some(child);
                     state.log_task = Some(log_task);
+                    state.phase = ServicePhase::Starting;
                 }
                 Err(e) => {
                     tracing::error!("{name} spawn failed: {e}");
@@ -501,7 +516,7 @@ impl ServiceManager {
             Ok(mut child) => {
                 state.log_task = Some(crate::log_capture::capture(name, &mut child, log_buf));
                 state.child = Some(child);
-                state.skip_health_check = true;
+                state.phase = ServicePhase::Starting;
                 state.post_start_done = false;
                 true
             }
@@ -537,12 +552,11 @@ impl ServiceManager {
             let name = state.service.name().to_string();
             sentry_ext::set_tag("service", &name);
 
-            if state.child.is_none() { continue; }
+            if state.phase == ServicePhase::Stopped { continue; }
 
-            // Check if exited.
-            let exit_status = state.child.as_mut().unwrap().try_wait();
-            match exit_status {
-                Ok(Some(status)) => {
+            // ── Detect crash (process exited) ────────────────────────
+            if let Some(ref mut child) = state.child {
+                if let Ok(Some(status)) = child.try_wait() {
                     state.consecutive_crashes += 1;
                     tracing::warn!("{name} exited with {status} (crash #{})", state.consecutive_crashes);
                     log_buf.push(format!("[{name}] crashed with {status} (#{crashes})", crashes = state.consecutive_crashes));
@@ -550,6 +564,7 @@ impl ServiceManager {
                         service: name.to_string(),
                         exit_code: status.code(),
                     });
+                    state.phase = ServicePhase::Crashed;
 
                     if state.consecutive_crashes >= 2 {
                         if let Err(e) = state.service.repair() {
@@ -557,21 +572,21 @@ impl ServiceManager {
                         }
                     }
 
+                    // Immediate respawn attempt.
                     if Self::respawn_inline(state, log_buf) {
                         state.upgrade_pending = false;
                     }
+                    // phase is now Starting (respawn) or still Crashed (failed)
                 }
-                Ok(None) => {}
-                Err(e) => tracing::error!("failed to check {name} status: {e}"),
             }
 
-            // Check if the service needs a restart due to external changes.
-            if !state.restart_pending && state.healthy && state.service.needs_restart() {
+            // ── Check if service needs a restart due to external changes
+            if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
                 tracing::info!("{name} needs restart (external change detected)");
                 state.restart_pending = true;
             }
 
-            // Pending restart when idle.
+            // ── Pending restart when idle ─────────────────────────────
             if state.restart_pending {
                 let busy = state.service.is_busy().unwrap_or(false);
                 if !busy || in_upgrade_window {
@@ -582,7 +597,7 @@ impl ServiceManager {
                 }
             }
 
-            // Pending upgrade when idle.
+            // ── Pending upgrade when idle ─────────────────────────────
             let busy = if state.upgrade_pending && in_upgrade_window {
                 let busy = state.service.is_busy().unwrap_or(false);
                 if !busy {
@@ -594,45 +609,51 @@ impl ServiceManager {
                 busy
             } else { false };
 
-            // Health check.
-            state.healthy = if state.skip_health_check {
-                state.skip_health_check = false;
-                true
-            } else {
-                match state.service.check_health() {
-                    Ok(true) => {
-                        state.consecutive_crashes = 0;
-                        if state.was_unhealthy {
-                            state.was_unhealthy = false;
-                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.to_string() });
-                        }
-                        if !state.post_start_done {
-                            if let Err(e) = state.service.post_start() {
-                                tracing::error!("{name} post_start failed: {e}");
+            // ── Phase transitions (health check) ─────────────────────
+            let prev_phase = state.phase;
+            match state.phase {
+                ServicePhase::Starting => {
+                    // Grace period: assume healthy, real check next tick.
+                    state.phase = ServicePhase::Healthy;
+                }
+                ServicePhase::Healthy | ServicePhase::Unhealthy => {
+                    match state.service.check_health() {
+                        Ok(true) => {
+                            state.consecutive_crashes = 0;
+                            state.phase = ServicePhase::Healthy;
+                            if prev_phase == ServicePhase::Unhealthy {
+                                dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.to_string() });
                             }
-                            state.post_start_done = true;
+                            if !state.post_start_done {
+                                if let Err(e) = state.service.post_start() {
+                                    tracing::error!("{name} post_start failed: {e}");
+                                }
+                                state.post_start_done = true;
+                            }
                         }
-                        true
-                    }
-                    Ok(false) => {
-                        if !state.was_unhealthy {
-                            state.was_unhealthy = true;
-                            dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.to_string() });
+                        Ok(false) => {
+                            state.phase = ServicePhase::Unhealthy;
+                            if prev_phase != ServicePhase::Unhealthy {
+                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.to_string() });
+                            }
+                            if let Err(e) = state.service.repair() {
+                                tracing::error!("{name} repair failed: {e}");
+                            }
                         }
-                        if let Err(e) = state.service.repair() {
-                            tracing::error!("{name} repair failed: {e}");
+                        Err(e) => {
+                            tracing::warn!("{name} health check failed: {e}");
+                            state.phase = ServicePhase::Unhealthy;
+                            if prev_phase != ServicePhase::Unhealthy {
+                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.to_string() });
+                            }
                         }
-                        false
-                    }
-                    Err(e) => {
-                        tracing::warn!("{name} health check failed: {e}");
-                        false
                     }
                 }
-            };
+                ServicePhase::Crashed | ServicePhase::Stopped => {}
+            }
 
             state.service.collect_metrics();
-            Self::update_metrics(metrics, &name, state.healthy, state.upgrade_pending, busy);
+            Self::update_metrics(metrics, &name, state.phase.is_healthy(), state.upgrade_pending, busy);
         }
     }
 
@@ -647,7 +668,7 @@ impl ServiceManager {
             let name = state.service_name.clone();
             sentry_ext::set_tag("service", &name);
 
-            // Reconnect if disconnected, re-send Spawn.
+            // ── Reconnect if disconnected, re-send Spawn ─────────────
             if state.client.is_none() {
                 let path = crate::service_ipc::socket_path(&name);
                 match ManagedClient::connect(&path, Duration::from_secs(5)).await {
@@ -663,35 +684,34 @@ impl ServiceManager {
                     Err(_) => {
                         tracing::warn!("{name} wrapper not reachable, restarting unit");
                         let _ = crate::service::start_managed_service(&name);
-                        state.healthy = false;
+                        state.phase = ServicePhase::Stopped;
                         Self::update_metrics(metrics, &name, false, state.upgrade_pending, false);
                         continue;
                     }
                 }
             }
 
-            // Drain notifications (logs, crashes).
+            // ── Drain notifications (logs, crashes) ──────────────────
             state.drain_notifications(&name, log_buf, dispatcher);
 
             // Check wrapper is still alive by peeking at the notification channel.
-            // If the background reader task ended (EOF), the channel is closed.
             if state.client.as_mut().is_some_and(|c| c.is_disconnected()) {
                 tracing::warn!("{name} wrapper connection lost");
                 state.client = None;
-                state.healthy = false;
+                state.phase = ServicePhase::Stopped;
                 Self::update_metrics(metrics, &name, false, state.upgrade_pending, false);
                 continue;
             }
 
             let busy = state.service.is_busy().unwrap_or(false);
 
-            // Check if the service needs a restart due to external changes.
-            if !state.restart_pending && state.healthy && state.service.needs_restart() {
+            // ── Check if service needs a restart due to external changes
+            if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
                 tracing::info!("{name} needs restart (external change detected)");
                 state.restart_pending = true;
             }
 
-            // Pending restart.
+            // ── Pending restart ──────────────────────────────────────
             if state.restart_pending && (!busy || in_upgrade_window) {
                 if let Err(e) = state.service.configure() {
                     tracing::warn!("{name} configure failed: {e}");
@@ -701,16 +721,16 @@ impl ServiceManager {
                 state.upgrade_pending = false;
             }
 
-            // Pending upgrade.
+            // ── Pending upgrade ──────────────────────────────────────
             if state.upgrade_pending && in_upgrade_window && (!busy || in_upgrade_window) {
                 state.spawn_via_wrapper().await;
-                if state.skip_health_check { // spawn succeeded
+                if state.phase == ServicePhase::Starting { // spawn succeeded
                     state.upgrade_pending = false;
                     dispatcher.dispatch(&DaemonEvent::UpgradeInstalled { service: name.clone() });
                 }
             }
 
-            // Binary store path drift.
+            // ── Binary store path drift ──────────────────────────────
             let current_store = crate::nix::binary_store_path(state.service.binary_name());
             if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
                 if old != new && (!busy || in_upgrade_window) {
@@ -719,43 +739,50 @@ impl ServiceManager {
                 }
             }
 
-            // Health check.
-            if state.skip_health_check {
-                state.skip_health_check = false;
-            } else {
-                match state.service.check_health() {
-                    Ok(true) => {
-                        state.healthy = true;
-                        state.consecutive_crashes = 0;
-                        if state.was_unhealthy {
-                            state.was_unhealthy = false;
-                            dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.clone() });
-                        }
-                        if !state.post_start_done {
-                            if let Err(e) = state.service.post_start() {
-                                tracing::error!("{name} post_start failed: {e}");
+            // ── Phase transitions (health check) ─────────────────────
+            let prev_phase = state.phase;
+            match state.phase {
+                ServicePhase::Starting => {
+                    // Grace period: assume healthy, real check next tick.
+                    state.phase = ServicePhase::Healthy;
+                }
+                ServicePhase::Healthy | ServicePhase::Unhealthy => {
+                    match state.service.check_health() {
+                        Ok(true) => {
+                            state.consecutive_crashes = 0;
+                            state.phase = ServicePhase::Healthy;
+                            if prev_phase == ServicePhase::Unhealthy {
+                                dispatcher.dispatch(&DaemonEvent::ServiceRecovered { service: name.clone() });
                             }
-                            state.post_start_done = true;
+                            if !state.post_start_done {
+                                if let Err(e) = state.service.post_start() {
+                                    tracing::error!("{name} post_start failed: {e}");
+                                }
+                                state.post_start_done = true;
+                            }
                         }
-                    }
-                    Ok(false) => {
-                        state.healthy = false;
-                        if !state.was_unhealthy {
-                            state.was_unhealthy = true;
-                            dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
+                        Ok(false) => {
+                            state.phase = ServicePhase::Unhealthy;
+                            if prev_phase != ServicePhase::Unhealthy {
+                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
+                            }
+                            if let Err(e) = state.service.repair() {
+                                tracing::error!("{name} repair failed: {e}");
+                            }
                         }
-                        if let Err(e) = state.service.repair() {
-                            tracing::error!("{name} repair failed: {e}");
+                        Err(e) => {
+                            tracing::warn!("{name} health check failed: {e}");
+                            state.phase = ServicePhase::Unhealthy;
+                            if prev_phase != ServicePhase::Unhealthy {
+                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
+                            }
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!("{name} health check failed: {e}");
-                        state.healthy = false;
                     }
                 }
+                ServicePhase::Crashed | ServicePhase::Stopped => {}
             }
 
-            // Detect wrapper running an outdated mac-mgmt binary.
+            // ── Detect wrapper running an outdated mac-mgmt binary ───
             if !state.update_self_pending {
                 let current_hash = hash_current_exe();
                 if state.wrapper_binary_hash != current_hash {
@@ -764,7 +791,7 @@ impl ServiceManager {
                 }
             }
 
-            // Deferred update-self when idle.
+            // ── Deferred update-self when idle ───────────────────────
             if state.update_self_pending && !busy {
                 if let Some(ref mut client) = state.client {
                     Self::do_send_update_self(client, &name).await;
@@ -774,7 +801,7 @@ impl ServiceManager {
             }
 
             state.service.collect_metrics();
-            Self::update_metrics(metrics, &name, state.healthy, state.upgrade_pending, busy);
+            Self::update_metrics(metrics, &name, state.phase.is_healthy(), state.upgrade_pending, busy);
         }
     }
 
@@ -867,7 +894,7 @@ impl ServiceManager {
             ServiceBackend::Inline(states) => states.iter().map(|s| {
                 serde_json::json!({
                     "name": s.service.name(),
-                    "healthy": s.healthy,
+                    "healthy": s.phase.is_healthy(),
                     "upgrade_pending": s.upgrade_pending,
                     "busy": false,
                 })
@@ -875,7 +902,7 @@ impl ServiceManager {
             ServiceBackend::External(states) => states.iter().map(|s| {
                 serde_json::json!({
                     "name": s.service_name,
-                    "healthy": s.healthy,
+                    "healthy": s.phase.is_healthy(),
                     "upgrade_pending": s.upgrade_pending,
                     "busy": false,
                 })
@@ -889,12 +916,12 @@ impl ServiceManager {
         match &self.backend {
             ServiceBackend::Inline(states) => states
                 .iter()
-                .filter(|s| s.healthy)
+                .filter(|s| s.phase.is_healthy())
                 .flat_map(|s| s.service.expose_tunnels())
                 .collect(),
             ServiceBackend::External(states) => states
                 .iter()
-                .filter(|s| s.healthy)
+                .filter(|s| s.phase.is_healthy())
                 .flat_map(|s| s.service.expose_tunnels())
                 .collect(),
         }
