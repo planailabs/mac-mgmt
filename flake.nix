@@ -98,6 +98,7 @@
             inherit mac-mgmt-relay;
           };
           sse-push = pkgs.callPackage ./tests/sse-push.nix { };
+          sse-daemon = pkgs.callPackage ./tests/sse-daemon.nix { };
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
