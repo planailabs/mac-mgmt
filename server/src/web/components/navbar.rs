@@ -10,8 +10,6 @@ async fn get_swagger_url() -> Result<String, ServerFnError> {
     Ok(format!("{base}/api/swagger-ui/"))
 }
 
-/// Theme preference: system (follow OS), light (forced), or dark (forced).
-/// Cycles: system → light → dark → system
 #[derive(Clone, Copy, PartialEq)]
 enum ThemeMode {
     System,
@@ -37,11 +35,9 @@ impl ThemeMode {
     }
 }
 
-/// Inline SVG icon for the current theme state.
 #[component]
 fn ThemeIcon(mode: ThemeMode) -> Element {
     match mode {
-        // Monitor icon — "follow system"
         ThemeMode::System => rsx! {
             svg {
                 class: "h-5 w-5",
@@ -49,14 +45,11 @@ fn ThemeIcon(mode: ThemeMode) -> Element {
                 stroke: "currentColor",
                 stroke_width: "1.5",
                 view_box: "0 0 24 24",
-                // Monitor screen
                 rect { x: "2", y: "3", width: "20", height: "14", rx: "2", ry: "2" }
-                // Stand
                 line { x1: "8", y1: "21", x2: "16", y2: "21" }
                 line { x1: "12", y1: "17", x2: "12", y2: "21" }
             }
         },
-        // Sun icon — "light mode"
         ThemeMode::Light => rsx! {
             svg {
                 class: "h-5 w-5",
@@ -75,7 +68,6 @@ fn ThemeIcon(mode: ThemeMode) -> Element {
                 line { x1: "18.36", y1: "5.64", x2: "19.78", y2: "4.22" }
             }
         },
-        // Moon icon — "dark mode"
         ThemeMode::Dark => rsx! {
             svg {
                 class: "h-5 w-5",
@@ -89,14 +81,77 @@ fn ThemeIcon(mode: ThemeMode) -> Element {
     }
 }
 
-#[component]
-pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Element {
-    // State for the mobile hamburger menu
-    let mut is_open = use_signal(|| false);
-    // Theme state
-    let mut theme = use_signal(|| ThemeMode::System);
+// -- Navigation Structure --
 
-    // Fetch swagger URL from config (only meaningful for admins)
+#[derive(Clone, PartialEq)]
+pub enum NavLink {
+    Internal(Route, String),
+    External(String, String),
+}
+
+#[derive(Clone, PartialEq)]
+pub struct NavGroup {
+    pub title: String,
+    pub links: Vec<NavLink>,
+}
+
+pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGroup> {
+    let mut groups = vec![
+        NavGroup {
+            title: "Overview".to_string(),
+            links: vec![
+                NavLink::Internal(Route::ClusterList {}, "Clusters".to_string()),
+                NavLink::Internal(Route::FleetDashboard {}, "Fleet".to_string()),
+            ]
+        },
+    ];
+
+    if is_admin {
+        groups.push(NavGroup {
+            title: "MCP + Skills".to_string(),
+            links: vec![
+                NavLink::Internal(Route::SkillList {}, "Skills".to_string()),
+                NavLink::Internal(Route::McpServerList {}, "MCP Servers".to_string()),
+                NavLink::Internal(Route::McpBundleList {}, "MCP Bundles".to_string()),
+                NavLink::Internal(Route::BundleList {}, "Bundles".to_string()),
+            ]
+        });
+
+        groups.push(NavGroup {
+            title: "Admin".to_string(),
+            links: vec![
+                NavLink::Internal(Route::AdminTokens {}, "Admin Tokens".to_string()),
+                NavLink::Internal(Route::OrganizationList {}, "Organizations".to_string()),
+                NavLink::Internal(Route::UserList {}, "Users".to_string()),
+            ]
+        });
+
+        groups.push(NavGroup {
+            title: "Version".to_string(),
+            links: vec![
+                NavLink::Internal(Route::RolloutList {}, "Rollouts".to_string()),
+                NavLink::Internal(Route::DaemonVersionList {}, "Daemon Versions".to_string()),
+            ]
+        });
+    }
+
+    let mut resources_links = vec![
+        NavLink::Internal(Route::DocList {}, "Docs".to_string()),
+    ];
+    if let Some(url) = swagger_url {
+        resources_links.push(NavLink::External(url, "API Docs".to_string()));
+    }
+
+    groups.push(NavGroup {
+        title: "Resources".to_string(),
+        links: resources_links,
+    });
+
+    groups
+}
+
+#[component]
+pub fn Sidebar(is_admin: bool) -> Element {
     let swagger_fut = use_server_future(get_swagger_url);
     let swagger_url: Option<String> = match swagger_fut {
         Ok(ref fut) => match &*fut.read() {
@@ -106,7 +161,59 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
         Err(_) => None,
     };
 
-    // On mount: read localStorage.theme to sync signal with actual state
+    let groups = get_nav_groups(is_admin, swagger_url);
+
+    rsx! {
+        aside { class: "hidden xl:flex xl:flex-col w-64 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 overflow-y-auto",
+            nav { class: "flex-1 px-4 py-6 space-y-8",
+                for group in groups {
+                    div { key: "{group.title}",
+                        h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", "{group.title}" }
+                        div { class: "mt-2 space-y-1",
+                            for link in group.links {
+                                match link {
+                                    NavLink::Internal(route, label) => rsx! {
+                                        Link {
+                                            key: "{label}",
+                                            to: route.clone(),
+                                            class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
+                                            active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                                            "{label}"
+                                        }
+                                    },
+                                    NavLink::External(url, label) => rsx! {
+                                        a {
+                                            key: "{label}",
+                                            href: "{url}",
+                                            target: "_blank",
+                                            class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
+                                            "{label}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn Navbar(is_admin: bool, display_name: String) -> Element {
+    let mut is_open = use_signal(|| false);
+    let mut theme = use_signal(|| ThemeMode::System);
+
+    let swagger_fut = use_server_future(get_swagger_url);
+    let swagger_url: Option<String> = match swagger_fut {
+        Ok(ref fut) => match &*fut.read() {
+            Some(Ok(url)) => Some(url.clone()),
+            _ => None,
+        },
+        Err(_) => None,
+    };
+
     use_effect(move || {
         spawn(async move {
             let result = document::eval(r#"
@@ -164,114 +271,60 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
         document::eval(js);
     };
 
-    // Links visible to all authenticated users
-    let common_links: Vec<(Route, &str)> = vec![
-        (Route::ClusterList {}, "Clusters"),
-        (Route::FleetDashboard {}, "Fleet"),
-        (Route::DocList {}, "Docs"),
-    ];
-
-    // Links visible only to admins
-    let admin_links: Vec<(Route, &str)> = if is_admin {
-        vec![
-            (Route::SkillList {}, "Skills"),
-            (Route::BundleList {}, "Bundles"),
-            (Route::McpServerList {}, "MCP Servers"),
-            (Route::McpBundleList {}, "MCP Bundles"),
-            (Route::AdminTokens {}, "Admin Tokens"),
-            (Route::RolloutList {}, "Rollouts"),
-            (Route::DaemonVersionList {}, "Daemon Versions"),
-            (Route::OrganizationList {}, "Organizations"),
-            (Route::UserList {}, "Users"),
-        ]
-    } else {
-        vec![]
-    };
-
-    let all_links: Vec<(Route, &str)> = common_links.into_iter().chain(admin_links).collect();
-
     let current_aria = theme().aria_label();
     let current_theme = theme();
 
     rsx! {
-        nav { class: "bg-white dark:bg-gray-800 shadow dark:shadow-gray-900/30",
-            div { class: "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+        nav { class: "bg-white dark:bg-gray-800 shadow dark:shadow-gray-900/30 shrink-0",
+            div { class: "w-full mx-auto px-4 sm:px-6 lg:px-8",
                 div { class: "flex justify-between h-16 items-center",
+                    // Left side: Logo
                     Link { to: Route::ClusterList {},
                         h1 { class: "text-xl font-bold text-gray-900 dark:text-white", "mac-mgmt" }
                     }
 
-                    // Desktop menu (visible on xl and larger)
-                    div { class: "hidden xl:flex xl:space-x-1 xl:items-center",
-                        for (route, label) in all_links.clone() {
-                            Link {
-                                key: "{label}",
-                                to: route,
-                                class: "whitespace-nowrap px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
-                                active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
-                                "{label}"
-                            }
-                        }
-                        // Swagger UI link (external)
-                        if let Some(ref url) = swagger_url {
-                            a {
-                                href: "{url}",
-                                target: "_blank",
-                                class: "whitespace-nowrap px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
-                                "API Docs"
-                            }
-                        }
-                        // Impersonation control (only for real admins)
-                        if real_is_admin {
-                            ImpersonateSelector {}
-                        }
-                        // Logged-in user display (links to profile)
+                    // Right side: Profile & Theme (Desktop & Mobile share some parts)
+                    div { class: "flex space-x-1 items-center",
+                        
+                        // Desktop user icon
                         if !display_name.is_empty() {
-                            Link {
-                                to: Route::Profile {},
-                                class: "ml-3 flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
-                                active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
-                                svg {
-                                    class: "h-5 w-5 shrink-0",
-                                    fill: "none",
-                                    stroke: "currentColor",
-                                    stroke_width: "1.5",
-                                    view_box: "0 0 24 24",
-                                    path {
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
-                                        d: "M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+                            div { class: "hidden xl:flex items-center",
+                                Link {
+                                    to: Route::Profile {},
+                                    class: "ml-3 flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
+                                    active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                                    svg {
+                                        class: "h-5 w-5 shrink-0",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.5",
+                                        view_box: "0 0 24 24",
+                                        path {
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            d: "M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+                                        }
                                     }
+                                    "{display_name}"
                                 }
-                                "{display_name}"
                             }
                         }
-                        // Desktop theme toggle
+                        
+                        // Theme Toggle
                         button {
                             onclick: toggle_theme,
-                            class: "ml-3 p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors",
+                            class: "ml-1 p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors",
                             "aria-label": "{current_aria}",
                             title: "{current_aria}",
                             ThemeIcon { mode: current_theme }
                         }
-                    }
-
-                    // Mobile: theme toggle + hamburger (visible below xl)
-                    div { class: "flex items-center gap-1 xl:hidden",
-                        // Mobile theme toggle
-                        button {
-                            onclick: toggle_theme,
-                            class: "p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors",
-                            "aria-label": "{current_aria}",
-                            title: "{current_aria}",
-                            ThemeIcon { mode: current_theme }
-                        }
-                        // Hamburger button
+                        
+                        // Hamburger button (Mobile)
                         button {
                             onclick: move |_| is_open.set(!is_open()),
-                            class: "inline-flex items-center justify-center p-2 rounded-md text-gray-400 dark:text-gray-300 hover:text-gray-500 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500",
+                            class: "xl:hidden ml-1 inline-flex items-center justify-center p-2 rounded-md text-gray-400 dark:text-gray-300 hover:text-gray-500 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500",
                             "aria-expanded": "{is_open}",
-                            "aria-controls": "mobile-menu",
+                            "aria-controls": "mobile-drawer",
                             span { class: "sr-only", "Open main menu" }
                             svg {
                                 class: "h-6 w-6",
@@ -289,50 +342,100 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
                 }
             }
 
-            // Mobile Dropdown Menu
-            if *is_open.read() {
+            // Mobile Slide-in Drawer
+            div {
+                id: "mobile-drawer-container",
+                class: "xl:hidden relative z-50",
+                
+                // Backdrop
                 div {
-                    id: "mobile-menu",
-                    class: "xl:hidden border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg",
-                    if !display_name.is_empty() {
-                        Link {
-                            to: Route::Profile {},
-                            class: "flex items-center gap-2 mx-2 mt-2 px-3 py-2 rounded-md text-base font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
-                            active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                    class: if *is_open.read() {
+                        "fixed inset-0 bg-gray-900/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
+                    } else {
+                        "fixed inset-0 bg-gray-900/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
+                    },
+                    "aria-hidden": "true",
+                    onclick: move |_| is_open.set(false),
+                }
+                
+                // Drawer
+                div {
+                    class: if *is_open.read() {
+                        "fixed inset-y-0 right-0 max-w-xs w-full bg-white dark:bg-gray-800 shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 translate-x-0 pointer-events-auto"
+                    } else {
+                        "fixed inset-y-0 right-0 max-w-xs w-full bg-white dark:bg-gray-800 shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 translate-x-full pointer-events-none"
+                    },
+                    
+                    // Header Area with User & Close Button
+                    div { class: "p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-between items-center",
+                        div { class: "flex-1 mr-4 overflow-hidden",
+                            if !display_name.is_empty() {
+                                div { class: "flex items-center gap-3",
+                                    div { class: "flex-shrink-0",
+                                        svg { class: "h-10 w-10 text-gray-400 bg-white dark:bg-gray-700 rounded-full p-2 border border-gray-200 dark:border-gray-600", fill: "none", stroke: "currentColor", view_box: "0 0 24 24", stroke_width: "1.5",
+                                            path { stroke_linecap: "round", stroke_linejoin: "round", d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" }
+                                        }
+                                    }
+                                    div { class: "flex flex-col overflow-hidden",
+                                        span { class: "text-sm font-medium text-gray-900 dark:text-white truncate block", "{display_name}" }
+                                        Link {
+                                            to: Route::Profile {},
+                                            class: "text-xs text-blue-600 dark:text-blue-400 hover:underline block",
+                                            onclick: move |_| is_open.set(false),
+                                            "View Profile"
+                                        }
+                                    }
+                                }
+
+                            }
+                        }
+                        
+                        button {
                             onclick: move |_| is_open.set(false),
+                            class: "flex-shrink-0 p-2 -mr-2 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none transition-colors",
+                            "aria-label": "Close menu",
                             svg {
-                                class: "h-5 w-5 shrink-0",
+                                class: "h-6 w-6",
                                 fill: "none",
                                 stroke: "currentColor",
-                                stroke_width: "1.5",
                                 view_box: "0 0 24 24",
-                                path {
-                                    stroke_linecap: "round",
-                                    stroke_linejoin: "round",
-                                    d: "M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+                                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
+                            }
+                        }
+                    }
+                    
+                    // Navigation Groups
+                    nav { class: "flex-1 px-4 py-6 space-y-8",
+                        for group in get_nav_groups(is_admin, swagger_url.clone()) {
+                            div { key: "{group.title}",
+                                h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", "{group.title}" }
+                                div { class: "mt-2 space-y-1",
+                                    for link in group.links {
+                                        match link {
+                                            NavLink::Internal(route, label) => rsx! {
+                                                Link {
+                                                    key: "{label}",
+                                                    to: route.clone(),
+                                                    class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
+                                                    active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                                                    onclick: move |_| is_open.set(false),
+                                                    "{label}"
+                                                }
+                                            },
+                                            NavLink::External(url, label) => rsx! {
+                                                a {
+                                                    key: "{label}",
+                                                    href: "{url}",
+                                                    target: "_blank",
+                                                    class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
+                                                    onclick: move |_| is_open.set(false),
+                                                    "{label}"
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            "{display_name}"
-                        }
-                    }
-                    div { class: "px-2 pt-2 pb-3 space-y-1 sm:px-3",
-                        for (route, label) in all_links.clone() {
-                            Link {
-                                key: "{label}",
-                                to: route,
-                                class: "block px-3 py-2 rounded-md text-base font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
-                                active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
-                                onclick: move |_| is_open.set(false), // Close menu when navigating
-                                "{label}"
-                            }
-                        }
-                        if let Some(ref url) = swagger_url {
-                            a {
-                                href: "{url}",
-                                target: "_blank",
-                                class: "block px-3 py-2 rounded-md text-base font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
-                                "API Docs"
-                            }
                         }
                     }
                 }
@@ -341,66 +444,3 @@ pub fn Navbar(is_admin: bool, real_is_admin: bool, display_name: String) -> Elem
     }
 }
 
-// ── Impersonation selector ──────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ImpersonateUser {
-    id: String,
-    email: String,
-}
-
-#[server]
-async fn get_impersonation_targets() -> Result<Vec<ImpersonateUser>, ServerFnError> {
-    use crate::web::user::current_user;
-    let user = current_user().await?;
-    if !user.is_admin || user.impersonating_from.is_some() {
-        return Ok(vec![]);
-    }
-    let pool = crate::server_pool()?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row { id: uuid::Uuid, email: String }
-
-    let rows = sqlx::query_as::<_, Row>("SELECT id, email FROM users ORDER BY email")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(rows.into_iter().map(|r| ImpersonateUser { id: r.id.to_string(), email: r.email }).collect())
-}
-
-#[component]
-fn ImpersonateSelector() -> Element {
-    let targets = use_server_future(get_impersonation_targets);
-
-    let users = match targets {
-        Ok(ref fut) => match &*fut.read() {
-            Some(Ok(list)) if !list.is_empty() => list.clone(),
-            _ => return rsx! {},
-        },
-        Err(_) => return rsx! {},
-    };
-
-    rsx! {
-        select {
-            class: "ml-2 border border-gray-300 dark:border-gray-600 rounded px-1 py-1 text-xs bg-white dark:bg-gray-700 dark:text-white max-w-[160px]",
-            onchange: move |e| {
-                let val = e.value();
-                if val.is_empty() {
-                    document::eval(
-                        "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
-                    );
-                } else {
-                    let js = format!(
-                        "document.cookie = 'impersonate_user_id={val}; Path=/; SameSite=Lax'; window.location.reload();"
-                    );
-                    document::eval(&js);
-                }
-            },
-            option { value: "", "Impersonate…" }
-            for u in &users {
-                option { value: "{u.id}", "{u.email}" }
-            }
-        }
-    }
-}
