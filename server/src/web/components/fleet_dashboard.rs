@@ -144,21 +144,23 @@ pub fn FleetDashboard() -> Element {
     let limit = use_signal(|| 20usize);
     let sort = use_signal(|| ("last_seen".to_string(), false));
 
-    // Fetch immediately, then every 5 seconds.
-    use_future(move || async move {
-        loop {
-            match get_fleet_status().await {
-                Ok(entries) => data.set(Some(Ok(entries))),
-                Err(e) => {
-                    // Only overwrite on first load or if already errored; keep stale data otherwise.
-                    if data.read().is_none() || data.read().as_ref().is_some_and(|r| r.is_err()) {
-                        data.set(Some(Err(e.to_string())));
+    // Fetch immediately, then every 5 seconds. use_hook + spawn so it runs
+    // exactly once and signal writes don't restart the loop.
+    use_hook(move || {
+        spawn(async move {
+            loop {
+                match get_fleet_status().await {
+                    Ok(entries) => data.set(Some(Ok(entries))),
+                    Err(e) => {
+                        if data.read().is_none() || data.read().as_ref().is_some_and(|r| r.is_err()) {
+                            data.set(Some(Err(e.to_string())));
+                        }
                     }
                 }
+                last_refreshed.set(Some(Utc::now()));
+                let _ = document::eval("new Promise(r => setTimeout(r, 5000))").await;
             }
-            last_refreshed.set(Some(Utc::now()));
-            let _ = document::eval("new Promise(r => setTimeout(r, 5000))").await;
-        }
+        })
     });
 
     let refresh_ago = match *last_refreshed.read() {
