@@ -73,6 +73,30 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
         server_state::set_push_channels(push_channels.clone());
     }
 
+    // Background task: delete daemon heartbeats offline for 30+ days
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            loop {
+                match sqlx::query(
+                    "DELETE FROM daemon_heartbeats WHERE reported_at < now() - interval '30 days'",
+                )
+                .execute(&pool)
+                .await
+                {
+                    Ok(result) => {
+                        let n = result.rows_affected();
+                        if n > 0 {
+                            tracing::info!("cleaned up {n} stale daemon heartbeats (offline >30d)");
+                        }
+                    }
+                    Err(e) => tracing::error!("heartbeat cleanup failed: {e}"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+    }
+
     let api_rocket = api::build_rocket(pool.clone(), cfg.api.port, push_channels)
         .ignite()
         .await
