@@ -138,44 +138,38 @@ impl Searchable for FleetEntry {
 
 #[component]
 pub fn FleetDashboard() -> Element {
-    let mut generation = use_signal(|| 0u64);
-    let mut last_refreshed = use_signal(|| Utc::now());
-    let mut cached: Signal<Option<Result<Vec<FleetEntry>, String>>> = use_signal(|| None);
+    let mut data: Signal<Option<Result<Vec<FleetEntry>, String>>> = use_signal(|| None);
+    let mut last_refreshed = use_signal(|| None::<DateTime<Utc>>);
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
     let sort = use_signal(|| ("last_seen".to_string(), false));
 
-    let fleet = use_server_future(move || {
-        let _gen = generation();
-        async move { get_fleet_status().await }
-    })?;
-
-    // Stash latest result so re-fetches don't flash "Loading...".
-    if let Some(result) = &*fleet.read() {
-        let new_cached = match result {
-            Ok(entries) => Ok(entries.clone()),
-            Err(e) => Err(e.to_string()),
-        };
-        cached.set(Some(new_cached));
-    }
-
-    // Auto-refresh every 5 seconds.
+    // Fetch immediately, then every 5 seconds.
     use_future(move || async move {
         loop {
+            match get_fleet_status().await {
+                Ok(entries) => data.set(Some(Ok(entries))),
+                Err(e) => {
+                    // Only overwrite on first load or if already errored; keep stale data otherwise.
+                    if data.read().is_none() || data.read().as_ref().is_some_and(|r| r.is_err()) {
+                        data.set(Some(Err(e.to_string())));
+                    }
+                }
+            }
+            last_refreshed.set(Some(Utc::now()));
             let _ = document::eval("new Promise(r => setTimeout(r, 5000))").await;
-            generation += 1;
-            last_refreshed.set(Utc::now());
         }
     });
 
-    let refreshed_at = *last_refreshed.read();
-    let refresh_ago = {
-        let secs = Utc::now().signed_duration_since(refreshed_at).num_seconds();
-        if secs < 5 { "just now".to_string() } else { format!("{secs}s ago") }
+    let refresh_ago = match *last_refreshed.read() {
+        Some(t) => {
+            let secs = Utc::now().signed_duration_since(t).num_seconds();
+            if secs < 5 { "just now".to_string() } else { format!("{secs}s ago") }
+        }
+        None => "...".to_string(),
     };
 
-    // Use cached data to avoid flicker; fall back to "Loading..." on first load.
-    let snapshot = cached.read();
+    let snapshot = data.read();
     match snapshot.as_ref() {
         Some(Ok(entries)) => {
             let entries_clone = entries.clone();
