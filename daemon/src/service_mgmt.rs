@@ -172,18 +172,15 @@ impl ServiceManager {
         dispatcher: Arc<Dispatcher>,
         log_buf: LogBuffer,
     ) -> Result<Self> {
-        let mut external = cfg.global.external_processes;
+        let external = cfg.global.external_processes;
 
-        // Auto-detect: if external processes are requested but the systemd
-        // user bus isn't available (no login session), fall back to inline.
         if external {
             let uid = unsafe { libc::getuid() };
             let bus_path = format!("/run/user/{uid}/bus");
             if !std::path::Path::new(&bus_path).exists() {
-                tracing::warn!(
-                    "external_processes=true but systemd user bus not found ({bus_path}), falling back to inline"
+                anyhow::bail!(
+                    "external_processes=true but systemd user bus not found ({bus_path})"
                 );
-                external = false;
             }
         }
 
