@@ -758,13 +758,13 @@ async fn do_send_heartbeat(
             tracing::debug!("heartbeat sent");
         }
         Ok(Ok(resp)) => {
-            tracing::debug!("heartbeat failed: {}", resp.status());
+            tracing::warn!("heartbeat rejected: {}", resp.status());
         }
         Ok(Err(e)) => {
-            tracing::debug!("heartbeat failed: {e}");
+            tracing::warn!("heartbeat failed: {e}");
         }
         Err(_) => {
-            tracing::debug!("heartbeat timed out");
+            tracing::warn!("heartbeat timed out");
         }
     }
 }
