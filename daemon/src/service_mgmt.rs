@@ -103,7 +103,11 @@ impl ExternalServiceState {
                         service: name.to_string(),
                         exit_code,
                     });
-                    self.phase = ServicePhase::Crashed;
+                    // External services are respawned by the wrapper, so from
+                    // the daemon's perspective a crash is just "unhealthy until
+                    // the wrapper brings it back."  Using Unhealthy (not Crashed)
+                    // keeps the health-check loop running so recovery is detected.
+                    self.phase = ServicePhase::Unhealthy;
                     self.post_start_done = false;
 
                     if self.consecutive_crashes >= 2 {
