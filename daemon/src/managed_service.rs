@@ -1,5 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::service_ipc::protocol::SpawnSpec;
 
@@ -60,8 +62,20 @@ pub trait ManagedService {
     /// Start the service process.
     fn spawn(&self) -> Result<std::process::Child>;
 
-    /// Check whether the service is healthy.
+    /// Check whether the service is healthy (blocking).
+    /// Used by the external-process wrapper and as the default for
+    /// `check_health_async`. Services with HTTP-based checks should
+    /// override `check_health_async` instead.
     fn check_health(&self) -> Result<bool>;
+
+    /// Non-blocking health check. Defaults to running `check_health()` via
+    /// `block_in_place` so it doesn't stall the tokio runtime.
+    /// Override for truly async checks (e.g. reqwest HTTP).
+    fn check_health_async(&self) -> Pin<Box<dyn Future<Output = Result<bool>> + '_>> {
+        Box::pin(std::future::ready(
+            tokio::task::block_in_place(|| self.check_health()),
+        ))
+    }
 
     /// Attempt to auto-repair an unhealthy service.
     fn repair(&self) -> Result<()>;

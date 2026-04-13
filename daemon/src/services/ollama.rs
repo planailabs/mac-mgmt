@@ -65,16 +65,36 @@ impl Ollama {
         format!("http://{}:{}", self.effective_host(), self.effective_port())
     }
 
-    fn http_get(&self, path: &str) -> Result<String> {
-        super::http_get(self.effective_host(), self.effective_port(), path)
+    async fn http_get(&self, path: &str) -> Result<String> {
+        super::http_get(self.effective_host(), self.effective_port(), path).await
+    }
+
+    async fn check_health_impl(&self) -> Result<bool> {
+        match self.http_get("/").await {
+            Ok(body) if body.contains("Ollama is running") => {
+                tracing::debug!("ollama is healthy at {}", self.base_url());
+                Ok(true)
+            }
+            Ok(body) => {
+                tracing::warn!("ollama unexpected response: {body}");
+                Ok(false)
+            }
+            Err(e) => {
+                tracing::warn!("ollama health check failed at {}: {e}", self.base_url());
+                Ok(false)
+            }
+        }
     }
 
     fn loaded_model_count(&self) -> usize {
-        self.http_get("/api/ps")
-            .ok()
-            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
-            .and_then(|json| json.get("models")?.as_array().map(|a| a.len()))
-            .unwrap_or(0)
+        // Blocking call for metrics collection (called from sync context).
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.http_get("/api/ps"))
+        })
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|json| json.get("models")?.as_array().map(|a| a.len()))
+        .unwrap_or(0)
     }
 }
 
@@ -157,20 +177,14 @@ impl ManagedService for Ollama {
     }
 
     fn check_health(&self) -> Result<bool> {
-        match self.http_get("/") {
-            Ok(body) if body.contains("Ollama is running") => {
-                tracing::debug!("ollama is healthy at {}", self.base_url());
-                Ok(true)
-            }
-            Ok(body) => {
-                tracing::warn!("ollama unexpected response: {body}");
-                Ok(false)
-            }
-            Err(e) => {
-                tracing::warn!("ollama health check failed at {}: {e}", self.base_url());
-                Ok(false)
-            }
-        }
+        // Sync fallback (used by external-process wrapper).
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.check_health_impl())
+        })
+    }
+
+    fn check_health_async(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + '_>> {
+        Box::pin(self.check_health_impl())
     }
 
     fn repair(&self) -> Result<()> {

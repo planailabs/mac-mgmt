@@ -26,8 +26,25 @@ impl Nexa {
         format!("http://{}:{}", self.effective_host(), self.effective_port())
     }
 
-    fn http_get(&self, path: &str) -> Result<String> {
-        super::http_get(self.effective_host(), self.effective_port(), path)
+    async fn http_get(&self, path: &str) -> Result<String> {
+        super::http_get(self.effective_host(), self.effective_port(), path).await
+    }
+
+    async fn check_health_impl(&self) -> Result<bool> {
+        match self.http_get("/").await {
+            Ok(body) if body.contains("Nexa SDK is running") => {
+                tracing::debug!("nexa is healthy at {}", self.base_url());
+                Ok(true)
+            }
+            Ok(body) => {
+                tracing::warn!("nexa unexpected response: {body}");
+                Ok(false)
+            }
+            Err(e) => {
+                tracing::warn!("nexa health check failed at {}: {e}", self.base_url());
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -85,20 +102,13 @@ impl ManagedService for Nexa {
     }
 
     fn check_health(&self) -> Result<bool> {
-        match self.http_get("/") {
-            Ok(body) if body.contains("Nexa SDK is running") => {
-                tracing::debug!("nexa is healthy at {}", self.base_url());
-                Ok(true)
-            }
-            Ok(body) => {
-                tracing::warn!("nexa unexpected response: {body}");
-                Ok(false)
-            }
-            Err(e) => {
-                tracing::warn!("nexa health check failed at {}: {e}", self.base_url());
-                Ok(false)
-            }
-        }
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.check_health_impl())
+        })
+    }
+
+    fn check_health_async(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + '_>> {
+        Box::pin(self.check_health_impl())
     }
 
     fn repair(&self) -> Result<()> {
@@ -151,7 +161,9 @@ impl ManagedService for Nexa {
     }
 
     fn is_busy(&self) -> Result<bool> {
-        let body = self.http_get("/v1/models")?;
+        let body = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.http_get("/v1/models"))
+        })?;
         let json: serde_json::Value =
             serde_json::from_str(&body).context("failed to parse nexa /v1/models")?;
 

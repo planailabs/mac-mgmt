@@ -533,7 +533,7 @@ impl ServiceManager {
     pub async fn health_tick(&mut self, metrics: &Arc<Metrics>, in_upgrade_window: bool) {
         match &mut self.backend {
             ServiceBackend::Inline(states) => {
-                Self::health_tick_inline(states, &self.log_buf, &self.dispatcher, metrics, in_upgrade_window);
+                Self::health_tick_inline(states, &self.log_buf, &self.dispatcher, metrics, in_upgrade_window).await;
             }
             ServiceBackend::External(states) => {
                 Self::health_tick_external(states, &self.dispatcher, &self.log_buf, metrics, in_upgrade_window).await;
@@ -542,7 +542,7 @@ impl ServiceManager {
         self.run_connectors();
     }
 
-    fn health_tick_inline(
+    async fn health_tick_inline(
         states: &mut [InlineServiceState],
         log_buf: &LogBuffer,
         dispatcher: &Dispatcher,
@@ -618,7 +618,7 @@ impl ServiceManager {
                     state.phase = ServicePhase::Healthy;
                 }
                 ServicePhase::Healthy | ServicePhase::Unhealthy => {
-                    match state.service.check_health() {
+                    match state.service.check_health_async().await {
                         Ok(true) => {
                             state.consecutive_crashes = 0;
                             state.phase = ServicePhase::Healthy;
@@ -747,7 +747,7 @@ impl ServiceManager {
                     state.phase = ServicePhase::Healthy;
                 }
                 ServicePhase::Healthy | ServicePhase::Unhealthy => {
-                    match state.service.check_health() {
+                    match state.service.check_health_async().await {
                         Ok(true) => {
                             state.consecutive_crashes = 0;
                             state.phase = ServicePhase::Healthy;
