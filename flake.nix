@@ -97,6 +97,7 @@
           metrics-federation = pkgs.callPackage ./tests/metrics.nix {
             inherit mac-mgmt-relay;
           };
+          sse-push = pkgs.callPackage ./tests/sse-push.nix { };
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
