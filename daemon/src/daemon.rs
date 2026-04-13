@@ -730,10 +730,13 @@ async fn do_send_heartbeat(
         }
     };
 
+    let svc_count = services.len();
+    let tunnel_count = tunnels.len();
+
     let body = mac_mgmt_common::HeartbeatBody {
         instance_id: instance_id.to_string(),
         version: CURRENT_VERSION.to_string(),
-        hostname,
+        hostname: hostname.clone(),
         environment: ENVIRONMENT.to_string(),
         services: serde_json::Value::Array(services),
         tunnels: serde_json::Value::Array(tunnels),
@@ -744,6 +747,9 @@ async fn do_send_heartbeat(
     };
 
     let url = format!("{server_url}/api/heartbeat");
+    tracing::info!(
+        "heartbeat → {url} instance={instance_id} host={hostname} signed_at={signed_at} services={svc_count} tunnels={tunnel_count}"
+    );
     match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         client
@@ -755,10 +761,12 @@ async fn do_send_heartbeat(
     .await
     {
         Ok(Ok(resp)) if resp.status().is_success() => {
-            tracing::debug!("heartbeat sent");
+            tracing::info!("heartbeat accepted");
         }
         Ok(Ok(resp)) => {
-            tracing::warn!("heartbeat rejected: {}", resp.status());
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!("heartbeat rejected: {status} — {body}");
         }
         Ok(Err(e)) => {
             tracing::warn!("heartbeat failed: {e}");
