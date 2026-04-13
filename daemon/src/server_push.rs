@@ -76,8 +76,11 @@ async fn connect_sse(url: &str, cmd_tx: &mpsc::Sender<PushCommand>) -> anyhow::R
             if let Some(data) = trimmed.strip_prefix("data:") {
                 let data = data.trim();
                 match serde_json::from_str::<PushCommand>(data) {
-                    Ok(PushCommand::Ping) => {} // keepalive, no action needed
+                    Ok(PushCommand::Ping) => {
+                        tracing::trace!("SSE ping");
+                    }
                     Ok(cmd) => {
+                        tracing::info!("SSE event: {cmd:?}");
                         if cmd_tx.send(cmd).await.is_err() {
                             return Ok(());
                         }
