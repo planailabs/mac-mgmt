@@ -642,11 +642,10 @@ impl ServiceManager {
                             }
                         }
                         Err(e) => {
+                            // Transient check failure — keep previous phase
+                            // unchanged so a single failed probe doesn't
+                            // trigger Unhealthy events or repair.
                             tracing::warn!("{name} health check failed: {e}");
-                            state.phase = ServicePhase::Unhealthy;
-                            if prev_phase != ServicePhase::Unhealthy {
-                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.to_string() });
-                            }
                         }
                     }
                 }
@@ -772,11 +771,8 @@ impl ServiceManager {
                             }
                         }
                         Err(e) => {
+                            // Transient check failure — keep previous phase.
                             tracing::warn!("{name} health check failed: {e}");
-                            state.phase = ServicePhase::Unhealthy;
-                            if prev_phase != ServicePhase::Unhealthy {
-                                dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
-                            }
                         }
                     }
                 }
