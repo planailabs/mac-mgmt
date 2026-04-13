@@ -24,9 +24,9 @@
 
 # ── Global ───────────────────────────────────────────────────────────
 # Controls which service providers are active. These two fields drive
-# which [ollama]/[nexa]/[openclaw] sections are actually used.
+# which [ollama]/[openclaw] sections are actually used.
 [global]
-# LLM inference backend: "ollama", "nexa", or "none"
+# LLM inference backend: "ollama", "lms", "cloud", or "none"
 llm_provider = "ollama"
 # Agent provider: "openclaw" or "none"
 agent_provider = "openclaw"
@@ -76,13 +76,6 @@ default_model = "phi4-mini"
 # "cpu" installs "ollama", others install "ollama-{flavour}".
 flavour = "cpu"
 
-# ── Nexa ─────────────────────────────────────────────────────────────
-# Alternative LLM provider. Only used when global.llm_provider = "nexa".
-# [nexa]
-# host = "127.0.0.1"
-# port = 18181
-# models = ["ggml-org/Qwen3-1.7B-GGUF"]
-# default_model = "ggml-org/Qwen3-1.7B-GGUF"
 
 # ── Notifications (via apprise) ──────────────────────────────────────
 # Push notifications when daemon events occur (crashes, upgrades, etc.).

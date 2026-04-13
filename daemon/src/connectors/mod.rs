@@ -1,6 +1,5 @@
 pub mod cloud_openclaw;
 pub mod lms_openclaw;
-pub mod nexa_openclaw;
 pub mod ollama_openclaw;
 pub mod relay_ollama;
 pub mod relay_openclaw;
@@ -8,8 +7,8 @@ pub mod relay_openclaw;
 use anyhow::Result;
 
 use crate::managed_service::ManagedService;
-use crate::services::{apprise::Apprise, lms::Lms, mcporter::McPorter, nexa::Nexa, ollama::Ollama, openclaw::OpenClaw};
-use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, NexaConfig, OllamaConfig, OpenClawConfig};
+use crate::services::{apprise::Apprise, lms::Lms, mcporter::McPorter, ollama::Ollama, openclaw::OpenClaw};
+use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig};
 
 /// A connector wires two services together after they are both healthy.
 ///
@@ -30,7 +29,6 @@ pub fn build_services(
     global: &GlobalConfig,
     openclaw_cfg: OpenClawConfig,
     ollama_cfg: OllamaConfig,
-    nexa_cfg: NexaConfig,
     lms_cfg: LmsConfig,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
@@ -47,10 +45,6 @@ pub fn build_services(
         LlmProvider::Ollama => {
             tracing::info!("llm_provider=ollama");
             services.push(Box::new(Ollama::new(ollama_cfg)));
-        }
-        LlmProvider::Nexa => {
-            tracing::info!("llm_provider=nexa");
-            services.push(Box::new(Nexa::new(nexa_cfg)));
         }
         LlmProvider::Lms => {
             tracing::info!("llm_provider=lms");
@@ -70,7 +64,6 @@ pub fn build_services(
 pub fn build_connectors(
     global: &GlobalConfig,
     ollama_cfg: &OllamaConfig,
-    nexa_cfg: &NexaConfig,
     lms_cfg: &LmsConfig,
     cloud_cfg: &CloudConfig,
 ) -> Vec<Box<dyn Connector>> {
@@ -88,13 +81,6 @@ pub fn build_connectors(
             LlmProvider::Ollama => {
                 connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
                     default_model: ollama_cfg.default_model.clone(),
-                }));
-            }
-            LlmProvider::Nexa => {
-                connectors.push(Box::new(nexa_openclaw::NexaOpenClaw {
-                    host: nexa_cfg.host.clone(),
-                    port: nexa_cfg.port,
-                    default_model: nexa_cfg.default_model.clone(),
                 }));
             }
             LlmProvider::Lms => {

@@ -150,7 +150,6 @@ impl Daemon {
                 let needs_restart = new_cfg.global.llm_provider != self.current_cfg.global.llm_provider
                     || new_cfg.global.agent_provider != self.current_cfg.global.agent_provider
                     || format!("{:?}", new_cfg.ollama) != format!("{:?}", self.current_cfg.ollama)
-                    || format!("{:?}", new_cfg.nexa) != format!("{:?}", self.current_cfg.nexa)
                     || format!("{:?}", new_cfg.openclaw) != format!("{:?}", self.current_cfg.openclaw);
 
                 if needs_restart {

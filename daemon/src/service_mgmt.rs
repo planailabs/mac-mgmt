@@ -188,7 +188,6 @@ impl ServiceManager {
         let global_cfg = std::mem::take(&mut cfg.global);
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
-        let nexa_cfg = std::mem::take(&mut cfg.nexa);
         let lms_cfg = std::mem::take(&mut cfg.lms);
         let cloud_cfg = std::mem::take(&mut cfg.cloud);
 
@@ -199,9 +198,6 @@ impl ServiceManager {
         // Register service configs as providers.
         if let Ok(v) = serde_json::to_value(&ollama_cfg) {
             config_store.set("ollama", v);
-        }
-        if let Ok(v) = serde_json::to_value(&nexa_cfg) {
-            config_store.set("nexa", v);
         }
         if let Ok(v) = serde_json::to_value(&lms_cfg) {
             config_store.set("lms", v);
@@ -214,11 +210,11 @@ impl ServiceManager {
         }
 
         let connectors = connectors::build_connectors(
-            &global_cfg, &ollama_cfg, &nexa_cfg, &lms_cfg, &cloud_cfg,
+            &global_cfg, &ollama_cfg, &lms_cfg, &cloud_cfg,
         );
 
         let services = connectors::build_services(
-            &global_cfg, openclaw_cfg, ollama_cfg, nexa_cfg, lms_cfg,
+            &global_cfg, openclaw_cfg, ollama_cfg, lms_cfg,
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();

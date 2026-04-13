@@ -101,7 +101,6 @@ const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {
     Ollama,
-    Nexa,
     Lms,
     Cloud,
     None,
@@ -117,7 +116,6 @@ impl LlmProvider {
     pub fn as_str(&self) -> &str {
         match self {
             Self::Ollama => "ollama",
-            Self::Nexa => "nexa",
             Self::Lms => "lms",
             Self::Cloud => "cloud",
             Self::None => "none",
@@ -357,56 +355,7 @@ impl Default for OllamaConfig {
     }
 }
 
-// ── Nexa ───────────────────────────────────────────────────────────────
 
-fn default_nexa_port() -> u16 {
-    18181
-}
-
-fn default_nexa_models() -> Vec<String> {
-    vec!["ggml-org/Qwen3-1.7B-GGUF".to_string()]
-}
-
-fn default_nexa_model() -> String {
-    "ggml-org/Qwen3-1.7B-GGUF".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NexaConfig {
-    #[schemars(description = "Nexa listen address")]
-    #[serde(default = "default_host")]
-    pub host: String,
-    #[schemars(description = "Nexa listen port")]
-    #[serde(default = "default_nexa_port")]
-    pub port: u16,
-    #[schemars(description = "Models to pull on startup; at least one required")]
-    #[serde(default = "default_nexa_models")]
-    pub models: Vec<String>,
-    #[schemars(description = "Default model for OpenClaw to use")]
-    #[serde(default = "default_nexa_model")]
-    pub default_model: String,
-}
-
-impl Default for NexaConfig {
-    fn default() -> Self {
-        Self {
-            host: default_host(),
-            port: default_nexa_port(),
-            models: default_nexa_models(),
-            default_model: default_nexa_model(),
-        }
-    }
-}
-
-impl NexaConfig {
-    pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.models.is_empty() {
-            return Err(ValidationError("nexa models list cannot be empty".into()));
-        }
-        Ok(())
-    }
-}
 
 // ── LM Studio (lms) ────────────────────────────────────────────────────
 
@@ -655,8 +604,6 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]
-    pub nexa: NexaConfig,
-    #[serde(default)]
     pub lms: LmsConfig,
     #[serde(default)]
     pub cloud: CloudConfig,
@@ -701,7 +648,6 @@ impl ClusterConfig {
         self.daemon.validate().map_err(|e| e.to_string())?;
         self.global.validate().map_err(|e| e.to_string())?;
         self.ollama.validate().map_err(|e| e.to_string())?;
-        self.nexa.validate().map_err(|e| e.to_string())?;
         self.lms.validate().map_err(|e| e.to_string())?;
         self.cloud.validate().map_err(|e| e.to_string())?;
         Ok(())
@@ -746,8 +692,6 @@ pub struct DaemonConfig {
     pub openclaw: OpenClawConfig,
     #[serde(default)]
     pub ollama: OllamaConfig,
-    #[serde(default)]
-    pub nexa: NexaConfig,
     #[serde(default)]
     pub lms: LmsConfig,
     #[serde(default)]
@@ -797,7 +741,6 @@ impl DaemonConfig {
         config.daemon.validate().map_err(|e| e.to_string())?;
         config.global.validate().map_err(|e| e.to_string())?;
         config.ollama.validate().map_err(|e| e.to_string())?;
-        config.nexa.validate().map_err(|e| e.to_string())?;
         config.relay.validate().map_err(|e| e.to_string())?;
         Ok(config)
     }
@@ -922,39 +865,6 @@ agent_provider = "chatgpt"
 "#;
         let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("unknown variant"), "got: {err}");
-    }
-
-    #[test]
-    fn valid_nexa_config() {
-        let toml = r#"
-[nexa]
-host = "10.0.0.1"
-port = 18181
-models = ["ggml-org/Qwen3-1.7B-GGUF"]
-default_model = "ggml-org/Qwen3-1.7B-GGUF"
-"#;
-        let config = ClusterConfig::from_toml(toml).unwrap();
-        assert_eq!(config.nexa.host, "10.0.0.1");
-        assert_eq!(config.nexa.port, 18181);
-    }
-
-    #[test]
-    fn rejects_empty_nexa_models() {
-        let toml = r#"
-[nexa]
-models = []
-"#;
-        let err = ClusterConfig::from_toml(toml).unwrap_err();
-        assert!(err.contains("nexa models list cannot be empty"), "got: {err}");
-    }
-
-    #[test]
-    fn accepts_nexa_llm_provider() {
-        let toml = r#"
-[global]
-llm_provider = "nexa"
-"#;
-        ClusterConfig::from_toml(toml).unwrap();
     }
 
     #[test]

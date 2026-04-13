@@ -23,7 +23,7 @@ Top-level settings that control which providers and features are active.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `llm_provider` | `"ollama"` | LLM backend: `ollama`, `nexa`, `lms`, `cloud`, or `none` |
+| `llm_provider` | `"ollama"` | LLM backend: `ollama`, `lms`, `cloud`, or `none` |
 | `agent_provider` | `"openclaw"` | Agent provider: `openclaw` or `none` |
 | `agent_name` | *none* | Display name for this agent |
 | `user_name` | *none* | Display name for the user |
@@ -49,17 +49,6 @@ Settings for the Ollama local LLM server. Only applies when `global.llm_provider
 | `models` | `["phi4-mini", "qwen3.5", "Flux_AI/Flux_AI"]` | Models to pull on startup; at least one required |
 | `default_model` | `"phi4-mini"` | Default model for OpenClaw to use |
 | `flavour` | `"cpu"` | Package flavour: `cpu`, `rocm` (AMD), `cuda` (NVIDIA), or `vulkan` |
-
-## `nexa`
-
-Settings for the Nexa local LLM server. Only applies when `global.llm_provider` is `"nexa"`.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `host` | `"127.0.0.1"` | Listen address |
-| `port` | `18181` | Listen port |
-| `models` | `["ggml-org/Qwen3-1.7B-GGUF"]` | Models to pull on startup; at least one required |
-| `default_model` | `"ggml-org/Qwen3-1.7B-GGUF"` | Default model for OpenClaw to use |
 
 ## `lms`
 
