@@ -293,7 +293,8 @@ pub async fn sse_events(
                     }
                 }
                 _ = keepalive.tick() => {
-                    yield Event::comment("");
+                    let json = serde_json::to_string(&PushMessage::Ping).unwrap_or_default();
+                    yield Event::data(json);
                 }
                 _ = &mut shutdown => break,
             }

@@ -224,6 +224,7 @@ impl Daemon {
     async fn handle_push_cmd(&mut self, cmd: crate::server_push::PushCommand) -> bool {
         use crate::server_push::PushCommand;
         match cmd {
+            PushCommand::Ping => unreachable!("Ping filtered in SSE parser"),
             PushCommand::SyncConfig => {
                 unreachable!("SyncConfig handled in event loop")
             }
