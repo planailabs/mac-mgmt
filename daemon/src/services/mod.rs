@@ -1,8 +1,11 @@
 pub mod apprise;
-pub mod mcporter;
+pub mod gpu_tool_common;
 pub mod lms;
+pub mod mcporter;
+pub mod nvidia_smi;
 pub mod ollama;
 pub mod openclaw;
+pub mod rocm_smi;
 
 use anyhow::Result;
 use std::time::Duration;

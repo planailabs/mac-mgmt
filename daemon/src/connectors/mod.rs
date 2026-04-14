@@ -7,7 +7,10 @@ pub mod relay_openclaw;
 use anyhow::Result;
 
 use crate::managed_service::ManagedService;
-use crate::services::{apprise::Apprise, lms::Lms, mcporter::McPorter, ollama::Ollama, openclaw::OpenClaw};
+use crate::services::{
+    apprise::Apprise, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
+    openclaw::OpenClaw, rocm_smi::RocmSmi,
+};
 use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig};
 
 /// A connector wires two services together after they are both healthy.
@@ -56,6 +59,10 @@ pub fn build_services(
 
     services.push(Box::new(McPorter));
     services.push(Box::new(Apprise));
+    // GPU-tool installers. Both are install-only; each internally gates on
+    // its vendor's PCI ID so GPU-less hosts don't pull the nix package.
+    services.push(Box::new(NvidiaSmi));
+    services.push(Box::new(RocmSmi));
     services
 }
 
