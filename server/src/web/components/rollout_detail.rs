@@ -57,6 +57,31 @@ struct StageHealthInfo {
     probe_ok_pct: std::collections::HashMap<String, u8>,
     reasons: Vec<String>,
     evaluated_at: DateTime<Utc>,
+    #[serde(default)]
+    probe_stats: std::collections::HashMap<String, ProbeStatsView>,
+    #[serde(default)]
+    sample_summary: Option<SampleSummaryView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProbeStatsView {
+    total_runs: u32,
+    ok_count: u32,
+    avg_duration_ms: Option<u32>,
+    avg_tokens_out: Option<u32>,
+    avg_first_token_ms: Option<u32>,
+    last_failure_at: Option<DateTime<Utc>>,
+    last_error_class: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SampleSummaryView {
+    reporting_instances: u32,
+    avg_cpu_load_1m: f32,
+    avg_mem_used_pct: u8,
+    max_disk_used_pct: Option<u8>,
+    gpu_avg_util_pct: Option<u8>,
+    thermal_alerts: u32,
 }
 
 #[server]
@@ -221,6 +246,19 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
 
 #[cfg(feature = "server")]
 fn parse_eval_report(v: serde_json::Value, at: DateTime<Utc>) -> Option<StageHealthInfo> {
+    let probe_stats: std::collections::HashMap<String, ProbeStatsView> = v
+        .get("probe_stats")
+        .and_then(|x| x.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| serde_json::from_value::<ProbeStatsView>(v.clone()).ok().map(|s| (k.clone(), s)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let sample_summary: Option<SampleSummaryView> = v
+        .get("sample_summary")
+        .and_then(|x| serde_json::from_value::<SampleSummaryView>(x.clone()).ok());
+
     Some(StageHealthInfo {
         passed: v.get("passed").and_then(|x| x.as_bool()).unwrap_or(false),
         in_grace_period: v.get("in_grace_period").and_then(|x| x.as_bool()).unwrap_or(false),
@@ -245,6 +283,8 @@ fn parse_eval_report(v: serde_json::Value, at: DateTime<Utc>) -> Option<StageHea
             })
             .unwrap_or_default(),
         evaluated_at: at,
+        probe_stats,
+        sample_summary,
     })
 }
 
@@ -1012,6 +1052,85 @@ pub fn RolloutDetail(id: String) -> Element {
                                                             ul { class: "mt-2 text-xs text-red-700 dark:text-red-300 list-disc list-inside",
                                                                 for reason in h.reasons.iter() {
                                                                     li { "{reason}" }
+                                                                }
+                                                            }
+                                                        }
+                                                        // Per-service probe aggregates over the gate window.
+                                                        if !h.probe_stats.is_empty() {
+                                                            div { class: "mt-3 overflow-x-auto",
+                                                                table { class: "min-w-full text-xs",
+                                                                    thead {
+                                                                        tr { class: "text-left text-gray-500 dark:text-gray-400",
+                                                                            th { class: "py-1 pr-3 font-medium", "Service" }
+                                                                            th { class: "py-1 pr-3 font-medium", "OK / total" }
+                                                                            th { class: "py-1 pr-3 font-medium", "avg ms" }
+                                                                            th { class: "py-1 pr-3 font-medium", "TTFT" }
+                                                                            th { class: "py-1 pr-3 font-medium", "tokens out" }
+                                                                            th { class: "py-1 font-medium", "Last failure" }
+                                                                        }
+                                                                    }
+                                                                    tbody { class: "text-gray-700 dark:text-gray-300 font-mono",
+                                                                        for (svc, ps) in h.probe_stats.iter() {
+                                                                            {
+                                                                                let dur = ps.avg_duration_ms.map(|v| format!("{v}")).unwrap_or_else(|| "—".into());
+                                                                                let ttft = ps.avg_first_token_ms.map(|v| format!("{v}ms")).unwrap_or_else(|| "—".into());
+                                                                                let tokens = ps.avg_tokens_out.map(|v| format!("{v}")).unwrap_or_else(|| "—".into());
+                                                                                let failure = match (ps.last_failure_at, &ps.last_error_class) {
+                                                                                    (Some(at), Some(cls)) => format!("{} ({cls})", at.format("%H:%M:%S")),
+                                                                                    (Some(at), None) => at.format("%H:%M:%S").to_string(),
+                                                                                    _ => "—".into(),
+                                                                                };
+                                                                                rsx! {
+                                                                                    tr {
+                                                                                        td { class: "py-1 pr-3 font-sans font-medium", "{svc}" }
+                                                                                        td { class: "py-1 pr-3", "{ps.ok_count}/{ps.total_runs}" }
+                                                                                        td { class: "py-1 pr-3", "{dur}" }
+                                                                                        td { class: "py-1 pr-3", "{ttft}" }
+                                                                                        td { class: "py-1 pr-3", "{tokens}" }
+                                                                                        td { class: "py-1 text-gray-500 dark:text-gray-400 font-sans", "{failure}" }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        // Cohort sample summary — derived from the most recent
+                                                        // heartbeat sample of every reporting instance.
+                                                        if let Some(s) = h.sample_summary.as_ref() {
+                                                            {
+                                                                let disk = s.max_disk_used_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "—".into());
+                                                                let gpu = s.gpu_avg_util_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "—".into());
+                                                                let cpu = format!("{:.2}", s.avg_cpu_load_1m);
+                                                                rsx! {
+                                                                    div { class: "mt-3 flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-300",
+                                                                        span {
+                                                                            span { class: "font-medium", "samples: " }
+                                                                            "{s.reporting_instances}"
+                                                                        }
+                                                                        span { class: "font-mono",
+                                                                            span { class: "font-medium font-sans", "cpu load: " }
+                                                                            "{cpu}"
+                                                                        }
+                                                                        span { class: "font-mono",
+                                                                            span { class: "font-medium font-sans", "mem: " }
+                                                                            "{s.avg_mem_used_pct}%"
+                                                                        }
+                                                                        span { class: "font-mono",
+                                                                            span { class: "font-medium font-sans", "max disk: " }
+                                                                            "{disk}"
+                                                                        }
+                                                                        span { class: "font-mono",
+                                                                            span { class: "font-medium font-sans", "gpu util: " }
+                                                                            "{gpu}"
+                                                                        }
+                                                                        if s.thermal_alerts > 0 {
+                                                                            span { class: "text-orange-700 dark:text-orange-300 font-medium",
+                                                                                "thermal alerts: {s.thermal_alerts}"
+                                                                            }
+                                                                        }
+                                                                    }
                                                                 }
                                                             }
                                                         }
