@@ -1,4 +1,6 @@
 use anyhow::Result;
+#[cfg(feature = "self-update")]
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 mod assessment;
@@ -214,7 +216,44 @@ async fn main() -> Result<()> {
         #[cfg(feature = "self-update")]
         Commands::Update { force, version, store_path } => {
             if let Some(v) = version {
+                // Explicit override path — mostly used by integration tests
+                // that exercise the store-path self-replace flow without a
+                // live server.
                 self_update::set_target(v, store_path);
+            } else {
+                // CLI runs in a fresh process with an empty in-process
+                // target. Populate it from the server the same way the
+                // daemon's update tick does, otherwise apply() prints
+                // "no target version known" and no-ops.
+                let cfg = config::load().await?;
+                let (Some(url), Some(token)) =
+                    (cfg.server.url.as_deref(), cfg.server.token.as_deref())
+                else {
+                    anyhow::bail!(
+                        "no [server] url/token configured — can't fetch update target"
+                    );
+                };
+                let system = nix::current_system().unwrap_or("");
+                let client = reqwest::Client::new();
+                let resp = client
+                    .get(format!("{url}/api/update?system={system}"))
+                    .bearer_auth(token)
+                    .send()
+                    .await
+                    .context("failed to fetch /api/update")?;
+                if !resp.status().is_success() {
+                    anyhow::bail!(
+                        "server /api/update returned {}",
+                        resp.status()
+                    );
+                }
+                let info: mac_mgmt_common::UpdateTarget =
+                    resp.json().await.context("failed to parse /api/update")?;
+                let Some(ver) = info.target_version else {
+                    println!("no target version configured on the server");
+                    return Ok(());
+                };
+                self_update::set_target(ver, info.store_path);
             }
             tokio::task::spawn_blocking(move || self_update::apply(force))
                 .await??;
