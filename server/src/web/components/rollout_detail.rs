@@ -1039,6 +1039,26 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
     Ok(())
 }
 
+/// Block on a browser `confirm()` dialog. Returns `true` on OK, `false`
+/// on Cancel or any JS hiccup. Used to gate destructive rollout actions
+/// (rollback, complete, delete) so a misclick doesn't instantly rewind
+/// cluster pins or remove historical rows.
+async fn confirm_prompt(message: &str) -> bool {
+    // Escape single quotes so the message doesn't break the JS literal.
+    // Browsers treat confirm() as synchronous; the outer dioxus.send
+    // ships the bool back to Rust via the channel recv below.
+    let script = format!(
+        "dioxus.send(confirm('{}'))",
+        message.replace('\\', "\\\\").replace('\'', "\\'")
+    );
+    document::eval(&script)
+        .recv::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 #[component]
 pub fn RolloutDetail(id: String) -> Element {
     let id_clone = id.clone();
@@ -1099,6 +1119,10 @@ pub fn RolloutDetail(id: String) -> Element {
                                     move |_| {
                                         let rid = rid.clone();
                                         async move {
+                                            let ok = confirm_prompt(
+                                                "Roll back this rollout? Every cohort cluster's pinned_version and nixpkgs_commit will be reset to the baseline captured at start time. Daemons that already took the new version will downgrade on the next tick."
+                                            ).await;
+                                            if !ok { return; }
                                             let _ = rollout_action(rid, "rollback".into()).await;
                                             detail.restart();
                                         }
@@ -1115,6 +1139,10 @@ pub fn RolloutDetail(id: String) -> Element {
                                     move |_| {
                                         let rid = rid.clone();
                                         async move {
+                                            let ok = confirm_prompt(
+                                                "Delete this rollout? The rollout row and its stage history will be removed. Cluster pins stay where they are — this is only a cleanup of the rollout record."
+                                            ).await;
+                                            if !ok { return; }
                                             let _ = rollout_action(rid, "delete".into()).await;
                                             nav.push(Route::RolloutList {});
                                         }
@@ -1206,6 +1234,10 @@ pub fn RolloutDetail(id: String) -> Element {
                                 move |_| {
                                     let rid = rid.clone();
                                     async move {
+                                        let ok = confirm_prompt(
+                                            "Complete this rollout now? Every stage is marked completed and the target version is written to the pinned_version of every cohort cluster, including stages that never rolled. Skips the health gate."
+                                        ).await;
+                                        if !ok { return; }
                                         let _ = rollout_action(rid, "complete".into()).await;
                                         detail.restart();
                                     }
