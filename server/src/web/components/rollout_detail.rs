@@ -374,10 +374,16 @@ fn render_health_summary_card(hs: &RolloutHealthSummary) -> Element {
                     span { class: "font-medium font-sans", "heartbeats fresh: " }
                     "{hb}"
                 }
-                for (svc, pct) in hs.probe_ok_pct.iter() {
-                    span { class: "font-mono",
-                        span { class: "font-medium font-sans", "{svc}: " }
-                        "{pct}%"
+                {
+                    let mut probe_pairs: Vec<(&String, &u8)> = hs.probe_ok_pct.iter().collect();
+                    probe_pairs.sort_by(|a, b| a.0.cmp(b.0));
+                    rsx! {
+                        for (svc, pct) in probe_pairs {
+                            span { class: "font-mono",
+                                span { class: "font-medium font-sans", "{svc}: " }
+                                "{pct}%"
+                            }
+                        }
                     }
                 }
             }
@@ -1324,10 +1330,16 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 span { class: "font-medium", "heartbeats fresh: " }
                                                                 "{h.heartbeat_fresh_pct}%"
                                                             }
-                                                            for (svc, pct) in h.probe_ok_pct.iter() {
-                                                                span { class: "font-mono",
-                                                                    span { class: "font-medium font-sans", "{svc}: " }
-                                                                    "{pct}%"
+                                                            {
+                                                                let mut pairs: Vec<(&String, &u8)> = h.probe_ok_pct.iter().collect();
+                                                                pairs.sort_by(|a, b| a.0.cmp(b.0));
+                                                                rsx! {
+                                                                    for (svc, pct) in pairs {
+                                                                        span { class: "font-mono",
+                                                                            span { class: "font-medium font-sans", "{svc}: " }
+                                                                            "{pct}%"
+                                                                        }
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -1353,24 +1365,30 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                         }
                                                                     }
                                                                     tbody { class: "text-gray-700 dark:text-gray-300 font-mono",
-                                                                        for (svc, ps) in h.probe_stats.iter() {
-                                                                            {
-                                                                                let dur = ps.avg_duration_ms.map(|v| format!("{v}")).unwrap_or_else(|| "—".into());
-                                                                                let ttft = ps.avg_first_token_ms.map(|v| format!("{v}ms")).unwrap_or_else(|| "—".into());
-                                                                                let tokens = ps.avg_tokens_out.map(|v| format!("{v}")).unwrap_or_else(|| "—".into());
-                                                                                let failure = match (ps.last_failure_at, &ps.last_error_class) {
-                                                                                    (Some(at), Some(cls)) => format!("{} ({cls})", at.format("%H:%M:%S")),
-                                                                                    (Some(at), None) => at.format("%H:%M:%S").to_string(),
-                                                                                    _ => "—".into(),
-                                                                                };
-                                                                                rsx! {
-                                                                                    tr {
-                                                                                        td { class: "py-1 pr-3 font-sans font-medium", "{svc}" }
-                                                                                        td { class: "py-1 pr-3", "{ps.ok_count}/{ps.total_runs}" }
-                                                                                        td { class: "py-1 pr-3", "{dur}" }
-                                                                                        td { class: "py-1 pr-3", "{ttft}" }
-                                                                                        td { class: "py-1 pr-3", "{tokens}" }
-                                                                                        td { class: "py-1 text-gray-500 dark:text-gray-400 font-sans", "{failure}" }
+                                                                        {
+                                                                            let mut stat_pairs: Vec<(&String, &ProbeStatsView)> = h.probe_stats.iter().collect();
+                                                                            stat_pairs.sort_by(|a, b| a.0.cmp(b.0));
+                                                                            rsx! {
+                                                                                for (svc, ps) in stat_pairs {
+                                                                                    {
+                                                                                        let dur = ps.avg_duration_ms.map(|v| format!("{v}")).unwrap_or_else(|| "—".into());
+                                                                                        let ttft = ps.avg_first_token_ms.map(|v| format!("{v}ms")).unwrap_or_else(|| "—".into());
+                                                                                        let tokens = ps.avg_tokens_out.map(|v| format!("{v}")).unwrap_or_else(|| "—".into());
+                                                                                        let failure = match (ps.last_failure_at, &ps.last_error_class) {
+                                                                                            (Some(at), Some(cls)) => format!("{} ({cls})", at.format("%H:%M:%S")),
+                                                                                            (Some(at), None) => at.format("%H:%M:%S").to_string(),
+                                                                                            _ => "—".into(),
+                                                                                        };
+                                                                                        rsx! {
+                                                                                            tr {
+                                                                                                td { class: "py-1 pr-3 font-sans font-medium", "{svc}" }
+                                                                                                td { class: "py-1 pr-3", "{ps.ok_count}/{ps.total_runs}" }
+                                                                                                td { class: "py-1 pr-3", "{dur}" }
+                                                                                                td { class: "py-1 pr-3", "{ttft}" }
+                                                                                                td { class: "py-1 pr-3", "{tokens}" }
+                                                                                                td { class: "py-1 text-gray-500 dark:text-gray-400 font-sans", "{failure}" }
+                                                                                            }
+                                                                                        }
                                                                                     }
                                                                                 }
                                                                             }
