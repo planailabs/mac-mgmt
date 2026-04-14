@@ -12,6 +12,13 @@ struct RolloutInfo {
     id: Uuid,
     target_version: Option<String>,
     nixpkgs_commit: Option<String>,
+    /// Captured majority version from the cohort at start-time; null when
+    /// the rollout hasn't been started yet or when the cohort had no
+    /// heartbeats in the 30-minute window.
+    #[serde(default)]
+    baseline_version: Option<String>,
+    #[serde(default)]
+    baseline_nixpkgs_commit: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
     stages: Vec<StageInfo>,
@@ -66,12 +73,14 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         id: Uuid,
         target_version: Option<String>,
         nixpkgs_commit: Option<String>,
+        baseline_version: Option<String>,
+        baseline_nixpkgs_commit: Option<String>,
         status: String,
         created_at: DateTime<Utc>,
     }
 
     let rollout = sqlx::query_as::<_, RRow>(
-        "SELECT id, target_version, nixpkgs_commit, status, created_at FROM rollouts WHERE id = $1",
+        "SELECT id, target_version, nixpkgs_commit, baseline_version, baseline_nixpkgs_commit, status, created_at FROM rollouts WHERE id = $1",
     )
     .bind(rid)
     .fetch_one(&pool)
@@ -178,6 +187,8 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         id: rollout.id,
         target_version: rollout.target_version,
         nixpkgs_commit: rollout.nixpkgs_commit,
+        baseline_version: rollout.baseline_version,
+        baseline_nixpkgs_commit: rollout.baseline_nixpkgs_commit,
         status: rollout.status,
         created_at: rollout.created_at,
         stages: stages
@@ -235,6 +246,55 @@ fn parse_eval_report(v: serde_json::Value, at: DateTime<Utc>) -> Option<StageHea
             .unwrap_or_default(),
         evaluated_at: at,
     })
+}
+
+/// Compute the baseline (version, nixpkgs_commit) from the cohort's recent
+/// heartbeats — the version most instances are running right now. Used to
+/// snapshot what a rollout should rewind to on rollback. `None` on each
+/// side if no heartbeat reports that field.
+#[cfg(feature = "server")]
+async fn cohort_baseline(
+    pool: &sqlx::PgPool,
+    rollout_id: Uuid,
+) -> Result<(Option<String>, Option<String>), sqlx::Error> {
+    let version: Option<String> = sqlx::query_scalar(
+        "SELECT dh.version FROM daemon_heartbeats dh \
+         WHERE dh.cluster_id IN ( \
+             SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
+             JOIN LATERAL ( \
+                 SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
+                 UNION ALL \
+                 SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+             ) rgm ON true \
+             WHERE rs.rollout_id = $1 \
+         ) \
+         AND dh.reported_at > now() - interval '30 minutes' \
+         GROUP BY dh.version ORDER BY COUNT(*) DESC LIMIT 1",
+    )
+    .bind(rollout_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let commit: Option<String> = sqlx::query_scalar(
+        "SELECT dh.nixpkgs_commit FROM daemon_heartbeats dh \
+         WHERE dh.cluster_id IN ( \
+             SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
+             JOIN LATERAL ( \
+                 SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
+                 UNION ALL \
+                 SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+             ) rgm ON true \
+             WHERE rs.rollout_id = $1 \
+         ) \
+         AND dh.reported_at > now() - interval '30 minutes' \
+         AND dh.nixpkgs_commit IS NOT NULL \
+         GROUP BY dh.nixpkgs_commit ORDER BY COUNT(*) DESC LIMIT 1",
+    )
+    .bind(rollout_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok((version, commit))
 }
 
 #[server]
@@ -318,14 +378,27 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
 
     match action.as_str() {
         "start" => {
+            // Capture the cohort's current majority version + nixpkgs commit
+            // before we start rolling — this is what "rollback" will restore.
+            // Skip if baseline is already set (e.g. stopped-then-restarted
+            // rollout) to avoid overwriting with post-partial-rollout noise.
+            let (baseline_version, baseline_commit) = cohort_baseline(&pool, rid)
+                .await
+                .unwrap_or((None, None));
+
             let mut tx = pool
                 .begin()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             sqlx::query(
-                "UPDATE rollouts SET status = 'rolling', updated_at = now() WHERE id = $1",
+                "UPDATE rollouts SET status = 'rolling', updated_at = now(), \
+                    baseline_version = COALESCE(baseline_version, $2), \
+                    baseline_nixpkgs_commit = COALESCE(baseline_nixpkgs_commit, $3) \
+                 WHERE id = $1",
             )
             .bind(rid)
+            .bind(&baseline_version)
+            .bind(&baseline_commit)
             .execute(&mut *tx)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -339,6 +412,88 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
+        }
+        "rollback" => {
+            // Fetch baseline + cohort ids so we can rewind cluster pins.
+            #[derive(sqlx::FromRow)]
+            struct BaselineRow {
+                baseline_version: Option<String>,
+                baseline_nixpkgs_commit: Option<String>,
+            }
+            let baseline: BaselineRow = sqlx::query_as(
+                "SELECT baseline_version, baseline_nixpkgs_commit FROM rollouts WHERE id = $1",
+            )
+            .bind(rid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("rollout not found"))?;
+
+            let cohort: Vec<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
+                 JOIN LATERAL ( \
+                   SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
+                   UNION ALL \
+                   SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                 ) rgm ON true \
+                 WHERE rs.rollout_id = $1",
+            )
+            .bind(rid)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+            let mut tx = pool
+                .begin()
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            // Mark every stage that actually shipped (rolling/paused/completed)
+            // as rolled_back. Pending stages stay pending — they never sent
+            // anything out, so there's nothing to undo.
+            sqlx::query(
+                "UPDATE rollout_stages SET status = 'rolled_back' \
+                 WHERE rollout_id = $1 AND status IN ('rolling', 'paused', 'completed')",
+            )
+            .bind(rid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query(
+                "UPDATE rollouts SET status = 'rolled_back', updated_at = now() WHERE id = $1",
+            )
+            .bind(rid)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            // Rewind cluster pins to the captured baseline. A NULL baseline
+            // clears the pin so the cluster falls back to the latest
+            // daemon_versions row — which matches the no-rollout default.
+            sqlx::query(
+                "UPDATE clusters SET pinned_version = $1, nixpkgs_commit = $2 \
+                 WHERE id = ANY($3)",
+            )
+            .bind(&baseline.baseline_version)
+            .bind(&baseline.baseline_nixpkgs_commit)
+            .bind(&cohort)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            tx.commit()
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            // Tell the cohort to refetch both so daemons that already took
+            // the bad version downgrade, and daemons that hadn't yet stay
+            // put.
+            crate::api::push::notify_all_rollout_global(
+                rid,
+                crate::api::push::PushMessage::SelfUpdate,
+            )
+            .await;
+            crate::api::push::notify_all_rollout_global(
+                rid,
+                crate::api::push::PushMessage::SyncNixpkgs,
+            )
+            .await;
         }
         "advance" => {
             #[derive(sqlx::FromRow)]
@@ -535,6 +690,7 @@ pub fn RolloutDetail(id: String) -> Element {
                 "completed" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
                 "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
                 "failed" => "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+                "rolled_back" => "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200",
                 _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
             };
 
@@ -549,20 +705,39 @@ pub fn RolloutDetail(id: String) -> Element {
                             span { class: "text-gray-500 dark:text-gray-400 text-sm", "Created: {created}" }
                         }
                     }
-                    if info.status == "pending" || info.status == "completed" || info.status == "failed" {
-                        button {
-                            class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
-                            onclick: {
-                                let rid = rid.clone();
-                                move |_| {
+                    div { class: "flex gap-2",
+                        if matches!(info.status.as_str(), "rolling" | "paused" | "completed") {
+                            button {
+                                class: "bg-orange-600 text-white px-3 py-1 rounded text-sm hover:bg-orange-700",
+                                title: "Mark rollout as rolled-back and rewind cluster pins to the baseline captured at start time",
+                                onclick: {
                                     let rid = rid.clone();
-                                    async move {
-                                        let _ = rollout_action(rid, "delete".into()).await;
-                                        nav.push(Route::RolloutList {});
+                                    move |_| {
+                                        let rid = rid.clone();
+                                        async move {
+                                            let _ = rollout_action(rid, "rollback".into()).await;
+                                            detail.restart();
+                                        }
                                     }
-                                }
-                            },
-                            "Delete"
+                                },
+                                "Rollback"
+                            }
+                        }
+                        if matches!(info.status.as_str(), "pending" | "completed" | "failed" | "rolled_back") {
+                            button {
+                                class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                                onclick: {
+                                    let rid = rid.clone();
+                                    move |_| {
+                                        let rid = rid.clone();
+                                        async move {
+                                            let _ = rollout_action(rid, "delete".into()).await;
+                                            nav.push(Route::RolloutList {});
+                                        }
+                                    }
+                                },
+                                "Delete"
+                            }
                         }
                     }
                 }
@@ -658,6 +833,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                 "rolling" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
                                 "completed" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
                                 "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
+                                "rolled_back" => "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200",
                                 _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
                             };
                             let started = stage
@@ -858,6 +1034,21 @@ pub fn RolloutDetail(id: String) -> Element {
                     }
                     if let Some(commit) = &info.nixpkgs_commit {
                         p { span { class: "font-medium", "Nixpkgs commit: " } code { class: "font-mono", "{commit}" } }
+                    }
+                }
+
+                // Baseline — shown once the rollout has started so operators
+                // can see exactly what a rollback would restore. Hidden for
+                // pending rollouts where nothing's been captured yet.
+                if info.baseline_version.is_some() || info.baseline_nixpkgs_commit.is_some() {
+                    h3 { class: "text-lg font-semibold mb-2 mt-4", "Rollback baseline" }
+                    div { class: "bg-gray-100 dark:bg-gray-700 p-4 rounded text-sm space-y-1",
+                        if let Some(ver) = &info.baseline_version {
+                            p { span { class: "font-medium", "Version: " } "{ver}" }
+                        }
+                        if let Some(commit) = &info.baseline_nixpkgs_commit {
+                            p { span { class: "font-medium", "Nixpkgs commit: " } code { class: "font-mono", "{commit}" } }
+                        }
                     }
                 }
             }

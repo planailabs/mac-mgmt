@@ -90,6 +90,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::admin_get_rollout_group,
         routes::admin_stage_health,
         routes::admin_request_stage_assessment,
+        routes::admin_rollback_rollout,
     ),
     components(schemas(
         routes::SelfInfo,
@@ -256,6 +257,7 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::admin_get_rollout_group,
                 routes::admin_stage_health,
                 routes::admin_request_stage_assessment,
+                routes::admin_rollback_rollout,
                 // Daemon binary download (public)
                 routes::download_daemon,
                 // SSE push

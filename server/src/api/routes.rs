@@ -3569,6 +3569,101 @@ pub async fn download_daemon(
     Ok(BinaryDownload { body, filename })
 }
 
+// ── Rollout rollback (admin) ────────────────────────────────────────
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts/{rollout_id}/rollback",
+    tag = "Admin — Rollouts",
+    summary = "Roll back a rollout to its captured baseline",
+    description = "Marks every non-pending stage as rolled_back and rewinds each cohort cluster's pinned_version + nixpkgs_commit to the baseline captured when the rollout first started rolling. Pushes SelfUpdate + SyncNixpkgs so daemons that took the bad version downgrade on the next tick.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Rollout rolled back"),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::post("/admin/rollouts/<rollout_id>/rollback")]
+pub async fn admin_rollback_rollout(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    rollout_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+
+    #[derive(sqlx::FromRow)]
+    struct BaselineRow {
+        baseline_version: Option<String>,
+        baseline_nixpkgs_commit: Option<String>,
+    }
+    let baseline: BaselineRow = sqlx::query_as(
+        "SELECT baseline_version, baseline_nixpkgs_commit FROM rollouts WHERE id = $1",
+    )
+    .bind(rid)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::NotFound)?;
+
+    let cohort: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
+         JOIN LATERAL ( \
+           SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
+           UNION ALL \
+           SELECT id FROM clusters WHERE rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+         ) rgm ON true \
+         WHERE rs.rollout_id = $1",
+    )
+    .bind(rid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    sqlx::query(
+        "UPDATE rollout_stages SET status = 'rolled_back' \
+         WHERE rollout_id = $1 AND status IN ('rolling', 'paused', 'completed')",
+    )
+    .bind(rid)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    sqlx::query(
+        "UPDATE rollouts SET status = 'rolled_back', updated_at = now() WHERE id = $1",
+    )
+    .bind(rid)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    sqlx::query(
+        "UPDATE clusters SET pinned_version = $1, nixpkgs_commit = $2 WHERE id = ANY($3)",
+    )
+    .bind(&baseline.baseline_version)
+    .bind(&baseline.baseline_nixpkgs_commit)
+    .bind(&cohort)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+
+    super::push::notify_all_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        PushMessage::SelfUpdate,
+    )
+    .await;
+    super::push::notify_all_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        PushMessage::SyncNixpkgs,
+    )
+    .await;
+    Ok(Status::Ok)
+}
+
 // ── Rollout health gates (admin) ────────────────────────────────────
 
 #[derive(Serialize, ToSchema)]
