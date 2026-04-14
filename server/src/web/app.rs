@@ -7,6 +7,7 @@ use super::components::cluster_detail::ClusterDetail;
 use super::components::cluster_form::ClusterForm;
 use super::components::cluster_list::ClusterList;
 use super::components::fleet_dashboard::FleetDashboard;
+use super::components::fleet_detail::FleetDetail;
 use super::components::layout::Layout;
 use super::components::mcp_bundle_detail::McpBundleDetail;
 use super::components::mcp_bundle_form::McpBundleForm;
@@ -75,6 +76,8 @@ pub enum Route {
     RolloutDetail { id: String },
     #[route("/fleet")]
     FleetDashboard {},
+    #[route("/fleet/:instance_id")]
+    FleetDetail { instance_id: String },
     #[route("/rollout-groups")]
     RolloutGroupList {},
     #[route("/rollout-groups/:id")]

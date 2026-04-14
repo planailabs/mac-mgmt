@@ -30,6 +30,7 @@ pub mod setting_token_list;
 pub mod skill_detail;
 pub mod skill_list;
 pub mod fleet_dashboard;
+pub mod fleet_detail;
 pub mod rollout_detail;
 pub mod rollout_form;
 pub mod rollout_group_detail;

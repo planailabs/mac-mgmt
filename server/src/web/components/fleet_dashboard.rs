@@ -329,10 +329,14 @@ pub fn FleetDashboard() -> Element {
                                                     }
                                                 }
                                                 td { class: "px-6 py-4 text-sm",
-                                                    if entry.hostname.is_empty() {
-                                                        span { class: "text-gray-400 dark:text-gray-500 font-mono text-xs", "{entry.instance_id}" }
-                                                    } else {
-                                                        span { "{entry.hostname}" }
+                                                    Link {
+                                                        to: Route::FleetDetail { instance_id: entry.instance_id.clone() },
+                                                        class: "text-blue-600 dark:text-blue-400 hover:underline",
+                                                        if entry.hostname.is_empty() {
+                                                            span { class: "font-mono text-xs", "{entry.instance_id}" }
+                                                        } else {
+                                                            span { "{entry.hostname}" }
+                                                        }
                                                     }
                                                 }
                                                 td { class: "px-6 py-4 text-sm",
