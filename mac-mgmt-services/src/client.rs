@@ -5,7 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
-use crate::protocol::{Message, Notification, Request, Response, SpawnSpec};
+use crate::protocol::{Message, Notification, Request, Response, ServiceStatus, SpawnSpec};
 
 /// Daemon-side RPC client. Spawns a background reader that forwards responses
 /// and notifications through bounded channels.
@@ -114,9 +114,22 @@ impl Client {
         }
     }
 
-    pub async fn list(&mut self) -> Result<Vec<String>> {
+    /// Ask the supervisor for the list of registered services.
+    ///
+    /// Prefers the `statuses` field (pid/exe included); falls back to the
+    /// legacy `names` list when talking to an older supervisor.
+    pub async fn list(&mut self) -> Result<Vec<ServiceStatus>> {
         match self.send(Request::List).await? {
-            Response::Services { names } => Ok(names),
+            Response::Services { statuses, names } => {
+                if !statuses.is_empty() || names.is_empty() {
+                    Ok(statuses)
+                } else {
+                    Ok(names
+                        .into_iter()
+                        .map(|name| ServiceStatus { name, pid: None, exe: None })
+                        .collect())
+                }
+            }
             Response::Error { message } => anyhow::bail!("list: {message}"),
             other => anyhow::bail!("list: unexpected response {other:?}"),
         }

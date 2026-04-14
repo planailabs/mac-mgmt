@@ -12,7 +12,7 @@ pub mod protocol;
 pub mod server;
 
 pub use client::Client;
-pub use protocol::{Notification, Request, Response, SpawnSpec};
+pub use protocol::{Notification, Request, Response, ServiceStatus, SpawnSpec};
 
 use std::path::PathBuf;
 

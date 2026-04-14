@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -10,7 +11,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::protocol::{Message, Notification, Request, Response, SpawnSpec};
+use crate::protocol::{Message, Notification, Request, Response, ServiceStatus, SpawnSpec};
 
 /// Delay between failed spawns before retrying.
 const RESPAWN_DELAY: Duration = Duration::from_secs(2);
@@ -211,6 +212,8 @@ struct Entry {
     spec: SpawnSpec,
     supervisor: JoinHandle<()>,
     stop_tx: mpsc::Sender<()>,
+    /// Live PID of the currently running child (0 when none).
+    pid: Arc<AtomicU32>,
 }
 
 impl SupervisorState {
@@ -233,8 +236,17 @@ impl SupervisorState {
                 Response::Ok
             }
             Request::List => {
-                let names: Vec<String> = self.services.lock().await.keys().cloned().collect();
-                Response::Services { names }
+                let map = self.services.lock().await;
+                let statuses: Vec<ServiceStatus> = map
+                    .iter()
+                    .map(|(name, entry)| {
+                        let pid = entry.pid.load(Ordering::Relaxed);
+                        let pid = if pid == 0 { None } else { Some(pid) };
+                        let exe = pid.and_then(resolve_exe);
+                        ServiceStatus { name: name.clone(), pid, exe }
+                    })
+                    .collect();
+                Response::services(statuses)
             }
             Request::Shutdown | Request::UpdateSelf => {
                 Response::Error { message: "handled by main loop".into() }
@@ -264,12 +276,14 @@ impl SupervisorState {
 
         tracing::info!("supervisor: registering {name}");
         let (stop_tx, stop_rx) = mpsc::channel(1);
+        let pid = Arc::new(AtomicU32::new(0));
         let task_name = name.clone();
         let task_spec = spec.clone();
-        let task = tokio::spawn(run_service(task_name, task_spec, notif_tx, stop_rx));
+        let task_pid = pid.clone();
+        let task = tokio::spawn(run_service(task_name, task_spec, notif_tx, stop_rx, task_pid));
         self.services.lock().await.insert(
             name,
-            Entry { spec, supervisor: task, stop_tx },
+            Entry { spec, supervisor: task, stop_tx, pid },
         );
     }
 
@@ -300,6 +314,7 @@ async fn run_service(
     spec: SpawnSpec,
     notif_tx: broadcast::Sender<Notification>,
     mut stop_rx: mpsc::Receiver<()>,
+    pid: Arc<AtomicU32>,
 ) {
     loop {
         let child = match spawn_child(&name, &spec) {
@@ -316,7 +331,10 @@ async fn run_service(
                 }
             }
         };
-        match wait_child(&name, child, &notif_tx, &mut stop_rx).await {
+        pid.store(child.id().unwrap_or(0), Ordering::Relaxed);
+        let exit = wait_child(&name, child, &notif_tx, &mut stop_rx).await;
+        pid.store(0, Ordering::Relaxed);
+        match exit {
             ChildExit::Stopped => return,
             ChildExit::Exited { code } => {
                 let _ = notif_tx.send(Notification::Crashed {
@@ -424,6 +442,21 @@ async fn forward_lines<R>(
             is_stderr,
         });
     }
+}
+
+/// Resolve the executable of a running pid. Used by `List` so callers can
+/// detect when the supervised process is an older binary than what's
+/// currently installed. Only implemented on Linux (where `/proc/<pid>/exe`
+/// is cheap and well-defined); returns `None` elsewhere.
+#[cfg(target_os = "linux")]
+fn resolve_exe(pid: u32) -> Option<String> {
+    let path = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    Some(path.to_string_lossy().into_owned())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn resolve_exe(_pid: u32) -> Option<String> {
+    None
 }
 
 /// Strip common ANSI escape sequences without pulling in an extra dep.

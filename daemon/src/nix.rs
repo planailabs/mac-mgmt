@@ -382,17 +382,23 @@ pub fn binary_store_path(binary_name: &str) -> Option<String> {
         return None;
     }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let resolved = std::fs::canonicalize(&path).ok()?;
+    store_path_prefix(&path)
+}
+
+/// Extract the `/nix/store/<hash>-<name>-<version>` prefix from an absolute
+/// path (canonicalising symlinks). Returns `None` when the path doesn't live
+/// in the nix store.
+pub fn store_path_prefix(path: &str) -> Option<String> {
+    let resolved = std::fs::canonicalize(path).ok()?;
     let resolved_str = resolved.to_string_lossy();
-    // Nix store paths look like /nix/store/<hash>-<name>-<version>/...
-    if resolved_str.starts_with("/nix/store/") {
-        // Extract the store path prefix (up to and including the first component after /nix/store/)
-        let rest = &resolved_str["/nix/store/".len()..];
-        if let Some(slash) = rest.find('/') {
-            return Some(format!("/nix/store/{}", &rest[..slash]));
-        }
+    if !resolved_str.starts_with("/nix/store/") {
+        return None;
     }
-    None
+    let rest = &resolved_str["/nix/store/".len()..];
+    match rest.find('/') {
+        Some(slash) => Some(format!("/nix/store/{}", &rest[..slash])),
+        None => Some(resolved_str.into_owned()),
+    }
 }
 
 /// Install or upgrade a package via `nix profile`.

@@ -236,6 +236,7 @@ impl ServiceManager {
         for i in 0..self.services.len() {
             self.register_service(i).await;
         }
+        self.refresh_running_store_paths().await;
     }
 
     async fn register_service(&mut self, i: usize) {
@@ -246,7 +247,11 @@ impl ServiceManager {
             tracing::warn!("{name} configure failed: {e}");
         }
         let spec = state.service.spawn_spec();
-        state.running_store_path = crate::nix::binary_store_path(state.service.binary_name());
+        // `running_store_path` is populated from the supervisor's view of the
+        // actual running binary via `refresh_running_store_paths` below, so
+        // don't speculatively set it from `which` here — that was masking
+        // drift when a daemon restart happened between upgrade-install and
+        // upgrade-apply.
         match client.register(&name, spec).await {
             Ok(()) => {
                 tracing::info!("{name} registered with supervisor");
@@ -256,6 +261,35 @@ impl ServiceManager {
             }
             Err(e) => {
                 tracing::warn!("{name} register failed: {e}");
+            }
+        }
+    }
+
+    /// Ask the supervisor for its current view of the running children and
+    /// set each service's `running_store_path` to the nix store prefix of
+    /// the live executable. Any services the supervisor doesn't report or
+    /// whose exe isn't in the nix store get cleared.
+    async fn refresh_running_store_paths(&mut self) {
+        let Some(client) = self.client.as_mut() else { return };
+        let statuses = match client.list().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::debug!("supervisor list failed: {e}");
+                return;
+            }
+        };
+        let mut by_name: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::with_capacity(statuses.len());
+        for status in statuses {
+            let prefix = status
+                .exe
+                .as_deref()
+                .and_then(crate::nix::store_path_prefix);
+            by_name.insert(status.name, prefix);
+        }
+        for state in &mut self.services {
+            if let Some(prefix) = by_name.remove(&state.name) {
+                state.running_store_path = prefix;
             }
         }
     }
@@ -361,6 +395,10 @@ impl ServiceManager {
                 self.register_service(i).await;
             }
         }
+
+        // Refresh running_store_path from the supervisor so that a restart
+        // between upgrade-install and upgrade-apply is still detected.
+        self.refresh_running_store_paths().await;
 
         self.drain_notifications();
 
