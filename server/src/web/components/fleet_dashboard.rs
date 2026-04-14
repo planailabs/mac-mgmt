@@ -255,15 +255,61 @@ pub fn FleetDashboard() -> Element {
 
             {
                 let (key, asc) = sort.read().clone();
+                // Online threshold matches the Status column's 5-minute rule.
+                let now = Utc::now();
+                let is_online = |e: &FleetEntry| {
+                    now.signed_duration_since(e.reported_at).num_seconds() < 300
+                };
                 filtered.sort_by(|a, b| {
                     let ord = match key.as_str() {
                         "cluster" => a.cluster_name.to_lowercase().cmp(&b.cluster_name.to_lowercase()),
                         "hostname" => a.hostname.to_lowercase().cmp(&b.hostname.to_lowercase()),
                         "env" => a.environment.to_lowercase().cmp(&b.environment.to_lowercase()),
                         "version" => a.version.cmp(&b.version),
-                        _ => a.reported_at.cmp(&b.reported_at),
+                        _ => {
+                            // Default "last seen" sort: group online hosts first,
+                            // alphabetical (hostname, then cluster name) within them
+                            // so the list stays stable while heartbeats tick. Offline
+                            // hosts fall through to the standard reported_at order
+                            // so the most-recently-seen offline sits at the top of
+                            // its group.
+                            let a_on = is_online(a);
+                            let b_on = is_online(b);
+                            match (a_on, b_on) {
+                                (true, false) => std::cmp::Ordering::Less,
+                                (false, true) => std::cmp::Ordering::Greater,
+                                (true, true) => {
+                                    let a_name = if a.hostname.is_empty() {
+                                        &a.cluster_name
+                                    } else {
+                                        &a.hostname
+                                    };
+                                    let b_name = if b.hostname.is_empty() {
+                                        &b.cluster_name
+                                    } else {
+                                        &b.hostname
+                                    };
+                                    a_name.to_lowercase().cmp(&b_name.to_lowercase())
+                                }
+                                (false, false) => a.reported_at.cmp(&b.reported_at),
+                            }
+                        }
                     };
-                    if asc { ord } else { ord.reverse() }
+                    // The online-first ordering is intrinsic — don't flip it on
+                    // asc. Only the within-group tie-breaker follows the arrow.
+                    if key != "last_seen" && !asc {
+                        ord.reverse()
+                    } else if key == "last_seen" {
+                        // Preserve the online-first grouping regardless of arrow
+                        // direction: the arrow only flips the tie-breakers.
+                        match (is_online(a), is_online(b)) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => if asc { ord } else { ord.reverse() },
+                        }
+                    } else {
+                        ord
+                    }
                 });
             }
 
