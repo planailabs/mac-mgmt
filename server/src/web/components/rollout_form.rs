@@ -8,6 +8,37 @@ use crate::web::user::current_user;
 
 const ALL_CLUSTERS_SENTINEL: &str = "__all__";
 
+/// Form-side mirror of `rollout_health::HealthGate`. Kept verbatim so the
+/// JSON we POST is round-trip compatible with the evaluator's struct.
+/// `min_probe_ok_pct` is shipped as a `Vec<(String, u8)>` rather than a
+/// HashMap so the UI can render insertion-ordered rows; the server
+/// converts back to a HashMap at write time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HealthGateInput {
+    enabled: bool,
+    min_heartbeat_fresh_pct: u8,
+    heartbeat_freshness_secs: u32,
+    grace_period_secs: u32,
+    /// Each entry is (service_name, required_ok_pct). Empty string keys
+    /// are dropped server-side.
+    probe_thresholds: Vec<(String, u8)>,
+}
+
+impl Default for HealthGateInput {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_heartbeat_fresh_pct: 95,
+            heartbeat_freshness_secs: 180,
+            grace_period_secs: 600,
+            probe_thresholds: vec![
+                ("openclaw".into(), 90),
+                ("ollama".into(), 90),
+            ],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupOption {
     id: Uuid,
@@ -67,6 +98,7 @@ async fn create_rollout(
     target_version: Option<String>,
     stage_ids: Vec<String>,
     nixpkgs_commit: Option<String>,
+    gate: Option<HealthGateInput>,
 ) -> Result<String, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
@@ -185,13 +217,40 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Build the JSON gate payload once. Empty service rows are dropped
+    // and percentages clamped so an off-by-one doesn't poison evaluation.
+    let gate_json: Option<serde_json::Value> = match gate {
+        Some(g) if g.enabled => {
+            let mut probe_map = serde_json::Map::new();
+            for (svc, pct) in &g.probe_thresholds {
+                let svc = svc.trim();
+                if svc.is_empty() {
+                    continue;
+                }
+                probe_map.insert(
+                    svc.to_string(),
+                    serde_json::Value::Number((*pct).min(100).into()),
+                );
+            }
+            Some(serde_json::json!({
+                "min_heartbeat_fresh_pct": g.min_heartbeat_fresh_pct.min(100),
+                "heartbeat_freshness_secs": g.heartbeat_freshness_secs.max(10),
+                "min_probe_ok_pct": serde_json::Value::Object(probe_map),
+                "grace_period_secs": g.grace_period_secs,
+            }))
+        }
+        _ => None,
+    };
+
     for (i, gid) in resolved.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)",
+            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order, health_gate) \
+             VALUES ($1, $2, $3, $4)",
         )
         .bind(rollout_id)
         .bind(gid)
         .bind(i as i32)
+        .bind(&gate_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -211,6 +270,7 @@ pub fn RolloutForm() -> Element {
     let mut nixpkgs_commit = use_signal(String::new);
     let mut selected_stages = use_signal(Vec::<String>::new);
     let mut error = use_signal(|| Option::<String>::None);
+    let mut gate = use_signal(HealthGateInput::default);
     let nav = navigator();
 
     match &*groups.read() {
@@ -361,6 +421,149 @@ pub fn RolloutForm() -> Element {
                         }
                     }
 
+                    // ── Health gate ──
+                    div { class: "border-t border-gray-200 dark:border-gray-700 pt-4",
+                        div { class: "flex items-center gap-2 mb-2",
+                            input {
+                                r#type: "checkbox",
+                                checked: gate.read().enabled,
+                                onchange: move |e| {
+                                    gate.write().enabled = e.value() == "true";
+                                },
+                            }
+                            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200",
+                                "Health gate"
+                            }
+                            span { class: "text-xs text-gray-400 dark:text-gray-500",
+                                "Auto-pause stages when assessment data falls below thresholds"
+                            }
+                        }
+
+                        if gate.read().enabled {
+                            div { class: "ml-6 space-y-3",
+                                div { class: "grid grid-cols-1 sm:grid-cols-3 gap-3",
+                                    div {
+                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                            "Heartbeat fresh % (min)"
+                                        }
+                                        input {
+                                            r#type: "number",
+                                            min: "0",
+                                            max: "100",
+                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                            value: "{gate.read().min_heartbeat_fresh_pct}",
+                                            oninput: move |e| {
+                                                if let Ok(v) = e.value().parse::<u8>() {
+                                                    gate.write().min_heartbeat_fresh_pct = v.min(100);
+                                                }
+                                            },
+                                        }
+                                    }
+                                    div {
+                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                            "Heartbeat freshness window (sec)"
+                                        }
+                                        input {
+                                            r#type: "number",
+                                            min: "10",
+                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                            value: "{gate.read().heartbeat_freshness_secs}",
+                                            oninput: move |e| {
+                                                if let Ok(v) = e.value().parse::<u32>() {
+                                                    gate.write().heartbeat_freshness_secs = v.max(10);
+                                                }
+                                            },
+                                        }
+                                    }
+                                    div {
+                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                            "Grace period after start (sec)"
+                                        }
+                                        input {
+                                            r#type: "number",
+                                            min: "0",
+                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                            value: "{gate.read().grace_period_secs}",
+                                            oninput: move |e| {
+                                                if let Ok(v) = e.value().parse::<u32>() {
+                                                    gate.write().grace_period_secs = v;
+                                                }
+                                            },
+                                        }
+                                    }
+                                }
+
+                                div {
+                                    label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                        "Probe success thresholds"
+                                    }
+                                    {
+                                        let rows: Vec<(usize, String, u8)> = gate
+                                            .read()
+                                            .probe_thresholds
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(i, (s, p))| (i, s.clone(), *p))
+                                            .collect();
+                                        rsx! {
+                                            for (idx, svc, pct) in rows {
+                                                div { class: "flex items-center gap-2 mb-1",
+                                                    input {
+                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white flex-1",
+                                                        placeholder: "service (e.g. ollama)",
+                                                        value: "{svc}",
+                                                        oninput: move |e| {
+                                                            let mut g = gate.write();
+                                                            if let Some(row) = g.probe_thresholds.get_mut(idx) {
+                                                                row.0 = e.value();
+                                                            }
+                                                        },
+                                                    }
+                                                    input {
+                                                        r#type: "number",
+                                                        min: "0",
+                                                        max: "100",
+                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm w-20 dark:bg-gray-700 dark:text-white",
+                                                        value: "{pct}",
+                                                        oninput: move |e| {
+                                                            if let Ok(v) = e.value().parse::<u8>() {
+                                                                let mut g = gate.write();
+                                                                if let Some(row) = g.probe_thresholds.get_mut(idx) {
+                                                                    row.1 = v.min(100);
+                                                                }
+                                                            }
+                                                        },
+                                                    }
+                                                    span { class: "text-xs text-gray-500 dark:text-gray-400", "%" }
+                                                    button {
+                                                        class: "text-red-600 dark:text-red-400 text-xs hover:underline",
+                                                        onclick: move |_| {
+                                                            let mut g = gate.write();
+                                                            if idx < g.probe_thresholds.len() {
+                                                                g.probe_thresholds.remove(idx);
+                                                            }
+                                                        },
+                                                        "remove"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    button {
+                                        class: "text-blue-600 dark:text-blue-400 text-xs hover:underline mt-1",
+                                        onclick: move |_| {
+                                            gate.write().probe_thresholds.push((String::new(), 90));
+                                        },
+                                        "+ add service"
+                                    }
+                                    p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
+                                        "A stage fails its gate if any listed service drops below the threshold over the last 30 min."
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(err) = &*error.read() {
                         p { class: "text-red-600 dark:text-red-400 text-sm", "{err}" }
                     }
@@ -377,6 +580,7 @@ pub fn RolloutForm() -> Element {
                                 let c = nixpkgs_commit.read().trim().to_string();
                                 if c.is_empty() { None } else { Some(c) }
                             };
+                            let gate_input = gate.read().clone();
                             async move {
                                 if ver.is_none() && commit.is_none() {
                                     error.set(Some("Set at least one of target version or nixpkgs commit".into()));
@@ -386,7 +590,7 @@ pub fn RolloutForm() -> Element {
                                     error.set(Some("Select at least one stage".into()));
                                     return;
                                 }
-                                match create_rollout(ver, stages, commit).await {
+                                match create_rollout(ver, stages, commit, Some(gate_input)).await {
                                     Ok(id) => {
                                         nav.push(Route::RolloutDetail { id });
                                     }

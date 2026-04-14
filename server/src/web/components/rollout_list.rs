@@ -119,13 +119,13 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(|r| {
+            // Match the detail-page rule: only show health when the
+            // rollout is rolling AND has at least one gated stage that's
+            // been evaluated. The query above already filters by
+            // health_gate IS NOT NULL, so any entry in health_by_rollout
+            // is already "has gate, has at least one eval".
             let health = if r.status == "rolling" {
-                Some(health_by_rollout.remove(&r.id).unwrap_or(RolloutHealthSummary {
-                    state: "no_data".into(),
-                    evaluated_stages: 0,
-                    failing_stages: 0,
-                    summary: String::new(),
-                }))
+                health_by_rollout.remove(&r.id)
             } else {
                 None
             };
