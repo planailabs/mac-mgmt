@@ -65,6 +65,9 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_remove_ssh_key,
         // Sync — Heartbeat
         routes::post_heartbeat,
+        // Sync — System assessment
+        routes::post_assessment,
+        routes::post_assessment_probe,
         // Admin
         routes::admin_list_clusters,
         routes::admin_create_token,
@@ -230,6 +233,9 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::admin_remove_skill_mcp_dep,
                 // Sync — Heartbeat
                 routes::post_heartbeat,
+                // Sync — System assessment
+                routes::post_assessment,
+                routes::post_assessment_probe,
                 // Admin — Rollouts
                 routes::admin_create_rollout_group,
                 routes::admin_list_rollout_groups,

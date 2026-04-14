@@ -2356,11 +2356,18 @@ pub async fn post_heartbeat(
         Status::Forbidden
     })?;
 
+    let sample_json = body.sample.as_ref().and_then(|s| serde_json::to_value(s).ok());
+    let svc_ext_json = if body.services_extended.is_empty() {
+        None
+    } else {
+        serde_json::to_value(&body.services_extended).ok()
+    };
+
     sqlx::query(
-        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname, nixpkgs_commit) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname, nixpkgs_commit, sample, services_extended) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
          ON CONFLICT (cluster_id, instance_id) \
-         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, nixpkgs_commit = $9, reported_at = now()",
+         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, nixpkgs_commit = $9, sample = $10, services_extended = $11, reported_at = now()",
     )
     .bind(auth.cluster_id)
     .bind(&body.instance_id)
@@ -2371,6 +2378,8 @@ pub async fn post_heartbeat(
     .bind(&body.tunnels)
     .bind(&body.relay_proxy_hostname)
     .bind(&body.nixpkgs_commit)
+    .bind(&sample_json)
+    .bind(&svc_ext_json)
     .execute(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -2432,6 +2441,183 @@ fn verify_heartbeat_signature(body: &HeartbeatBody) -> Result<(), &'static str> 
         .map_err(|_| "signature verification failed")?;
 
     Ok(())
+}
+
+/// Maximum allowed clock skew for assessment signatures (seconds).
+const ASSESSMENT_MAX_AGE_SECS: i64 = 300;
+
+/// Verify an ed25519 signature over "{instance_id}:{signed_at}" for an assessment-
+/// style payload (inventory snapshot or probe report). Same format as the heartbeat
+/// signature, but with a slightly looser clock-skew budget (5 min) because probe
+/// runs can themselves take 30s+ before the body is built.
+fn verify_assessment_signature(
+    instance_id: &str,
+    signed_at: i64,
+    public_key: &str,
+    signature: &str,
+) -> Result<(), &'static str> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    if public_key.is_empty() || signature.is_empty() {
+        return Err("missing public_key or signature");
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    if (now - signed_at).abs() > ASSESSMENT_MAX_AGE_SECS {
+        return Err("signed_at timestamp too old or too far in the future");
+    }
+
+    let pk_bytes = base64::engine::general_purpose::STANDARD
+        .decode(public_key)
+        .map_err(|_| "invalid base64 in public_key")?;
+
+    let fingerprint = hex::encode(Sha256::digest(&pk_bytes));
+    if fingerprint != instance_id {
+        return Err("public key fingerprint does not match instance_id");
+    }
+
+    let raw_pk = extract_ed25519_pubkey(&pk_bytes)
+        .ok_or("invalid SSH ed25519 public key format")?;
+    let verifying_key = VerifyingKey::from_bytes(raw_pk)
+        .map_err(|_| "invalid ed25519 public key")?;
+
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(signature)
+        .map_err(|_| "invalid base64 in signature")?;
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|_| "invalid ed25519 signature format")?;
+
+    let message = format!("{instance_id}:{signed_at}");
+    use ed25519_dalek::Verifier;
+    verifying_key
+        .verify(message.as_bytes(), &signature)
+        .map_err(|_| "signature verification failed")?;
+
+    Ok(())
+}
+
+// ── System assessment (sync token) ──────────────────────────────────
+
+pub(crate) use mac_mgmt_common::{Assessment, ProbeReport};
+
+#[utoipa::path(
+    post,
+    path = "/api/assessment",
+    tag = "Sync",
+    summary = "Submit system assessment snapshot",
+    description = "Stores a full inventory + security-posture snapshot for the authenticated daemon instance.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Assessment recorded"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required / signature invalid"),
+    ),
+)]
+#[rocket::post("/assessment", data = "<body>")]
+pub async fn post_assessment(
+    auth: SyncAuth,
+    pool: &State<PgPool>,
+    body: Json<Assessment>,
+) -> Result<Status, Status> {
+    verify_assessment_signature(
+        &body.instance_id,
+        body.collected_at,
+        &body.public_key,
+        &body.signature,
+    )
+    .map_err(|e| {
+        tracing::warn!("assessment signature verification failed: {e}");
+        Status::Forbidden
+    })?;
+
+    let inventory_json =
+        serde_json::to_value(&body.inventory).map_err(|_| Status::BadRequest)?;
+    let security_json =
+        serde_json::to_value(&body.security).map_err(|_| Status::BadRequest)?;
+    let collected_at = DateTime::<Utc>::from_timestamp(body.collected_at, 0)
+        .ok_or(Status::BadRequest)?;
+
+    sqlx::query(
+        "INSERT INTO assessments (cluster_id, instance_id, collected_at, inventory, security) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(auth.cluster_id)
+    .bind(&body.instance_id)
+    .bind(collected_at)
+    .bind(&inventory_json)
+    .bind(&security_json)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        tracing::warn!("assessment insert failed: {e}");
+        Status::InternalServerError
+    })?;
+
+    Ok(Status::Ok)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/assessment/probe",
+    tag = "Sync",
+    summary = "Submit a single probe result",
+    description = "Stores one functional-probe result (e.g. full-prompt round-trip against an LLM backend) for the authenticated daemon instance. Used as a rollout gate datasource.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Probe result recorded"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required / signature invalid"),
+    ),
+)]
+#[rocket::post("/assessment/probe", data = "<body>")]
+pub async fn post_assessment_probe(
+    auth: SyncAuth,
+    pool: &State<PgPool>,
+    body: Json<ProbeReport>,
+) -> Result<Status, Status> {
+    verify_assessment_signature(
+        &body.instance_id,
+        body.collected_at,
+        &body.public_key,
+        &body.signature,
+    )
+    .map_err(|e| {
+        tracing::warn!("probe signature verification failed: {e}");
+        Status::Forbidden
+    })?;
+
+    let collected_at = DateTime::<Utc>::from_timestamp(body.collected_at, 0)
+        .ok_or(Status::BadRequest)?;
+
+    sqlx::query(
+        "INSERT INTO assessment_probes \
+            (cluster_id, instance_id, service, kind, ok, duration_ms, \
+             tokens_in, tokens_out, first_token_ms, model, canary_digest, \
+             error_class, error_detail, collected_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+    )
+    .bind(auth.cluster_id)
+    .bind(&body.instance_id)
+    .bind(&body.service)
+    .bind(&body.kind)
+    .bind(body.ok)
+    .bind(body.duration_ms as i64)
+    .bind(body.tokens_in.map(|v| v as i32))
+    .bind(body.tokens_out.map(|v| v as i32))
+    .bind(body.first_token_ms.map(|v| v as i64))
+    .bind(&body.model)
+    .bind(&body.canary_digest)
+    .bind(&body.error_class)
+    .bind(&body.error_detail)
+    .bind(collected_at)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        tracing::warn!("probe insert failed: {e}");
+        Status::InternalServerError
+    })?;
+
+    Ok(Status::Ok)
 }
 
 /// Extract the raw 32-byte ed25519 public key from SSH wire format.
