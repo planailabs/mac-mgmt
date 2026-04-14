@@ -14,6 +14,28 @@ struct RolloutEntry {
     status: String,
     created_at: DateTime<Utc>,
     stage_count: i64,
+    /// Latest aggregated gate state across the rollout's rolling stages.
+    /// `None` when the rollout has no rolling stages or no stage with a
+    /// configured health_gate (legacy rollouts).
+    #[serde(default)]
+    health: Option<RolloutHealthSummary>,
+}
+
+/// Compact health rollup for a single rollout — one row, one badge, one
+/// tooltip. Rendered in the list view's Health column. Reads the most
+/// recent `rollout_stage_health_evaluations` row per rolling stage rather
+/// than re-evaluating live (the auto-pause loop ticks every 60s).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RolloutHealthSummary {
+    /// "pass" | "grace" | "fail" | "no_data"
+    state: String,
+    /// Stages with a gate that have at least one evaluation.
+    evaluated_stages: u32,
+    /// Stages whose last evaluation failed.
+    failing_stages: u32,
+    /// Top reason text from any failing stage, truncated. Empty when
+    /// no stage failed.
+    summary: String,
 }
 
 #[server]
@@ -39,15 +61,94 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    // Pull the latest evaluation per rolling stage in one query, then
+    // collapse to one summary per rollout. Cheaper than per-rollout
+    // queries when the list has many entries.
+    #[derive(sqlx::FromRow)]
+    struct EvalRow {
+        rollout_id: Uuid,
+        passed: bool,
+        report: serde_json::Value,
+    }
+    let evals: Vec<EvalRow> = sqlx::query_as(
+        "SELECT DISTINCT ON (rs.id) rs.rollout_id, e.passed, e.report \
+         FROM rollout_stages rs \
+         JOIN rollouts r ON r.id = rs.rollout_id \
+         JOIN rollout_stage_health_evaluations e ON e.stage_id = rs.id \
+         WHERE r.status = 'rolling' AND rs.status = 'rolling' \
+           AND rs.health_gate IS NOT NULL \
+         ORDER BY rs.id, e.evaluated_at DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let mut health_by_rollout: std::collections::HashMap<Uuid, RolloutHealthSummary> =
+        std::collections::HashMap::new();
+    for ev in evals {
+        let in_grace = ev
+            .report
+            .get("in_grace_period")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let entry = health_by_rollout
+            .entry(ev.rollout_id)
+            .or_insert_with(|| RolloutHealthSummary {
+                state: "pass".into(),
+                evaluated_stages: 0,
+                failing_stages: 0,
+                summary: String::new(),
+            });
+        entry.evaluated_stages += 1;
+        // State precedence: fail > grace > pass.
+        if !ev.passed {
+            entry.failing_stages += 1;
+            entry.state = "fail".into();
+            if entry.summary.is_empty() {
+                if let Some(reasons) = ev.report.get("reasons").and_then(|v| v.as_array()) {
+                    if let Some(first) = reasons.iter().filter_map(|r| r.as_str()).next() {
+                        entry.summary = truncate(first, 80);
+                    }
+                }
+            }
+        } else if in_grace && entry.state != "fail" {
+            entry.state = "grace".into();
+        }
+    }
+
     Ok(rows
         .into_iter()
-        .map(|r| RolloutEntry {
-            id: r.id,
-            status: r.status,
-            created_at: r.created_at,
-            stage_count: r.stage_count,
+        .map(|r| {
+            let health = if r.status == "rolling" {
+                Some(health_by_rollout.remove(&r.id).unwrap_or(RolloutHealthSummary {
+                    state: "no_data".into(),
+                    evaluated_stages: 0,
+                    failing_stages: 0,
+                    summary: String::new(),
+                }))
+            } else {
+                None
+            };
+            RolloutEntry {
+                id: r.id,
+                status: r.status,
+                created_at: r.created_at,
+                stage_count: r.stage_count,
+                health,
+            }
         })
         .collect())
+}
+
+#[cfg(feature = "server")]
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max).collect();
+        out.push('…');
+        out
+    }
 }
 
 #[server]
@@ -70,6 +171,62 @@ impl Searchable for RolloutEntry {
     fn matches_search(&self, query: &str) -> bool {
         self.id.to_string().to_lowercase().contains(query)
             || self.status.to_lowercase().contains(query)
+    }
+}
+
+/// Render the Health column cell for one rollout. Non-rolling rollouts
+/// get an em dash; rolling rollouts get a coloured pill plus an
+/// `evaluated/total` count and a tooltip carrying the top failure reason.
+fn render_health_cell(health: Option<&RolloutHealthSummary>) -> Element {
+    let Some(h) = health else {
+        return rsx! { span { class: "text-gray-400 dark:text-gray-500", "—" } };
+    };
+    let (cls, label) = match h.state.as_str() {
+        "pass" => (
+            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+            "pass",
+        ),
+        "fail" => (
+            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+            "fail",
+        ),
+        "grace" => (
+            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
+            "grace",
+        ),
+        _ => (
+            "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+            "no data",
+        ),
+    };
+    let title = if h.summary.is_empty() {
+        format!(
+            "{} stage(s) evaluated, {} failing",
+            h.evaluated_stages, h.failing_stages
+        )
+    } else {
+        format!(
+            "{} stage(s) evaluated, {} failing — {}",
+            h.evaluated_stages, h.failing_stages, h.summary
+        )
+    };
+    rsx! {
+        span { class: "inline-flex items-center gap-2",
+            span {
+                class: "px-2 py-0.5 rounded text-xs font-medium {cls}",
+                title: "{title}",
+                "{label}"
+            }
+            if h.failing_stages > 0 {
+                span { class: "text-xs font-mono text-red-700 dark:text-red-300",
+                    "{h.failing_stages}/{h.evaluated_stages}"
+                }
+            } else if h.evaluated_stages > 0 {
+                span { class: "text-xs font-mono text-gray-500 dark:text-gray-400",
+                    "{h.evaluated_stages}/{h.evaluated_stages}"
+                }
+            }
+        }
     }
 }
 
@@ -150,6 +307,7 @@ pub fn RolloutList() -> Element {
                                             SortableTh { label: "ID".to_string(), sort_key: "id".to_string(), sort }
                                             SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
                                             SortableTh { label: "Stages".to_string(), sort_key: "stages".to_string(), sort }
+                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Health" }
                                             SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
                                             th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase",
                                                 ""
@@ -185,6 +343,9 @@ pub fn RolloutList() -> Element {
                                                         }
                                                         td { class: "px-6 py-4 text-sm",
                                                             "{r.stage_count}"
+                                                        }
+                                                        td { class: "px-6 py-4 text-sm",
+                                                            {render_health_cell(r.health.as_ref())}
                                                         }
                                                         td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400",
                                                             "{created}"

@@ -22,6 +22,30 @@ struct RolloutInfo {
     status: String,
     created_at: DateTime<Utc>,
     stages: Vec<StageInfo>,
+    /// Rollup over all stages with health gates, computed from each
+    /// stage's most recent stored evaluation. `None` for non-rolling
+    /// rollouts and for rollouts with no gated stages.
+    #[serde(default)]
+    health_summary: Option<RolloutHealthSummary>,
+}
+
+/// Mirror of the rollout-list summary so the same renderer can be reused
+/// here. Both pages stay in sync if the field set evolves.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RolloutHealthSummary {
+    state: String,
+    evaluated_stages: u32,
+    failing_stages: u32,
+    /// Aggregated metrics across the rollout's gated stages.
+    #[serde(default)]
+    total_cohort: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    avg_heartbeat_fresh_pct: Option<u8>,
+    #[serde(default)]
+    probe_ok_pct: std::collections::HashMap<String, u8>,
+    /// Top failure reason from any failing stage. Empty when no fail.
+    #[serde(default)]
+    top_reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +232,11 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         gate_map.insert(g.stage_id, (g.has_gate, info));
     }
 
+    let health_summary = aggregate_health_summary(&pool, rid, &rollout.status)
+        .await
+        .ok()
+        .flatten();
+
     Ok(RolloutInfo {
         id: rollout.id,
         target_version: rollout.target_version,
@@ -216,6 +245,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         baseline_nixpkgs_commit: rollout.baseline_nixpkgs_commit,
         status: rollout.status,
         created_at: rollout.created_at,
+        health_summary,
         stages: stages
             .into_iter()
             .map(|s| {
@@ -286,6 +316,178 @@ fn parse_eval_report(v: serde_json::Value, at: DateTime<Utc>) -> Option<StageHea
         probe_stats,
         sample_summary,
     })
+}
+
+/// Render the rollout-wide health summary as a card above the action
+/// buttons. Mirrors the shape used in the rollout-list Health column but
+/// with extra detail (heartbeat-freshness avg, per-service probe %)
+/// surfaced as inline metrics.
+fn render_health_summary_card(hs: &RolloutHealthSummary) -> Element {
+    let (cls, label) = match hs.state.as_str() {
+        "pass" => (
+            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+            "pass",
+        ),
+        "fail" => (
+            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+            "fail",
+        ),
+        "grace" => (
+            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
+            "grace",
+        ),
+        _ => (
+            "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+            "no data",
+        ),
+    };
+    let hb = hs
+        .avg_heartbeat_fresh_pct
+        .map(|v| format!("{v}%"))
+        .unwrap_or_else(|| "—".into());
+
+    rsx! {
+        div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+            div { class: "flex items-center gap-3 mb-2",
+                span { class: "text-lg font-semibold text-gray-700 dark:text-gray-200",
+                    "Rollout health"
+                }
+                span { class: "px-2 py-0.5 rounded text-xs font-medium {cls}",
+                    "{label}"
+                }
+                if hs.failing_stages > 0 {
+                    span { class: "text-xs font-mono text-red-700 dark:text-red-300",
+                        "{hs.failing_stages}/{hs.evaluated_stages} stages failing"
+                    }
+                } else if hs.evaluated_stages > 0 {
+                    span { class: "text-xs font-mono text-gray-500 dark:text-gray-400",
+                        "{hs.evaluated_stages}/{hs.evaluated_stages} stages passing"
+                    }
+                }
+            }
+            div { class: "flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-300",
+                span {
+                    span { class: "font-medium", "cohort: " }
+                    "{hs.total_cohort}"
+                }
+                span { class: "font-mono",
+                    span { class: "font-medium font-sans", "heartbeats fresh: " }
+                    "{hb}"
+                }
+                for (svc, pct) in hs.probe_ok_pct.iter() {
+                    span { class: "font-mono",
+                        span { class: "font-medium font-sans", "{svc}: " }
+                        "{pct}%"
+                    }
+                }
+            }
+            if !hs.top_reason.is_empty() {
+                p { class: "mt-2 text-xs text-red-700 dark:text-red-300",
+                    "Top reason: {hs.top_reason}"
+                }
+            }
+        }
+    }
+}
+
+/// Roll up the latest evaluation per stage into one summary for the whole
+/// rollout. Returns `None` when the rollout isn't rolling, or when no
+/// stage has a configured health_gate.
+#[cfg(feature = "server")]
+async fn aggregate_health_summary(
+    pool: &sqlx::PgPool,
+    rollout_id: Uuid,
+    rollout_status: &str,
+) -> Result<Option<RolloutHealthSummary>, sqlx::Error> {
+    if rollout_status != "rolling" {
+        return Ok(None);
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct EvalRow {
+        passed: bool,
+        report: serde_json::Value,
+    }
+    let evals: Vec<EvalRow> = sqlx::query_as(
+        "SELECT DISTINCT ON (rs.id) e.passed, e.report \
+         FROM rollout_stages rs \
+         JOIN rollout_stage_health_evaluations e ON e.stage_id = rs.id \
+         WHERE rs.rollout_id = $1 AND rs.status = 'rolling' \
+           AND rs.health_gate IS NOT NULL \
+         ORDER BY rs.id, e.evaluated_at DESC",
+    )
+    .bind(rollout_id)
+    .fetch_all(pool)
+    .await?;
+    if evals.is_empty() {
+        return Ok(None);
+    }
+
+    let mut summary = RolloutHealthSummary {
+        state: "pass".into(),
+        evaluated_stages: 0,
+        failing_stages: 0,
+        total_cohort: 0,
+        avg_heartbeat_fresh_pct: None,
+        probe_ok_pct: std::collections::HashMap::new(),
+        top_reason: String::new(),
+    };
+
+    let mut hb_acc = 0u32;
+    let mut hb_count = 0u32;
+    let mut probe_acc: std::collections::HashMap<String, (u32, u32)> =
+        std::collections::HashMap::new();
+
+    for ev in &evals {
+        summary.evaluated_stages += 1;
+        let in_grace = ev
+            .report
+            .get("in_grace_period")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !ev.passed {
+            summary.failing_stages += 1;
+            summary.state = "fail".into();
+            if summary.top_reason.is_empty() {
+                if let Some(first) = ev
+                    .report
+                    .get("reasons")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
+                {
+                    summary.top_reason = first.chars().take(120).collect();
+                }
+            }
+        } else if in_grace && summary.state != "fail" {
+            summary.state = "grace".into();
+        }
+        if let Some(n) = ev.report.get("cohort_size").and_then(|v| v.as_u64()) {
+            summary.total_cohort += n as u32;
+        }
+        if let Some(p) = ev.report.get("heartbeat_fresh_pct").and_then(|v| v.as_u64()) {
+            hb_acc += p as u32;
+            hb_count += 1;
+        }
+        if let Some(obj) = ev.report.get("probe_ok_pct").and_then(|v| v.as_object()) {
+            for (svc, val) in obj {
+                if let Some(p) = val.as_u64() {
+                    let entry = probe_acc.entry(svc.clone()).or_insert((0, 0));
+                    entry.0 += p as u32;
+                    entry.1 += 1;
+                }
+            }
+        }
+    }
+
+    if hb_count > 0 {
+        summary.avg_heartbeat_fresh_pct = Some((hb_acc / hb_count).min(100) as u8);
+    }
+    summary.probe_ok_pct = probe_acc
+        .into_iter()
+        .map(|(svc, (acc, n))| (svc, ((acc / n).min(100)) as u8))
+        .collect();
+
+    Ok(Some(summary))
 }
 
 /// Compute the baseline (version, nixpkgs_commit) from the cohort's recent
@@ -780,6 +982,14 @@ pub fn RolloutDetail(id: String) -> Element {
                             }
                         }
                     }
+                }
+
+                // Rollout-wide health summary — visible only for rolling
+                // rollouts with at least one gated stage. Aggregates the
+                // most recent stored evaluation per stage (auto-pause loop
+                // refreshes these every 60s).
+                if let Some(hs) = info.health_summary.as_ref() {
+                    {render_health_summary_card(hs)}
                 }
 
                 // Action buttons
