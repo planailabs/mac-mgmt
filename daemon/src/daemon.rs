@@ -745,6 +745,7 @@ async fn do_send_heartbeat(
         services: serde_json::Value::Array(services),
         tunnels: serde_json::Value::Array(tunnels),
         relay_proxy_hostname,
+        nixpkgs_commit: crate::nix::current_nixpkgs_commit(),
         public_key: public_key_b64,
         signature: sig_b64,
         signed_at,

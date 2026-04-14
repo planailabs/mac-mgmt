@@ -29,6 +29,7 @@ struct StageInfo {
     healthy_count: i64,
     total_count: i64,
     upgraded_count: i64,
+    nixpkgs_upgraded_count: i64,
 }
 
 #[server]
@@ -86,13 +87,15 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         total: i64,
         healthy: i64,
         upgraded: i64,
+        nixpkgs_upgraded: i64,
     }
 
     let health = sqlx::query_as::<_, HealthRow>(
         "SELECT rs.stage_order, \
          COUNT(DISTINCT dh.instance_id) AS total, \
          COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.reported_at > now() - interval '5 minutes') AS healthy, \
-         COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.version = $2 AND dh.reported_at > now() - interval '5 minutes') AS upgraded \
+         COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.version = $2 AND dh.reported_at > now() - interval '5 minutes') AS upgraded, \
+         COUNT(DISTINCT dh.instance_id) FILTER (WHERE dh.nixpkgs_commit = $3 AND dh.reported_at > now() - interval '5 minutes') AS nixpkgs_upgraded \
          FROM rollout_stages rs \
          JOIN LATERAL ( \
            SELECT cluster_id FROM rollout_group_members WHERE group_id = rs.group_id \
@@ -105,13 +108,14 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     )
     .bind(rid)
     .bind(rollout.target_version.as_deref().unwrap_or(""))
+    .bind(rollout.nixpkgs_commit.as_deref().unwrap_or(""))
     .fetch_all(&pool)
     .await
     .unwrap_or_default();
 
-    let health_map: std::collections::HashMap<i32, (i64, i64, i64)> = health
+    let health_map: std::collections::HashMap<i32, (i64, i64, i64, i64)> = health
         .into_iter()
-        .map(|h| (h.stage_order, (h.healthy, h.total, h.upgraded)))
+        .map(|h| (h.stage_order, (h.healthy, h.total, h.upgraded, h.nixpkgs_upgraded)))
         .collect();
 
     Ok(RolloutInfo {
@@ -123,10 +127,10 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
         stages: stages
             .into_iter()
             .map(|s| {
-                let (healthy, total, upgraded) = health_map
+                let (healthy, total, upgraded, nixpkgs_upgraded) = health_map
                     .get(&s.stage_order)
                     .copied()
-                    .unwrap_or((0, 0, 0));
+                    .unwrap_or((0, 0, 0, 0));
                 StageInfo {
                     id: s.id,
                     group_name: s.group_name,
@@ -138,6 +142,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
                     healthy_count: healthy,
                     total_count: total,
                     upgraded_count: upgraded,
+                    nixpkgs_upgraded_count: nixpkgs_upgraded,
                 }
             })
             .collect(),
@@ -517,16 +522,30 @@ pub fn RolloutDetail(id: String) -> Element {
                             } else {
                                 "text-red-600 dark:text-red-400"
                             };
-                            let upgrade_text = if stage.total_count > 0 {
-                                format!("{}/{} upgraded", stage.upgraded_count, stage.total_count)
+                            let version_upgrade_text = if stage.total_count > 0 {
+                                format!("{}/{} version", stage.upgraded_count, stage.total_count)
                             } else {
                                 String::new()
                             };
-                            let upgrade_color = if stage.total_count == 0 {
+                            let version_upgrade_color = if stage.total_count == 0 {
                                 "text-gray-400 dark:text-gray-500"
                             } else if stage.upgraded_count == stage.total_count {
                                 "text-green-600 dark:text-green-400"
                             } else if stage.upgraded_count > 0 {
+                                "text-blue-600 dark:text-blue-400"
+                            } else {
+                                "text-gray-400 dark:text-gray-500"
+                            };
+                            let nixpkgs_upgrade_text = if stage.total_count > 0 {
+                                format!("{}/{} nixpkgs", stage.nixpkgs_upgraded_count, stage.total_count)
+                            } else {
+                                String::new()
+                            };
+                            let nixpkgs_upgrade_color = if stage.total_count == 0 {
+                                "text-gray-400 dark:text-gray-500"
+                            } else if stage.nixpkgs_upgraded_count == stage.total_count {
+                                "text-green-600 dark:text-green-400"
+                            } else if stage.nixpkgs_upgraded_count > 0 {
                                 "text-blue-600 dark:text-blue-400"
                             } else {
                                 "text-gray-400 dark:text-gray-500"
@@ -545,9 +564,14 @@ pub fn RolloutDetail(id: String) -> Element {
                                             }
                                         }
                                         div { class: "flex gap-3",
-                                            if !upgrade_text.is_empty() {
-                                                span { class: "text-sm font-medium {upgrade_color}",
-                                                    "{upgrade_text}"
+                                            if !version_upgrade_text.is_empty() {
+                                                span { class: "text-sm font-medium {version_upgrade_color}",
+                                                    "{version_upgrade_text}"
+                                                }
+                                            }
+                                            if !nixpkgs_upgrade_text.is_empty() {
+                                                span { class: "text-sm font-medium {nixpkgs_upgrade_color}",
+                                                    "{nixpkgs_upgrade_text}"
                                                 }
                                             }
                                             span { class: "text-sm font-medium {health_color}",

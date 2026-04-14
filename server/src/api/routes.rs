@@ -2357,10 +2357,10 @@ pub async fn post_heartbeat(
     })?;
 
     sqlx::query(
-        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname, nixpkgs_commit) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
          ON CONFLICT (cluster_id, instance_id) \
-         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, reported_at = now()",
+         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, nixpkgs_commit = $9, reported_at = now()",
     )
     .bind(auth.cluster_id)
     .bind(&body.instance_id)
@@ -2370,6 +2370,7 @@ pub async fn post_heartbeat(
     .bind(&body.services)
     .bind(&body.tunnels)
     .bind(&body.relay_proxy_hostname)
+    .bind(&body.nixpkgs_commit)
     .execute(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;

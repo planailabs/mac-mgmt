@@ -33,6 +33,9 @@ pub struct HeartbeatBody {
     /// Relay proxy hostname (e.g. "relay.plan.ai"), received from the relay.
     #[serde(default)]
     pub relay_proxy_hostname: Option<String>,
+    /// Current nixpkgs commit pin (if any) the daemon is using.
+    #[serde(default)]
+    pub nixpkgs_commit: Option<String>,
     /// Ed25519 public key bytes (base64-encoded SSH wire format).
     /// The server verifies that SHA-256(public_key) == instance_id.
     #[serde(default)]
