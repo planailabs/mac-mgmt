@@ -4,6 +4,8 @@ set -euxo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+export ENVIRONMENT=production
+
 # ── Daemon binary build & upload ─────────────────────────────────────
 # Build the daemon for each supported target, drop the binary into a
 # bin/ dir, add it to the local nix store, and upload as
