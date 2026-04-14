@@ -109,13 +109,12 @@ struct ProxyTokenResult {
 ///   1. Require write access to the cluster (admins always pass).
 ///   2. Re-read `reported_at` and reject if it's within the last 24h
 ///      so a delete can't race a fresh heartbeat.
-///   3. Delete the heartbeat row, then any matching `assessments` and
-///      `assessment_probes` (no FK on instance_id, so no cascade).
-///
-/// `assessment_samples` was never created — sample lives inline on the
-/// heartbeat row — so heartbeat removal already takes the sample with
-/// it. `rollout_stage_health_evaluations` references stage_id, not
-/// instance, and cohort queries naturally exclude the missing daemon.
+///   3. Delete the heartbeat row. Migration 031 adds ON DELETE CASCADE
+///      FKs from `assessments` and `assessment_probes` on
+///      `(cluster_id, instance_id)`, so those rows go with it.
+///      `rollout_stage_health_evaluations` references stage_id, not
+///      instance, and cohort queries naturally exclude the missing
+///      daemon.
 #[server]
 async fn delete_stale_instance(instance_id: String) -> Result<(), ServerFnError> {
     use chrono::Duration;
@@ -147,29 +146,10 @@ async fn delete_stale_instance(instance_id: String) -> Result<(), ServerFnError>
         )));
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
     sqlx::query("DELETE FROM daemon_heartbeats WHERE instance_id = $1 AND cluster_id = $2")
         .bind(&instance_id)
         .bind(row.cluster_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM assessments WHERE instance_id = $1 AND cluster_id = $2")
-        .bind(&instance_id)
-        .bind(row.cluster_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    sqlx::query("DELETE FROM assessment_probes WHERE instance_id = $1 AND cluster_id = $2")
-        .bind(&instance_id)
-        .bind(row.cluster_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    tx.commit()
+        .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
