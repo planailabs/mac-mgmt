@@ -219,21 +219,22 @@ pub async fn evaluate_stage(
     .await?;
     let heartbeat_fresh_pct = pct(fresh_count as u32, cohort_size);
 
-    // Per-service probe stats over the last 30 min. Aggregates feed both
-    // the existing gate logic (`probe_ok_pct`) and the new `probe_stats`
-    // table the UI renders.
+    // Per-service probe stats over the last 30 min. The `probe_stats` map
+    // keeps row-level aggregates (total_runs, ok_count, avg_*) for the
+    // UI's "OK/total" display. The gate's probe_ok_pct uses a different
+    // basis: per-INSTANCE accounting where instances without a probe row
+    // for the service in the window count as OK. Without this, a service
+    // gate trips immediately whenever an instance hasn't run its first
+    // probe yet — which on a 15min cadence happens for the first ~15min
+    // after a daemon comes online.
     let probe_stats = collect_probe_stats(pool, &cohort, &gate.min_probe_ok_pct).await?;
-    let probe_ok_pct: HashMap<String, u8> = probe_stats
-        .iter()
-        .map(|(svc, s)| {
-            let pct_v = if s.total_runs > 0 {
-                pct(s.ok_count, s.total_runs)
-            } else {
-                0
-            };
-            (svc.clone(), pct_v)
-        })
-        .collect();
+    let probe_ok_pct = collect_probe_ok_pct_per_instance(
+        pool,
+        &cohort,
+        cohort_size,
+        gate.min_probe_ok_pct.keys().cloned().collect(),
+    )
+    .await?;
 
     let sample_summary = collect_sample_summary(pool, &cohort).await?;
 
@@ -336,6 +337,56 @@ async fn collect_probe_stats(
 /// Aggregate the latest heartbeat sample per instance across the cohort.
 /// Returns `None` when no instance has reported a sample (typical for
 /// brand-new rollouts where daemons haven't ticked yet).
+/// Per-instance ok-percentage for the gate.
+///
+/// Counts distinct instances in the cohort whose latest probe row in the
+/// window for `service` reports `ok = false`, then derives ok_count as
+/// `cohort_size - failed`. Instances with NO probe row for the service
+/// in the window contribute to the ok side — they're "absence treated
+/// as success", which is the right default during the bootstrap window
+/// (15min probe cadence means a fresh daemon has nothing yet) and on
+/// hosts where the service genuinely doesn't run a probe.
+///
+/// Empty cohort short-circuits to 100% so the "no heartbeats yet"
+/// case lines up with `evaluate_stage`'s top-level early return.
+async fn collect_probe_ok_pct_per_instance(
+    pool: &PgPool,
+    cohort: &[Uuid],
+    cohort_size: u32,
+    services: Vec<String>,
+) -> Result<HashMap<String, u8>, sqlx::Error> {
+    let mut out: HashMap<String, u8> = HashMap::new();
+    if cohort_size == 0 || cohort.is_empty() {
+        for s in services {
+            out.insert(s, 100);
+        }
+        return Ok(out);
+    }
+
+    for service in services {
+        // DISTINCT ON picks the latest row per instance; outer COUNT
+        // tallies how many of those latest rows were a failure.
+        let failed: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM ( \
+               SELECT DISTINCT ON (instance_id) ok \
+               FROM assessment_probes \
+               WHERE cluster_id = ANY($1) AND service = $2 \
+                 AND collected_at > now() - interval '30 minutes' \
+               ORDER BY instance_id, collected_at DESC \
+             ) latest \
+             WHERE NOT ok",
+        )
+        .bind(cohort)
+        .bind(&service)
+        .fetch_one(pool)
+        .await?;
+        let failed = (failed as u32).min(cohort_size);
+        let ok = cohort_size - failed;
+        out.insert(service, pct(ok, cohort_size));
+    }
+    Ok(out)
+}
+
 async fn collect_sample_summary(
     pool: &PgPool,
     cohort: &[Uuid],
