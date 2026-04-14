@@ -165,7 +165,24 @@ pub async fn evaluate_stage(
     .bind(stage.group_id)
     .fetch_all(pool)
     .await?;
-    let cohort_size = cohort.len() as u32;
+
+    // cohort_size counts distinct instance_ids that have ever heartbeated
+    // in the stage's clusters — NOT the cluster count. A cluster can run
+    // multiple daemons, and deleting a stale instance should be visible
+    // as the denominator going down. Clusters with zero heartbeats
+    // contribute nothing; the gate grace period covers the bootstrap
+    // window where no daemon has reported yet.
+    let cohort_size: i64 = if cohort.is_empty() {
+        0
+    } else {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM daemon_heartbeats WHERE cluster_id = ANY($1)",
+        )
+        .bind(&cohort)
+        .fetch_one(pool)
+        .await?
+    };
+    let cohort_size = cohort_size as u32;
 
     let in_grace_period = stage
         .started_at
@@ -179,7 +196,7 @@ pub async fn evaluate_stage(
         return Ok(Some(HealthEvaluation {
             passed: true,
             cohort_size: 0,
-            reasons: vec!["empty cohort".into()],
+            reasons: vec!["no heartbeats yet".into()],
             heartbeat_fresh_pct: 100,
             probe_ok_pct: HashMap::new(),
             in_grace_period,
@@ -188,7 +205,9 @@ pub async fn evaluate_stage(
         }));
     }
 
-    // Heartbeat freshness.
+    // Heartbeat freshness — counts instances with a row newer than the
+    // configured window. Denominator is the same instance count so the
+    // ratio lands in [0, 100].
     let fresh_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM daemon_heartbeats \
          WHERE cluster_id = ANY($1) \
