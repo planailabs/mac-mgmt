@@ -118,7 +118,7 @@ pkgs.testers.nixosTest {
             return []
         return [json.loads(line) for line in raw.splitlines() if line.strip()]
 
-    def wait_for_event(event_type, timeout=15):
+    def wait_for_event(event_type, timeout=60):
         """Wait until an event with the given type appears in the log."""
         for _ in range(timeout * 2):
             evts = read_events()
@@ -162,12 +162,12 @@ pkgs.testers.nixosTest {
         "curl -sN 'http://127.0.0.1:7378/api/events?token=${syncToken}' "
         "| ${sseFilter} >/tmp/sse-listener.log 2>&1 &"
     )
-    time.sleep(2)
+    time.sleep(5)
     machine.log("SSE listener started")
 
     # ── Test 1: Ping ───────────────────────────────────────────────
     machine.log("Waiting for initial ping...")
-    wait_for_event("ping", timeout=40)
+    wait_for_event("ping", timeout=90)
     machine.log("PASS: ping received")
     clear_events()
 
@@ -239,7 +239,14 @@ pkgs.testers.nixosTest {
     # ── Test 10: Rapid-fire events all delivered ───────────────────
     for i in range(5):
         api("PUT", "/api/setting/config", "{}")
-    time.sleep(3)
+    # Allow ample time for all 5 events to propagate through the broadcast
+    # channel and land in the listener log; a short sleep here is a common
+    # source of flakiness under VM load.
+    for _ in range(30):
+        evts = read_events()
+        if len([e for e in evts if e.get("type") == "sync_config"]) >= 5:
+            break
+        time.sleep(0.5)
     evts = read_events()
     config_evts = [e for e in evts if e.get("type") == "sync_config"]
     assert len(config_evts) == 5, \

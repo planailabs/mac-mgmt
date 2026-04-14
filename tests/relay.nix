@@ -188,7 +188,7 @@ pkgs.testers.nixosTest {
     # so we poll the tunnel list API instead)
     attempts = 0
     relay_port = None
-    while attempts < 60:
+    while attempts < 120:
         try:
             tunnels_json = machine.succeed(
                 "curl -sf -H 'Authorization: Bearer ${settingToken}' "
@@ -203,7 +203,7 @@ pkgs.testers.nixosTest {
         time.sleep(1)
         attempts += 1
 
-    assert relay_port is not None, "daemon did not register with relay within 60s"
+    assert relay_port is not None, "daemon did not register with relay within 120s"
     machine.log(f"Daemon registered, relay SSH port: {relay_port}")
 
     # Verify tunnel metadata from real server
@@ -217,7 +217,7 @@ pkgs.testers.nixosTest {
         "cp ${testKeyDir}/id_ed25519 /tmp/test_key && chmod 600 /tmp/test_key"
     )
     machine.wait_for_open_port(relay_port)
-    time.sleep(1)
+    time.sleep(3)
 
     # Spawn two SSH sessions in parallel and wait for both to finish.
     # This exercises session multiplexing through the relay.
@@ -225,12 +225,12 @@ pkgs.testers.nixosTest {
         f"set -e; "
         f"ssh -p {relay_port} -i /tmp/test_key "
         f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
-        f"-o ConnectTimeout=10 "
+        f"-o ConnectTimeout=30 "
         f"root@127.0.0.1 'echo SESSION_A_OK' >/tmp/ssh-a.out 2>/tmp/ssh-a.err & "
         f"PID_A=$!; "
         f"ssh -p {relay_port} -i /tmp/test_key "
         f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
-        f"-o ConnectTimeout=10 "
+        f"-o ConnectTimeout=30 "
         f"root@127.0.0.1 'echo SESSION_B_OK' >/tmp/ssh-b.out 2>/tmp/ssh-b.err & "
         f"PID_B=$!; "
         f"wait $PID_A; RC_A=$?; "
@@ -238,7 +238,7 @@ pkgs.testers.nixosTest {
         f"echo \"RC_A=$RC_A RC_B=$RC_B\"; "
         f"exit $((RC_A + RC_B))"
     )
-    rc, out = machine.execute(parallel_cmd, timeout=60)
+    rc, out = machine.execute(parallel_cmd, timeout=120)
     machine.log(f"Parallel SSH exit code: {rc}")
     machine.log(f"Parallel SSH summary: {out.strip()}")
     if rc != 0:

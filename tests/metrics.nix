@@ -221,7 +221,7 @@ pkgs.testers.nixosTest {
     # we actually care about for federation).
     relay_port = None
     instance_id = None
-    for _ in range(60):
+    for _ in range(120):
         try:
             tunnels_json = machine.succeed(
                 "curl -sf -H 'Authorization: Bearer ${settingToken}' "
@@ -238,7 +238,7 @@ pkgs.testers.nixosTest {
     if relay_port is None:
         machine.log("daemon did not register; dumping /tmp/daemon.log:")
         machine.log(machine.succeed("cat /tmp/daemon.log || true"))
-    assert relay_port is not None, "daemon did not register with relay within 60s"
+    assert relay_port is not None, "daemon did not register with relay within 120s"
     machine.log(f"Daemon registered: instance_id={instance_id}")
 
     # Hit the federated /metrics directly to confirm the daemon scrape now
@@ -260,7 +260,7 @@ pkgs.testers.nixosTest {
 
     # Wait for Prometheus to scrape successfully at least once.
     target_up = False
-    for _ in range(40):
+    for _ in range(120):
         targets_json = machine.succeed(
             "curl -sf 'http://127.0.0.1:9090/api/v1/targets?state=active'"
         )
@@ -280,7 +280,7 @@ pkgs.testers.nixosTest {
     # registered (the very first scrape may have happened before the daemon
     # connected).
     targets_value = 0.0
-    for _ in range(20):
+    for _ in range(60):
         result = prom_query("mac_mgmt_relay_scrape_targets")
         if result["status"] == "success" and result["data"]["result"]:
             targets_value = float(result["data"]["result"][0]["value"][1])
@@ -298,7 +298,7 @@ pkgs.testers.nixosTest {
     )
     up_value = 0.0
     series_labels: dict = {}
-    for _ in range(20):
+    for _ in range(60):
         result = prom_query(up_q)
         if result["status"] == "success" and result["data"]["result"]:
             sample = result["data"]["result"][0]

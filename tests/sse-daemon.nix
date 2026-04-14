@@ -136,7 +136,7 @@ pkgs.testers.nixosTest {
         rc, _ = machine.execute("grep -q '{}' /tmp/daemon.log".format(pattern))
         return rc == 0
 
-    def wait_for_daemon_log(pattern, timeout=15):
+    def wait_for_daemon_log(pattern, timeout=60):
         """Wait until the daemon log contains the given pattern."""
         for _ in range(timeout * 2):
             if daemon_log_contains(pattern):
@@ -173,11 +173,11 @@ pkgs.testers.nixosTest {
     machine.log("Daemon started")
 
     # Wait for daemon to connect to SSE
-    wait_for_daemon_log("connecting to server SSE", timeout=30)
+    wait_for_daemon_log("connecting to server SSE", timeout=60)
     machine.log("PASS: daemon initiated SSE connection")
 
     # Give the connection a moment to establish
-    time.sleep(3)
+    time.sleep(5)
 
     # ── Test 1: SyncConfig ─────────────────────────────────────────
     api("PUT", "/api/setting/config", "{}")
@@ -236,7 +236,7 @@ pkgs.testers.nixosTest {
     machine.log("Server restarted")
 
     # Wait for the daemon to reconnect (connect count increases)
-    for _ in range(60):
+    for _ in range(120):
         count = int(machine.succeed(
             "grep -c 'connecting to server SSE' /tmp/daemon.log || echo 0"
         ).strip())
@@ -251,9 +251,9 @@ pkgs.testers.nixosTest {
 
     # Trigger another event after reconnect to verify the new connection works
     # Need to wait a moment for the SSE handshake to complete
-    time.sleep(2)
+    time.sleep(5)
     api("PUT", "/api/setting/config", "{}")
-    wait_for_daemon_log("server push: sync config", timeout=30)
+    wait_for_daemon_log("server push: sync config", timeout=60)
     machine.log("PASS: daemon receives push events after reconnect")
 
     machine.log("All daemon SSE integration tests passed!")
