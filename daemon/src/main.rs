@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod assessment;
 mod cmd;
 mod config;
 mod config_watch;

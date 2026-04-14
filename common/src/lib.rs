@@ -15,6 +15,8 @@ pub enum PushEvent {
     SyncSshKeys,
     SelfUpdate,
     SyncNixpkgs,
+    /// Request an immediate system-assessment snapshot + probe run.
+    RequestAssessment,
 }
 
 /// Daemon → server heartbeat body (`POST /api/heartbeat`).
@@ -46,6 +48,183 @@ pub struct HeartbeatBody {
     /// Unix timestamp (seconds) included in the signed message.
     #[serde(default)]
     pub signed_at: i64,
+    /// Lightweight dynamic sample collected each heartbeat (CPU, mem, disk-free, net).
+    /// Optional for back-compat with older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<DynamicSample>,
+    /// Rolled-up extended service state (latest probe summary per service).
+    /// Optional for back-compat.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services_extended: Vec<ServiceExtState>,
+}
+
+/// Small dynamic sample sent with each heartbeat. GDPR allowlist: no user data,
+/// no network identifiers beyond aggregate counters, no process args.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DynamicSample {
+    /// 1-minute load average.
+    pub cpu_load_1m: f32,
+    /// Resident memory in use, bytes.
+    pub mem_used_bytes: u64,
+    pub mem_total_bytes: u64,
+    /// Swap used, bytes. 0 if disabled.
+    #[serde(default)]
+    pub swap_used_bytes: u64,
+    /// Free bytes per mount, limited to root and /nix/store.
+    #[serde(default)]
+    pub disk_free: Vec<DiskFree>,
+    /// Cumulative RX/TX bytes across all non-loopback interfaces.
+    #[serde(default)]
+    pub net_rx_bytes: u64,
+    #[serde(default)]
+    pub net_tx_bytes: u64,
+    /// Process count (total).
+    #[serde(default)]
+    pub process_count: u32,
+    /// Thermal pressure — platform-reported, e.g. "nominal", "fair", "serious", "critical".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskFree {
+    pub mount: String,
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// Rolled-up latest-probe summary for a single service, attached to heartbeat.
+/// Full probe bodies go to `/api/assessment/probe`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceExtState {
+    pub name: String,
+    pub healthy: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_probe_ok: Option<bool>,
+    /// Unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_probe_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_probe_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_probe_kind: Option<String>,
+}
+
+/// Full assessment body sent to `POST /api/assessment`. Signed like heartbeat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Assessment {
+    pub instance_id: String,
+    /// Unix seconds.
+    pub collected_at: i64,
+    pub inventory: Inventory,
+    pub security: SecurityPosture,
+    /// Ed25519 signature over "{instance_id}:{collected_at}".
+    pub public_key: String,
+    pub signature: String,
+}
+
+/// Static system facts — refreshed every ~6h or on RequestAssessment.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Inventory {
+    pub os_name: String,
+    pub os_version: String,
+    pub kernel_version: String,
+    pub arch: String,
+    /// Seconds since boot at collection time.
+    pub uptime_secs: u64,
+    pub cpu_model: String,
+    pub cpu_cores_physical: u32,
+    pub cpu_cores_logical: u32,
+    pub mem_total_bytes: u64,
+    /// Non-loopback interface names + link state. No MACs, no IPs.
+    #[serde(default)]
+    pub interfaces: Vec<NetInterface>,
+    /// Disks by mount point + size. Root and /nix/store only.
+    #[serde(default)]
+    pub disks: Vec<DiskInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nix_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nixpkgs_commit: Option<String>,
+    /// Coarse supervisor label (e.g. "launchd", "systemd").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetInterface {
+    pub name: String,
+    pub up: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskInfo {
+    pub mount: String,
+    pub fs_type: String,
+    pub total_bytes: u64,
+}
+
+/// Security posture — booleans + versions only, no secrets.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SecurityPosture {
+    /// macOS: System Integrity Protection enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sip_enabled: Option<bool>,
+    /// macOS: FileVault on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filevault_enabled: Option<bool>,
+    /// macOS: Application Firewall enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firewall_enabled: Option<bool>,
+    /// macOS: Gatekeeper assessments enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gatekeeper_enabled: Option<bool>,
+    /// macOS: XProtect definitions version string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xprotect_version: Option<String>,
+    /// Linux: SELinux mode — "enforcing", "permissive", "disabled".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selinux_mode: Option<String>,
+    /// Linux: AppArmor profiles loaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apparmor_profiles: Option<u32>,
+    /// Linux: ufw/nftables detected + active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linux_firewall: Option<String>,
+    /// Linux: full-disk encryption detected on root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fde_enabled: Option<bool>,
+}
+
+/// Single probe result sent to `POST /api/assessment/probe`. Signed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProbeReport {
+    pub instance_id: String,
+    pub collected_at: i64,
+    pub service: String,
+    /// "liveness" | "functional" | "regression".
+    pub kind: String,
+    pub ok: bool,
+    pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Hex-encoded SHA-256 of the canary response for regression detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary_digest: Option<String>,
+    /// Error class (not raw message). E.g. "timeout", "bad_response", "pull_failed".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_class: Option<String>,
+    /// Full error message — redacted for non-admin viewers server-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
+    pub public_key: String,
+    pub signature: String,
 }
 
 /// Server → daemon update target response (`GET /api/update`).

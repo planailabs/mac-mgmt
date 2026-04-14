@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time;
 
+use crate::assessment::{self, Assessor};
 use crate::config;
 use crate::events::DaemonEvent;
 use crate::metrics::Metrics;
@@ -31,6 +32,7 @@ struct Daemon {
     current_cfg: config::Config,
     instance_id: String,
     host_key: Arc<russh::keys::PrivateKey>,
+    assessor: Arc<Assessor>,
     #[cfg(feature = "services")]
     svc_mgr: crate::service_mgmt::ServiceManager,
 }
@@ -193,13 +195,74 @@ impl Daemon {
             #[cfg(not(feature = "services"))]
             let tunnels: Vec<serde_json::Value> = vec![];
 
+            let sample = self.assessor.latest_sample_snapshot();
+            let services_extended = self.assessor.latest_probes_snapshot();
+
             let url = url.clone();
             let token = token.clone();
             let iid = self.instance_id.clone();
             let hk = Arc::clone(&self.host_key);
             tokio::spawn(async move {
-                do_send_heartbeat(&url, &token, &iid, &hk, services, tunnels, relay_proxy_hostname)
-                    .await;
+                do_send_heartbeat(
+                    &url,
+                    &token,
+                    &iid,
+                    &hk,
+                    services,
+                    tunnels,
+                    relay_proxy_hostname,
+                    sample,
+                    services_extended,
+                )
+                .await;
+            });
+        }
+    }
+
+    /// Called immediately before each heartbeat. Cheap — just refreshes the cached
+    /// dynamic sample so `send_heartbeat` can snapshot it synchronously.
+    async fn refresh_assessment_sample(&self) {
+        self.assessor.refresh_sample().await;
+    }
+
+    /// Fire-and-forget: build and send a full inventory+security assessment.
+    fn send_assessment_inventory(&self) {
+        if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            let u = url.clone();
+            let t = token.clone();
+            let iid = self.instance_id.clone();
+            let hk = Arc::clone(&self.host_key);
+            let assessor = Arc::clone(&self.assessor);
+            tokio::spawn(async move {
+                assessor.send_inventory(&u, &t, &iid, &hk).await;
+            });
+        }
+    }
+
+    /// Fire-and-forget: run all deep probes.
+    fn run_assessment_probes(&self) {
+        if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            let u = url.clone();
+            let t = token.clone();
+            let iid = self.instance_id.clone();
+            let hk = Arc::clone(&self.host_key);
+            let assessor = Arc::clone(&self.assessor);
+            tokio::spawn(async move {
+                assessor.run_probes(&u, &t, &iid, &hk).await;
+            });
+        }
+    }
+
+    /// Respond to `PushCommand::RequestAssessment` — runs inventory + probes now.
+    fn handle_request_assessment(&self) {
+        if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            let u = url.clone();
+            let t = token.clone();
+            let iid = self.instance_id.clone();
+            let hk = Arc::clone(&self.host_key);
+            let assessor = Arc::clone(&self.assessor);
+            tokio::spawn(async move {
+                assessor.request(&u, &t, &iid, &hk).await;
             });
         }
     }
@@ -280,6 +343,11 @@ impl Daemon {
                 }
                 #[cfg(feature = "services")]
                 self.svc_mgr.check_upgrades();
+                false
+            }
+            PushCommand::RequestAssessment => {
+                tracing::info!("server push: system assessment requested");
+                self.handle_request_assessment();
                 false
             }
         }
@@ -434,6 +502,9 @@ pub async fn run(
     let mut update_tick = time::interval(update_interval);
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
+    let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
+    let mut assessment_probe_tick =
+        time::interval(assessment::jittered(assessment::DEFAULT_PROBE_INTERVAL, 120));
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to register SIGTERM handler")?;
@@ -488,6 +559,8 @@ pub async fn run(
         None
     };
 
+    let assessor = Arc::new(Assessor::new());
+
     // Build the Daemon struct with all long-lived state.
     let mut daemon = Daemon {
         server_url,
@@ -499,6 +572,7 @@ pub async fn run(
         current_cfg,
         instance_id,
         host_key,
+        assessor,
         #[cfg(feature = "services")]
         svc_mgr,
     };
@@ -563,6 +637,7 @@ pub async fn run(
                 daemon.update_relay_tunnel_defs(&relay_mgr);
                 #[cfg(feature = "services")]
                 daemon.update_relay_config(relay_proxy_hostname!());
+                daemon.refresh_assessment_sample().await;
                 // Send heartbeat BEFORE connectors — connectors run blocking
                 // CLI commands that can hang for minutes.
                 daemon.send_heartbeat(relay_proxy_hostname!());
@@ -571,7 +646,16 @@ pub async fn run(
             }
 
             _ = heartbeat_tick.tick() => {
+                daemon.refresh_assessment_sample().await;
                 daemon.send_heartbeat(relay_proxy_hostname!());
+            }
+
+            _ = assessment_inventory_tick.tick() => {
+                daemon.send_assessment_inventory();
+            }
+
+            _ = assessment_probe_tick.tick() => {
+                daemon.run_assessment_probes();
             }
 
             _ = crate::config_watch::recv_debounced(&mut config_rx) => {
@@ -709,6 +793,8 @@ async fn do_send_heartbeat(
     services: Vec<serde_json::Value>,
     tunnels: Vec<serde_json::Value>,
     relay_proxy_hostname: Option<String>,
+    sample: Option<mac_mgmt_common::DynamicSample>,
+    services_extended: Vec<mac_mgmt_common::ServiceExtState>,
 ) {
     use russh::keys::signature::Signer;
     use russh::keys::PublicKeyBase64;
@@ -749,6 +835,8 @@ async fn do_send_heartbeat(
         public_key: public_key_b64,
         signature: sig_b64,
         signed_at,
+        sample,
+        services_extended,
     };
 
     let url = format!("{server_url}/api/heartbeat");

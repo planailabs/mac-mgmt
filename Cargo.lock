@@ -3693,6 +3693,7 @@ name = "mac-mgmt"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64",
  "bytes",
  "chrono",
