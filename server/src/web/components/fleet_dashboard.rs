@@ -340,6 +340,7 @@ pub fn FleetDashboard() -> Element {
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Status" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Load" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Services" }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Probes" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Tunnels" }
                                     SortableTh { label: "Last Seen".to_string(), sort_key: "last_seen".to_string(), sort }
                                     th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
@@ -363,50 +364,79 @@ pub fn FleetDashboard() -> Element {
                                             entry.reported_at.format("%Y-%m-%d %H:%M").to_string()
                                         };
 
-                                        // Map probe state (last_probe_ok + last_probe_kind) by service name from
-                                        // services_extended so we can overlay deep-probe status on the base badges.
-                                        let probe_map: std::collections::HashMap<String, (Option<bool>, Option<String>, Option<String>)> = entry.services_extended
-                                            .as_ref()
-                                            .and_then(|v| v.as_array())
-                                            .map(|arr| arr.iter().filter_map(|s| {
-                                                let name = s.get("name").and_then(|v| v.as_str())?.to_string();
-                                                let probe_ok = s.get("last_probe_ok").and_then(|v| v.as_bool());
-                                                let probe_kind = s.get("last_probe_kind").and_then(|v| v.as_str()).map(String::from);
-                                                let probe_at = s.get("last_probe_at").and_then(|v| v.as_i64()).map(|i| i.to_string());
-                                                Some((name, (probe_ok, probe_kind, probe_at)))
-                                            }).collect())
-                                            .unwrap_or_default();
-
-                                        let services_badges: Vec<(String, String, String)> = entry.services
+                                        // Service badges reflect the local daemon's health flag only — the
+                                        // Services column answers "does the daemon think the service is up?".
+                                        // Probe data goes in its own column below so the two signals don't
+                                        // get conflated when only one of them is failing.
+                                        let mut services_badges: Vec<(String, String, String)> = entry.services
                                             .as_array()
                                             .map(|arr| {
                                                 arr.iter().map(|s| {
                                                     let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
                                                     let healthy = s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
-                                                    let probe = probe_map.get(&name).cloned();
-                                                    // Probe failure overrides the base healthy flag visually.
-                                                    let (cls, title) = match (healthy, probe.as_ref()) {
-                                                        (_, Some((Some(false), Some(k), _))) => (
-                                                            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200".to_string(),
-                                                            format!("{k} probe failed"),
-                                                        ),
-                                                        (true, Some((Some(true), Some(k), _))) => (
-                                                            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200".to_string(),
-                                                            format!("{k} probe ok"),
-                                                        ),
-                                                        (true, _) => (
+                                                    let (cls, title) = if healthy {
+                                                        (
                                                             "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200".to_string(),
                                                             "healthy".to_string(),
-                                                        ),
-                                                        (false, _) => (
+                                                        )
+                                                    } else {
+                                                        (
                                                             "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200".to_string(),
                                                             "unhealthy".to_string(),
-                                                        ),
+                                                        )
                                                     };
                                                     (name, cls, title)
                                                 }).collect()
                                             })
                                             .unwrap_or_default();
+                                        services_badges.sort_by(|a, b| a.0.cmp(&b.0));
+
+                                        // Probe badges: one per service present in services_extended, colored
+                                        // by the latest probe outcome. Tooltip carries kind + age so operators
+                                        // can tell a just-ran green from a stale-but-previously-ok green.
+                                        let mut probe_badges: Vec<(String, String, String)> = entry.services_extended
+                                            .as_ref()
+                                            .and_then(|v| v.as_array())
+                                            .map(|arr| arr.iter().filter_map(|s| {
+                                                let name = s.get("name").and_then(|v| v.as_str())?.to_string();
+                                                let ok = s.get("last_probe_ok").and_then(|v| v.as_bool());
+                                                let kind = s.get("last_probe_kind").and_then(|v| v.as_str()).unwrap_or("probe").to_string();
+                                                let at = s.get("last_probe_at").and_then(|v| v.as_i64());
+                                                let dur = s.get("last_probe_duration_ms").and_then(|v| v.as_u64());
+                                                let age_txt = at.map(|ts| {
+                                                    let secs = (Utc::now().timestamp() - ts).max(0);
+                                                    if secs < 60 {
+                                                        format!("{secs}s ago")
+                                                    } else if secs < 3600 {
+                                                        format!("{}m ago", secs / 60)
+                                                    } else {
+                                                        format!("{}h ago", secs / 3600)
+                                                    }
+                                                }).unwrap_or_else(|| "never".into());
+                                                let dur_txt = dur.map(|d| format!(", {d}ms")).unwrap_or_default();
+                                                let (cls, label, ok_text) = match ok {
+                                                    Some(true) => (
+                                                        "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+                                                        "ok",
+                                                        "ok",
+                                                    ),
+                                                    Some(false) => (
+                                                        "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+                                                        "fail",
+                                                        "fail",
+                                                    ),
+                                                    None => (
+                                                        "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                                        "pending",
+                                                        "no result yet",
+                                                    ),
+                                                };
+                                                let _ = label;
+                                                let title = format!("{kind} {ok_text} · {age_txt}{dur_txt}");
+                                                Some((name, cls.to_string(), title))
+                                            }).collect())
+                                            .unwrap_or_default();
+                                        probe_badges.sort_by(|a, b| a.0.cmp(&b.0));
 
                                         // Compact load cell: "1.2 · 78% · nominal"
                                         let load_cell: Option<String> = entry.sample.as_ref().map(|s| {
@@ -493,6 +523,21 @@ pub fn FleetDashboard() -> Element {
                                                                 class: "inline-block px-2 py-0.5 rounded text-xs font-medium {badge_class}",
                                                                 title: "{title}",
                                                                 "{name}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                td { class: "px-6 py-4 text-sm",
+                                                    if probe_badges.is_empty() {
+                                                        span { class: "text-gray-400 dark:text-gray-500", "—" }
+                                                    } else {
+                                                        div { class: "flex gap-1 flex-wrap",
+                                                            for (name, badge_class, title) in &probe_badges {
+                                                                span {
+                                                                    class: "inline-block px-2 py-0.5 rounded text-xs font-medium {badge_class}",
+                                                                    title: "{title}",
+                                                                    "{name}"
+                                                                }
                                                             }
                                                         }
                                                     }
