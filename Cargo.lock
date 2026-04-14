@@ -3705,6 +3705,7 @@ dependencies = [
  "humantime",
  "libc",
  "mac-mgmt-common",
+ "mac-mgmt-services",
  "notify",
  "prometheus",
  "rand 0.8.5",
@@ -3802,6 +3803,18 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "mac-mgmt-services"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

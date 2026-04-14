@@ -26,24 +26,6 @@ impl Lms {
         format!("http://{}:{}", self.effective_host(), self.effective_port())
     }
 
-    /// Run `lms server start` to (re)start the local API server. Idempotent
-    /// per LM Studio's CLI semantics.
-    fn server_start(&self) -> Result<()> {
-        let output = Command::new("lms")
-            .args(["server", "start"])
-            .output()
-            .context("failed to run `lms server start`")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            sentry_ext::capture_cmd_failure(
-                "lms server start",
-                output.status.code(),
-                stderr.trim(),
-            );
-            anyhow::bail!("`lms server start` failed: {}", stderr.trim());
-        }
-        Ok(())
-    }
 }
 
 impl ManagedService for Lms {
@@ -76,32 +58,18 @@ impl ManagedService for Lms {
         Ok(())
     }
 
-    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
-        // lms server start backgrounds itself, so we use a sleep shim as
-        // the monitored process. The real server runs independently.
-        crate::service_ipc::protocol::SpawnSpec {
-            program: "sleep".into(),
-            args: vec!["infinity".into()],
+    fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
+        // `lms server start` backgrounds itself, so wrap it in a shell that
+        // starts the server and then blocks on sleep — the supervisor treats
+        // the sleep as the supervised process.
+        crate::managed_service::SpawnSpec {
+            program: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "lms server start && exec sleep infinity".into(),
+            ],
             env: Default::default(),
         }
-    }
-
-    fn spawn(&self) -> Result<std::process::Child> {
-        self.server_start()?;
-        tracing::info!("lms server started, base_url={}", self.base_url());
-        sentry_ext::breadcrumb("spawn", "lms server started", &[
-            ("service", "lms"),
-            ("base_url", &self.base_url()),
-        ]);
-
-        let spec = self.spawn_spec();
-        let child = Command::new(&spec.program)
-            .args(&spec.args)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .context("failed to spawn lms shim process")?;
-        Ok(child)
     }
 
     fn check_health(&self) -> Result<bool> {
@@ -128,9 +96,10 @@ impl ManagedService for Lms {
     }
 
     fn repair(&self) -> Result<()> {
-        tracing::info!("repairing lms by restarting the server");
+        // Stop the server; the supervisor's restart will invoke
+        // `lms server start` again via the spawn spec.
+        tracing::info!("repairing lms by stopping the server");
         let _ = Command::new("lms").args(["server", "stop"]).status();
-        self.server_start()?;
         Ok(())
     }
 

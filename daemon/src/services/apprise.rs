@@ -35,12 +35,8 @@ impl ManagedService for Apprise {
         Ok(())
     }
 
-    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
+    fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
         unreachable!("apprise is install-only")
-    }
-
-    fn spawn(&self) -> Result<std::process::Child> {
-        anyhow::bail!("apprise is install-only, cannot spawn")
     }
 
     fn check_health(&self) -> Result<bool> {

@@ -13,7 +13,6 @@ mod crash;
 mod daemon;
 mod host_keys;
 mod log_buffer;
-mod log_capture;
 mod log_layer;
 mod events;
 mod logs;
@@ -34,11 +33,7 @@ mod scripts;
 #[cfg(feature = "self-update")]
 mod self_update;
 #[cfg(feature = "services")]
-mod service_ipc;
-#[cfg(feature = "services")]
 mod service_mgmt;
-#[cfg(feature = "services")]
-mod service_wrapper;
 mod skills;
 mod service;
 mod server_push;
@@ -111,13 +106,9 @@ enum Commands {
     DisableSsh,
     /// Trigger an immediate sync of skills, MCP servers, and SSH keys
     Sync,
-    /// Stop all externally managed services (launchd/systemd per-service units)
-    StopManagedServices,
-    /// Run a managed service wrapper (called by launchd/systemd per-service units)
-    DaemonServiceLaunch {
-        /// Service name (e.g., "ollama")
-        service: String,
-    },
+    /// Run the managed-services supervisor (started by the mac-mgmt-services
+    /// system unit — not normally invoked by hand).
+    Services,
     /// View service logs
     Logs {
         /// Service name (e.g., "ollama"). Shows all services if omitted.
@@ -188,29 +179,17 @@ async fn main() -> Result<()> {
             });
             daemon::run(log_buf, set_log_level).await?
         }
-        Commands::StopManagedServices => {
-            let names = service::list_managed_service_units()?;
-            if names.is_empty() {
-                println!("No managed services found");
-            } else {
-                for name in &names {
-                    print!("Stopping {name}... ");
-                    match service::cleanup_managed_service(name) {
-                        Ok(()) => println!("done"),
-                        Err(e) => println!("failed: {e}"),
-                    }
-                }
-                println!("Stopped {} managed service(s)", names.len());
-            }
-        }
-        Commands::DaemonServiceLaunch { service } => {
+        Commands::Services => {
             #[cfg(feature = "services")]
-            service_wrapper::run(&service).await?;
-            #[cfg(not(feature = "services"))]
             {
-                let _ = service;
-                anyhow::bail!("services feature is not enabled");
+                let socket_path = mac_mgmt_services::default_socket_path();
+                let reexec = mac_mgmt_services::server::run(&socket_path).await?;
+                if reexec {
+                    mac_mgmt_services::server::reexec_self();
+                }
             }
+            #[cfg(not(feature = "services"))]
+            anyhow::bail!("services feature is not enabled");
         }
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]

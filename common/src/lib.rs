@@ -807,9 +807,6 @@ pub struct GlobalConfig {
     #[schemars(description = "Display name for the user")]
     #[serde(default)]
     pub user_name: Option<String>,
-    #[schemars(description = "Run managed services as independent system services (launchd/systemd) instead of child processes")]
-    #[serde(default)]
-    pub external_processes: bool,
 }
 
 impl GlobalConfig {

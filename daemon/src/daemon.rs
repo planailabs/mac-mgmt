@@ -529,12 +529,10 @@ pub async fn run(
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("failed to register SIGINT handler")?;
 
-    // Now that signal handlers are registered, spawn/connect all services.
+    // Now that signal handlers are registered, connect to the supervisor
+    // and register every service.
     #[cfg(feature = "services")]
-    {
-        svc_mgr.spawn_all();
-        svc_mgr.connect_all().await;
-    }
+    svc_mgr.connect_all().await;
 
     // Set up config file watcher.
     let (config_tx, mut config_rx) = tokio::sync::mpsc::channel(4);

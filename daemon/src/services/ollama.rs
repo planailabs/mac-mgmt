@@ -137,7 +137,7 @@ impl ManagedService for Ollama {
         Ok(())
     }
 
-    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
+    fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
         let mut env = std::collections::HashMap::new();
         if self.config.host != "127.0.0.1" || self.config.port != 11434 {
             env.insert(
@@ -152,32 +152,14 @@ impl ManagedService for Ollama {
         }
         // Record the env file hash so we can detect changes.
         self.last_env_hash.set(Self::env_file_hash());
-        crate::service_ipc::protocol::SpawnSpec {
+        crate::managed_service::SpawnSpec {
             program: "ollama".into(),
             args: vec!["serve".into()],
             env,
         }
     }
 
-    fn spawn(&self) -> Result<std::process::Child> {
-        let spec = self.spawn_spec();
-        let child = Command::new(&spec.program)
-            .args(&spec.args)
-            .envs(&spec.env)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("failed to start ollama serve")?;
-        tracing::info!("ollama serve started (pid: {})", child.id());
-        sentry_ext::breadcrumb("spawn", "ollama serve started", &[
-            ("service", "ollama"),
-            ("pid", &child.id().to_string()),
-        ]);
-        Ok(child)
-    }
-
     fn check_health(&self) -> Result<bool> {
-        // Sync fallback (used by external-process wrapper).
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(self.check_health_impl())
         })

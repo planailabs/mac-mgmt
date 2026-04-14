@@ -39,6 +39,7 @@ futures-util = "0.3"
 urlencoding = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4"] }
 mac-mgmt-common = { path = "../common" }
+mac-mgmt-services = { path = "../mac-mgmt-services" }
 dirs = "6"
 hex = "0.4"
 hostname = "0.4"

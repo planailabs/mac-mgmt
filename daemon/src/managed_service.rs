@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::service_ipc::protocol::SpawnSpec;
+pub use mac_mgmt_services::SpawnSpec;
 
 /// A TCP tunnel that a managed service exposes for proxying through the relay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,17 +55,13 @@ pub trait ManagedService {
     /// Ensure the service is configured (first-run setup, etc.).
     fn ensure_setup(&self) -> Result<()>;
 
-    /// Return the command spec for spawning this service. Used by the
-    /// external process wrapper which doesn't have access to ManagedService.
+    /// Return the command spec for spawning this service. The daemon hands
+    /// this off to the services supervisor over RPC.
     fn spawn_spec(&self) -> SpawnSpec;
 
-    /// Start the service process.
-    fn spawn(&self) -> Result<std::process::Child>;
-
     /// Check whether the service is healthy (blocking).
-    /// Used by the external-process wrapper and as the default for
-    /// `check_health_async`. Services with HTTP-based checks should
-    /// override `check_health_async` instead.
+    /// Used as the default implementation for `check_health_async`. Services
+    /// with HTTP-based checks should override `check_health_async` instead.
     fn check_health(&self) -> Result<bool>;
 
     /// Non-blocking health check. Defaults to running `check_health()` via

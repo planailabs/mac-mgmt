@@ -23,8 +23,6 @@ audience: user
 
 ## Production-readying a cluster
 
-- Enable `global.external_processes`
-  - This enables daemon restarts without having to restart the associated services
 - Set `relay.url` to `wss://relay.plan.ai` or your company relay if provided by us
 - Add `https://relay.plan.ai/metrics` to your Prometheus monitoring
   - Use an organization token

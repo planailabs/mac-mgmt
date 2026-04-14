@@ -272,28 +272,12 @@ impl ManagedService for OpenClaw {
         true
     }
 
-    fn spawn_spec(&self) -> crate::service_ipc::protocol::SpawnSpec {
-        crate::service_ipc::protocol::SpawnSpec {
+    fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
+        crate::managed_service::SpawnSpec {
             program: "openclaw".into(),
             args: vec!["gateway".into()],
             env: Default::default(),
         }
-    }
-
-    fn spawn(&self) -> Result<std::process::Child> {
-        let spec = self.spawn_spec();
-        let child = Command::new(&spec.program)
-            .args(&spec.args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("failed to start openclaw gateway")?;
-        tracing::info!("openclaw gateway started (pid: {})", child.id());
-        sentry_ext::breadcrumb("spawn", "openclaw gateway started", &[
-            ("service", "openclaw"),
-            ("pid", &child.id().to_string()),
-        ]);
-        Ok(child)
     }
 
     fn check_health(&self) -> Result<bool> {

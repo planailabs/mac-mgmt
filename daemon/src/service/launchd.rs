@@ -62,7 +62,6 @@ pub fn install() -> Result<()> {
     let path = plist_path();
     let contents = plist_contents()?;
 
-    // If plist exists with identical contents, just ensure it's loaded.
     if path.exists() {
         if let Ok(output) = sudo(&["cat", &path.display().to_string()]) {
             if output.status.success() && String::from_utf8_lossy(&output.stdout) == contents {
@@ -72,7 +71,6 @@ pub fn install() -> Result<()> {
                 return Ok(());
             }
         }
-        // Contents changed — bootout before rewriting.
         tracing::info!("plist changed, updating");
         let _ = sudo(&["launchctl", "bootout", &service_target()]);
     }
@@ -201,36 +199,31 @@ fn sudo(args: &[&str]) -> Result<std::process::Output> {
         .context("failed to run sudo")
 }
 
-// ── Per-service user-level LaunchAgents ──────────────────────────────
+// ── Managed-services supervisor (user-level LaunchAgent) ────────────
 
-const MANAGED_PLIST_PREFIX: &str = "com.plan-ai.mac-mgmt.";
+const SUPERVISOR_LABEL: &str = "com.plan-ai.mac-mgmt.services";
+
+fn supervisor_plist_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("Library/LaunchAgents")
+        .join(format!("{SUPERVISOR_LABEL}.plist"))
+}
 
 fn current_uid() -> u32 {
     unsafe { libc::getuid() }
 }
 
-fn managed_plist_label(service_name: &str) -> String {
-    format!("{MANAGED_PLIST_PREFIX}{service_name}")
+fn supervisor_gui_target() -> String {
+    format!("gui/{}/{}", current_uid(), SUPERVISOR_LABEL)
 }
 
-fn managed_plist_path(service_name: &str) -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("Library/LaunchAgents")
-        .join(format!("{}.plist", managed_plist_label(service_name)))
-}
-
-fn managed_gui_target(service_name: &str) -> String {
-    format!("gui/{}/{}", current_uid(), managed_plist_label(service_name))
-}
-
-fn managed_gui_domain() -> String {
+fn supervisor_gui_domain() -> String {
     format!("gui/{}", current_uid())
 }
 
-fn managed_plist_contents(service_name: &str) -> Result<String> {
+fn supervisor_plist_contents() -> Result<String> {
     let bin = std::env::current_exe().context("cannot determine binary path")?;
-    let label = managed_plist_label(service_name);
     Ok(format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -238,22 +231,22 @@ fn managed_plist_contents(service_name: &str) -> Result<String> {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>{label}</string>
+    <string>{SUPERVISOR_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>-l</string>
         <string>-c</string>
-        <string>exec {bin} daemon-service-launch {service_name}</string>
+        <string>exec {bin} services</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/{label}.out.log</string>
+    <string>/tmp/{SUPERVISOR_LABEL}.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/{label}.err.log</string>
+    <string>/tmp/{SUPERVISOR_LABEL}.err.log</string>
 </dict>
 </plist>
 "#,
@@ -261,121 +254,56 @@ fn managed_plist_contents(service_name: &str) -> Result<String> {
     ))
 }
 
-/// Check if a per-service LaunchAgent plist is installed.
-pub fn is_managed_service_installed(service_name: &str) -> bool {
-    managed_plist_path(service_name).exists()
-}
-
-pub fn install_managed_service(service_name: &str) -> Result<()> {
-    let path = managed_plist_path(service_name);
-    let domain = managed_gui_domain();
-    let contents = managed_plist_contents(service_name)?;
+pub fn install_services_manager() -> Result<()> {
+    let path = supervisor_plist_path();
+    let domain = supervisor_gui_domain();
+    let contents = supervisor_plist_contents()?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create {}", parent.display()))?;
     }
 
-    // If already installed with identical contents, just ensure it's running.
-    if path.exists() {
-        let existing = std::fs::read_to_string(&path).unwrap_or_default();
-        if existing == contents {
-            tracing::info!("managed service {service_name} plist unchanged, ensuring running");
-            // bootstrap is a no-op if already loaded, but succeeds.
+    let changed = match std::fs::read_to_string(&path) {
+        Ok(existing) => existing != contents,
+        Err(_) => true,
+    };
+
+    if changed {
+        if path.exists() {
             let _ = Command::new("launchctl")
-                .args(["bootstrap", &domain, &path.display().to_string()])
+                .args(["bootout", &supervisor_gui_target()])
                 .output();
-            return Ok(());
         }
-        // Contents changed — bootout the old one before rewriting.
-        tracing::info!("managed service {service_name} plist changed, updating");
+        std::fs::write(&path, &contents)
+            .with_context(|| format!("write {}", path.display()))?;
+        tracing::info!("wrote {}", path.display());
+
+        let output = Command::new("launchctl")
+            .args(["bootstrap", &domain, &path.display().to_string()])
+            .output()
+            .context("launchctl bootstrap")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("launchctl bootstrap failed: {stderr}");
+        }
+    } else {
+        // Ensure loaded.
         let _ = Command::new("launchctl")
-            .args(["bootout", &managed_gui_target(service_name)])
+            .args(["bootstrap", &domain, &path.display().to_string()])
             .output();
     }
 
-    std::fs::write(&path, &contents)
-        .with_context(|| format!("write {}", path.display()))?;
-    tracing::info!("wrote {}", path.display());
-
-    let output = Command::new("launchctl")
-        .args(["bootstrap", &domain, &path.display().to_string()])
-        .output()
-        .context("launchctl bootstrap")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("launchctl bootstrap failed: {stderr}");
-    }
-
-    tracing::info!("managed service {service_name} installed and loaded");
     Ok(())
 }
 
-pub fn uninstall_managed_service(service_name: &str) -> Result<()> {
-    let path = managed_plist_path(service_name);
-
+pub fn uninstall_services_manager() -> Result<()> {
     let _ = Command::new("launchctl")
-        .args(["bootout", &managed_gui_target(service_name)])
+        .args(["bootout", &supervisor_gui_target()])
         .output();
-
+    let path = supervisor_plist_path();
     if path.exists() {
-        std::fs::remove_file(&path)
-            .with_context(|| format!("remove {}", path.display()))?;
-        tracing::info!("removed {}", path.display());
-    }
-
-    // Also clean up the socket file.
-    #[cfg(feature = "services")]
-    {
-        let sock = crate::service_ipc::socket_path(service_name);
-        std::fs::remove_file(&sock).ok();
-    }
-
-    Ok(())
-}
-
-pub fn start_managed_service(service_name: &str) -> Result<()> {
-    let path = managed_plist_path(service_name);
-    if !path.exists() {
-        anyhow::bail!("managed service {service_name} not installed");
-    }
-    let domain = managed_gui_domain();
-    let output = Command::new("launchctl")
-        .args(["bootstrap", &domain, &path.display().to_string()])
-        .output()
-        .context("launchctl bootstrap")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("launchctl bootstrap failed: {stderr}");
+        let _ = std::fs::remove_file(&path);
     }
     Ok(())
-}
-
-pub fn stop_managed_service(service_name: &str) -> Result<()> {
-    let _ = Command::new("launchctl")
-        .args(["bootout", &managed_gui_target(service_name)])
-        .output();
-    Ok(())
-}
-
-/// List service names that have installed per-service LaunchAgent plists.
-pub fn list_managed_service_units() -> Result<Vec<String>> {
-    let agents_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("Library/LaunchAgents");
-
-    let mut names = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
-        for entry in entries.flatten() {
-            let fname = entry.file_name();
-            let fname = fname.to_string_lossy();
-            if let Some(rest) = fname.strip_prefix(MANAGED_PLIST_PREFIX) {
-                if let Some(name) = rest.strip_suffix(".plist") {
-                    names.push(name.to_string());
-                }
-            }
-        }
-    }
-    Ok(names)
 }

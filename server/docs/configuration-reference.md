@@ -27,7 +27,6 @@ Top-level settings that control which providers and features are active.
 | `agent_provider` | `"openclaw"` | Agent provider: `openclaw` or `none` |
 | `agent_name` | *none* | Display name for this agent |
 | `user_name` | *none* | Display name for the user |
-| `external_processes` | `false` | Run managed services as independent system services (launchd/systemd) instead of child processes. Recommended for production |
 
 ## `notifications`
 
@@ -144,8 +143,7 @@ Settings for the relay server used for remote SSH access.
   },
   "global": {
     "llm_provider": "ollama",
-    "agent_provider": "openclaw",
-    "external_processes": true
+    "agent_provider": "openclaw"
   },
   "ollama": {
     "models": ["phi4-mini", "qwen3.5"],

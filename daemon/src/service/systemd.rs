@@ -67,7 +67,6 @@ pub fn install() -> Result<()> {
     let path = unit_path();
     let contents = unit_contents()?;
 
-    // Write unit file via tee to handle permissions
     if is_root() {
         fs::write(&path, &contents).context("failed to write systemd unit")?;
     } else {
@@ -164,20 +163,16 @@ pub fn restart() -> Result<()> {
     Ok(())
 }
 
-// ── Per-service user-level systemd template unit ─────────────────────
+// ── Managed-services supervisor (user-level systemd unit) ────────────
 
-const TEMPLATE_UNIT: &str = "mac-mgmt-service@.service";
-const TEMPLATE_INSTANCE_PREFIX: &str = "mac-mgmt-service@";
+const SUPERVISOR_UNIT: &str = "mac-mgmt-services.service";
 
-/// Create a `systemctl --user` command with the D-Bus session env vars set.
-/// If `DBUS_SESSION_BUS_ADDRESS` is missing (e.g. running via sudo or a system
-/// service), derives it from the current user's UID.
+/// Build a `systemctl --user` command with the D-Bus session env vars set.
 fn systemctl_user(args: &[&str]) -> Command {
     let mut cmd = Command::new("systemctl");
     cmd.arg("--user");
     cmd.args(args);
 
-    // Ensure the user D-Bus session is reachable.
     let uid = unsafe { libc::getuid() };
     if std::env::var("XDG_RUNTIME_DIR").is_err() {
         cmd.env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"));
@@ -197,26 +192,22 @@ fn user_unit_dir() -> PathBuf {
         .join("systemd/user")
 }
 
-fn template_unit_path() -> PathBuf {
-    user_unit_dir().join(TEMPLATE_UNIT)
+fn supervisor_unit_path() -> PathBuf {
+    user_unit_dir().join(SUPERVISOR_UNIT)
 }
 
-fn instance_unit_name(service_name: &str) -> String {
-    format!("{TEMPLATE_INSTANCE_PREFIX}{service_name}.service")
-}
-
-fn template_unit_contents() -> Result<String> {
+fn supervisor_unit_contents() -> Result<String> {
     let bin = std::env::current_exe().context("cannot determine binary path")?;
     Ok(format!(
         r#"[Unit]
-Description=mac-mgmt managed service %i
+Description=mac-mgmt managed-services supervisor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 Environment=HOME=%h
-ExecStart=/bin/bash -lc '{bin} daemon-service-launch %i'
+ExecStart=/bin/bash -lc '{bin} services'
 Restart=always
 RestartSec=5
 
@@ -227,17 +218,15 @@ WantedBy=default.target
     ))
 }
 
-/// Ensure the systemd template unit file exists and is up to date.
-fn ensure_template_unit() -> Result<()> {
-    let path = template_unit_path();
-    let contents = template_unit_contents()?;
+pub fn install_services_manager() -> Result<()> {
+    let path = supervisor_unit_path();
+    let contents = supervisor_unit_contents()?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create {}", parent.display()))?;
     }
 
-    // Only write if contents changed (avoid unnecessary daemon-reload).
     let needs_write = match std::fs::read_to_string(&path) {
         Ok(existing) => existing != contents,
         Err(_) => true,
@@ -246,7 +235,7 @@ fn ensure_template_unit() -> Result<()> {
     if needs_write {
         std::fs::write(&path, &contents)
             .with_context(|| format!("write {}", path.display()))?;
-        tracing::info!("wrote template unit {}", path.display());
+        tracing::info!("wrote supervisor unit {}", path.display());
 
         let status = systemctl_user(&["daemon-reload"])
             .status()
@@ -256,100 +245,38 @@ fn ensure_template_unit() -> Result<()> {
         }
     }
 
-    Ok(())
-}
-
-/// Check if a per-service systemd user unit instance is enabled.
-pub fn is_managed_service_installed(service_name: &str) -> bool {
-    let unit = instance_unit_name(service_name);
-    systemctl_user(&["is-enabled", "--quiet", &unit])
+    let enabled = systemctl_user(&["is-enabled", "--quiet", SUPERVISOR_UNIT])
         .status()
-        .is_ok_and(|s| s.success())
-}
+        .is_ok_and(|s| s.success());
 
-pub fn install_managed_service(service_name: &str) -> Result<()> {
-    ensure_template_unit()?;
-
-    let unit = instance_unit_name(service_name);
-
-    // If already enabled, just ensure it's running.
-    if is_managed_service_installed(service_name) {
-        tracing::info!("managed service {service_name} already enabled, ensuring running");
-        let _ = systemctl_user(&["start", &unit]).status();
-        return Ok(());
-    }
-
-    let status = systemctl_user(&["enable", "--now", &unit])
-        .status()
-        .with_context(|| format!("systemctl --user enable --now {unit}"))?;
-
-    if !status.success() {
-        anyhow::bail!("systemctl --user enable --now {unit} failed");
-    }
-
-    tracing::info!("managed service {service_name} enabled and started");
-    Ok(())
-}
-
-pub fn uninstall_managed_service(service_name: &str) -> Result<()> {
-    let unit = instance_unit_name(service_name);
-
-    let _ = systemctl_user(&["disable", "--now", &unit]).status();
-
-    // Clean up socket file.
-    #[cfg(feature = "services")]
-    {
-        let sock = crate::service_ipc::socket_path(service_name);
-        std::fs::remove_file(&sock).ok();
-    }
-
-    tracing::info!("managed service {service_name} disabled and stopped");
-    Ok(())
-}
-
-pub fn start_managed_service(service_name: &str) -> Result<()> {
-    ensure_template_unit()?;
-
-    let unit = instance_unit_name(service_name);
-    let status = systemctl_user(&["start", &unit])
-        .status()
-        .with_context(|| format!("systemctl --user start {unit}"))?;
-
-    if !status.success() {
-        anyhow::bail!("systemctl --user start {unit} failed");
-    }
-    Ok(())
-}
-
-pub fn stop_managed_service(service_name: &str) -> Result<()> {
-    let unit = instance_unit_name(service_name);
-    let _ = systemctl_user(&["stop", &unit]).status();
-    Ok(())
-}
-
-/// List service names that have enabled per-service systemd user units.
-pub fn list_managed_service_units() -> Result<Vec<String>> {
-    let output = systemctl_user(&[
-            "list-units",
-            &format!("{TEMPLATE_INSTANCE_PREFIX}*"),
-            "--no-legend",
-            "--plain",
-            "--no-pager",
-        ])
-        .output()
-        .context("systemctl --user list-units")?;
-
-    let mut names = Vec::new();
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            let unit = line.split_whitespace().next().unwrap_or("");
-            if let Some(rest) = unit.strip_prefix(TEMPLATE_INSTANCE_PREFIX) {
-                if let Some(name) = rest.strip_suffix(".service") {
-                    names.push(name.to_string());
-                }
-            }
+    if !enabled {
+        let status = systemctl_user(&["enable", "--now", SUPERVISOR_UNIT])
+            .status()
+            .with_context(|| format!("systemctl --user enable --now {SUPERVISOR_UNIT}"))?;
+        if !status.success() {
+            anyhow::bail!("systemctl --user enable --now {SUPERVISOR_UNIT} failed");
         }
+    } else if needs_write {
+        let status = systemctl_user(&["restart", SUPERVISOR_UNIT])
+            .status()
+            .with_context(|| format!("systemctl --user restart {SUPERVISOR_UNIT}"))?;
+        if !status.success() {
+            anyhow::bail!("systemctl --user restart {SUPERVISOR_UNIT} failed");
+        }
+    } else {
+        let _ = systemctl_user(&["start", SUPERVISOR_UNIT]).status();
     }
-    Ok(names)
+
+    tracing::info!("supervisor unit ready");
+    Ok(())
+}
+
+pub fn uninstall_services_manager() -> Result<()> {
+    let _ = systemctl_user(&["disable", "--now", SUPERVISOR_UNIT]).status();
+    let path = supervisor_unit_path();
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+    }
+    let _ = systemctl_user(&["daemon-reload"]).status();
+    Ok(())
 }
