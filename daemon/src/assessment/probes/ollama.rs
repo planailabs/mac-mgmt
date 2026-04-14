@@ -12,7 +12,7 @@ use mac_mgmt_common::OllamaConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::{digest_hex, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{digest_hex, response_has_content, snippet, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
 
 pub const CANARY_MODEL: &str = "smollm2:135m";
 
@@ -85,7 +85,8 @@ impl OllamaProbe {
             .context("failed to parse generate response")?;
         let first_token_ms = started.elapsed().as_millis() as u64;
 
-        let ok = resp.response.contains(&ctx.canary_expected);
+        let ok = response_has_content(&resp.response);
+        let _ = ctx.canary_expected; // kept for the Regression probe kind
         Ok(ProbeResult {
             ok,
             tokens_in: resp.prompt_eval_count,
@@ -93,15 +94,15 @@ impl OllamaProbe {
             first_token_ms: Some(first_token_ms),
             model: Some(self.canary_model.clone()),
             canary_digest: Some(digest_hex(resp.response.trim().as_bytes())),
-            error_class: if ok {
-                None
-            } else {
-                Some("bad_response".into())
-            },
+            error_class: if ok { None } else { Some("empty_response".into()) },
             error_detail: if ok {
                 None
             } else {
-                Some(format!("canary mismatch; got {} bytes", resp.response.len()))
+                Some(format!(
+                    "response had no non-whitespace content ({} bytes): {}",
+                    resp.response.len(),
+                    snippet(&resp.response)
+                ))
             },
             ..Default::default()
         })

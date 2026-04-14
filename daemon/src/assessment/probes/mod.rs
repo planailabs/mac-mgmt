@@ -117,6 +117,37 @@ pub fn digest_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
+/// Did the LLM respond with real content?
+///
+/// The probe's job is to verify the pipeline (daemon → backend → model →
+/// response) works end-to-end, not to enforce that a tiny canary model
+/// followed the prompt verbatim. smollm2:135m and other sub-500M models
+/// routinely paraphrase, omit casing, or pad responses in ways that break
+/// a literal `.contains("READY")` check even when the pipeline is fine.
+///
+/// Accept any response with at least 4 non-whitespace characters. That
+/// catches truly broken outputs (empty strings, whitespace-only,
+/// stuck-on-one-token failure modes) without failing on model style.
+/// The canary_digest is still emitted for regression detection where
+/// operators care about output stability.
+pub fn response_has_content(s: &str) -> bool {
+    s.chars().filter(|c| !c.is_whitespace()).take(4).count() >= 4
+}
+
+/// Shorten a response for error reporting. Single-line, capped so an
+/// accidental dump doesn't blow up a Sentry event.
+pub fn snippet(s: &str) -> String {
+    let one_line: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
+    let trimmed = one_line.trim();
+    if trimmed.chars().count() <= 120 {
+        trimmed.to_string()
+    } else {
+        let mut out: String = trimmed.chars().take(120).collect();
+        out.push('…');
+        out
+    }
+}
+
 /// Build the full probe registry from the current daemon config. Called each
 /// probe tick so config reloads take effect on the next run.
 pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {

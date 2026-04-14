@@ -20,7 +20,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use super::{digest_hex, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{digest_hex, response_has_content, snippet, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
 
 /// Loopback is unauthenticated in openclaw's gateway (see net.ts:53,
 /// auth.ts:557), so no bearer-token handling is needed here.
@@ -98,7 +98,8 @@ async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
         .next()
         .map(|c| c.message.content)
         .unwrap_or_default();
-    let ok = content.contains(&ctx.canary_expected);
+    let ok = response_has_content(&content);
+    let _ = ctx.canary_expected; // kept for the Regression probe kind
 
     Ok(ProbeResult {
         ok,
@@ -107,11 +108,15 @@ async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
         first_token_ms: Some(first_token_ms),
         model: Some(resp.model),
         canary_digest: Some(digest_hex(content.trim().as_bytes())),
-        error_class: if ok { None } else { Some("bad_response".into()) },
+        error_class: if ok { None } else { Some("empty_response".into()) },
         error_detail: if ok {
             None
         } else {
-            Some(format!("canary mismatch; got {} bytes", content.len()))
+            Some(format!(
+                "response had no non-whitespace content ({} bytes): {}",
+                content.len(),
+                snippet(&content)
+            ))
         },
         ..Default::default()
     })

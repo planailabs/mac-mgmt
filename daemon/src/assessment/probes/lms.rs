@@ -12,7 +12,7 @@ use mac_mgmt_common::LmsConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::{digest_hex, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{digest_hex, response_has_content, snippet, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
 
 pub struct LmsProbe {
     base_url: String,
@@ -61,7 +61,8 @@ impl LmsProbe {
             .next()
             .map(|c| c.message.content)
             .unwrap_or_default();
-        let ok = content.contains(&ctx.canary_expected);
+        let ok = response_has_content(&content);
+        let _ = ctx.canary_expected; // kept for the Regression probe kind
 
         Ok(ProbeResult {
             ok,
@@ -69,11 +70,15 @@ impl LmsProbe {
             tokens_out: resp.usage.as_ref().map(|u| u.completion_tokens),
             model: Some(self.default_model.clone()),
             canary_digest: Some(digest_hex(content.trim().as_bytes())),
-            error_class: if ok { None } else { Some("bad_response".into()) },
+            error_class: if ok { None } else { Some("empty_response".into()) },
             error_detail: if ok {
                 None
             } else {
-                Some(format!("canary mismatch; got {} bytes", content.len()))
+                Some(format!(
+                    "response had no non-whitespace content ({} bytes): {}",
+                    content.len(),
+                    snippet(&content)
+                ))
             },
             ..Default::default()
         })
