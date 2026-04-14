@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -556,6 +557,74 @@ struct RequestAssessmentResult {
     dispatched: u32,
 }
 
+/// Load one stage's current gate config as a `HealthGateInput`. Returns
+/// `None` when the stage has no gate (renders as "disabled" toggle in
+/// the form so the operator can turn one on).
+#[server]
+async fn get_stage_gate(stage_id: String) -> Result<Option<HealthGateInput>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let sid: Uuid = stage_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let gate: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT health_gate FROM rollout_stages WHERE id = $1")
+            .bind(sid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("stage not found"))?;
+    Ok(gate.as_ref().map(HealthGateInput::from_json))
+}
+
+/// Persist a gate update. When `apply_to_all` is true the payload is
+/// written to every stage of the rollout so operators can ratchet one
+/// threshold across the board without editing each stage individually.
+#[server]
+async fn update_stage_gate(
+    stage_id: String,
+    gate: Option<HealthGateInput>,
+    apply_to_all: bool,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let sid: Uuid = stage_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    // `None` or enabled=false both serialise to SQL NULL (= no gate).
+    let gate_json: Option<serde_json::Value> = gate.as_ref().and_then(|g| g.to_json());
+
+    if apply_to_all {
+        let rollout_id: Uuid = sqlx::query_scalar(
+            "SELECT rollout_id FROM rollout_stages WHERE id = $1",
+        )
+        .bind(sid)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new("stage not found"))?;
+        sqlx::query(
+            "UPDATE rollout_stages SET health_gate = $1 WHERE rollout_id = $2",
+        )
+        .bind(&gate_json)
+        .bind(rollout_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    } else {
+        sqlx::query("UPDATE rollout_stages SET health_gate = $1 WHERE id = $2")
+            .bind(&gate_json)
+            .bind(sid)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    }
+    Ok(())
+}
+
 #[server]
 async fn request_stage_assessment(
     _rollout_id: String,
@@ -951,6 +1020,12 @@ pub fn RolloutDetail(id: String) -> Element {
     // message, is_error)>. Cleared when the operator clicks a different
     // stage's button. Avoids the silent click that prompted this work.
     let mut request_status = use_signal(|| Option::<(String, String, bool)>::None);
+    // Per-stage gate editor: Option<(stage_id, HealthGateInput, apply_to_all)>
+    // is None when no editor is open. Only one stage edits at a time — opening
+    // another closes the first without prompting (the form has Cancel anyway).
+    let mut edit_gate =
+        use_signal(|| Option::<(String, HealthGateInput, bool)>::None);
+    let mut edit_gate_error = use_signal(|| Option::<String>::None);
 
     match &*detail.read() {
         Some(Ok(info)) => {
@@ -1202,6 +1277,30 @@ pub fn RolloutDetail(id: String) -> Element {
                                         span { "Completed: {completed}" }
                                     }
 
+                                    // No-gate affordance: one-line row with an
+                                    // "Add gate" button. Mirrors where the gate
+                                    // panel would have sat, so the card layout
+                                    // stays consistent across stages.
+                                    if !stage.has_gate {
+                                        div { class: "mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between",
+                                            span { class: "text-xs text-gray-500 dark:text-gray-400",
+                                                "No health gate configured."
+                                            }
+                                            button {
+                                                class: "px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-800 dark:text-blue-200",
+                                                onclick: {
+                                                    let sid = stage_id_str.clone();
+                                                    move |_| {
+                                                        let sid = sid.clone();
+                                                        edit_gate_error.set(None);
+                                                        edit_gate.set(Some((sid, HealthGateInput::default(), false)));
+                                                    }
+                                                },
+                                                "Add gate"
+                                            }
+                                        }
+                                    }
+
                                     // ── System-assessment health gate ──
                                     if stage.has_gate {
                                         {
@@ -1241,6 +1340,31 @@ pub fn RolloutDetail(id: String) -> Element {
                                                             }
                                                         }
                                                         div { class: "flex gap-2",
+                                                            button {
+                                                                class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200",
+                                                                title: "Change thresholds, add/remove probed services, or disable the gate entirely",
+                                                                onclick: {
+                                                                    let sid = stage_id_str.clone();
+                                                                    move |_| {
+                                                                        let sid_inner = sid.clone();
+                                                                        async move {
+                                                                            edit_gate_error.set(None);
+                                                                            match get_stage_gate(sid_inner.clone()).await {
+                                                                                Ok(Some(existing)) => {
+                                                                                    edit_gate.set(Some((sid_inner, existing, false)));
+                                                                                }
+                                                                                Ok(None) => {
+                                                                                    edit_gate.set(Some((sid_inner, HealthGateInput::default(), false)));
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    edit_gate_error.set(Some(e.to_string()));
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                },
+                                                                "Edit gate"
+                                                            }
                                                             button {
                                                                 class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200",
                                                                 onclick: {
@@ -1432,6 +1556,248 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                             }
                                                                         }
                                                                     }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // ── Inline gate editor ──
+                                    // Renders when edit_gate's target matches
+                                    // this stage_id. Kept under the gate panel
+                                    // so save/cancel lands in the operator's
+                                    // natural reading flow.
+                                    {
+                                        let editing_here = edit_gate
+                                            .read()
+                                            .as_ref()
+                                            .map(|(sid, _, _)| sid == &stage_id_str)
+                                            .unwrap_or(false);
+                                        let err = if editing_here {
+                                            edit_gate_error.read().clone()
+                                        } else {
+                                            None
+                                        };
+                                        rsx! {
+                                            if editing_here {
+                                                div { class: "mt-3 pt-3 border-t border-gray-200 dark:border-gray-700",
+                                                    div { class: "flex items-center justify-between mb-2",
+                                                        span { class: "text-sm font-semibold text-gray-700 dark:text-gray-200",
+                                                            "Gate configuration"
+                                                        }
+                                                        button {
+                                                            class: "text-xs text-gray-500 dark:text-gray-400 hover:underline",
+                                                            onclick: move |_| {
+                                                                edit_gate.set(None);
+                                                                edit_gate_error.set(None);
+                                                            },
+                                                            "Cancel"
+                                                        }
+                                                    }
+
+                                                    // Read snapshot for display; writes flow through
+                                                    // edit_gate.write() on each input change.
+                                                    {
+                                                        let snap = edit_gate
+                                                            .read()
+                                                            .as_ref()
+                                                            .map(|(_, g, a)| (g.clone(), *a))
+                                                            .unwrap_or_else(|| (HealthGateInput::default(), false));
+                                                        let (g, apply_all) = snap;
+                                                        rsx! {
+                                                            div { class: "flex items-center gap-2 mb-3",
+                                                                input {
+                                                                    r#type: "checkbox",
+                                                                    checked: g.enabled,
+                                                                    onchange: move |e| {
+                                                                        let mut w = edit_gate.write();
+                                                                        if let Some(t) = w.as_mut() {
+                                                                            t.1.enabled = e.value() == "true";
+                                                                        }
+                                                                    },
+                                                                }
+                                                                label { class: "text-xs text-gray-700 dark:text-gray-200",
+                                                                    "Gate enabled (unchecked = no gate, always passes)"
+                                                                }
+                                                            }
+
+                                                            if g.enabled {
+                                                                div { class: "grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3",
+                                                                    div {
+                                                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                            "Heartbeat fresh % (min)"
+                                                                        }
+                                                                        input {
+                                                                            r#type: "number", min: "0", max: "100",
+                                                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                                                            value: "{g.min_heartbeat_fresh_pct}",
+                                                                            oninput: move |e| {
+                                                                                if let Ok(v) = e.value().parse::<u8>() {
+                                                                                    let mut w = edit_gate.write();
+                                                                                    if let Some(t) = w.as_mut() {
+                                                                                        t.1.min_heartbeat_fresh_pct = v.min(100);
+                                                                                    }
+                                                                                }
+                                                                            },
+                                                                        }
+                                                                    }
+                                                                    div {
+                                                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                            "Freshness window (sec)"
+                                                                        }
+                                                                        input {
+                                                                            r#type: "number", min: "10",
+                                                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                                                            value: "{g.heartbeat_freshness_secs}",
+                                                                            oninput: move |e| {
+                                                                                if let Ok(v) = e.value().parse::<u32>() {
+                                                                                    let mut w = edit_gate.write();
+                                                                                    if let Some(t) = w.as_mut() {
+                                                                                        t.1.heartbeat_freshness_secs = v.max(10);
+                                                                                    }
+                                                                                }
+                                                                            },
+                                                                        }
+                                                                    }
+                                                                    div {
+                                                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                            "Grace period (sec)"
+                                                                        }
+                                                                        input {
+                                                                            r#type: "number", min: "0",
+                                                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                                                            value: "{g.grace_period_secs}",
+                                                                            oninput: move |e| {
+                                                                                if let Ok(v) = e.value().parse::<u32>() {
+                                                                                    let mut w = edit_gate.write();
+                                                                                    if let Some(t) = w.as_mut() {
+                                                                                        t.1.grace_period_secs = v;
+                                                                                    }
+                                                                                }
+                                                                            },
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                div { class: "mb-3",
+                                                                    label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                        "Probe success thresholds"
+                                                                    }
+                                                                    {
+                                                                        let rows: Vec<(usize, String, u8)> = g
+                                                                            .probe_thresholds
+                                                                            .iter()
+                                                                            .enumerate()
+                                                                            .map(|(i, (s, p))| (i, s.clone(), *p))
+                                                                            .collect();
+                                                                        rsx! {
+                                                                            for (idx, svc, pct) in rows {
+                                                                                div { class: "flex items-center gap-2 mb-1",
+                                                                                    input {
+                                                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white flex-1",
+                                                                                        placeholder: "service",
+                                                                                        value: "{svc}",
+                                                                                        oninput: move |e| {
+                                                                                            let mut w = edit_gate.write();
+                                                                                            if let Some(t) = w.as_mut() {
+                                                                                                if let Some(row) = t.1.probe_thresholds.get_mut(idx) {
+                                                                                                    row.0 = e.value();
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                    }
+                                                                                    input {
+                                                                                        r#type: "number", min: "0", max: "100",
+                                                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm w-20 dark:bg-gray-700 dark:text-white",
+                                                                                        value: "{pct}",
+                                                                                        oninput: move |e| {
+                                                                                            if let Ok(v) = e.value().parse::<u8>() {
+                                                                                                let mut w = edit_gate.write();
+                                                                                                if let Some(t) = w.as_mut() {
+                                                                                                    if let Some(row) = t.1.probe_thresholds.get_mut(idx) {
+                                                                                                        row.1 = v.min(100);
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                    }
+                                                                                    span { class: "text-xs text-gray-500 dark:text-gray-400", "%" }
+                                                                                    button {
+                                                                                        class: "text-red-600 dark:text-red-400 text-xs hover:underline",
+                                                                                        onclick: move |_| {
+                                                                                            let mut w = edit_gate.write();
+                                                                                            if let Some(t) = w.as_mut() {
+                                                                                                if idx < t.1.probe_thresholds.len() {
+                                                                                                    t.1.probe_thresholds.remove(idx);
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                        "remove"
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    button {
+                                                                        class: "text-blue-600 dark:text-blue-400 text-xs hover:underline mt-1",
+                                                                        onclick: move |_| {
+                                                                            let mut w = edit_gate.write();
+                                                                            if let Some(t) = w.as_mut() {
+                                                                                t.1.probe_thresholds.push((String::new(), 90));
+                                                                            }
+                                                                        },
+                                                                        "+ add service"
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            // Apply-to-all + Save row.
+                                                            div { class: "flex items-center gap-3 mt-3",
+                                                                div { class: "flex items-center gap-2",
+                                                                    input {
+                                                                        r#type: "checkbox",
+                                                                        checked: apply_all,
+                                                                        onchange: move |e| {
+                                                                            let mut w = edit_gate.write();
+                                                                            if let Some(t) = w.as_mut() {
+                                                                                t.2 = e.value() == "true";
+                                                                            }
+                                                                        },
+                                                                    }
+                                                                    label { class: "text-xs text-gray-600 dark:text-gray-300",
+                                                                        "Apply this gate to all stages of this rollout"
+                                                                    }
+                                                                }
+                                                                button {
+                                                                    class: "ml-auto px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700",
+                                                                    onclick: move |_| {
+                                                                        let snap = edit_gate
+                                                                            .read()
+                                                                            .as_ref()
+                                                                            .map(|(sid, g, a)| (sid.clone(), g.clone(), *a));
+                                                                        async move {
+                                                                            let Some((sid, g, apply_all)) = snap else { return; };
+                                                                            match update_stage_gate(sid, Some(g), apply_all).await {
+                                                                                Ok(()) => {
+                                                                                    edit_gate.set(None);
+                                                                                    edit_gate_error.set(None);
+                                                                                    detail.restart();
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    edit_gate_error.set(Some(e.to_string()));
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    "Save"
+                                                                }
+                                                            }
+                                                            if let Some(msg) = err.as_ref() {
+                                                                p { class: "mt-2 text-xs text-red-700 dark:text-red-300",
+                                                                    "{msg}"
                                                                 }
                                                             }
                                                         }

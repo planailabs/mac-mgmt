@@ -3,41 +3,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
 const ALL_CLUSTERS_SENTINEL: &str = "__all__";
-
-/// Form-side mirror of `rollout_health::HealthGate`. Kept verbatim so the
-/// JSON we POST is round-trip compatible with the evaluator's struct.
-/// `min_probe_ok_pct` is shipped as a `Vec<(String, u8)>` rather than a
-/// HashMap so the UI can render insertion-ordered rows; the server
-/// converts back to a HashMap at write time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct HealthGateInput {
-    enabled: bool,
-    min_heartbeat_fresh_pct: u8,
-    heartbeat_freshness_secs: u32,
-    grace_period_secs: u32,
-    /// Each entry is (service_name, required_ok_pct). Empty string keys
-    /// are dropped server-side.
-    probe_thresholds: Vec<(String, u8)>,
-}
-
-impl Default for HealthGateInput {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            min_heartbeat_fresh_pct: 95,
-            heartbeat_freshness_secs: 180,
-            grace_period_secs: 600,
-            probe_thresholds: vec![
-                ("openclaw".into(), 90),
-                ("ollama".into(), 90),
-            ],
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GroupOption {
@@ -217,30 +187,9 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Build the JSON gate payload once. Empty service rows are dropped
-    // and percentages clamped so an off-by-one doesn't poison evaluation.
-    let gate_json: Option<serde_json::Value> = match gate {
-        Some(g) if g.enabled => {
-            let mut probe_map = serde_json::Map::new();
-            for (svc, pct) in &g.probe_thresholds {
-                let svc = svc.trim();
-                if svc.is_empty() {
-                    continue;
-                }
-                probe_map.insert(
-                    svc.to_string(),
-                    serde_json::Value::Number((*pct).min(100).into()),
-                );
-            }
-            Some(serde_json::json!({
-                "min_heartbeat_fresh_pct": g.min_heartbeat_fresh_pct.min(100),
-                "heartbeat_freshness_secs": g.heartbeat_freshness_secs.max(10),
-                "min_probe_ok_pct": serde_json::Value::Object(probe_map),
-                "grace_period_secs": g.grace_period_secs,
-            }))
-        }
-        _ => None,
-    };
+    // Empty service rows are dropped and percentages clamped inside
+    // to_json so an off-by-one doesn't poison evaluation.
+    let gate_json: Option<serde_json::Value> = gate.as_ref().and_then(|g| g.to_json());
 
     for (i, gid) in resolved.iter().enumerate() {
         sqlx::query(
