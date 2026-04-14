@@ -19,12 +19,22 @@ struct FleetEntry {
     tunnels: serde_json::Value,
     relay_proxy_hostname: Option<String>,
     reported_at: DateTime<Utc>,
+    /// Latest dynamic sample piggybacked on the heartbeat (CPU/mem/thermal).
+    #[serde(default)]
+    sample: Option<serde_json::Value>,
+    /// Rolled-up extended service state from the last probe run.
+    #[serde(default)]
+    services_extended: Option<serde_json::Value>,
+    /// True if the viewer may see probe error_detail (admin only).
+    #[serde(default)]
+    viewer_is_admin: bool,
 }
 
 #[server]
 async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
+    let is_admin = user.is_admin;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -38,13 +48,15 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         tunnels: serde_json::Value,
         relay_proxy_hostname: Option<String>,
         reported_at: DateTime<Utc>,
+        sample: Option<serde_json::Value>,
+        services_extended: Option<serde_json::Value>,
     }
 
     let accessible = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let rows = if let Some(ids) = accessible {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              WHERE dh.cluster_id = ANY($1) \
@@ -56,7 +68,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              ORDER BY dh.reported_at DESC",
@@ -79,6 +91,9 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
             tunnels: r.tunnels,
             relay_proxy_hostname: r.relay_proxy_hostname,
             reported_at: r.reported_at,
+            sample: r.sample,
+            services_extended: r.services_extended,
+            viewer_is_admin: is_admin,
         })
         .collect())
 }
@@ -225,6 +240,7 @@ pub fn FleetDashboard() -> Element {
                                     SortableTh { label: "Env".to_string(), sort_key: "env".to_string(), sort }
                                     SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Status" }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Load" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Services" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Tunnels" }
                                     SortableTh { label: "Last Seen".to_string(), sort_key: "last_seen".to_string(), sort }
@@ -248,21 +264,60 @@ pub fn FleetDashboard() -> Element {
                                             entry.reported_at.format("%Y-%m-%d %H:%M").to_string()
                                         };
 
-                                        let services_badges: Vec<(String, String)> = entry.services
+                                        // Map probe state (last_probe_ok + last_probe_kind) by service name from
+                                        // services_extended so we can overlay deep-probe status on the base badges.
+                                        let probe_map: std::collections::HashMap<String, (Option<bool>, Option<String>, Option<String>)> = entry.services_extended
+                                            .as_ref()
+                                            .and_then(|v| v.as_array())
+                                            .map(|arr| arr.iter().filter_map(|s| {
+                                                let name = s.get("name").and_then(|v| v.as_str())?.to_string();
+                                                let probe_ok = s.get("last_probe_ok").and_then(|v| v.as_bool());
+                                                let probe_kind = s.get("last_probe_kind").and_then(|v| v.as_str()).map(String::from);
+                                                let probe_at = s.get("last_probe_at").and_then(|v| v.as_i64()).map(|i| i.to_string());
+                                                Some((name, (probe_ok, probe_kind, probe_at)))
+                                            }).collect())
+                                            .unwrap_or_default();
+
+                                        let services_badges: Vec<(String, String, String)> = entry.services
                                             .as_array()
                                             .map(|arr| {
                                                 arr.iter().map(|s| {
                                                     let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
                                                     let healthy = s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
-                                                    let cls = if healthy {
-                                                        "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200".to_string()
-                                                    } else {
-                                                        "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200".to_string()
+                                                    let probe = probe_map.get(&name).cloned();
+                                                    // Probe failure overrides the base healthy flag visually.
+                                                    let (cls, title) = match (healthy, probe.as_ref()) {
+                                                        (_, Some((Some(false), Some(k), _))) => (
+                                                            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200".to_string(),
+                                                            format!("{k} probe failed"),
+                                                        ),
+                                                        (true, Some((Some(true), Some(k), _))) => (
+                                                            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200".to_string(),
+                                                            format!("{k} probe ok"),
+                                                        ),
+                                                        (true, _) => (
+                                                            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200".to_string(),
+                                                            "healthy".to_string(),
+                                                        ),
+                                                        (false, _) => (
+                                                            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200".to_string(),
+                                                            "unhealthy".to_string(),
+                                                        ),
                                                     };
-                                                    (name, cls)
+                                                    (name, cls, title)
                                                 }).collect()
                                             })
                                             .unwrap_or_default();
+
+                                        // Compact load cell: "1.2 · 78% · nominal"
+                                        let load_cell: Option<String> = entry.sample.as_ref().map(|s| {
+                                            let cpu = s.get("cpu_load_1m").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                            let mem_used = s.get("mem_used_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                                            let mem_total = s.get("mem_total_bytes").and_then(|v| v.as_u64()).unwrap_or(1);
+                                            let mem_pct = (mem_used * 100 / mem_total.max(1)).min(100);
+                                            let thermal = s.get("thermal_state").and_then(|v| v.as_str()).unwrap_or("—");
+                                            format!("{cpu:.2} · {mem_pct}% · {thermal}")
+                                        });
 
                                         rsx! {
                                             tr {
@@ -289,10 +344,19 @@ pub fn FleetDashboard() -> Element {
                                                 }
                                                 td { class: "px-6 py-4 text-sm", "{entry.version}" }
                                                 td { class: "px-6 py-4 text-sm {status_class}", "{status_text}" }
+                                                td { class: "px-6 py-4 text-xs font-mono text-gray-600 dark:text-gray-300",
+                                                    if let Some(lc) = &load_cell {
+                                                        span { "{lc}" }
+                                                    } else {
+                                                        span { class: "text-gray-400 dark:text-gray-500", "—" }
+                                                    }
+                                                }
                                                 td { class: "px-6 py-4 text-sm",
                                                     div { class: "flex gap-1 flex-wrap",
-                                                        for (name, badge_class) in &services_badges {
-                                                            span { class: "inline-block px-2 py-0.5 rounded text-xs font-medium {badge_class}",
+                                                        for (name, badge_class, title) in &services_badges {
+                                                            span {
+                                                                class: "inline-block px-2 py-0.5 rounded text-xs font-medium {badge_class}",
+                                                                title: "{title}",
                                                                 "{name}"
                                                             }
                                                         }
