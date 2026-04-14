@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time;
 
 use crate::assessment::{self, Assessor};
@@ -33,6 +34,11 @@ struct Daemon {
     instance_id: String,
     host_key: Arc<russh::keys::PrivateKey>,
     assessor: Arc<Assessor>,
+    /// `true` until the first successful heartbeat has been ack'd by the
+    /// server. Gates the initial `/api/assessment` POST so it lands after
+    /// the heartbeat that creates its parent row — the FK added in
+    /// migration 031 would otherwise reject the insert.
+    initial_assessment_pending: Arc<AtomicBool>,
     #[cfg(feature = "services")]
     svc_mgr: crate::service_mgmt::ServiceManager,
 }
@@ -203,8 +209,10 @@ impl Daemon {
             let token = token.clone();
             let iid = self.instance_id.clone();
             let hk = Arc::clone(&self.host_key);
+            let pending = Arc::clone(&self.initial_assessment_pending);
+            let assessor = Arc::clone(&self.assessor);
             tokio::spawn(async move {
-                do_send_heartbeat(
+                let ok = do_send_heartbeat(
                     &url,
                     &token,
                     &iid,
@@ -216,6 +224,15 @@ impl Daemon {
                     services_extended,
                 )
                 .await;
+
+                // First successful heartbeat creates the parent row for
+                // assessments + probes via migration 031's FK. Only fire
+                // the initial inventory send once, and only after we know
+                // the parent is there. swap(false) is a compare-and-set
+                // so concurrent heartbeat sends at startup don't race.
+                if ok && pending.swap(false, Ordering::Relaxed) {
+                    assessor.send_inventory(&url, &token, &iid, &hk).await;
+                }
             });
         }
     }
@@ -576,6 +593,7 @@ pub async fn run(
         instance_id,
         host_key,
         assessor,
+        initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         #[cfg(feature = "services")]
         svc_mgr,
     };
@@ -604,9 +622,9 @@ pub async fn run(
 
     daemon.spawn_sync_skills_and_mcp();
 
-    // Emit an initial assessment snapshot so the server has data before the
-    // first 6h tick. Fire-and-forget; does not block startup.
-    daemon.send_assessment_inventory();
+    // The initial assessment snapshot is emitted by send_heartbeat() once
+    // the first 2xx ack lands — the heartbeat INSERT creates the parent
+    // row that migration 031's FK requires on the assessments insert.
 
     #[cfg(feature = "relay")]
     relay_mgr.sync_ssh_keys();
@@ -792,6 +810,10 @@ async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
     }
 }
 
+/// Returns `true` when the POST lands with a 2xx. Used by the caller to
+/// gate one-shot follow-up work (e.g. the initial assessment inventory
+/// send, which would otherwise race the heartbeat that creates its FK
+/// parent row — see migration 031).
 async fn do_send_heartbeat(
     server_url: &str,
     server_token: &str,
@@ -802,7 +824,7 @@ async fn do_send_heartbeat(
     relay_proxy_hostname: Option<String>,
     sample: Option<mac_mgmt_common::DynamicSample>,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
-) {
+) -> bool {
     use russh::keys::signature::Signer;
     use russh::keys::PublicKeyBase64;
 
@@ -823,7 +845,7 @@ async fn do_send_heartbeat(
         }
         Err(e) => {
             tracing::warn!("failed to sign heartbeat: {e}");
-            return;
+            return false;
         }
     };
 
@@ -862,17 +884,21 @@ async fn do_send_heartbeat(
     {
         Ok(Ok(resp)) if resp.status().is_success() => {
             tracing::debug!("heartbeat accepted");
+            true
         }
         Ok(Ok(resp)) => {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             tracing::warn!("heartbeat rejected: {status} — {body}");
+            false
         }
         Ok(Err(e)) => {
             tracing::warn!("heartbeat failed: {e}");
+            false
         }
         Err(_) => {
             tracing::warn!("heartbeat timed out");
+            false
         }
     }
 }
