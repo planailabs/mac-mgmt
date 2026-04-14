@@ -19,9 +19,10 @@ pub mod security;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
 use tokio::sync::RwLock;
 
-use mac_mgmt_common::{DynamicSample, ServiceExtState};
+use mac_mgmt_common::{Assessment, DynamicSample, ServiceExtState};
 
 /// Default cadence for deep probes. Jittered ±2min.
 pub const DEFAULT_PROBE_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -73,13 +74,42 @@ impl Assessor {
     /// inventory interval, and on `RequestAssessment` push.
     pub async fn send_inventory(
         &self,
-        _server_url: &str,
-        _server_token: &str,
-        _instance_id: &str,
-        _host_key: &russh::keys::PrivateKey,
+        server_url: &str,
+        server_token: &str,
+        instance_id: &str,
+        host_key: &russh::keys::PrivateKey,
     ) {
-        // TODO(step 4+5): collect inventory+security, sign, POST /api/assessment.
-        tracing::debug!("assessment: inventory send (stub)");
+        let inventory = match inventory::collect().await {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::warn!("inventory collection failed: {e}");
+                return;
+            }
+        };
+        let security = match security::collect().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("security collection failed: {e}");
+                return;
+            }
+        };
+
+        let collected_at = chrono::Utc::now().timestamp();
+        let body = match build_signed_assessment(
+            instance_id,
+            collected_at,
+            inventory,
+            security,
+            host_key,
+        ) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("failed to sign assessment: {e}");
+                return;
+            }
+        };
+
+        post_assessment(server_url, server_token, body).await;
     }
 
     /// Run every configured probe and send each result. Expensive (full LLM inference).
@@ -123,5 +153,56 @@ pub fn jittered(base: Duration, jitter_secs: u64) -> Duration {
     let jitter = rand::thread_rng().gen_range(0..=(jitter_secs * 2)) as i64 - jitter_secs as i64;
     let secs = (base.as_secs() as i64 + jitter).max(1) as u64;
     Duration::from_secs(secs)
+}
+
+fn build_signed_assessment(
+    instance_id: &str,
+    collected_at: i64,
+    inventory: mac_mgmt_common::Inventory,
+    security: mac_mgmt_common::SecurityPosture,
+    host_key: &russh::keys::PrivateKey,
+) -> anyhow::Result<Assessment> {
+    use russh::keys::PublicKeyBase64;
+    use russh::keys::signature::Signer;
+
+    let message = format!("{instance_id}:{collected_at}");
+    let sig = host_key.try_sign(message.as_bytes())?;
+    let public_key = host_key.public_key_base64();
+    let signature = base64::engine::general_purpose::STANDARD.encode(sig.as_bytes());
+
+    Ok(Assessment {
+        instance_id: instance_id.to_string(),
+        collected_at,
+        inventory,
+        security,
+        public_key,
+        signature,
+    })
+}
+
+async fn post_assessment(server_url: &str, server_token: &str, body: Assessment) {
+    let url = format!("{server_url}/api/assessment");
+    let client = reqwest::Client::new();
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .post(&url)
+            .bearer_auth(server_token)
+            .json(&body)
+            .send(),
+    )
+    .await;
+    match result {
+        Ok(Ok(resp)) if resp.status().is_success() => {
+            tracing::debug!("assessment accepted");
+        }
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            tracing::warn!("assessment rejected: {status} — {text}");
+        }
+        Ok(Err(e)) => tracing::warn!("assessment send failed: {e}"),
+        Err(_) => tracing::warn!("assessment send timed out"),
+    }
 }
 

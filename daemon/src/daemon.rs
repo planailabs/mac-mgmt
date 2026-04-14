@@ -601,6 +601,10 @@ pub async fn run(
 
     daemon.spawn_sync_skills_and_mcp();
 
+    // Emit an initial assessment snapshot so the server has data before the
+    // first 6h tick. Fire-and-forget; does not block startup.
+    daemon.send_assessment_inventory();
+
     #[cfg(feature = "relay")]
     relay_mgr.sync_ssh_keys();
 
