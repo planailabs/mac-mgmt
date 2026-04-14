@@ -103,6 +103,10 @@ pkgs.testers.nixosTest {
   nodes.machine = { lib, ... }: {
     imports = [ ../server/module.nix ];
 
+    # Daemon's mcp_servers.rs calls `nix profile list --json`, which needs
+    # the nix-command experimental feature — absent in the stock VM config.
+    nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
     environment.systemPackages = [
       mac-mgmt-daemon
       mac-mgmt-relay
