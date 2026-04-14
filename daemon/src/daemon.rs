@@ -562,6 +562,7 @@ pub async fn run(
 
     let assessor = Arc::new(Assessor::new());
     assessor.update_config(current_cfg.clone()).await;
+    assessor.attach_metrics(Arc::clone(&metrics)).await;
 
     // Build the Daemon struct with all long-lived state.
     let mut daemon = Daemon {

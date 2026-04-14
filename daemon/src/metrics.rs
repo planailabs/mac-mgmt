@@ -1,10 +1,381 @@
-use prometheus::{Encoder, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
+
+use mac_mgmt_common::{DynamicSample, Inventory, SecurityPosture};
+
+use crate::assessment::probes::{ProbeKind, ProbeResult};
+
+/// Prometheus surface for the system-assessment module.
+///
+/// Each tier (sample / inventory / security / probes) updates its own
+/// gauges. Everything is a gauge (or gauge-vec) so that a rescrape always
+/// shows the latest observation — probes in particular are sparse (~15min)
+/// so a counter would be misleading.
+pub struct AssessmentMetrics {
+    // Dynamic sample (per-heartbeat ~60s).
+    pub cpu_load_1m: Gauge,
+    pub mem_used_bytes: IntGauge,
+    pub mem_total_bytes: IntGauge,
+    pub swap_used_bytes: IntGauge,
+    pub disk_free_bytes: IntGaugeVec,
+    pub disk_total_bytes: IntGaugeVec,
+    pub net_rx_bytes: IntGauge,
+    pub net_tx_bytes: IntGauge,
+    pub process_count: IntGauge,
+    /// One-hot gauge by state label ("nominal" / "fair" / "serious" / "critical").
+    pub thermal_state: IntGaugeVec,
+
+    // Inventory (every ~6h).
+    pub uptime_secs: IntGauge,
+    pub cpu_cores_logical: IntGauge,
+    pub cpu_cores_physical: IntGauge,
+    pub inventory_mem_total_bytes: IntGauge,
+    /// Info-style gauge: always 1, all structural fields on labels.
+    pub inventory_info: IntGaugeVec,
+
+    // Security (every ~6h). Booleans are -1 = unknown, 0 = off, 1 = on.
+    pub security_bool: IntGaugeVec,
+    /// Info-style gauge: always 1; labels carry version strings.
+    pub security_info: IntGaugeVec,
+
+    // Probes (every ~15min).
+    pub probe_ok: IntGaugeVec,
+    pub probe_duration_ms: IntGaugeVec,
+    pub probe_first_token_ms: IntGaugeVec,
+    pub probe_tokens_in: IntGaugeVec,
+    pub probe_tokens_out: IntGaugeVec,
+    pub probe_last_run_timestamp: IntGaugeVec,
+}
+
+impl AssessmentMetrics {
+    fn new(registry: &Registry) -> Self {
+        let cpu_load_1m = Gauge::with_opts(Opts::new(
+            "mac_mgmt_cpu_load_1m",
+            "1-minute CPU load average from the latest heartbeat sample",
+        ))
+        .unwrap();
+        let mem_used_bytes = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_mem_used_bytes",
+            "Resident memory in use, bytes",
+        ))
+        .unwrap();
+        let mem_total_bytes = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_mem_total_bytes",
+            "Total physical memory, bytes",
+        ))
+        .unwrap();
+        let swap_used_bytes = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_swap_used_bytes",
+            "Swap in use, bytes (0 when disabled)",
+        ))
+        .unwrap();
+        let disk_free_bytes = IntGaugeVec::new(
+            Opts::new("mac_mgmt_disk_free_bytes", "Free bytes per tracked mount"),
+            &["mount"],
+        )
+        .unwrap();
+        let disk_total_bytes = IntGaugeVec::new(
+            Opts::new("mac_mgmt_disk_total_bytes", "Total bytes per tracked mount"),
+            &["mount"],
+        )
+        .unwrap();
+        let net_rx_bytes = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_net_rx_bytes",
+            "Network bytes received since the sample collector was initialised",
+        ))
+        .unwrap();
+        let net_tx_bytes = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_net_tx_bytes",
+            "Network bytes transmitted since the sample collector was initialised",
+        ))
+        .unwrap();
+        let process_count = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_process_count",
+            "Total process count",
+        ))
+        .unwrap();
+        let thermal_state = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_thermal_state",
+                "One-hot thermal state; the label matching the current state is 1",
+            ),
+            &["state"],
+        )
+        .unwrap();
+
+        let uptime_secs = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_host_uptime_secs",
+            "Host uptime in seconds at last inventory",
+        ))
+        .unwrap();
+        let cpu_cores_logical = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_cpu_cores_logical",
+            "Logical CPU cores",
+        ))
+        .unwrap();
+        let cpu_cores_physical = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_cpu_cores_physical",
+            "Physical CPU cores",
+        ))
+        .unwrap();
+        let inventory_mem_total_bytes = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_inventory_mem_total_bytes",
+            "Total physical memory at last inventory",
+        ))
+        .unwrap();
+        let inventory_info = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_inventory_info",
+                "Static inventory facts, always 1; structural fields on labels",
+            ),
+            &[
+                "os_name",
+                "os_version",
+                "kernel_version",
+                "arch",
+                "cpu_model",
+                "supervisor",
+                "nix_version",
+                "nixpkgs_commit",
+            ],
+        )
+        .unwrap();
+
+        let security_bool = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_security_enabled",
+                "Security posture toggle per check: -1 unknown, 0 off, 1 on",
+            ),
+            &["check"],
+        )
+        .unwrap();
+        let security_info = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_security_info",
+                "Security posture string fields, always 1; values on labels",
+            ),
+            &[
+                "xprotect_version",
+                "selinux_mode",
+                "apparmor_profiles",
+                "linux_firewall",
+            ],
+        )
+        .unwrap();
+
+        let probe_ok = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_probe_ok",
+                "Last probe outcome: 1 ok, 0 failed. Absent until the first run.",
+            ),
+            &["service", "kind"],
+        )
+        .unwrap();
+        let probe_duration_ms = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_probe_duration_ms",
+                "Last probe wall-clock duration in milliseconds",
+            ),
+            &["service"],
+        )
+        .unwrap();
+        let probe_first_token_ms = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_probe_first_token_ms",
+                "Last probe first-token latency in milliseconds (LLM backends only)",
+            ),
+            &["service"],
+        )
+        .unwrap();
+        let probe_tokens_in = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_probe_tokens_in",
+                "Last probe prompt-token count (LLM backends only)",
+            ),
+            &["service"],
+        )
+        .unwrap();
+        let probe_tokens_out = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_probe_tokens_out",
+                "Last probe completion-token count (LLM backends only)",
+            ),
+            &["service"],
+        )
+        .unwrap();
+        let probe_last_run_timestamp = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_probe_last_run_timestamp_seconds",
+                "Unix timestamp of the last probe run",
+            ),
+            &["service"],
+        )
+        .unwrap();
+
+        for c in [
+            Box::new(cpu_load_1m.clone()) as Box<dyn prometheus::core::Collector>,
+            Box::new(mem_used_bytes.clone()),
+            Box::new(mem_total_bytes.clone()),
+            Box::new(swap_used_bytes.clone()),
+            Box::new(disk_free_bytes.clone()),
+            Box::new(disk_total_bytes.clone()),
+            Box::new(net_rx_bytes.clone()),
+            Box::new(net_tx_bytes.clone()),
+            Box::new(process_count.clone()),
+            Box::new(thermal_state.clone()),
+            Box::new(uptime_secs.clone()),
+            Box::new(cpu_cores_logical.clone()),
+            Box::new(cpu_cores_physical.clone()),
+            Box::new(inventory_mem_total_bytes.clone()),
+            Box::new(inventory_info.clone()),
+            Box::new(security_bool.clone()),
+            Box::new(security_info.clone()),
+            Box::new(probe_ok.clone()),
+            Box::new(probe_duration_ms.clone()),
+            Box::new(probe_first_token_ms.clone()),
+            Box::new(probe_tokens_in.clone()),
+            Box::new(probe_tokens_out.clone()),
+            Box::new(probe_last_run_timestamp.clone()),
+        ] {
+            registry.register(c).unwrap();
+        }
+
+        Self {
+            cpu_load_1m,
+            mem_used_bytes,
+            mem_total_bytes,
+            swap_used_bytes,
+            disk_free_bytes,
+            disk_total_bytes,
+            net_rx_bytes,
+            net_tx_bytes,
+            process_count,
+            thermal_state,
+            uptime_secs,
+            cpu_cores_logical,
+            cpu_cores_physical,
+            inventory_mem_total_bytes,
+            inventory_info,
+            security_bool,
+            security_info,
+            probe_ok,
+            probe_duration_ms,
+            probe_first_token_ms,
+            probe_tokens_in,
+            probe_tokens_out,
+            probe_last_run_timestamp,
+        }
+    }
+
+    pub fn update_sample(&self, s: &DynamicSample) {
+        self.cpu_load_1m.set(s.cpu_load_1m as f64);
+        self.mem_used_bytes.set(s.mem_used_bytes as i64);
+        self.mem_total_bytes.set(s.mem_total_bytes as i64);
+        self.swap_used_bytes.set(s.swap_used_bytes as i64);
+        for df in &s.disk_free {
+            self.disk_free_bytes
+                .with_label_values(&[&df.mount])
+                .set(df.free_bytes as i64);
+            self.disk_total_bytes
+                .with_label_values(&[&df.mount])
+                .set(df.total_bytes as i64);
+        }
+        self.net_rx_bytes.set(s.net_rx_bytes as i64);
+        self.net_tx_bytes.set(s.net_tx_bytes as i64);
+        self.process_count.set(s.process_count as i64);
+        // One-hot thermal state: zero out the known labels, then set the current.
+        for state in ["nominal", "fair", "serious", "critical"] {
+            self.thermal_state.with_label_values(&[state]).set(0);
+        }
+        if let Some(state) = s.thermal_state.as_deref() {
+            self.thermal_state.with_label_values(&[state]).set(1);
+        }
+    }
+
+    pub fn update_inventory(&self, inv: &Inventory) {
+        self.uptime_secs.set(inv.uptime_secs as i64);
+        self.cpu_cores_logical.set(inv.cpu_cores_logical as i64);
+        self.cpu_cores_physical.set(inv.cpu_cores_physical as i64);
+        self.inventory_mem_total_bytes.set(inv.mem_total_bytes as i64);
+        // Reset — an inventory update may change the label set (e.g. OS upgrade).
+        self.inventory_info.reset();
+        self.inventory_info
+            .with_label_values(&[
+                inv.os_name.as_str(),
+                inv.os_version.as_str(),
+                inv.kernel_version.as_str(),
+                inv.arch.as_str(),
+                inv.cpu_model.as_str(),
+                inv.supervisor.as_deref().unwrap_or(""),
+                inv.nix_version.as_deref().unwrap_or(""),
+                inv.nixpkgs_commit.as_deref().unwrap_or(""),
+            ])
+            .set(1);
+    }
+
+    pub fn update_security(&self, s: &SecurityPosture) {
+        for (name, v) in [
+            ("sip", s.sip_enabled),
+            ("filevault", s.filevault_enabled),
+            ("firewall", s.firewall_enabled),
+            ("gatekeeper", s.gatekeeper_enabled),
+            ("fde", s.fde_enabled),
+        ] {
+            let value = match v {
+                None => -1,
+                Some(true) => 1,
+                Some(false) => 0,
+            };
+            self.security_bool.with_label_values(&[name]).set(value);
+        }
+        self.security_info.reset();
+        let apparmor = s
+            .apparmor_profiles
+            .map(|n| n.to_string())
+            .unwrap_or_default();
+        self.security_info
+            .with_label_values(&[
+                s.xprotect_version.as_deref().unwrap_or(""),
+                s.selinux_mode.as_deref().unwrap_or(""),
+                apparmor.as_str(),
+                s.linux_firewall.as_deref().unwrap_or(""),
+            ])
+            .set(1);
+    }
+
+    pub fn update_probe(&self, service: &str, kind: ProbeKind, r: &ProbeResult) {
+        self.probe_ok
+            .with_label_values(&[service, kind.as_str()])
+            .set(if r.ok { 1 } else { 0 });
+        self.probe_duration_ms
+            .with_label_values(&[service])
+            .set(r.duration_ms as i64);
+        if let Some(v) = r.first_token_ms {
+            self.probe_first_token_ms
+                .with_label_values(&[service])
+                .set(v as i64);
+        }
+        if let Some(v) = r.tokens_in {
+            self.probe_tokens_in
+                .with_label_values(&[service])
+                .set(v as i64);
+        }
+        if let Some(v) = r.tokens_out {
+            self.probe_tokens_out
+                .with_label_values(&[service])
+                .set(v as i64);
+        }
+        self.probe_last_run_timestamp
+            .with_label_values(&[service])
+            .set(chrono::Utc::now().timestamp());
+    }
+}
 
 pub struct Metrics {
     registry: Registry,
     pub service_healthy: IntGaugeVec,
     pub service_upgrade_pending: IntGaugeVec,
     pub service_busy: IntGaugeVec,
+    pub assessment: AssessmentMetrics,
     pub daemon_version: String,
     pub started_at: std::time::Instant,
 }
@@ -35,11 +406,14 @@ impl Metrics {
         registry.register(Box::new(service_upgrade_pending.clone())).unwrap();
         registry.register(Box::new(service_busy.clone())).unwrap();
 
+        let assessment = AssessmentMetrics::new(&registry);
+
         Metrics {
             registry,
             service_healthy,
             service_upgrade_pending,
             service_busy,
+            assessment,
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             started_at: std::time::Instant::now(),
         }

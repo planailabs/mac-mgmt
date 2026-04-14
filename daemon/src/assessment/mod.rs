@@ -24,6 +24,8 @@ use tokio::sync::RwLock;
 
 use mac_mgmt_common::{Assessment, DaemonConfig, DynamicSample, ProbeReport, ServiceExtState};
 
+use crate::metrics::Metrics;
+
 /// Default cadence for deep probes. Jittered ±2min.
 pub const DEFAULT_PROBE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// Default cadence for full inventory refresh.
@@ -38,6 +40,8 @@ pub struct Assessor {
     /// endpoints (ollama host/port, openclaw gateway, etc.) without reaching
     /// back into the daemon event loop.
     config: Arc<RwLock<Option<DaemonConfig>>>,
+    /// Prometheus metrics surface. Optional so tests can skip wiring.
+    metrics: Arc<RwLock<Option<Arc<Metrics>>>>,
 }
 
 impl Assessor {
@@ -46,7 +50,14 @@ impl Assessor {
             latest_sample: Arc::new(RwLock::new(None)),
             latest_probes: Arc::new(RwLock::new(Vec::new())),
             config: Arc::new(RwLock::new(None)),
+            metrics: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Attach the shared metrics instance so sample/inventory/probe updates
+    /// land on Prometheus gauges.
+    pub async fn attach_metrics(&self, metrics: Arc<Metrics>) {
+        *self.metrics.write().await = Some(metrics);
     }
 
     /// Replace the stored config snapshot. Call on startup and on every config
@@ -72,6 +83,9 @@ impl Assessor {
     pub async fn refresh_sample(&self) {
         match sample::collect().await {
             Ok(s) => {
+                if let Some(m) = self.metrics.read().await.clone() {
+                    m.assessment.update_sample(&s);
+                }
                 let mut w = self.latest_sample.write().await;
                 *w = Some(s);
             }
@@ -104,6 +118,10 @@ impl Assessor {
                 return;
             }
         };
+        if let Some(m) = self.metrics.read().await.clone() {
+            m.assessment.update_inventory(&inventory);
+            m.assessment.update_security(&security);
+        }
 
         let collected_at = chrono::Utc::now().timestamp();
         let body = match build_signed_assessment(
@@ -142,11 +160,16 @@ impl Assessor {
         let probes = probes::registry(&cfg);
         let mut summaries: Vec<ServiceExtState> = Vec::with_capacity(probes.len());
 
+        let metrics = self.metrics.read().await.clone();
         for probe in probes {
             let name = probe.name();
             let kind = probe.kind();
             let result = probe.run(&ctx).await;
             let collected_at = chrono::Utc::now().timestamp();
+
+            if let Some(ref m) = metrics {
+                m.assessment.update_probe(name, kind, &result);
+            }
 
             summaries.push(ServiceExtState {
                 name: name.to_string(),
