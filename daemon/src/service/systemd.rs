@@ -163,41 +163,19 @@ pub fn restart() -> Result<()> {
     Ok(())
 }
 
-// ── Managed-services supervisor (user-level systemd unit) ────────────
+// ── Managed-services supervisor (system-level systemd unit) ──────────
 
+const SUPERVISOR_NAME: &str = "mac-mgmt-services";
 const SUPERVISOR_UNIT: &str = "mac-mgmt-services.service";
 
-/// Build a `systemctl --user` command with the D-Bus session env vars set.
-fn systemctl_user(args: &[&str]) -> Command {
-    let mut cmd = Command::new("systemctl");
-    cmd.arg("--user");
-    cmd.args(args);
-
-    let uid = unsafe { libc::getuid() };
-    if std::env::var("XDG_RUNTIME_DIR").is_err() {
-        cmd.env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"));
-    }
-    if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
-        cmd.env(
-            "DBUS_SESSION_BUS_ADDRESS",
-            format!("unix:path=/run/user/{uid}/bus"),
-        );
-    }
-    cmd
-}
-
-fn user_unit_dir() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("systemd/user")
-}
-
 fn supervisor_unit_path() -> PathBuf {
-    user_unit_dir().join(SUPERVISOR_UNIT)
+    PathBuf::from("/etc/systemd/system").join(SUPERVISOR_UNIT)
 }
 
 fn supervisor_unit_contents() -> Result<String> {
     let bin = std::env::current_exe().context("cannot determine binary path")?;
+    let user = service_user();
+    let home = super::home_dir_for_user(&user);
     Ok(format!(
         r#"[Unit]
 Description=mac-mgmt managed-services supervisor
@@ -206,77 +184,146 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=HOME=%h
+User={user}
+Environment=HOME={home}
 ExecStart=/bin/bash -lc '{bin} services'
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 "#,
-        bin = bin.display()
+        bin = bin.display(),
+        home = home.display()
     ))
 }
 
+/// Write `contents` to `path` as root, using `sudo tee` when needed.
+fn write_privileged(path: &std::path::Path, contents: &str) -> Result<()> {
+    if is_root() {
+        fs::write(path, contents).with_context(|| format!("write {}", path.display()))?;
+        return Ok(());
+    }
+    use std::io::Write;
+    let mut child = Command::new("sudo")
+        .args(["tee", &path.to_string_lossy()])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .context("failed to run sudo tee")?;
+    child.stdin.as_mut().unwrap().write_all(contents.as_bytes())?;
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("sudo tee {} failed", path.display());
+    }
+    Ok(())
+}
+
 pub fn install_services_manager() -> Result<()> {
+    cleanup_legacy_user_units();
+
     let path = supervisor_unit_path();
     let contents = supervisor_unit_contents()?;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
-    }
-
-    let needs_write = match std::fs::read_to_string(&path) {
+    let needs_write = match fs::read_to_string(&path) {
         Ok(existing) => existing != contents,
         Err(_) => true,
     };
 
     if needs_write {
-        std::fs::write(&path, &contents)
-            .with_context(|| format!("write {}", path.display()))?;
+        write_privileged(&path, &contents)?;
         tracing::info!("wrote supervisor unit {}", path.display());
 
-        let status = systemctl_user(&["daemon-reload"])
-            .status()
-            .context("systemctl --user daemon-reload")?;
+        let status = privileged("systemctl", &["daemon-reload"])?;
         if !status.success() {
-            tracing::warn!("systemctl --user daemon-reload failed");
+            tracing::warn!("systemctl daemon-reload failed");
         }
     }
 
-    let enabled = systemctl_user(&["is-enabled", "--quiet", SUPERVISOR_UNIT])
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if !enabled {
-        let status = systemctl_user(&["enable", "--now", SUPERVISOR_UNIT])
-            .status()
-            .with_context(|| format!("systemctl --user enable --now {SUPERVISOR_UNIT}"))?;
-        if !status.success() {
-            anyhow::bail!("systemctl --user enable --now {SUPERVISOR_UNIT} failed");
-        }
-    } else if needs_write {
-        let status = systemctl_user(&["restart", SUPERVISOR_UNIT])
-            .status()
-            .with_context(|| format!("systemctl --user restart {SUPERVISOR_UNIT}"))?;
-        if !status.success() {
-            anyhow::bail!("systemctl --user restart {SUPERVISOR_UNIT} failed");
-        }
-    } else {
-        let _ = systemctl_user(&["start", SUPERVISOR_UNIT]).status();
+    let status = privileged("systemctl", &["enable", "--now", SUPERVISOR_NAME])?;
+    if !status.success() {
+        anyhow::bail!("systemctl enable --now {SUPERVISOR_NAME} failed");
     }
 
-    tracing::info!("supervisor unit ready");
+    if needs_write {
+        let status = privileged("systemctl", &["restart", SUPERVISOR_NAME])?;
+        if !status.success() {
+            anyhow::bail!("systemctl restart {SUPERVISOR_NAME} failed");
+        }
+    }
+
+    tracing::info!("supervisor unit installed and running");
     Ok(())
 }
 
 pub fn uninstall_services_manager() -> Result<()> {
-    let _ = systemctl_user(&["disable", "--now", SUPERVISOR_UNIT]).status();
+    cleanup_legacy_user_units();
+
     let path = supervisor_unit_path();
     if path.exists() {
-        let _ = std::fs::remove_file(&path);
+        let _ = privileged("systemctl", &["disable", "--now", SUPERVISOR_NAME]);
+        if is_root() {
+            let _ = fs::remove_file(&path);
+        } else {
+            let _ = privileged("rm", &[&path.to_string_lossy()]);
+        }
+        let _ = privileged("systemctl", &["daemon-reload"]);
     }
-    let _ = systemctl_user(&["daemon-reload"]).status();
     Ok(())
+}
+
+/// Migration: remove any user-level mac-mgmt units left behind by older
+/// versions of the daemon (the per-service `mac-mgmt-service@*.service`
+/// template and the initial user-level `mac-mgmt-services.service`).
+fn cleanup_legacy_user_units() {
+    let user_unit_dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("systemd/user");
+
+    let mut had_any = false;
+    let Ok(entries) = fs::read_dir(&user_unit_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let fname = entry.file_name();
+        let name = fname.to_string_lossy();
+        if !(name.starts_with("mac-mgmt-service@")
+            || name == "mac-mgmt-services.service"
+            || name == "mac-mgmt-service@.service")
+        {
+            continue;
+        }
+        had_any = true;
+        let unit = name.to_string();
+        tracing::info!("removing legacy user unit {unit}");
+        let mut cmd = Command::new("systemctl");
+        cmd.arg("--user").args(["disable", "--now", &unit]);
+        let uid = unsafe { libc::getuid() };
+        if std::env::var("XDG_RUNTIME_DIR").is_err() {
+            cmd.env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"));
+        }
+        if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
+            cmd.env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path=/run/user/{uid}/bus"),
+            );
+        }
+        let _ = cmd.status();
+        let _ = fs::remove_file(entry.path());
+    }
+    if had_any {
+        let mut cmd = Command::new("systemctl");
+        cmd.arg("--user").arg("daemon-reload");
+        let uid = unsafe { libc::getuid() };
+        if std::env::var("XDG_RUNTIME_DIR").is_err() {
+            cmd.env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"));
+        }
+        if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_err() {
+            cmd.env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path=/run/user/{uid}/bus"),
+            );
+        }
+        let _ = cmd.status();
+    }
 }

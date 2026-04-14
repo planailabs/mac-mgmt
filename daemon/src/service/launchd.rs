@@ -199,31 +199,22 @@ fn sudo(args: &[&str]) -> Result<std::process::Output> {
         .context("failed to run sudo")
 }
 
-// ── Managed-services supervisor (user-level LaunchAgent) ────────────
+// ── Managed-services supervisor (system-level LaunchDaemon) ─────────
 
 const SUPERVISOR_LABEL: &str = "com.plan-ai.mac-mgmt.services";
+const LEGACY_MANAGED_PREFIX: &str = "com.plan-ai.mac-mgmt.";
 
 fn supervisor_plist_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("Library/LaunchAgents")
-        .join(format!("{SUPERVISOR_LABEL}.plist"))
+    PathBuf::from("/Library/LaunchDaemons").join(format!("{SUPERVISOR_LABEL}.plist"))
 }
 
-fn current_uid() -> u32 {
-    unsafe { libc::getuid() }
-}
-
-fn supervisor_gui_target() -> String {
-    format!("gui/{}/{}", current_uid(), SUPERVISOR_LABEL)
-}
-
-fn supervisor_gui_domain() -> String {
-    format!("gui/{}", current_uid())
+fn supervisor_system_target() -> String {
+    format!("system/{SUPERVISOR_LABEL}")
 }
 
 fn supervisor_plist_contents() -> Result<String> {
     let bin = std::env::current_exe().context("cannot determine binary path")?;
+    let username = current_username()?;
     Ok(format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -232,6 +223,8 @@ fn supervisor_plist_contents() -> Result<String> {
 <dict>
     <key>Label</key>
     <string>{SUPERVISOR_LABEL}</string>
+    <key>UserName</key>
+    <string>{username}</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
@@ -255,55 +248,93 @@ fn supervisor_plist_contents() -> Result<String> {
 }
 
 pub fn install_services_manager() -> Result<()> {
+    cleanup_legacy_user_agents();
+
     let path = supervisor_plist_path();
-    let domain = supervisor_gui_domain();
     let contents = supervisor_plist_contents()?;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
-    }
-
-    let changed = match std::fs::read_to_string(&path) {
-        Ok(existing) => existing != contents,
-        Err(_) => true,
+    let changed = match sudo(&["cat", &path.display().to_string()]) {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout) != contents
+        }
+        _ => true,
     };
 
     if changed {
         if path.exists() {
-            let _ = Command::new("launchctl")
-                .args(["bootout", &supervisor_gui_target()])
-                .output();
+            let _ = sudo(&["launchctl", "bootout", &supervisor_system_target()]);
         }
-        std::fs::write(&path, &contents)
-            .with_context(|| format!("write {}", path.display()))?;
+        let status = Command::new("sudo")
+            .args(["tee", &path.display().to_string()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                if let Some(ref mut stdin) = child.stdin {
+                    stdin.write_all(contents.as_bytes())?;
+                }
+                child.wait()
+            })
+            .context("failed to write supervisor plist")?;
+        if !status.success() {
+            anyhow::bail!("sudo tee {} failed", path.display());
+        }
         tracing::info!("wrote {}", path.display());
+    }
 
-        let output = Command::new("launchctl")
-            .args(["bootstrap", &domain, &path.display().to_string()])
-            .output()
-            .context("launchctl bootstrap")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+    let output = sudo(&[
+        "launchctl",
+        "bootstrap",
+        "system",
+        &path.display().to_string(),
+    ])
+    .context("launchctl bootstrap")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Already-loaded is fine; surface anything else.
+        if !stderr.contains("already") {
             anyhow::bail!("launchctl bootstrap failed: {stderr}");
         }
-    } else {
-        // Ensure loaded.
-        let _ = Command::new("launchctl")
-            .args(["bootstrap", &domain, &path.display().to_string()])
-            .output();
     }
 
     Ok(())
 }
 
 pub fn uninstall_services_manager() -> Result<()> {
-    let _ = Command::new("launchctl")
-        .args(["bootout", &supervisor_gui_target()])
-        .output();
+    cleanup_legacy_user_agents();
+
     let path = supervisor_plist_path();
+    let _ = sudo(&["launchctl", "bootout", &supervisor_system_target()]);
     if path.exists() {
-        let _ = std::fs::remove_file(&path);
+        let _ = sudo(&["rm", &path.display().to_string()]);
     }
     Ok(())
+}
+
+/// Migration: tear down any user-level LaunchAgents from older versions
+/// (the per-service `com.plan-ai.mac-mgmt.<name>.plist` files and the
+/// original user-level supervisor agent).
+fn cleanup_legacy_user_agents() {
+    let Some(home) = dirs::home_dir() else { return };
+    let agents = home.join("Library/LaunchAgents");
+    let uid = unsafe { libc::getuid() };
+    let Ok(entries) = std::fs::read_dir(&agents) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let fname = entry.file_name();
+        let name = fname.to_string_lossy();
+        let Some(label_plist) = name.strip_suffix(".plist") else {
+            continue;
+        };
+        if !label_plist.starts_with(LEGACY_MANAGED_PREFIX) {
+            continue;
+        }
+        tracing::info!("removing legacy user agent {name}");
+        let _ = Command::new("launchctl")
+            .args(["bootout", &format!("gui/{uid}/{label_plist}")])
+            .output();
+        let _ = std::fs::remove_file(entry.path());
+    }
 }
