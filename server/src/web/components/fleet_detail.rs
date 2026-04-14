@@ -24,11 +24,63 @@ struct FleetDetailData {
     reported_at: DateTime<Utc>,
     sample: Option<serde_json::Value>,
     services_extended: Option<serde_json::Value>,
+    /// Raw `services` JSON array from the heartbeat (name, healthy,
+    /// upgrade_pending, busy). Surfaced as badges at the top of the page.
+    #[serde(default)]
+    services: Option<serde_json::Value>,
+    /// Raw `tunnels` JSON array (name, port) for the relay proxy buttons.
+    #[serde(default)]
+    tunnels: Option<serde_json::Value>,
+    /// Relay proxy hostname (e.g. "relay.plan.ai") from the heartbeat.
+    /// Required to build a working proxy URL; absent -> no tunnel buttons.
+    #[serde(default)]
+    relay_proxy_hostname: Option<String>,
     inventory: Option<serde_json::Value>,
     inventory_collected_at: Option<DateTime<Utc>>,
     security: Option<serde_json::Value>,
     probes: Vec<ProbeEntry>,
     viewer_is_admin: bool,
+}
+
+/// Same shape as the fleet-dashboard proxy-token flow. Local to this
+/// module so the detail page doesn't reach into fleet_dashboard's
+/// module-private server fn. Scoped to whatever cluster the user has
+/// access to (admin = unscoped, org-scoped = first accessible).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DetailProxyTokenResult {
+    proxy_token: String,
+}
+
+#[server]
+async fn create_detail_proxy_token() -> Result<DetailProxyTokenResult, ServerFnError> {
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let accessible = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
+    let cluster_id: Option<uuid::Uuid> = accessible.as_ref().and_then(|ids| ids.first().copied());
+
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
+         VALUES ($1, $2, 'proxy', 'proxy', $3)",
+    )
+    .bind(cluster_id)
+    .bind(&hash)
+    .bind(expires_at)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(DetailProxyTokenResult { proxy_token: raw_token })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,10 +117,14 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         reported_at: DateTime<Utc>,
         sample: Option<serde_json::Value>,
         services_extended: Option<serde_json::Value>,
+        services: serde_json::Value,
+        tunnels: serde_json::Value,
+        relay_proxy_hostname: Option<String>,
     }
     let hb: HbRow = sqlx::query_as(
         "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.hostname, dh.environment, \
-                dh.version, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended \
+                dh.version, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
+                dh.services, dh.tunnels, dh.relay_proxy_hostname \
          FROM daemon_heartbeats dh JOIN clusters c ON c.id = dh.cluster_id \
          WHERE dh.instance_id = $1 \
          ORDER BY dh.reported_at DESC LIMIT 1",
@@ -157,6 +213,9 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         reported_at: hb.reported_at,
         sample: hb.sample,
         services_extended: hb.services_extended,
+        services: Some(hb.services),
+        tunnels: Some(hb.tunnels),
+        relay_proxy_hostname: hb.relay_proxy_hostname,
         inventory: ass.as_ref().map(|a| a.inventory.clone()),
         inventory_collected_at: ass.as_ref().map(|a| a.collected_at),
         security: ass.as_ref().map(|a| a.security.clone()),
@@ -210,6 +269,44 @@ fn render_detail(d: &FleetDetailData) -> Element {
 
     let gpus = merge_gpu_data(d.inventory.as_ref(), d.sample.as_ref());
 
+    // Service badges from the daemon's own health flags. Same semantics
+    // as the fleet-dashboard Services column: green = daemon says up,
+    // red = daemon says down. Probe state is elsewhere on the page.
+    let mut service_badges: Vec<(String, bool, bool, bool)> = d
+        .services
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|s| {
+                    (
+                        s.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+                        s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false),
+                        s.get("upgrade_pending").and_then(|v| v.as_bool()).unwrap_or(false),
+                        s.get("busy").and_then(|v| v.as_bool()).unwrap_or(false),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    service_badges.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Tunnel entries paired with the relay hostname. Present only when
+    // the daemon published both — a daemon behind a relay it can't reach
+    // won't emit relay_proxy_hostname so we won't show clickable buttons.
+    let tunnel_names: Vec<String> = d
+        .tunnels
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let proxy_hostname = d.relay_proxy_hostname.clone();
+    let instance_prefix: String = d.instance_id.chars().take(12).collect();
+
     rsx! {
         div { class: "flex items-baseline justify-between mb-4",
             div {
@@ -223,6 +320,102 @@ fn render_detail(d: &FleetDetailData) -> Element {
                 code { class: "font-mono", "{d.instance_id}" }
                 br {}
                 "last heartbeat: {reported}"
+            }
+        }
+
+        // ── Services ──
+        if !service_badges.is_empty() {
+            div { class: "mb-4",
+                h3 { class: "text-lg font-semibold mb-2", "Services" }
+                div { class: "flex flex-wrap gap-2",
+                    for (name, healthy, upgrade_pending, busy) in service_badges.iter() {
+                        {
+                            let cls = if *healthy {
+                                "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
+                            } else {
+                                "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
+                            };
+                            let title = match (*healthy, *upgrade_pending, *busy) {
+                                (true, true, _) => "healthy · upgrade pending".to_string(),
+                                (true, _, true) => "healthy · busy".to_string(),
+                                (true, _, _) => "healthy".to_string(),
+                                (false, _, _) => "unhealthy".to_string(),
+                            };
+                            rsx! {
+                                span {
+                                    class: "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium {cls}",
+                                    title: "{title}",
+                                    "{name}"
+                                    if *upgrade_pending {
+                                        span { class: "opacity-70", "⏫" }
+                                    }
+                                    if *busy {
+                                        span { class: "opacity-70", "…" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Tunnels ──
+        // Clickable only when both the tunnels array and relay_proxy_hostname
+        // are present. Without a proxy hostname the daemon is either on a
+        // bare relay or offline, so the buttons have nowhere to point.
+        if !tunnel_names.is_empty() {
+            div { class: "mb-6",
+                h3 { class: "text-lg font-semibold mb-2", "Tunnels" }
+                if let Some(ref hostname) = proxy_hostname {
+                    div { class: "flex flex-wrap gap-2",
+                        for tname in tunnel_names.iter() {
+                            {
+                                let tn = tname.clone();
+                                let ph = hostname.clone();
+                                let iid = instance_prefix.clone();
+                                rsx! {
+                                    button {
+                                        class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
+                                        title: "Open a short-lived proxy URL in a new tab",
+                                        onclick: move |_| {
+                                            let tn = tn.clone();
+                                            let ph = ph.clone();
+                                            let iid = iid.clone();
+                                            async move {
+                                                match create_detail_proxy_token().await {
+                                                    Ok(res) => {
+                                                        let url = format!(
+                                                            "https://{iid}-{tn}.{ph}/proxy?proxy_token={}",
+                                                            res.proxy_token
+                                                        );
+                                                        let _ = document::eval(&format!(
+                                                            "window.open('{}', '_blank')",
+                                                            url.replace('\'', "\\'"),
+                                                        ));
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!("proxy token creation failed: {e}");
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        "{tname}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    div { class: "flex flex-wrap gap-2",
+                        for tname in tunnel_names.iter() {
+                            span { class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                title: "No relay proxy hostname reported — daemon isn't reachable via the relay",
+                                "{tname}"
+                            }
+                        }
+                    }
+                }
             }
         }
 
