@@ -167,6 +167,7 @@ impl Daemon {
                     set_log_level(&new_cfg.daemon.log_level);
                 }
 
+                self.assessor.update_config(new_cfg.clone()).await;
                 self.current_cfg = new_cfg;
             }
         }
@@ -560,6 +561,7 @@ pub async fn run(
     };
 
     let assessor = Arc::new(Assessor::new());
+    assessor.update_config(current_cfg.clone()).await;
 
     // Build the Daemon struct with all long-lived state.
     let mut daemon = Daemon {

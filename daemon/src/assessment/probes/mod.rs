@@ -1,14 +1,19 @@
 //! Deep probes: end-to-end functional validation of managed services.
 //!
 //! Every probe implements [`Probe`] and is registered in [`registry`]. Each probe
-//! is expensive by design — e.g. a full prompt round-trip against the LLM backend.
-//! Do not run on the heartbeat cadence.
-//!
-//! The concrete per-service implementations land in step 7.
+//! is expensive by design — a full-prompt round-trip against an LLM backend can
+//! take tens of seconds. Do **not** run on the heartbeat cadence.
+
+pub mod apprise;
+pub mod lms;
+pub mod mcporter;
+pub mod ollama;
+pub mod openclaw;
 
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use mac_mgmt_common::DaemonConfig;
 
 /// Classification used both for scheduling and for rollout gate configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,16 +52,22 @@ pub struct ProbeResult {
     pub error_detail: Option<String>,
 }
 
-/// Context threaded into every probe run — timeouts, config snapshots, etc.
+/// Context threaded into every probe run — timeouts, canary prompt, etc.
 #[derive(Debug, Clone)]
 pub struct ProbeCtx {
     pub timeout: Duration,
+    /// Fixed canary prompt. Deterministic, short, no user data — safe for GDPR.
+    pub canary_prompt: String,
+    /// Expected substring in the response. Used as a light validity check.
+    pub canary_expected: String,
 }
 
 impl Default for ProbeCtx {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(60),
+            canary_prompt: "Reply with exactly: READY-42. No other text.".into(),
+            canary_expected: "READY".into(),
         }
     }
 }
@@ -68,8 +79,7 @@ pub trait Probe: Send + Sync {
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult;
 }
 
-/// Time a fallible probe body and fill in `duration_ms` / error fields.
-#[allow(dead_code)]
+/// Run a fallible probe body and fill in `duration_ms` / error fields.
 pub async fn timed<F, Fut>(body: F) -> ProbeResult
 where
     F: FnOnce() -> Fut,
@@ -86,8 +96,7 @@ where
     result
 }
 
-#[allow(dead_code)]
-fn classify_error(e: &anyhow::Error) -> String {
+pub fn classify_error(e: &anyhow::Error) -> String {
     let s = format!("{e:#}").to_lowercase();
     if s.contains("timeout") || s.contains("timed out") {
         "timeout".into()
@@ -95,12 +104,46 @@ fn classify_error(e: &anyhow::Error) -> String {
         "connection".into()
     } else if s.contains("pull") {
         "pull_failed".into()
+    } else if s.contains("unexpected") || s.contains("mismatch") {
+        "bad_response".into()
     } else {
         "error".into()
     }
 }
 
-/// Return the registered probes. For now, empty — real probes land in step 7.
-pub fn registry() -> Vec<Box<dyn Probe>> {
-    Vec::new()
+/// Hex SHA-256 of a byte slice — used for canary response regression digests.
+pub fn digest_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
+}
+
+/// Build the full probe registry from the current daemon config. Called each
+/// probe tick so config reloads take effect on the next run.
+pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
+    use mac_mgmt_common::{AgentProvider, LlmProvider};
+
+    let mut probes: Vec<Box<dyn Probe>> = Vec::new();
+
+    match cfg.global.llm_provider {
+        LlmProvider::Ollama => {
+            probes.push(Box::new(ollama::OllamaProbe::from_config(&cfg.ollama)));
+        }
+        LlmProvider::Lms => {
+            probes.push(Box::new(lms::LmsProbe::from_config(&cfg.lms)));
+        }
+        LlmProvider::Cloud | LlmProvider::None => {}
+    }
+
+    match cfg.global.agent_provider {
+        AgentProvider::Openclaw => {
+            probes.push(Box::new(openclaw::OpenClawProbe::from_config(&cfg.openclaw)));
+        }
+        AgentProvider::None => {}
+    }
+
+    // Always probe apprise + mcporter if configured (cheap liveness checks).
+    probes.push(Box::new(apprise::AppriseProbe));
+    probes.push(Box::new(mcporter::McPorterProbe));
+
+    probes
 }
