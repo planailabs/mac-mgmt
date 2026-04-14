@@ -103,6 +103,78 @@ struct ProxyTokenResult {
     proxy_token: String,
 }
 
+/// Stale-instance delete. Server-side gate is the source of truth — the
+/// UI hides the button when last-seen is recent, but a malicious or
+/// stale browser tab can still call this directly. We:
+///   1. Require write access to the cluster (admins always pass).
+///   2. Re-read `reported_at` and reject if it's within the last 24h
+///      so a delete can't race a fresh heartbeat.
+///   3. Delete the heartbeat row, then any matching `assessments` and
+///      `assessment_probes` (no FK on instance_id, so no cascade).
+///
+/// `assessment_samples` was never created — sample lives inline on the
+/// heartbeat row — so heartbeat removal already takes the sample with
+/// it. `rollout_stage_health_evaluations` references stage_id, not
+/// instance, and cohort queries naturally exclude the missing daemon.
+#[server]
+async fn delete_stale_instance(instance_id: String) -> Result<(), ServerFnError> {
+    use chrono::Duration;
+
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        cluster_id: uuid::Uuid,
+        reported_at: DateTime<Utc>,
+    }
+    let row: Row = sqlx::query_as(
+        "SELECT cluster_id, reported_at FROM daemon_heartbeats WHERE instance_id = $1",
+    )
+    .bind(&instance_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("instance not found"))?;
+
+    user.require_cluster_write(&pool, row.cluster_id).await?;
+
+    let age = Utc::now().signed_duration_since(row.reported_at);
+    if age < Duration::days(1) {
+        return Err(ServerFnError::new(format!(
+            "instance reported {}h ago — only stale instances (>24h) can be deleted",
+            age.num_hours().max(0)
+        )));
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM daemon_heartbeats WHERE instance_id = $1 AND cluster_id = $2")
+        .bind(&instance_id)
+        .bind(row.cluster_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM assessments WHERE instance_id = $1 AND cluster_id = $2")
+        .bind(&instance_id)
+        .bind(row.cluster_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM assessment_probes WHERE instance_id = $1 AND cluster_id = $2")
+        .bind(&instance_id)
+        .bind(row.cluster_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
 #[server]
 async fn create_fleet_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
     use rand::Rng;
@@ -244,6 +316,7 @@ pub fn FleetDashboard() -> Element {
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Services" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Tunnels" }
                                     SortableTh { label: "Last Seen".to_string(), sort_key: "last_seen".to_string(), sort }
+                                    th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
                                 }
                             }
                             tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
@@ -455,6 +528,34 @@ pub fn FleetDashboard() -> Element {
                                                     }
                                                 }
                                                 td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400", "{last_seen}" }
+                                                td { class: "px-6 py-4 text-right",
+                                                    if age.num_hours() >= 24 {
+                                                        button {
+                                                            class: "text-red-600 dark:text-red-400 text-xs hover:underline",
+                                                            title: "Delete this stale instance from the dashboard. Only available after 24h of silence.",
+                                                            onclick: {
+                                                                let iid = entry.instance_id.clone();
+                                                                move |_| {
+                                                                    let iid = iid.clone();
+                                                                    async move {
+                                                                        match delete_stale_instance(iid).await {
+                                                                            Ok(()) => {
+                                                                                // The 5s polling loop will pick up the change.
+                                                                            }
+                                                                            Err(e) => {
+                                                                                let _ = document::eval(&format!(
+                                                                                    "alert('Delete failed: {}')",
+                                                                                    e.to_string().replace('\'', "\\'")
+                                                                                ));
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            },
+                                                            "Delete"
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
