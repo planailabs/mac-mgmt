@@ -1051,6 +1051,11 @@ pub fn RolloutDetail(id: String) -> Element {
     // message, is_error)>. Cleared when the operator clicks a different
     // stage's button. Avoids the silent click that prompted this work.
     let mut request_status = use_signal(|| Option::<(String, String, bool)>::None);
+    // Stage_id of the currently in-flight Reevaluate call. Rapid clicks on
+    // the same button used to stack up concurrent detail.restart()s, each
+    // of which flashed the page back to Loading for a moment. Gating the
+    // click handler on this signal turns spam into a no-op.
+    let mut reevaluating_stage = use_signal(|| Option::<String>::None);
     // Per-stage gate editor: Option<(stage_id, HealthGateInput, apply_to_all)>
     // is None when no editor is open. Only one stage edits at a time — opening
     // another closes the first without prompting (the form has Cancel anyway).
@@ -1396,19 +1401,43 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 },
                                                                 "Edit gate"
                                                             }
-                                                            button {
-                                                                class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200",
-                                                                onclick: {
-                                                                    let sid = stage_id_str.clone();
-                                                                    move |_| {
-                                                                        let sid = sid.clone();
-                                                                        async move {
-                                                                            let _ = reevaluate_stage(sid).await;
-                                                                            detail.restart();
-                                                                        }
+                                                            {
+                                                                let busy = reevaluating_stage
+                                                                    .read()
+                                                                    .as_ref()
+                                                                    .map(|s| s == &stage_id_str)
+                                                                    .unwrap_or(false);
+                                                                let cls = if busy {
+                                                                    "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                                                                } else {
+                                                                    "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200"
+                                                                };
+                                                                let label = if busy { "Reevaluating…" } else { "Reevaluate now" };
+                                                                rsx! {
+                                                                    button {
+                                                                        class: "{cls}",
+                                                                        disabled: busy,
+                                                                        onclick: {
+                                                                            let sid = stage_id_str.clone();
+                                                                            move |_| {
+                                                                                let sid = sid.clone();
+                                                                                async move {
+                                                                                    // Gate so spam turns into a no-op rather
+                                                                                    // than stacking up detail.restart()s, each
+                                                                                    // of which flashes Loading.
+                                                                                    if reevaluating_stage.read().as_ref() == Some(&sid) {
+                                                                                        return;
+                                                                                    }
+                                                                                    reevaluating_stage.set(Some(sid.clone()));
+                                                                                    let _ = reevaluate_stage(sid).await;
+                                                                                    reevaluating_stage.set(None);
+                                                                                    detail.restart();
+                                                                                }
+                                                                            }
+                                                                        },
+                                                                        "{label}"
                                                                     }
-                                                                },
-                                                                "Reevaluate now"
+                                                                }
                                                             }
                                                             button {
                                                                 class: "px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-800 dark:text-blue-200",
