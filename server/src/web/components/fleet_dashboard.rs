@@ -30,8 +30,17 @@ struct FleetEntry {
     viewer_is_admin: bool,
 }
 
+/// Wrapped response so the UI can render a "Filtered by …" banner with
+/// a human-readable label without a second round-trip per refresh.
+/// `stage_label` is `None` when no stage filter is active.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FleetStatusResult {
+    entries: Vec<FleetEntry>,
+    stage_label: Option<String>,
+}
+
 #[server]
-async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
+async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
     let is_admin = user.is_admin;
@@ -54,7 +63,63 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
 
     let accessible = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let rows = if let Some(ids) = accessible {
+    // Optional stage filter — resolves the stage's cohort cluster_ids and
+    // a human label ("Stage 1 · canary"). Intersects with accessible
+    // clusters so org-scoped users can't see hosts they couldn't reach
+    // in an unfiltered view.
+    let (stage_cohort, stage_label) = if let Some(sid) = stage_id.as_deref() {
+        let sid_uuid: uuid::Uuid = sid
+            .parse()
+            .map_err(|e: uuid::Error| ServerFnError::new(format!("invalid stage_id: {e}")))?;
+
+        #[derive(sqlx::FromRow)]
+        struct StageMeta {
+            stage_order: i32,
+            group_name: String,
+            group_id: uuid::Uuid,
+        }
+        let meta: StageMeta = sqlx::query_as(
+            "SELECT rs.stage_order, rg.name AS group_name, rs.group_id \
+             FROM rollout_stages rs JOIN rollout_groups rg ON rg.id = rs.group_id \
+             WHERE rs.id = $1",
+        )
+        .bind(sid_uuid)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new("stage not found"))?;
+
+        let cohort: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \
+             UNION ALL \
+             SELECT id FROM clusters WHERE $1 = '00000000-0000-0000-0000-000000000000'::uuid",
+        )
+        .bind(meta.group_id)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        (
+            Some(cohort),
+            Some(format!("Stage {} · {}", meta.stage_order, meta.group_name)),
+        )
+    } else {
+        (None, None)
+    };
+
+    // Compose the effective cluster_id filter from accessible ∩ cohort.
+    // None on either side means "no filter from that source".
+    let effective: Option<Vec<uuid::Uuid>> = match (accessible, stage_cohort) {
+        (Some(a), Some(c)) => {
+            let cset: std::collections::HashSet<_> = c.iter().copied().collect();
+            Some(a.into_iter().filter(|id| cset.contains(id)).collect())
+        }
+        (Some(a), None) => Some(a),
+        (None, Some(c)) => Some(c),
+        (None, None) => None,
+    };
+
+    let rows = if let Some(ids) = effective {
         sqlx::query_as::<_, Row>(
             "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
@@ -78,7 +143,7 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
-    Ok(rows
+    let entries = rows
         .into_iter()
         .map(|r| FleetEntry {
             cluster_id: r.cluster_id.to_string(),
@@ -95,7 +160,9 @@ async fn get_fleet_status() -> Result<Vec<FleetEntry>, ServerFnError> {
             services_extended: r.services_extended,
             viewer_is_admin: is_admin,
         })
-        .collect())
+        .collect();
+
+    Ok(FleetStatusResult { entries, stage_label })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,20 +271,26 @@ impl Searchable for FleetEntry {
 }
 
 #[component]
-pub fn FleetDashboard() -> Element {
+pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     let mut data: Signal<Option<Result<Vec<FleetEntry>, String>>> = use_signal(|| None);
+    let mut stage_label: Signal<Option<String>> = use_signal(|| None);
     let mut last_refreshed = use_signal(|| None::<DateTime<Utc>>);
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
     let sort = use_signal(|| ("last_seen".to_string(), false));
+    let filter_stage = stage_id.clone();
 
     // Fetch immediately, then every 5 seconds. use_hook + spawn so it runs
     // exactly once and signal writes don't restart the loop.
     use_hook(move || {
+        let stage_for_loop = filter_stage.clone();
         spawn(async move {
             loop {
-                match get_fleet_status().await {
-                    Ok(entries) => data.set(Some(Ok(entries))),
+                match get_fleet_status(stage_for_loop.clone()).await {
+                    Ok(result) => {
+                        stage_label.set(result.stage_label);
+                        data.set(Some(Ok(result.entries)));
+                    }
                     Err(e) => {
                         if data.read().is_none() || data.read().as_ref().is_some_and(|r| r.is_err()) {
                             data.set(Some(Err(e.to_string())));
@@ -323,6 +396,21 @@ pub fn FleetDashboard() -> Element {
                     h2 { class: "text-2xl font-bold", "Fleet Dashboard" }
                     span { class: "text-xs text-gray-400 dark:text-gray-500",
                         "Last refreshed: {refresh_ago}"
+                    }
+                }
+                // Stage filter banner — visible when the route was loaded
+                // with a stage_id and the server resolved it to a label.
+                if let Some(label) = stage_label.read().clone() {
+                    div { class: "flex items-center justify-between gap-2 mb-3 px-3 py-2 rounded bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800",
+                        div { class: "text-sm text-blue-800 dark:text-blue-200",
+                            span { class: "font-medium", "Filtered by rollout: " }
+                            "{label}"
+                        }
+                        Link {
+                            to: Route::FleetDashboard { stage_id: None },
+                            class: "text-xs text-blue-700 dark:text-blue-300 hover:underline",
+                            "Clear filter"
+                        }
                     }
                 }
                 if entries.is_empty() {

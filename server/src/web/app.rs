@@ -74,8 +74,8 @@ pub enum Route {
     RolloutForm {},
     #[route("/rollouts/:id")]
     RolloutDetail { id: String },
-    #[route("/fleet")]
-    FleetDashboard {},
+    #[route("/fleet?:stage_id")]
+    FleetDashboard { stage_id: Option<String> },
     #[route("/fleet/:instance_id")]
     FleetDetail { instance_id: String },
     #[route("/rollout-groups")]

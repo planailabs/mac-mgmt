@@ -101,7 +101,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             title: "Overview".to_string(),
             links: vec![
                 NavLink::Internal(Route::ClusterList {}, "Clusters".to_string()),
-                NavLink::Internal(Route::FleetDashboard {}, "Fleet".to_string()),
+                NavLink::Internal(Route::FleetDashboard { stage_id: None }, "Fleet".to_string()),
             ]
         },
     ];

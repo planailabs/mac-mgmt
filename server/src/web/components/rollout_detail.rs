@@ -1354,17 +1354,25 @@ pub fn RolloutDetail(id: String) -> Element {
                                             span { class: "text-xs text-gray-500 dark:text-gray-400",
                                                 "No health gate configured."
                                             }
-                                            button {
-                                                class: "px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-800 dark:text-blue-200",
-                                                onclick: {
-                                                    let sid = stage_id_str.clone();
-                                                    move |_| {
-                                                        let sid = sid.clone();
-                                                        edit_gate_error.set(None);
-                                                        edit_gate.set(Some((sid, HealthGateInput::default(), false)));
-                                                    }
-                                                },
-                                                "Add gate"
+                                            div { class: "flex gap-2",
+                                                Link {
+                                                    to: Route::FleetDashboard { stage_id: Some(stage_id_str.clone()) },
+                                                    class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 inline-flex items-center",
+                                                    title: "Open the fleet dashboard filtered to this stage's cohort",
+                                                    "View fleet"
+                                                }
+                                                button {
+                                                    class: "px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-800 dark:text-blue-200",
+                                                    onclick: {
+                                                        let sid = stage_id_str.clone();
+                                                        move |_| {
+                                                            let sid = sid.clone();
+                                                            edit_gate_error.set(None);
+                                                            edit_gate.set(Some((sid, HealthGateInput::default(), false)));
+                                                        }
+                                                    },
+                                                    "Add gate"
+                                                }
                                             }
                                         }
                                     }
@@ -1509,6 +1517,12 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                     }
                                                                 },
                                                                 "Request fresh assessment"
+                                                            }
+                                                            Link {
+                                                                to: Route::FleetDashboard { stage_id: Some(stage_id_str.clone()) },
+                                                                class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 inline-flex items-center",
+                                                                title: "Open the fleet dashboard filtered to this stage's cohort",
+                                                                "View fleet"
                                                             }
                                                         }
                                                     }
