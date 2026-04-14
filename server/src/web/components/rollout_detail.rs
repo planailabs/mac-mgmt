@@ -539,11 +539,22 @@ async fn cohort_baseline(
     Ok((version, commit))
 }
 
+/// Result of a `RequestAssessment` push. `cohort_size` is the number of
+/// clusters targeted by the stage; `dispatched` is the subset that
+/// actually had an open SSE channel to receive the push. A value of 0
+/// almost always means no daemon in the cohort is currently connected —
+/// the most common reason an operator clicks the button and sees nothing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RequestAssessmentResult {
+    cohort_size: u32,
+    dispatched: u32,
+}
+
 #[server]
 async fn request_stage_assessment(
     _rollout_id: String,
     stage_id: String,
-) -> Result<(), ServerFnError> {
+) -> Result<RequestAssessmentResult, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
@@ -570,15 +581,25 @@ async fn request_stage_assessment(
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cohort_size = cohort.len() as u32;
 
     let channels = crate::push_channels()?;
     let map = channels.read().await;
+    let mut dispatched = 0u32;
     for cid in cohort {
         if let Some(tx) = map.get(&cid) {
-            let _ = tx.send(crate::api::push::PushMessage::RequestAssessment);
+            // broadcast::Sender::send returns Err when there are no active
+            // receivers — a daemon that connected then closed its SSE.
+            // Treat that as "not dispatched" so the UI counter is honest.
+            if tx.send(crate::api::push::PushMessage::RequestAssessment).is_ok() {
+                dispatched += 1;
+            }
         }
     }
-    Ok(())
+    Ok(RequestAssessmentResult {
+        cohort_size,
+        dispatched,
+    })
 }
 
 #[server]
@@ -920,6 +941,10 @@ pub fn RolloutDetail(id: String) -> Element {
         async move { get_rollout_detail(id).await }
     })?;
     let nav = navigator();
+    // Inline feedback for "Request fresh assessment" — Option<(stage_id,
+    // message, is_error)>. Cleared when the operator clicks a different
+    // stage's button. Avoids the silent click that prompted this work.
+    let mut request_status = use_signal(|| Option::<(String, String, bool)>::None);
 
     match &*detail.read() {
         Some(Ok(info)) => {
@@ -1232,12 +1257,60 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                     move |_| {
                                                                         let rid = rid.clone();
                                                                         let sid = sid.clone();
+                                                                        request_status.set(Some((sid.clone(), "requesting…".into(), false)));
                                                                         async move {
-                                                                            let _ = request_stage_assessment(rid, sid).await;
+                                                                            match request_stage_assessment(rid, sid.clone()).await {
+                                                                                Ok(r) => {
+                                                                                    let msg = if r.dispatched == 0 {
+                                                                                        if r.cohort_size == 0 {
+                                                                                            "no clusters in cohort".to_string()
+                                                                                        } else {
+                                                                                            format!(
+                                                                                                "0 of {} daemons reachable — none have an active SSE connection right now",
+                                                                                                r.cohort_size
+                                                                                            )
+                                                                                        }
+                                                                                    } else {
+                                                                                        format!(
+                                                                                            "pushed to {} of {} daemons (results land in ~30s)",
+                                                                                            r.dispatched, r.cohort_size
+                                                                                        )
+                                                                                    };
+                                                                                    let is_err = r.dispatched == 0;
+                                                                                    request_status.set(Some((sid, msg, is_err)));
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    request_status.set(Some((sid, e.to_string(), true)));
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 },
                                                                 "Request fresh assessment"
+                                                            }
+                                                        }
+                                                    }
+                                                    // Inline feedback for the just-clicked button. Render
+                                                    // only when the latest request targeted *this* stage so
+                                                    // each card carries its own status.
+                                                    {
+                                                        let status_for_this_stage = request_status
+                                                            .read()
+                                                            .as_ref()
+                                                            .filter(|(sid, _, _)| sid == &stage_id_str)
+                                                            .map(|(_, msg, is_err)| (msg.clone(), *is_err));
+                                                        rsx! {
+                                                            if let Some((msg, is_err)) = status_for_this_stage {
+                                                                {
+                                                                    let cls = if is_err {
+                                                                        "mt-2 text-xs text-red-700 dark:text-red-300"
+                                                                    } else {
+                                                                        "mt-2 text-xs text-gray-600 dark:text-gray-300"
+                                                                    };
+                                                                    rsx! {
+                                                                        p { class: "{cls}", "{msg}" }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
