@@ -62,6 +62,8 @@ fn collect_blocking() -> Result<DynamicSample> {
             (rx + data.total_received(), tx + data.total_transmitted())
         });
 
+    let gpus = crate::assessment::gpu::sample();
+
     let elapsed = started.elapsed();
     if elapsed > Duration::from_millis(200) {
         tracing::debug!("sample collection took {:?} (>200ms)", elapsed);
@@ -77,6 +79,7 @@ fn collect_blocking() -> Result<DynamicSample> {
         net_tx_bytes,
         process_count,
         thermal_state: thermal_state(),
+        gpus,
     })
 }
 

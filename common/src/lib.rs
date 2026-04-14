@@ -84,6 +84,43 @@ pub struct DynamicSample {
     /// Thermal pressure — platform-reported, e.g. "nominal", "fair", "serious", "critical".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thermal_state: Option<String>,
+    /// Per-GPU state at sample time. Empty when no GPU was detected or no
+    /// vendor tooling is available.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gpus: Vec<GpuSample>,
+}
+
+/// Per-GPU static inventory. Collected at the 6h inventory cadence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuInfo {
+    /// Vendor-local index, 0-based. Matches the index used in `GpuSample`.
+    pub index: u32,
+    /// "nvidia" | "amd" | "apple" | "intel" | "unknown".
+    pub vendor: String,
+    pub name: String,
+    /// Total VRAM in bytes. 0 when unreported (integrated GPUs on macOS).
+    #[serde(default)]
+    pub vram_total_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_version: Option<String>,
+    /// PCI bus ID on Linux ("0000:01:00.0") or the Apple subsystem name on macOS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pci_bus_id: Option<String>,
+}
+
+/// Per-GPU current state. Populated opportunistically — fields that the
+/// vendor tool doesn't report stay `None` rather than faking a value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuSample {
+    pub index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utilization_pct: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vram_used_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_c: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_watts: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +186,10 @@ pub struct Inventory {
     /// Coarse supervisor label (e.g. "launchd", "systemd").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supervisor: Option<String>,
+    /// GPUs detected on this host. Empty when no GPU was found or no vendor
+    /// tooling (nvidia-smi / rocm-smi / system_profiler) is available.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gpus: Vec<GpuInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

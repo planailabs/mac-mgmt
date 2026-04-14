@@ -319,6 +319,29 @@ pub fn FleetDashboard() -> Element {
                                             format!("{cpu:.2} · {mem_pct}% · {thermal}")
                                         });
 
+                                        // Compact GPU badge set, one per GPU: "nvidia 72% · 64°C".
+                                        let gpu_cells: Vec<(String, String)> = entry.sample.as_ref()
+                                            .and_then(|s| s.get("gpus"))
+                                            .and_then(|v| v.as_array())
+                                            .map(|arr| {
+                                                arr.iter().map(|g| {
+                                                    let util = g.get("utilization_pct").and_then(|v| v.as_u64());
+                                                    let temp = g.get("temperature_c").and_then(|v| v.as_i64());
+                                                    let mut parts: Vec<String> = Vec::new();
+                                                    if let Some(u) = util { parts.push(format!("{u}%")); }
+                                                    if let Some(t) = temp { parts.push(format!("{t}°C")); }
+                                                    let label = if parts.is_empty() { "idle".to_string() } else { parts.join(" · ") };
+                                                    let idx = g.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                    let cls = match util {
+                                                        Some(u) if u >= 85 => "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200",
+                                                        Some(_) => "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200",
+                                                        None => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                                    };
+                                                    (format!("gpu{idx} {label}"), cls.to_string())
+                                                }).collect()
+                                            })
+                                            .unwrap_or_default();
+
                                         rsx! {
                                             tr {
                                                 td { class: "px-6 py-4 text-sm",
@@ -353,6 +376,15 @@ pub fn FleetDashboard() -> Element {
                                                         span { "{lc}" }
                                                     } else {
                                                         span { class: "text-gray-400 dark:text-gray-500", "—" }
+                                                    }
+                                                    if !gpu_cells.is_empty() {
+                                                        div { class: "flex gap-1 flex-wrap mt-1",
+                                                            for (label, cls) in &gpu_cells {
+                                                                span { class: "inline-block px-1.5 py-0.5 rounded text-xs font-medium {cls}",
+                                                                    "{label}"
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                                 td { class: "px-6 py-4 text-sm",

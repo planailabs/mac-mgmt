@@ -11,6 +11,7 @@
 //!   canaries for LLM backends, etc.). Every ~15 min (jittered). Delivered via
 //!   `POST /api/assessment/probe`.
 
+pub mod gpu;
 pub mod inventory;
 pub mod probes;
 pub mod sample;

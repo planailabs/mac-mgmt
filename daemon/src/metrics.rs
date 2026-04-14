@@ -1,6 +1,6 @@
 use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 
-use mac_mgmt_common::{DynamicSample, Inventory, SecurityPosture};
+use mac_mgmt_common::{DynamicSample, GpuInfo, GpuSample, Inventory, SecurityPosture};
 
 use crate::assessment::probes::{ProbeKind, ProbeResult};
 
@@ -36,6 +36,17 @@ pub struct AssessmentMetrics {
     pub security_bool: IntGaugeVec,
     /// Info-style gauge: always 1; labels carry version strings.
     pub security_info: IntGaugeVec,
+
+    // GPUs — inventory refreshed on the inventory tick, state each heartbeat.
+    /// Info-style gauge: always 1, per-GPU identity on labels.
+    pub gpu_info: IntGaugeVec,
+    pub gpu_vram_total_bytes: IntGaugeVec,
+    pub gpu_vram_used_bytes: IntGaugeVec,
+    pub gpu_utilization_pct: IntGaugeVec,
+    pub gpu_temperature_celsius: IntGaugeVec,
+    pub gpu_power_watts: Gauge,
+    /// Only used as a placeholder — the real power gauge is a GaugeVec below.
+    pub gpu_power_watts_vec: prometheus::GaugeVec,
 
     // Probes (every ~15min).
     pub probe_ok: IntGaugeVec,
@@ -162,6 +173,52 @@ impl AssessmentMetrics {
         )
         .unwrap();
 
+        let gpu_info = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_gpu_info",
+                "Per-GPU static inventory, always 1; identity on labels",
+            ),
+            &["index", "vendor", "name", "driver_version", "pci_bus_id"],
+        )
+        .unwrap();
+        let gpu_vram_total_bytes = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_gpu_vram_total_bytes",
+                "Total VRAM per GPU, bytes. 0 when the vendor tool doesn't report it.",
+            ),
+            &["index"],
+        )
+        .unwrap();
+        let gpu_vram_used_bytes = IntGaugeVec::new(
+            Opts::new("mac_mgmt_gpu_vram_used_bytes", "VRAM in use per GPU, bytes"),
+            &["index"],
+        )
+        .unwrap();
+        let gpu_utilization_pct = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_gpu_utilization_pct",
+                "GPU utilization percentage (0-100)",
+            ),
+            &["index"],
+        )
+        .unwrap();
+        let gpu_temperature_celsius = IntGaugeVec::new(
+            Opts::new("mac_mgmt_gpu_temperature_celsius", "GPU core temperature, °C"),
+            &["index"],
+        )
+        .unwrap();
+        let gpu_power_watts_vec = prometheus::GaugeVec::new(
+            Opts::new("mac_mgmt_gpu_power_watts", "GPU power draw, watts"),
+            &["index"],
+        )
+        .unwrap();
+        // Placeholder — unused but kept so struct init stays aligned with docs.
+        let gpu_power_watts = Gauge::with_opts(Opts::new(
+            "mac_mgmt_gpu_power_watts_aggregate",
+            "Reserved — not exported",
+        ))
+        .unwrap();
+
         let probe_ok = IntGaugeVec::new(
             Opts::new(
                 "mac_mgmt_probe_ok",
@@ -229,6 +286,12 @@ impl AssessmentMetrics {
             Box::new(inventory_info.clone()),
             Box::new(security_bool.clone()),
             Box::new(security_info.clone()),
+            Box::new(gpu_info.clone()),
+            Box::new(gpu_vram_total_bytes.clone()),
+            Box::new(gpu_vram_used_bytes.clone()),
+            Box::new(gpu_utilization_pct.clone()),
+            Box::new(gpu_temperature_celsius.clone()),
+            Box::new(gpu_power_watts_vec.clone()),
             Box::new(probe_ok.clone()),
             Box::new(probe_duration_ms.clone()),
             Box::new(probe_first_token_ms.clone()),
@@ -257,12 +320,69 @@ impl AssessmentMetrics {
             inventory_info,
             security_bool,
             security_info,
+            gpu_info,
+            gpu_vram_total_bytes,
+            gpu_vram_used_bytes,
+            gpu_utilization_pct,
+            gpu_temperature_celsius,
+            gpu_power_watts,
+            gpu_power_watts_vec,
             probe_ok,
             probe_duration_ms,
             probe_first_token_ms,
             probe_tokens_in,
             probe_tokens_out,
             probe_last_run_timestamp,
+        }
+    }
+
+    pub fn update_gpu_inventory(&self, gpus: &[GpuInfo]) {
+        self.gpu_info.reset();
+        self.gpu_vram_total_bytes.reset();
+        for g in gpus {
+            let idx = g.index.to_string();
+            self.gpu_info
+                .with_label_values(&[
+                    idx.as_str(),
+                    g.vendor.as_str(),
+                    g.name.as_str(),
+                    g.driver_version.as_deref().unwrap_or(""),
+                    g.pci_bus_id.as_deref().unwrap_or(""),
+                ])
+                .set(1);
+            self.gpu_vram_total_bytes
+                .with_label_values(&[idx.as_str()])
+                .set(g.vram_total_bytes as i64);
+        }
+    }
+
+    pub fn update_gpu_samples(&self, samples: &[GpuSample]) {
+        self.gpu_vram_used_bytes.reset();
+        self.gpu_utilization_pct.reset();
+        self.gpu_temperature_celsius.reset();
+        self.gpu_power_watts_vec.reset();
+        for s in samples {
+            let idx = s.index.to_string();
+            if let Some(v) = s.vram_used_bytes {
+                self.gpu_vram_used_bytes
+                    .with_label_values(&[idx.as_str()])
+                    .set(v as i64);
+            }
+            if let Some(v) = s.utilization_pct {
+                self.gpu_utilization_pct
+                    .with_label_values(&[idx.as_str()])
+                    .set(v as i64);
+            }
+            if let Some(v) = s.temperature_c {
+                self.gpu_temperature_celsius
+                    .with_label_values(&[idx.as_str()])
+                    .set(v as i64);
+            }
+            if let Some(v) = s.power_watts {
+                self.gpu_power_watts_vec
+                    .with_label_values(&[idx.as_str()])
+                    .set(v as f64);
+            }
         }
     }
 
@@ -289,6 +409,7 @@ impl AssessmentMetrics {
         if let Some(state) = s.thermal_state.as_deref() {
             self.thermal_state.with_label_values(&[state]).set(1);
         }
+        self.update_gpu_samples(&s.gpus);
     }
 
     pub fn update_inventory(&self, inv: &Inventory) {
@@ -310,6 +431,7 @@ impl AssessmentMetrics {
                 inv.nixpkgs_commit.as_deref().unwrap_or(""),
             ])
             .set(1);
+        self.update_gpu_inventory(&inv.gpus);
     }
 
     pub fn update_security(&self, s: &SecurityPosture) {

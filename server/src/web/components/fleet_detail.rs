@@ -208,6 +208,8 @@ fn render_detail(d: &FleetDetailData) -> Element {
         .cloned()
         .unwrap_or_default();
 
+    let gpus = merge_gpu_data(d.inventory.as_ref(), d.sample.as_ref());
+
     rsx! {
         div { class: "flex items-baseline justify-between mb-4",
             div {
@@ -388,6 +390,75 @@ fn render_detail(d: &FleetDetailData) -> Element {
             }
         }
 
+        // ── GPUs ──
+        if !gpus.is_empty() {
+            h3 { class: "text-lg font-semibold mb-2", "GPUs" }
+            div { class: "mb-6 overflow-x-auto",
+                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                    thead { class: "bg-gray-50 dark:bg-gray-700",
+                        tr {
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "#" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Vendor" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Name" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Driver" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "VRAM" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Util" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Temp" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Power" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "PCI" }
+                        }
+                    }
+                    tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for g in gpus.iter() {
+                            {
+                                let vendor_cls = match g.vendor.as_str() {
+                                    "nvidia" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+                                    "amd" => "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+                                    "apple" => "bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
+                                    "intel" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
+                                    _ => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                };
+                                let vram = if g.vram_total_bytes > 0 {
+                                    match g.vram_used_bytes {
+                                        Some(used) => format!(
+                                            "{} / {}",
+                                            human_bytes(used),
+                                            human_bytes(g.vram_total_bytes),
+                                        ),
+                                        None => human_bytes(g.vram_total_bytes),
+                                    }
+                                } else {
+                                    "—".to_string()
+                                };
+                                let util = g.utilization_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "—".into());
+                                let temp = g.temperature_c.map(|v| format!("{v} °C")).unwrap_or_else(|| "—".into());
+                                let power = g.power_watts.map(|v| format!("{v:.0} W")).unwrap_or_else(|| "—".into());
+                                let driver = g.driver_version.clone().unwrap_or_else(|| "—".into());
+                                let pci = g.pci_bus_id.clone().unwrap_or_default();
+                                rsx! {
+                                    tr {
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{g.index}" }
+                                        td { class: "px-4 py-2",
+                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {vendor_cls}",
+                                                "{g.vendor}"
+                                            }
+                                        }
+                                        td { class: "px-4 py-2 text-sm text-gray-900 dark:text-gray-100", "{g.name}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{driver}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{vram}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{util}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{temp}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{power}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400", "{pci}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Security posture ──
         h3 { class: "text-lg font-semibold mb-2", "Security posture" }
         div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
@@ -526,6 +597,93 @@ fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
         rows.push(("AppArmor profiles".into(), n.to_string()));
     }
     rows
+}
+
+/// One row per GPU combining the static inventory entry with its latest
+/// sample (utilization, temp, power, vram_used). Indices are matched via
+/// `index` — inventory is the source of truth for ordering.
+#[derive(Debug, Clone)]
+struct GpuRow {
+    index: u32,
+    vendor: String,
+    name: String,
+    driver_version: Option<String>,
+    pci_bus_id: Option<String>,
+    vram_total_bytes: u64,
+    vram_used_bytes: Option<u64>,
+    utilization_pct: Option<u8>,
+    temperature_c: Option<i32>,
+    power_watts: Option<f32>,
+}
+
+fn merge_gpu_data(
+    inventory: Option<&serde_json::Value>,
+    sample: Option<&serde_json::Value>,
+) -> Vec<GpuRow> {
+    let inv_arr = inventory
+        .and_then(|i| i.get("gpus"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let sample_arr = sample
+        .and_then(|s| s.get("gpus"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut samples_by_idx: std::collections::HashMap<u32, &serde_json::Value> =
+        std::collections::HashMap::new();
+    for s in &sample_arr {
+        if let Some(idx) = s.get("index").and_then(|v| v.as_u64()) {
+            samples_by_idx.insert(idx as u32, s);
+        }
+    }
+
+    inv_arr
+        .iter()
+        .map(|g| {
+            let index = g.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let s = samples_by_idx.get(&index).copied();
+            GpuRow {
+                index,
+                vendor: g
+                    .get("vendor")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                name: g
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                driver_version: g
+                    .get("driver_version")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                pci_bus_id: g
+                    .get("pci_bus_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                vram_total_bytes: g
+                    .get("vram_total_bytes")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                vram_used_bytes: s.and_then(|s| s.get("vram_used_bytes")).and_then(|v| v.as_u64()),
+                utilization_pct: s
+                    .and_then(|s| s.get("utilization_pct"))
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u8),
+                temperature_c: s
+                    .and_then(|s| s.get("temperature_c"))
+                    .and_then(|v| v.as_i64())
+                    .map(|n| n as i32),
+                power_watts: s
+                    .and_then(|s| s.get("power_watts"))
+                    .and_then(|v| v.as_f64())
+                    .map(|n| n as f32),
+            }
+        })
+        .collect()
 }
 
 fn human_bytes(n: u64) -> String {

@@ -58,6 +58,8 @@ fn collect_blocking() -> Result<Inventory> {
         })
         .collect();
 
+    let gpus = crate::assessment::gpu::inventory();
+
     Ok(Inventory {
         os_name: System::name().unwrap_or_default(),
         os_version: System::long_os_version().unwrap_or_default(),
@@ -73,6 +75,7 @@ fn collect_blocking() -> Result<Inventory> {
         nix_version: detect_nix_version(),
         nixpkgs_commit: crate::nix::current_nixpkgs_commit(),
         supervisor: detect_supervisor(),
+        gpus,
     })
 }
 
