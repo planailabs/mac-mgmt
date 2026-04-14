@@ -705,6 +705,29 @@ async fn reevaluate_stage(stage_id: String) -> Result<(), ServerFnError> {
     Ok(())
 }
 
+/// Seed a stored evaluation for every currently-rolling stage in this
+/// rollout so the UI's health card renders right away rather than
+/// waiting up to 60s for the auto-pause loop. Non-fatal: caller uses
+/// `let _ =` so a failed evaluation doesn't block the state transition.
+#[cfg(feature = "server")]
+async fn evaluate_all_rolling_stages(
+    pool: &sqlx::PgPool,
+    rollout_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let stage_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM rollout_stages WHERE rollout_id = $1 AND status = 'rolling'",
+    )
+    .bind(rollout_id)
+    .fetch_all(pool)
+    .await?;
+    for sid in stage_ids {
+        // Ignore errors for any one stage — a degraded gate-eval path
+        // shouldn't stop the rest of the rollout from getting its data.
+        let _ = crate::rollout_health::evaluate_and_store(pool, sid).await;
+    }
+    Ok(())
+}
+
 #[server]
 async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
@@ -748,6 +771,9 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+            // Seed a first evaluation so the Rollout health card renders
+            // immediately instead of waiting for the 60s auto-pause tick.
+            let _ = evaluate_all_rolling_stages(&pool, rid).await;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
         }
@@ -881,6 +907,8 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+            // Seed evaluation for the newly-rolling stage.
+            let _ = evaluate_all_rolling_stages(&pool, rid).await;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
         }
@@ -925,6 +953,9 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+            // Seed an evaluation for every stage that's resumed so the
+            // health card comes back without waiting for the next tick.
+            let _ = evaluate_all_rolling_stages(&pool, rid).await;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
             crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
         }

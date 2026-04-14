@@ -417,6 +417,33 @@ fn pct(num: u32, denom: u32) -> u8 {
     ((num as u64 * 100 / denom as u64).min(100)) as u8
 }
 
+/// Evaluate one stage and persist the result. Used both by the auto-pause
+/// loop and by the rollout-action handlers on state transitions so the
+/// UI sees health data immediately after a stage starts rolling, not
+/// only after the 60s tick catches up.
+///
+/// Returns the evaluation (or `None` when the stage has no gate) so
+/// callers can decide whether to act on it (e.g. auto-pause).
+pub async fn evaluate_and_store(
+    pool: &PgPool,
+    stage_id: Uuid,
+) -> Result<Option<HealthEvaluation>, sqlx::Error> {
+    let eval = match evaluate_stage(pool, stage_id).await? {
+        Some(e) => e,
+        None => return Ok(None),
+    };
+    sqlx::query(
+        "INSERT INTO rollout_stage_health_evaluations (stage_id, passed, report) \
+         VALUES ($1, $2, $3)",
+    )
+    .bind(stage_id)
+    .bind(eval.passed)
+    .bind(serde_json::to_value(&eval).unwrap_or_default())
+    .execute(pool)
+    .await?;
+    Ok(Some(eval))
+}
+
 /// Background loop: evaluate every active stage on `interval`; on failure,
 /// auto-pause the stage and record the evaluation. Spawn once at server start.
 pub async fn run_auto_pause_loop(pool: PgPool, interval: std::time::Duration) {
@@ -438,19 +465,10 @@ async fn tick(pool: &PgPool) -> Result<(), sqlx::Error> {
     .await?;
 
     for stage_id in active_stages {
-        let eval = match evaluate_stage(pool, stage_id).await? {
+        let eval = match evaluate_and_store(pool, stage_id).await? {
             Some(e) => e,
             None => continue,
         };
-        sqlx::query(
-            "INSERT INTO rollout_stage_health_evaluations (stage_id, passed, report) \
-             VALUES ($1, $2, $3)",
-        )
-        .bind(stage_id)
-        .bind(eval.passed)
-        .bind(serde_json::to_value(&eval).unwrap_or_default())
-        .execute(pool)
-        .await?;
 
         if !eval.passed {
             tracing::warn!(
