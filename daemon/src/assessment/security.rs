@@ -105,7 +105,8 @@ fn collect_linux() -> SecurityPosture {
     SecurityPosture {
         selinux_mode: getenforce_mode(),
         apparmor_profiles: apparmor_profile_count(),
-        linux_firewall: linux_firewall_status(),
+        ufw_active: ufw_active(),
+        nftables_rule_count: nftables_rule_count(),
         fde_enabled: luks_present_on_root(),
         ..Default::default()
     }
@@ -131,29 +132,54 @@ fn apparmor_profile_count() -> Option<u32> {
     Some(s.lines().count() as u32)
 }
 
+/// `ufw status` reports "Status: active" or "Status: inactive". The binary
+/// also exits 0 in both cases, so success + absence of either string means
+/// an unexpected ufw version — return `None` rather than guessing.
 #[cfg(target_os = "linux")]
-fn linux_firewall_status() -> Option<String> {
-    // Prefer ufw if present; fall back to a simple nftables rule count.
-    if let Ok(out) = Command::new("ufw").arg("status").output() {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
-            if s.contains("status: active") {
-                return Some("ufw:active".into());
-            } else if s.contains("status: inactive") {
-                return Some("ufw:inactive".into());
-            }
-        }
+fn ufw_active() -> Option<bool> {
+    let out = Command::new("ufw").arg("status").output().ok()?;
+    if !out.status.success() {
+        return None;
     }
-    if let Ok(out) = Command::new("nft").args(["list", "ruleset"]).output() {
-        if out.status.success() {
-            let rules = String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .filter(|l| l.trim_start().starts_with("ip") || l.contains("chain"))
-                .count();
-            return Some(format!("nft:{rules}"));
-        }
+    let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
+    if s.contains("status: active") {
+        Some(true)
+    } else if s.contains("status: inactive") {
+        Some(false)
+    } else {
+        None
     }
-    None
+}
+
+/// Parse `nft --json list ruleset` and count top-level `"rule"` entries.
+///
+/// The document shape is:
+/// ```json
+/// { "nftables": [ {"metainfo": ...}, {"table": ...}, {"chain": ...},
+///                 {"rule": ...}, {"rule": ...} ] }
+/// ```
+///
+/// `nft` needs CAP_NET_ADMIN (effectively root) to read the netlink rules,
+/// which our daemon has when running under the system launchd/systemd unit.
+/// A missing binary, permission denial, or a JSON-parse failure all return
+/// `None` so callers can distinguish "absent" from `Some(0)` = "installed
+/// but no rules configured" (itself a posture signal worth surfacing).
+#[cfg(target_os = "linux")]
+fn nftables_rule_count() -> Option<u32> {
+    let out = Command::new("nft")
+        .args(["--json", "list", "ruleset"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let arr = v.get("nftables")?.as_array()?;
+    let count = arr
+        .iter()
+        .filter(|entry| entry.as_object().is_some_and(|obj| obj.contains_key("rule")))
+        .count();
+    Some(count as u32)
 }
 
 #[cfg(target_os = "linux")]

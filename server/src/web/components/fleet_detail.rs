@@ -577,6 +577,7 @@ fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
         ("firewall_enabled", "Firewall"),
         ("gatekeeper_enabled", "Gatekeeper"),
         ("fde_enabled", "Full-disk encryption"),
+        ("ufw_active", "ufw"),
     ] {
         if let Some(b) = v.get(key).and_then(|x| x.as_bool()) {
             rows.push((label.into(), if b { "on".into() } else { "off".into() }));
@@ -585,7 +586,6 @@ fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
     for (key, label) in [
         ("xprotect_version", "XProtect"),
         ("selinux_mode", "SELinux"),
-        ("linux_firewall", "Linux firewall"),
     ] {
         if let Some(s) = v.get(key).and_then(|x| x.as_str()) {
             if !s.is_empty() {
@@ -595,6 +595,14 @@ fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
     }
     if let Some(n) = v.get("apparmor_profiles").and_then(|x| x.as_u64()) {
         rows.push(("AppArmor profiles".into(), n.to_string()));
+    }
+    if let Some(n) = v.get("nftables_rule_count").and_then(|x| x.as_u64()) {
+        let label = if n == 0 {
+            "nftables rules (no policy)".to_string()
+        } else {
+            "nftables rules".to_string()
+        };
+        rows.push((label, n.to_string()));
     }
     rows
 }

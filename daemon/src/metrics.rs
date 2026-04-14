@@ -36,6 +36,9 @@ pub struct AssessmentMetrics {
     pub security_bool: IntGaugeVec,
     /// Info-style gauge: always 1; labels carry version strings.
     pub security_info: IntGaugeVec,
+    /// Linux-only: number of rules in `nft list ruleset`. Unset when nft
+    /// isn't readable (missing / permission denied / non-Linux host).
+    pub security_nftables_rule_count: IntGauge,
 
     // GPUs — inventory refreshed on the inventory tick, state each heartbeat.
     /// Info-style gauge: always 1, per-GPU identity on labels.
@@ -168,9 +171,13 @@ impl AssessmentMetrics {
                 "xprotect_version",
                 "selinux_mode",
                 "apparmor_profiles",
-                "linux_firewall",
             ],
         )
+        .unwrap();
+        let security_nftables_rule_count = IntGauge::with_opts(Opts::new(
+            "mac_mgmt_security_nftables_rule_count",
+            "Linux: number of rules loaded in nftables. Absent when nft can't be read.",
+        ))
         .unwrap();
 
         let gpu_info = IntGaugeVec::new(
@@ -286,6 +293,7 @@ impl AssessmentMetrics {
             Box::new(inventory_info.clone()),
             Box::new(security_bool.clone()),
             Box::new(security_info.clone()),
+            Box::new(security_nftables_rule_count.clone()),
             Box::new(gpu_info.clone()),
             Box::new(gpu_vram_total_bytes.clone()),
             Box::new(gpu_vram_used_bytes.clone()),
@@ -320,6 +328,7 @@ impl AssessmentMetrics {
             inventory_info,
             security_bool,
             security_info,
+            security_nftables_rule_count,
             gpu_info,
             gpu_vram_total_bytes,
             gpu_vram_used_bytes,
@@ -441,6 +450,7 @@ impl AssessmentMetrics {
             ("firewall", s.firewall_enabled),
             ("gatekeeper", s.gatekeeper_enabled),
             ("fde", s.fde_enabled),
+            ("ufw", s.ufw_active),
         ] {
             let value = match v {
                 None => -1,
@@ -459,9 +469,12 @@ impl AssessmentMetrics {
                 s.xprotect_version.as_deref().unwrap_or(""),
                 s.selinux_mode.as_deref().unwrap_or(""),
                 apparmor.as_str(),
-                s.linux_firewall.as_deref().unwrap_or(""),
             ])
             .set(1);
+        // Absent == -1 so alerting can distinguish "no rules" (0) from
+        // "can't read nft" (-1). Prometheus gauges don't have Option.
+        let n = s.nftables_rule_count.map(|n| n as i64).unwrap_or(-1);
+        self.security_nftables_rule_count.set(n);
     }
 
     pub fn update_probe(&self, service: &str, kind: ProbeKind, r: &ProbeResult) {

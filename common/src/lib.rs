@@ -229,9 +229,16 @@ pub struct SecurityPosture {
     /// Linux: AppArmor profiles loaded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apparmor_profiles: Option<u32>,
-    /// Linux: ufw/nftables detected + active.
+    /// Linux: ufw installed *and* reporting "Status: active". `None` means
+    /// ufw is not present on the host at all (most NixOS systems).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub linux_firewall: Option<String>,
+    pub ufw_active: Option<bool>,
+    /// Linux: total rule count reported by `nft --json list ruleset`.
+    /// `None` means nftables isn't usable (missing binary / permission
+    /// denied / netlink unavailable). `Some(0)` means nftables is usable
+    /// but no rules are loaded — the host has no firewall policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nftables_rule_count: Option<u32>,
     /// Linux: full-disk encryption detected on root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fde_enabled: Option<bool>,
