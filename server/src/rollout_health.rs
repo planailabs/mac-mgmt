@@ -133,6 +133,7 @@ pub async fn evaluate_stage(
 ) -> Result<Option<HealthEvaluation>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct StageRow {
+        rollout_id: Uuid,
         group_id: Uuid,
         started_at: Option<chrono::DateTime<chrono::Utc>>,
         status: String,
@@ -140,7 +141,7 @@ pub async fn evaluate_stage(
     }
 
     let stage: StageRow = sqlx::query_as(
-        "SELECT group_id, started_at, status, health_gate \
+        "SELECT rollout_id, group_id, started_at, status, health_gate \
          FROM rollout_stages WHERE id = $1",
     )
     .bind(stage_id)
@@ -157,6 +158,22 @@ pub async fn evaluate_stage(
         return Ok(None);
     }
 
+    // Rollout target is what defines "actually upgraded". An instance
+    // still on the old version is *not* part of the rollout's evaluation
+    // surface — counting it as a probe failure penalises a rollout for
+    // problems unrelated to the rollout itself.
+    #[derive(sqlx::FromRow)]
+    struct TargetRow {
+        target_version: Option<String>,
+        nixpkgs_commit: Option<String>,
+    }
+    let target: TargetRow = sqlx::query_as(
+        "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
+    )
+    .bind(stage.rollout_id)
+    .fetch_one(pool)
+    .await?;
+
     let cohort: Vec<Uuid> = sqlx::query_scalar(
         "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \
          UNION ALL \
@@ -166,23 +183,26 @@ pub async fn evaluate_stage(
     .fetch_all(pool)
     .await?;
 
-    // cohort_size counts distinct instance_ids that have ever heartbeated
-    // in the stage's clusters — NOT the cluster count. A cluster can run
-    // multiple daemons, and deleting a stale instance should be visible
-    // as the denominator going down. Clusters with zero heartbeats
-    // contribute nothing; the gate grace period covers the bootstrap
-    // window where no daemon has reported yet.
-    let cohort_size: i64 = if cohort.is_empty() {
-        0
+    // The cohort instance set: every instance in the stage's clusters
+    // that *also* matches the rollout target. NULL targets degenerate to
+    // "match anything" so legacy rollouts that only carry one of
+    // (target_version, nixpkgs_commit) still see their full cohort.
+    let considered_instance_ids: Vec<String> = if cohort.is_empty() {
+        Vec::new()
     } else {
         sqlx::query_scalar(
-            "SELECT COUNT(*) FROM daemon_heartbeats WHERE cluster_id = ANY($1)",
+            "SELECT instance_id FROM daemon_heartbeats \
+             WHERE cluster_id = ANY($1) \
+               AND ($2::text IS NULL OR version = $2) \
+               AND ($3::text IS NULL OR nixpkgs_commit = $3)",
         )
         .bind(&cohort)
-        .fetch_one(pool)
+        .bind(&target.target_version)
+        .bind(&target.nixpkgs_commit)
+        .fetch_all(pool)
         .await?
     };
-    let cohort_size = cohort_size as u32;
+    let cohort_size = considered_instance_ids.len() as u32;
 
     let in_grace_period = stage
         .started_at
@@ -205,15 +225,16 @@ pub async fn evaluate_stage(
         }));
     }
 
-    // Heartbeat freshness — counts instances with a row newer than the
-    // configured window. Denominator is the same instance count so the
-    // ratio lands in [0, 100].
+    // Heartbeat freshness — counts upgraded instances with a row newer
+    // than the configured window. Filtered by the considered instance
+    // set so the % reflects "fresh among instances on the target", not
+    // "fresh among all instances in the cohort's clusters".
     let fresh_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM daemon_heartbeats \
-         WHERE cluster_id = ANY($1) \
+         WHERE instance_id = ANY($1) \
            AND reported_at > now() - ($2::int || ' seconds')::interval",
     )
-    .bind(&cohort)
+    .bind(&considered_instance_ids)
     .bind(gate.heartbeat_freshness_secs as i32)
     .fetch_one(pool)
     .await?;
@@ -227,16 +248,17 @@ pub async fn evaluate_stage(
     // gate trips immediately whenever an instance hasn't run its first
     // probe yet — which on a 15min cadence happens for the first ~15min
     // after a daemon comes online.
-    let probe_stats = collect_probe_stats(pool, &cohort, &gate.min_probe_ok_pct).await?;
+    let probe_stats =
+        collect_probe_stats(pool, &considered_instance_ids, &gate.min_probe_ok_pct).await?;
     let probe_ok_pct = collect_probe_ok_pct_per_instance(
         pool,
-        &cohort,
+        &considered_instance_ids,
         cohort_size,
         gate.min_probe_ok_pct.keys().cloned().collect(),
     )
     .await?;
 
-    let sample_summary = collect_sample_summary(pool, &cohort).await?;
+    let sample_summary = collect_sample_summary(pool, &considered_instance_ids).await?;
 
     // Accumulate failure reasons.
     let mut reasons: Vec<String> = Vec::new();
@@ -274,9 +296,16 @@ pub async fn evaluate_stage(
 /// window so operators see liveness probes alongside gated ones.
 async fn collect_probe_stats(
     pool: &PgPool,
-    cohort: &[Uuid],
+    instance_ids: &[String],
     gated: &HashMap<String, u8>,
 ) -> Result<HashMap<String, ProbeStats>, sqlx::Error> {
+    if instance_ids.is_empty() {
+        let mut out = HashMap::new();
+        for s in gated.keys() {
+            out.insert(s.clone(), ProbeStats::default());
+        }
+        return Ok(out);
+    }
     #[derive(sqlx::FromRow)]
     struct Row {
         service: String,
@@ -298,16 +327,16 @@ async fn collect_probe_stats(
                 MAX(collected_at) FILTER (WHERE NOT ok) AS last_failure_at, \
                 ( \
                   SELECT error_class FROM assessment_probes p2 \
-                  WHERE p2.cluster_id = ANY($1) AND p2.service = p.service AND NOT p2.ok \
+                  WHERE p2.instance_id = ANY($1) AND p2.service = p.service AND NOT p2.ok \
                     AND p2.collected_at > now() - interval '30 minutes' \
                   ORDER BY p2.collected_at DESC LIMIT 1 \
                 ) AS last_error_class \
          FROM assessment_probes p \
-         WHERE p.cluster_id = ANY($1) \
+         WHERE p.instance_id = ANY($1) \
            AND p.collected_at > now() - interval '30 minutes' \
          GROUP BY p.service",
     )
-    .bind(cohort)
+    .bind(instance_ids)
     .fetch_all(pool)
     .await?;
 
@@ -351,12 +380,12 @@ async fn collect_probe_stats(
 /// case lines up with `evaluate_stage`'s top-level early return.
 async fn collect_probe_ok_pct_per_instance(
     pool: &PgPool,
-    cohort: &[Uuid],
+    instance_ids: &[String],
     cohort_size: u32,
     services: Vec<String>,
 ) -> Result<HashMap<String, u8>, sqlx::Error> {
     let mut out: HashMap<String, u8> = HashMap::new();
-    if cohort_size == 0 || cohort.is_empty() {
+    if cohort_size == 0 || instance_ids.is_empty() {
         for s in services {
             out.insert(s, 100);
         }
@@ -370,13 +399,13 @@ async fn collect_probe_ok_pct_per_instance(
             "SELECT COUNT(*) FROM ( \
                SELECT DISTINCT ON (instance_id) ok \
                FROM assessment_probes \
-               WHERE cluster_id = ANY($1) AND service = $2 \
+               WHERE instance_id = ANY($1) AND service = $2 \
                  AND collected_at > now() - interval '30 minutes' \
                ORDER BY instance_id, collected_at DESC \
              ) latest \
              WHERE NOT ok",
         )
-        .bind(cohort)
+        .bind(instance_ids)
         .bind(&service)
         .fetch_one(pool)
         .await?;
@@ -389,13 +418,16 @@ async fn collect_probe_ok_pct_per_instance(
 
 async fn collect_sample_summary(
     pool: &PgPool,
-    cohort: &[Uuid],
+    instance_ids: &[String],
 ) -> Result<Option<SampleSummary>, sqlx::Error> {
+    if instance_ids.is_empty() {
+        return Ok(None);
+    }
     let samples: Vec<serde_json::Value> = sqlx::query_scalar(
         "SELECT sample FROM daemon_heartbeats \
-         WHERE cluster_id = ANY($1) AND sample IS NOT NULL",
+         WHERE instance_id = ANY($1) AND sample IS NOT NULL",
     )
-    .bind(cohort)
+    .bind(instance_ids)
     .fetch_all(pool)
     .await?;
     if samples.is_empty() {
