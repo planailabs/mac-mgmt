@@ -4,6 +4,16 @@ use std::time::Duration;
 
 use mac_mgmt_services::{Client as SupervisorClient, Notification};
 
+/// Environment variable that switches the supervisor to in-process mode.
+/// When set to `1`, the daemon spawns the supervisor as a tokio task instead
+/// of installing it as a separate OS unit, while still talking to it over
+/// the usual Unix socket. Intended for development.
+const INPROCESS_ENV: &str = "INPROCESS_SERVICE_MANAGER";
+
+fn inprocess_enabled() -> bool {
+    matches!(std::env::var(INPROCESS_ENV).ok().as_deref(), Some("1"))
+}
+
 use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
@@ -63,6 +73,10 @@ pub struct ServiceManager {
     dispatcher: Arc<Dispatcher>,
     log_buf: LogBuffer,
     pub config_store: ConfigStore,
+    /// `true` when the supervisor runs as a tokio task inside this daemon
+    /// process. Skips OS-unit install and disables UpdateSelf RPC (a daemon
+    /// self-update will recreate the supervisor anyway).
+    inprocess: bool,
 }
 
 impl ServiceManager {
@@ -71,14 +85,16 @@ impl ServiceManager {
         dispatcher: Arc<Dispatcher>,
         log_buf: LogBuffer,
     ) -> Result<Self> {
-        // Install the one supervisor OS unit (idempotent).
-        if let Err(e) = crate::service::install_services_manager() {
-            tracing::warn!("failed to install services supervisor unit: {e}");
-            sentry_ext::capture_error(
-                &format!("failed to install services supervisor unit: {e}"),
-                &[],
+        let inprocess = inprocess_enabled();
+        if inprocess {
+            tracing::info!(
+                "{INPROCESS_ENV}=1, launching services supervisor in-process"
             );
+            spawn_inprocess_supervisor();
         }
+        // Otherwise the supervisor is expected to be running from a prior
+        // `mac-mgmt install` (OS unit); the client retries until the socket
+        // shows up.
 
         let global_cfg = std::mem::take(&mut cfg.global);
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
@@ -166,6 +182,7 @@ impl ServiceManager {
             dispatcher,
             log_buf,
             config_store,
+            inprocess,
         })
     }
 
@@ -564,6 +581,11 @@ impl ServiceManager {
     /// Tell the supervisor to re-exec itself, picking up the new binary.
     #[allow(dead_code)]
     pub async fn send_update_self(&mut self) {
+        if self.inprocess {
+            // The supervisor lives inside this daemon process, so the
+            // daemon's own self-update will restart it. Nothing to do.
+            return;
+        }
         let Some(client) = self.client.as_mut() else {
             return;
         };
@@ -580,4 +602,29 @@ impl ServiceManager {
             s.phase = ServicePhase::Stopped;
         }
     }
+}
+
+/// Launch the services supervisor as a tokio task inside the current process.
+/// The task logs any error and exits; next health tick will fail to connect
+/// and retry, which also surfaces the problem.
+fn spawn_inprocess_supervisor() {
+    let socket = mac_mgmt_services::default_socket_path();
+    tokio::spawn(async move {
+        match mac_mgmt_services::server::run(&socket).await {
+            Ok(true) => {
+                // UpdateSelf was requested. In-process we can't re-exec just
+                // the supervisor, so log it and exit — the next reconnect
+                // will fail and the daemon will surface the problem.
+                tracing::warn!(
+                    "in-process supervisor asked to re-exec; not supported, exiting task"
+                );
+            }
+            Ok(false) => {
+                tracing::info!("in-process supervisor exited cleanly");
+            }
+            Err(e) => {
+                tracing::error!("in-process supervisor failed: {e:#}");
+            }
+        }
+    });
 }

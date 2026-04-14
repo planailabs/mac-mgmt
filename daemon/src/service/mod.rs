@@ -7,9 +7,16 @@ use anyhow::Result;
 
 pub fn install() -> Result<()> {
     #[cfg(target_os = "macos")]
-    return launchd::install();
+    launchd::install()?;
     #[cfg(not(target_os = "macos"))]
-    return systemd::install();
+    systemd::install()?;
+
+    // Install the services supervisor alongside the daemon.
+    if let Err(e) = install_services_manager() {
+        tracing::warn!("failed to install services manager: {e}");
+    }
+
+    Ok(())
 }
 
 pub fn uninstall() -> Result<()> {
