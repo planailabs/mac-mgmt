@@ -452,20 +452,26 @@ async fn aggregate_health_summary(
             .get("in_grace_period")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let reasons_iter = ev
+            .report
+            .get("reasons")
+            .and_then(|v| v.as_array());
+        let has_reasons = reasons_iter
+            .map(|arr| arr.iter().any(|r| r.is_string()))
+            .unwrap_or(false);
         if !ev.passed {
             summary.failing_stages += 1;
             summary.state = "fail".into();
             if summary.top_reason.is_empty() {
-                if let Some(first) = ev
-                    .report
-                    .get("reasons")
-                    .and_then(|v| v.as_array())
+                if let Some(first) = reasons_iter
                     .and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
                 {
                     summary.top_reason = first.chars().take(120).collect();
                 }
             }
-        } else if in_grace && summary.state != "fail" {
+        } else if in_grace && has_reasons && summary.state != "fail" {
+            // Grace is *shielding* a real reason — surface that. A clean
+            // pass during grace is just a pass; no need for a yellow flag.
             summary.state = "grace".into();
         }
         if let Some(n) = ev.report.get("cohort_size").and_then(|v| v.as_u64()) {
@@ -1381,8 +1387,13 @@ pub fn RolloutDetail(id: String) -> Element {
                                     if stage.has_gate {
                                         {
                                             let evaluated_at_text = stage.health.as_ref().map(|h| h.evaluated_at.format("%Y-%m-%d %H:%M:%S").to_string());
+                                            // "grace" is reserved for the case where the gate would have
+                                            // failed if not for the grace period — i.e. there are reasons
+                                            // but they're being shielded. A clean pass during grace renders
+                                            // as a normal pass, since there's nothing for the grace period
+                                            // to actually shield.
                                             let (gate_badge_class, gate_text) = match stage.health.as_ref() {
-                                                Some(h) if h.passed && h.in_grace_period => (
+                                                Some(h) if h.passed && h.in_grace_period && !h.reasons.is_empty() => (
                                                     "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
                                                     "gate: grace period".to_string(),
                                                 ),

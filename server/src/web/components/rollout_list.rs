@@ -91,6 +91,10 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
             .get("in_grace_period")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let reasons_arr = ev.report.get("reasons").and_then(|v| v.as_array());
+        let has_reasons = reasons_arr
+            .map(|arr| arr.iter().any(|r| r.is_string()))
+            .unwrap_or(false);
         let entry = health_by_rollout
             .entry(ev.rollout_id)
             .or_insert_with(|| RolloutHealthSummary {
@@ -100,18 +104,20 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
                 summary: String::new(),
             });
         entry.evaluated_stages += 1;
-        // State precedence: fail > grace > pass.
+        // State precedence: fail > grace (only when grace is actually
+        // shielding a real reason) > pass. A clean pass during grace is
+        // just a pass.
         if !ev.passed {
             entry.failing_stages += 1;
             entry.state = "fail".into();
             if entry.summary.is_empty() {
-                if let Some(reasons) = ev.report.get("reasons").and_then(|v| v.as_array()) {
-                    if let Some(first) = reasons.iter().filter_map(|r| r.as_str()).next() {
-                        entry.summary = truncate(first, 80);
-                    }
+                if let Some(first) = reasons_arr
+                    .and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
+                {
+                    entry.summary = truncate(first, 80);
                 }
             }
-        } else if in_grace && entry.state != "fail" {
+        } else if in_grace && has_reasons && entry.state != "fail" {
             entry.state = "grace".into();
         }
     }
