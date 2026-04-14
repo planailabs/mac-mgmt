@@ -3568,3 +3568,134 @@ pub async fn download_daemon(
     let filename = format!("mac-mgmt-{version}-{system}");
     Ok(BinaryDownload { body, filename })
 }
+
+// ── Rollout health gates (admin) ────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct StageHealthReport {
+    pub stage_id: Uuid,
+    pub has_gate: bool,
+    pub evaluation: Option<serde_json::Value>,
+    pub last_evaluated_at: Option<DateTime<Utc>>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/rollouts/{rollout_id}/stages/{stage_id}/health",
+    tag = "Admin — Rollouts",
+    summary = "Get latest health-gate evaluation for a stage",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Stage health report", body = StageHealthReport),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::get("/admin/rollouts/<rollout_id>/stages/<stage_id>/health")]
+pub async fn admin_stage_health(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    rollout_id: &str,
+    stage_id: &str,
+) -> Result<Json<StageHealthReport>, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+    let sid: Uuid = stage_id.parse().map_err(|_| Status::BadRequest)?;
+
+    #[derive(sqlx::FromRow)]
+    struct StageRow { has_gate: bool }
+    let stage: StageRow = sqlx::query_as(
+        "SELECT (health_gate IS NOT NULL) AS has_gate \
+         FROM rollout_stages WHERE id = $1 AND rollout_id = $2",
+    )
+    .bind(sid)
+    .bind(rid)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::NotFound)?;
+
+    // Also evaluate now so callers see live state, not just the last tick.
+    let live = crate::rollout_health::evaluate_stage(pool.inner(), sid)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+    #[derive(sqlx::FromRow)]
+    struct LastRow { report: serde_json::Value, evaluated_at: DateTime<Utc> }
+    let last: Option<LastRow> = sqlx::query_as(
+        "SELECT report, evaluated_at FROM rollout_stage_health_evaluations \
+         WHERE stage_id = $1 ORDER BY evaluated_at DESC LIMIT 1",
+    )
+    .bind(sid)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let (evaluation, last_evaluated_at) = match (live, last) {
+        (Some(l), _) => (
+            Some(serde_json::to_value(&l).unwrap_or_default()),
+            Some(Utc::now()),
+        ),
+        (None, Some(l)) => (Some(l.report), Some(l.evaluated_at)),
+        (None, None) => (None, None),
+    };
+
+    Ok(Json(StageHealthReport {
+        stage_id: sid,
+        has_gate: stage.has_gate,
+        evaluation,
+        last_evaluated_at,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/rollouts/{rollout_id}/stages/{stage_id}/request-assessment",
+    tag = "Admin — Rollouts",
+    summary = "Request fresh assessment from every instance in a stage's cohort",
+    description = "Sends PushCommand::RequestAssessment via SSE to every cluster in the stage's group. Use to force a health re-evaluation before advancing.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Push dispatched"),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::post("/admin/rollouts/<rollout_id>/stages/<stage_id>/request-assessment")]
+pub async fn admin_request_stage_assessment(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    rollout_id: &str,
+    stage_id: &str,
+) -> Result<Status, Status> {
+    let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
+    let sid: Uuid = stage_id.parse().map_err(|_| Status::BadRequest)?;
+
+    #[derive(sqlx::FromRow)]
+    struct GroupRow { group_id: Uuid }
+    let stage: GroupRow = sqlx::query_as(
+        "SELECT group_id FROM rollout_stages WHERE id = $1 AND rollout_id = $2",
+    )
+    .bind(sid)
+    .bind(rid)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .ok_or(Status::NotFound)?;
+
+    let cohort: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \
+         UNION ALL \
+         SELECT id FROM clusters WHERE $1 = '00000000-0000-0000-0000-000000000000'::uuid",
+    )
+    .bind(stage.group_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let map = channels.inner().read().await;
+    for cid in cohort {
+        if let Some(tx) = map.get(&cid) {
+            let _ = tx.send(PushMessage::RequestAssessment);
+        }
+    }
+    Ok(Status::Ok)
+}

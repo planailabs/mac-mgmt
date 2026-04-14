@@ -6,6 +6,8 @@ mod config;
 mod db;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod mcp_schema;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+mod rollout_health;
 #[cfg(feature = "webui")]
 mod anthropic;
 #[cfg(feature = "webui")]
@@ -95,6 +97,15 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             }
         });
+    }
+
+    // Background task: auto-pause rollout stages that fail their health gate.
+    {
+        let pool = pool.clone();
+        tokio::spawn(rollout_health::run_auto_pause_loop(
+            pool,
+            std::time::Duration::from_secs(60),
+        ));
     }
 
     let api_rocket = api::build_rocket(pool.clone(), cfg.api.port, push_channels)
