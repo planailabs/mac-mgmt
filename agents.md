@@ -16,3 +16,5 @@ The supervisor and the daemon are upgraded independently (the supervisor keeps r
 - When you replace a field, keep the old one on the wire during the transition and have the new side fall back to it when the new one is empty/missing (see the `statuses` / `names` pair on `Response::Services`).
 - Don't rename or remove existing request/response variants; add new ones and keep handling the old shape.
 - When in doubt, test with one side on the old protocol and one on the new.
+
+Mark every compat shim with a `// compat: added YYYY-MM-DD, removable after YYYY-MM-DD` comment (one year out) so a later cleanup pass can delete shims confidently instead of guessing whether something out in the wild still needs them.
