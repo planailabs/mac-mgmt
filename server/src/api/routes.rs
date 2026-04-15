@@ -2196,7 +2196,7 @@ pub async fn setting_cloud_init(
     let body = body.into_inner();
     let system = body
         .system
-        .unwrap_or_else(|| "x86_64-linux-musl".to_string());
+        .unwrap_or_else(|| "x86_64-linux".to_string());
     let label = body.label.unwrap_or_else(|| {
         let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
         match &body.instance_id {
@@ -2307,6 +2307,8 @@ fn render_cloud_init(
 packages:
   - curl
   - ca-certificates
+  - xz-utils
+  - wget
 
 write_files:
   - path: /root/.config/mac-mgmt/config.toml
@@ -2316,27 +2318,11 @@ write_files:
       [server]
       url = \"{server_url}\"
       token = \"{token}\"
-{host_key_block}  - path: /etc/systemd/system/mac-mgmt.service
-    owner: root:root
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=mac-mgmt daemon
-      After=network-online.target
-      Wants=network-online.target
-
-      [Service]
-      Type=simple
-      ExecStart=/usr/local/bin/mac-mgmt daemon
-      Restart=on-failure
-      RestartSec=5
-
-      [Install]
-      WantedBy=multi-user.target
-
+{host_key_block}
 runcmd:
   - [ curl, -fsSL, -o, /usr/local/bin/mac-mgmt, \"{download_url}\" ]
   - [ chmod, \"0755\", /usr/local/bin/mac-mgmt ]
+  - [ /usr/local/bin/mac-mgmt, setup ]
   - [ systemctl, daemon-reload ]
   - [ systemctl, enable, --now, mac-mgmt.service ]
 "
