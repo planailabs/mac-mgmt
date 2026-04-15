@@ -3,7 +3,9 @@
 # Override with `--config <path>` or MAC_MGMT_RUNNER_CONFIG.
 
 [mgmt]
-# Admin-side URL — the runner uses this to hit /api/admin/*.
+# REST API URL — must be the server's api.external_url (the Rocket listener
+# on port 7378 by default), NOT the OIDC-protected web UI. A wrong value
+# is caught by preflight at startup.
 url = "https://mgmt.example.com:7378"
 # Admin bearer token (kind="admin").
 admin_token = "..."

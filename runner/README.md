@@ -36,12 +36,16 @@ instances cheap, large enough to support tool calling.
 
 ## Setup
 
-1. **mac-mgmt server** must be reachable with an **admin token**
-   (`POST /api/admin/organizations/{org_id}/tokens` with `kind =
-   "admin"` set directly in the DB, or via the web UI).
-2. **Pick an organization** — every matrix cluster will be created
+1. **mac-mgmt server** must be reachable at its **REST API URL** —
+   `api.external_url` in the server config (default port 7378),
+   **not** the web UI port (default 7377, OIDC-protected). The runner
+   runs a preflight `GET /api/self` at startup and refuses to proceed
+   if the URL redirects to an OIDC sign-in page.
+2. **Admin token**: created directly in the DB or via the web UI
+   (`kind = "admin"`).
+3. **Pick an organization** — every matrix cluster will be created
    inside it so an existing org-scoped setting token can manage them.
-3. **Incus host** with the HTTPS listener enabled and a client cert
+4. **Incus host** with the HTTPS listener enabled and a client cert
    trusted:
 
    ```
@@ -50,7 +54,7 @@ instances cheap, large enough to support tool calling.
    incus config trust add-certificate /path/to/runner-client.crt
    ```
 
-4. **Runner config**: copy `config.example.toml` to
+5. **Runner config**: copy `config.example.toml` to
    `/etc/mac-mgmt-runner/config.toml` and fill in:
    - `mgmt.url`, `mgmt.admin_token`, `mgmt.organization_id`
    - `incus.url`, `incus.client_cert`, `incus.client_key`

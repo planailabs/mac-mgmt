@@ -113,6 +113,10 @@ fn init_sentry(cfg: &RunnerConfig) -> Option<sentry::ClientInitGuard> {
 
 async fn run_daemon(cfg: RunnerConfig) -> Result<()> {
     let orch = build_orchestrator(cfg).await?;
+    orch.mgmt
+        .preflight()
+        .await
+        .context("mgmt preflight failed — check mgmt.url and admin_token")?;
     let orch = Arc::new(orch);
 
     // Initial reconcile is kicked off in the background so the HTTP API comes up immediately.

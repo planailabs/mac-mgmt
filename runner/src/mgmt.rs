@@ -112,6 +112,57 @@ impl MgmtClient {
         Ok(h)
     }
 
+    /// Preflight: hit /api/self to confirm the URL points at the REST API
+    /// (not the OIDC-protected web UI) and that the admin token works.
+    /// Called once at startup so errors show up before the first cell boots.
+    pub async fn preflight(&self) -> Result<()> {
+        let url = format!("{}/api/self", self.base);
+        let resp = self
+            .http
+            .get(&url)
+            .headers(self.headers(None)?)
+            .send()
+            .await
+            .with_context(|| format!("preflight: GET {url}"))?;
+        let status = resp.status();
+        let ct = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            if body.starts_with("<!doctype") || body.starts_with("<html") || ct.contains("text/html") {
+                bail!(
+                    "mgmt.url ({}) looks like the web UI, not the REST API. \
+                     Point it at the server's api.external_url (default port 7378). \
+                     Got status={status} content-type={ct}",
+                    self.base
+                );
+            }
+            bail!(
+                "preflight failed: status={status} content-type={ct} body={:?}",
+                body.chars().take(400).collect::<String>()
+            );
+        }
+        #[derive(Deserialize)]
+        struct SelfInfo {
+            token_kind: String,
+        }
+        let info: SelfInfo = serde_json::from_str(&body).with_context(|| {
+            let snippet: String = body.chars().take(400).collect();
+            format!("preflight: /api/self did not return JSON: {snippet:?}")
+        })?;
+        if info.token_kind != "admin" {
+            bail!(
+                "mgmt.admin_token is a {:?} token, but the runner requires an admin token",
+                info.token_kind
+            );
+        }
+        Ok(())
+    }
+
     pub async fn create_cluster(&self, name: &str) -> Result<CreatedCluster> {
         let resp = self
             .http
