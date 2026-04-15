@@ -15,13 +15,20 @@ futures-util = "0.3"
 hex = "0.4"
 mac-mgmt-common = { path = "../common" }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "json"] }
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 rocket = { version = "0.5", default-features = false, features = ["json"] }
+sentry = { workspace = true, features = ["anyhow"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+ssh-key = { version = "0.6", features = ["ed25519", "rand_core"] }
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+# Used in tests only, to verify our host-key fingerprint matches the
+# algorithm the daemon runs (daemon uses russh's PublicKeyBase64::public_key_bytes).
+russh = { version = "0.59", default-features = false, features = ["ring"] }

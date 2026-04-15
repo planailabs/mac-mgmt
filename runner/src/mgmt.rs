@@ -33,6 +33,25 @@ pub struct AdminMachineRow {
     pub services_extended: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct CloudInitRequest<'a> {
+    pub system: &'a str,
+    pub server_url: Option<&'a str>,
+    pub daemon_version: Option<&'a str>,
+    pub label: Option<&'a str>,
+    pub host_key_pem: Option<&'a str>,
+    pub instance_id: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CloudInitResponse {
+    pub cloud_init: String,
+    #[allow(dead_code)] // surfaced in logs / future use
+    pub sync_token: String,
+    #[allow(dead_code)] // runner already knows it; this just echoes
+    pub instance_id: Option<String>,
+}
+
 impl MgmtClient {
     pub fn new(base: &str, admin_token: &str, organization_id: Uuid) -> Result<Self> {
         let http = reqwest::Client::builder()
@@ -122,32 +141,43 @@ impl MgmtClient {
     pub async fn get_cloud_init(
         &self,
         cluster_id: Uuid,
-        system: &str,
-        public_url: Option<&str>,
-        daemon_version: Option<&str>,
-        label: Option<&str>,
-    ) -> Result<String> {
-        let mut req = self
+        req: &CloudInitRequest<'_>,
+    ) -> Result<CloudInitResponse> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            system: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            server_url: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            daemon_version: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            label: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            host_key_pem: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            instance_id: Option<&'a str>,
+        }
+        let resp = self
             .http
-            .get(format!("{}/api/setting/cloud-init", self.base))
-            .query(&[("system", system)])
-            .headers(self.headers(Some(cluster_id))?);
-        if let Some(u) = public_url {
-            req = req.query(&[("server_url", u)]);
-        }
-        if let Some(v) = daemon_version {
-            req = req.query(&[("daemon_version", v)]);
-        }
-        if let Some(l) = label {
-            req = req.query(&[("label", l)]);
-        }
-        let resp = req.send().await.context("fetching cloud-init")?;
+            .post(format!("{}/api/setting/cloud-init", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .json(&Body {
+                system: req.system,
+                server_url: req.server_url,
+                daemon_version: req.daemon_version,
+                label: req.label,
+                host_key_pem: req.host_key_pem,
+                instance_id: req.instance_id,
+            })
+            .send()
+            .await
+            .context("fetching cloud-init")?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             bail!("get_cloud_init({cluster_id}): {status} {body}");
         }
-        Ok(resp.text().await.context("reading cloud-init body")?)
+        Ok(resp.json().await.context("decoding cloud-init response")?)
     }
 
     pub async fn list_cluster_machines(&self, cluster_id: Uuid) -> Result<Vec<AdminMachineRow>> {

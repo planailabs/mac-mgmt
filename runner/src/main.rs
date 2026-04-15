@@ -13,6 +13,7 @@ use tracing_subscriber::EnvFilter;
 
 mod api;
 mod config;
+mod host_key;
 mod incus;
 mod matrix;
 mod mgmt;
@@ -22,7 +23,7 @@ mod state;
 use crate::config::RunnerConfig;
 use crate::incus::IncusClient;
 use crate::mgmt::MgmtClient;
-use crate::orchestrator::{Orchestrator, reconcile_loop, reprovision_loop};
+use crate::orchestrator::{Orchestrator, deploy_watchdog_loop, reconcile_loop, reprovision_loop};
 
 #[derive(Parser)]
 #[command(name = "mac-mgmt-runner", version, about = "mac-mgmt fleet runner")]
@@ -66,8 +67,7 @@ enum Cmd {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -79,14 +79,36 @@ async fn main() -> Result<()> {
     let cfg = RunnerConfig::load(&opts.config)
         .with_context(|| format!("loading runner config from {}", opts.config.display()))?;
 
-    match opts.cmd {
-        Cmd::Daemon => run_daemon(cfg).await,
-        Cmd::Status { json } => cmd_status(&cfg, json).await,
-        Cmd::Provision => cmd_provision(&cfg).await,
-        Cmd::Teardown { yes } => cmd_teardown(&cfg, yes).await,
-        Cmd::Reprovision { key } => cmd_reprovision(&cfg, key.as_deref()).await,
-        Cmd::Matrix { json } => cmd_matrix(&cfg, json),
-    }
+    // Sentry must be initialised before the tokio runtime so the panic hook is in place.
+    let _sentry_guard = init_sentry(&cfg);
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+
+    rt.block_on(async move {
+        match opts.cmd {
+            Cmd::Daemon => run_daemon(cfg).await,
+            Cmd::Status { json } => cmd_status(&cfg, json).await,
+            Cmd::Provision => cmd_provision(&cfg).await,
+            Cmd::Teardown { yes } => cmd_teardown(&cfg, yes).await,
+            Cmd::Reprovision { key } => cmd_reprovision(&cfg, key.as_deref()).await,
+            Cmd::Matrix { json } => cmd_matrix(&cfg, json),
+        }
+    })
+}
+
+fn init_sentry(cfg: &RunnerConfig) -> Option<sentry::ClientInitGuard> {
+    let dsn = cfg.sentry.dsn.as_deref()?;
+    Some(sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            environment: cfg.sentry.environment.clone().map(Into::into),
+            ..Default::default()
+        },
+    )))
 }
 
 async fn run_daemon(cfg: RunnerConfig) -> Result<()> {
@@ -99,11 +121,13 @@ async fn run_daemon(cfg: RunnerConfig) -> Result<()> {
         async move {
             if let Err(e) = orch.reconcile().await {
                 tracing::error!("initial reconcile: {e:#}");
+                sentry::integrations::anyhow::capture_anyhow(&e);
             }
         }
     });
 
     tokio::spawn(reconcile_loop(orch.clone()));
+    tokio::spawn(deploy_watchdog_loop(orch.clone()));
     tokio::spawn(reprovision_loop(orch.clone()));
 
     api::serve(orch).await
@@ -142,11 +166,16 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
             snap.total_cells, snap.provisioned
         );
         for c in &snap.cells {
-            let marker = match (c.provisioned, c.healthy) {
-                (false, _) => "·",
-                (true, Some(true)) => "✔",
-                (true, Some(false)) => "✗",
-                (true, None) => "…",
+            let marker = if c.parked {
+                "⛔"
+            } else {
+                match (c.provisioned, c.healthy, c.pending_since.is_some()) {
+                    (false, _, _) => "·",
+                    (true, Some(true), _) => "✔",
+                    (true, Some(false), _) => "✗",
+                    (true, None, true) => "…",
+                    (true, None, false) => " ",
+                }
             };
             let extra = match (&c.cluster_id, &c.instance_name) {
                 (Some(cid), Some(name)) => format!("  cluster={cid}  incus={name}"),
@@ -157,7 +186,12 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
                 .as_deref()
                 .map(|d| format!("  [{d}]"))
                 .unwrap_or_default();
-            println!("  {marker} {}{}{}", c.key, extra, detail);
+            let fail = if c.deploy_failures > 0 {
+                format!("  fail={}", c.deploy_failures)
+            } else {
+                String::new()
+            };
+            println!("  {marker} {}{}{}{}", c.key, extra, fail, detail);
         }
     }
     Ok(())

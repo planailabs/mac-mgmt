@@ -3783,9 +3783,12 @@ dependencies = [
  "rand 0.8.5",
  "reqwest 0.12.28",
  "rocket",
+ "russh",
+ "sentry",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "ssh-key",
  "tokio",
  "toml",
  "tracing",
@@ -5508,6 +5511,7 @@ dependencies = [
  "pkcs1 0.7.5",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
+ "sha2 0.10.9",
  "signature 2.2.0",
  "spki 0.7.3",
  "subtle",
@@ -5949,6 +5953,7 @@ dependencies = [
  "httpdate",
  "reqwest 0.12.28",
  "rustls",
+ "sentry-anyhow",
  "sentry-backtrace",
  "sentry-contexts",
  "sentry-core",
@@ -5959,6 +5964,17 @@ dependencies = [
  "tokio",
  "ureq",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "sentry-anyhow"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4084c497026eaa8115c31449881502b8b212d76cc10138014143a2c7595478ab"
+dependencies = [
+ "anyhow",
+ "sentry-backtrace",
+ "sentry-core",
 ]
 
 [[package]]
@@ -6647,6 +6663,27 @@ dependencies = [
  "bytes",
  "pem-rfc7468 0.7.0",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "ssh-key"
+version = "0.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b86f5297f0f04d08cabaa0f6bff7cb6aec4d9c3b49d87990d63da9d9156a8c3"
+dependencies = [
+ "ed25519-dalek",
+ "p256",
+ "p384",
+ "p521",
+ "rand_core 0.6.4",
+ "rsa 0.9.10",
+ "sec1",
+ "sha2 0.10.9",
+ "signature 2.2.0",
+ "ssh-cipher",
+ "ssh-encoding",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]

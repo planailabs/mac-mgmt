@@ -123,6 +123,8 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::CreateClusterForOrgBody,
         routes::CreatedCluster,
         routes::AdminMachineRow,
+        routes::CloudInitBody,
+        routes::CloudInitResponse,
         routes::CreateTokenForClusterBody,
         routes::CreateOrgTokenBody,
         routes::CreatedToken,

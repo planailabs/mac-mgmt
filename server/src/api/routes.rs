@@ -2099,41 +2099,77 @@ pub async fn admin_list_cluster_machines(
 
 // ── Setting — Cloud-init bootstrap ──────────────────────────────────
 
+#[derive(Deserialize, ToSchema, Default)]
+pub struct CloudInitBody {
+    /// Nix system identifier (default: x86_64-linux-musl).
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Public URL the daemon should dial; defaults to the server's configured api.external_url.
+    #[serde(default)]
+    pub server_url: Option<String>,
+    /// Explicit daemon version; omit to resolve from rollout/pinned.
+    #[serde(default)]
+    pub daemon_version: Option<String>,
+    /// Sync token label.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Optional pregenerated Ed25519 host key in OpenSSH PEM format.
+    /// When provided, it is written to the daemon's host-key path so the
+    /// caller-computed instance_id matches what the daemon will report.
+    /// When absent, the daemon generates its own on first boot.
+    #[serde(default)]
+    pub host_key_pem: Option<String>,
+    /// Optional caller-computed instance_id (hex SHA-256 of the SSH-wire
+    /// public key). Stored as a token label suffix so it can be correlated
+    /// with heartbeats; the daemon itself derives instance_id from its host key.
+    #[serde(default)]
+    pub instance_id: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CloudInitResponse {
+    /// Rendered cloud-init YAML.
+    pub cloud_init: String,
+    /// The sync token embedded in `cloud_init` (for convenience).
+    pub sync_token: String,
+    /// Echoes the caller-supplied instance_id, or null if none was supplied.
+    pub instance_id: Option<String>,
+}
+
 #[utoipa::path(
-    get,
+    post,
     path = "/api/setting/cloud-init",
     tag = "Setting — Config",
     summary = "Generate a cloud-init bootstrap for this cluster",
-    description = "Mints a fresh sync token for the cluster and returns a cloud-init YAML that installs the daemon, writes the config pointing at this server, and starts the service.",
+    description = "Mints a fresh sync token for the cluster and returns a ready-to-use cloud-init YAML that installs the daemon, writes the config pointing at this server, and starts the service. Optionally embeds a caller-provided Ed25519 host key so the daemon's instance_id is predictable.",
     security(("bearer" = [])),
-    params(
-        ("system" = Option<String>, Query, description = "Nix system identifier (default: x86_64-linux-musl)"),
-        ("server_url" = Option<String>, Query, description = "Public URL the daemon should dial; defaults to the server's configured api.external_url"),
-        ("daemon_version" = Option<String>, Query, description = "Specific daemon version; omit to auto-resolve from rollout/pinned"),
-        ("label" = Option<String>, Query, description = "Sync token label"),
-    ),
+    request_body = CloudInitBody,
     responses(
-        (status = 200, description = "Cloud-init YAML"),
+        (status = 200, description = "Cloud-init YAML + metadata", body = CloudInitResponse),
         (status = 422, description = "Could not resolve daemon version or server URL"),
     ),
 )]
-#[rocket::get("/setting/cloud-init?<system>&<server_url>&<daemon_version>&<label>")]
+#[rocket::post("/setting/cloud-init", data = "<body>")]
 pub async fn setting_cloud_init(
     auth: SettingAuth,
     pool: &State<PgPool>,
-    system: Option<String>,
-    server_url: Option<String>,
-    daemon_version: Option<String>,
-    label: Option<String>,
-) -> Result<(ContentType, String), Status> {
+    body: Json<CloudInitBody>,
+) -> Result<Json<CloudInitResponse>, Status> {
     use rand::Rng;
 
-    let system = system.unwrap_or_else(|| "x86_64-linux-musl".to_string());
-    let label = label.unwrap_or_else(|| format!(
-        "cloud-init-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
-    ));
+    let body = body.into_inner();
+    let system = body
+        .system
+        .unwrap_or_else(|| "x86_64-linux-musl".to_string());
+    let label = body.label.unwrap_or_else(|| {
+        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        match &body.instance_id {
+            Some(iid) => format!("cloud-init-{ts}-{}", &iid[..iid.len().min(12)]),
+            None => format!("cloud-init-{ts}"),
+        }
+    });
 
-    let version = if let Some(v) = daemon_version {
+    let version = if let Some(v) = body.daemon_version {
         v
     } else {
         let rollout_version: Option<Option<String>> = sqlx::query_scalar(
@@ -2159,7 +2195,7 @@ pub async fn setting_cloud_init(
         rollout_version.and_then(|v| v).or(pinned).ok_or(Status::UnprocessableEntity)?
     };
 
-    let server_url = server_url.unwrap_or_else(|| {
+    let server_url = body.server_url.unwrap_or_else(|| {
         crate::config::config().api.external_url.clone()
     });
     let server_url = server_url.trim_end_matches('/').to_string();
@@ -2176,12 +2212,46 @@ pub async fn setting_cloud_init(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    let yaml = render_cloud_init(&server_url, &raw_token, &version, &system);
-    Ok((ContentType::new("text", "cloud-config"), yaml))
+    let yaml = render_cloud_init(
+        &server_url,
+        &raw_token,
+        &version,
+        &system,
+        body.host_key_pem.as_deref(),
+    );
+    Ok(Json(CloudInitResponse {
+        cloud_init: yaml,
+        sync_token: raw_token,
+        instance_id: body.instance_id,
+    }))
 }
 
-fn render_cloud_init(server_url: &str, token: &str, version: &str, system: &str) -> String {
+fn render_cloud_init(
+    server_url: &str,
+    token: &str,
+    version: &str,
+    system: &str,
+    host_key_pem: Option<&str>,
+) -> String {
     let download_url = format!("{server_url}/api/daemon-download/{version}/{system}");
+    let host_key_block = match host_key_pem {
+        Some(pem) => {
+            let indented = pem
+                .lines()
+                .map(|l| format!("      {l}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+"  - path: /root/.config/mac-mgmt/host_ed25519_key
+    owner: root:root
+    permissions: '0600'
+    content: |
+{indented}
+"
+            )
+        }
+        None => String::new(),
+    };
     format!(
 "#cloud-config
 packages:
@@ -2196,7 +2266,7 @@ write_files:
       [server]
       url = \"{server_url}\"
       token = \"{token}\"
-  - path: /etc/systemd/system/mac-mgmt.service
+{host_key_block}  - path: /etc/systemd/system/mac-mgmt.service
     owner: root:root
     permissions: '0644'
     content: |

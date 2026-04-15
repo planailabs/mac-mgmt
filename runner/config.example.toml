@@ -40,6 +40,17 @@ random_reprovision_interval = "30m"
 state_path = "/var/lib/mac-mgmt-runner/state.json"
 startup_grace = "3m"
 heartbeat_stale_after = "5m"
+# How long a fresh instance has to produce its first heartbeat before the
+# runner destroys it and retries with a new host key.
+deploy_timeout = "15m"
+# After this many consecutive deploy timeouts for the same matrix cell, park
+# the cell. Parked cells are not auto-retried — run `reprovision <key>` to resume.
+max_deploy_retries = 3
+
+# Optional Sentry integration for deploy timeouts, reconcile errors, and panics.
+[sentry]
+# dsn = "https://public@sentry.example.com/42"
+# environment = "staging"
 
 [matrix]
 # Model pulled on every ollama-LLM matrix cell. Must support tools.

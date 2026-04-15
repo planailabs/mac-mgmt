@@ -14,6 +14,8 @@ pub struct RunnerConfig {
     pub fleet: FleetConfig,
     #[serde(default)]
     pub matrix: MatrixConfig,
+    #[serde(default)]
+    pub sentry: SentryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +104,14 @@ pub struct FleetConfig {
     /// Heartbeat staleness threshold.
     #[serde(default = "default_heartbeat_stale")]
     pub heartbeat_stale_after: String,
+    /// Maximum time a newly-launched instance has to produce its first
+    /// heartbeat before the runner tears it down and retries.
+    #[serde(default = "default_deploy_timeout")]
+    pub deploy_timeout: String,
+    /// After this many consecutive deploy timeouts for the same cell, stop
+    /// retrying until the operator intervenes (still logs to Sentry).
+    #[serde(default = "default_max_retries")]
+    pub max_deploy_retries: u32,
 }
 
 impl Default for FleetConfig {
@@ -112,8 +122,20 @@ impl Default for FleetConfig {
             state_path: default_state_path(),
             startup_grace: default_grace(),
             heartbeat_stale_after: default_heartbeat_stale(),
+            deploy_timeout: default_deploy_timeout(),
+            max_deploy_retries: default_max_retries(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SentryConfig {
+    /// Sentry DSN. When unset, Sentry is disabled.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    /// Environment tag (e.g. "staging", "production").
+    #[serde(default)]
+    pub environment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -149,6 +171,8 @@ fn default_reprovision() -> String { "30m".into() }
 fn default_state_path() -> PathBuf { PathBuf::from("/var/lib/mac-mgmt-runner/state.json") }
 fn default_grace() -> String { "3m".into() }
 fn default_heartbeat_stale() -> String { "5m".into() }
+fn default_deploy_timeout() -> String { "15m".into() }
+fn default_max_retries() -> u32 { 3 }
 fn default_ollama_model() -> String { "smollm2:1.7b".into() }
 
 impl RunnerConfig {

@@ -19,10 +19,26 @@ pub struct CellState {
     pub cluster_id: Uuid,
     /// Incus instance name (identical to cluster name; derives from key + prefix).
     pub instance_name: String,
+    /// Pregenerated daemon instance_id (hex SHA-256 of the SSH-wire ed25519 public key).
+    /// Used to match heartbeats without waiting for the daemon to pick one itself.
+    pub instance_id: String,
     /// When the instance was created.
     pub created_at: DateTime<Utc>,
     /// When the instance was last re-provisioned.
     pub last_reprovisioned_at: DateTime<Utc>,
+    /// Set while we are still waiting for the first heartbeat from this instance.
+    /// Cleared when a matching heartbeat arrives. A value older than the configured
+    /// deploy_timeout triggers a teardown + retry.
+    #[serde(default)]
+    pub pending_since: Option<DateTime<Utc>>,
+    /// Count of consecutive deploy timeouts. Resets to zero after a successful
+    /// heartbeat; once it hits `max_deploy_retries` the cell is parked.
+    #[serde(default)]
+    pub deploy_failures: u32,
+    /// When true, the cell has exceeded `max_deploy_retries` and will not be
+    /// auto-retried until the operator runs `reprovision`.
+    #[serde(default)]
+    pub parked: bool,
 }
 
 impl FleetState {

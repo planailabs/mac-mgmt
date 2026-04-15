@@ -33,7 +33,7 @@ jsonschema = { version = "0.45", optional = true }
 serde_json = "1"
 base64 = { version = "0.22", optional = true }
 axum-extra = { version = "0.10", features = ["cookie-private"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
+reqwest = { workspace = true, optional = true }
 dioxus-tabular = { version = "0.3", optional = true }
 ed25519-dalek = { version = "2", optional = true }
 mac-mgmt-common = { path = "../common" }

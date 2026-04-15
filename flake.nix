@@ -12,6 +12,7 @@
     {
       nixosModules.default = import ./server/module.nix;
       nixosModules.relay = import ./relay/module.nix;
+      nixosModules.runner = import ./runner/module.nix;
     } //
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -41,6 +42,7 @@
 
         mac-mgmt-server = pkgs.callPackage ./server/package.nix { };
         mac-mgmt-relay = pkgs.callPackage ./relay/package.nix { };
+        mac-mgmt-runner = pkgs.callPackage ./runner/package.nix { };
         relay-ssh = pkgs.callPackage ./relay-ssh/package.nix { };
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
@@ -87,6 +89,7 @@
         packages.default = mac-mgmt;
         packages.server = mac-mgmt-server;
         packages.relay = mac-mgmt-relay;
+        packages.runner = mac-mgmt-runner;
         packages.relay-ssh = relay-ssh;
         packages.macosx-sdk = macosx-sdk;
 
