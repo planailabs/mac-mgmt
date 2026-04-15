@@ -63,7 +63,7 @@ pub async fn generate_name_desc(
     let (system_msg, user_msg) = build_prompt(&context, &current_name, &current_desc).await?;
 
     let body = serde_json::json!({
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 300,
         "system": system_msg,
         "messages": [{"role": "user", "content": user_msg}],
