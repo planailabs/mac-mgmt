@@ -116,7 +116,48 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
     (pool, api_rocket)
 }
 
+/// Install a tracing subscriber that mirrors events to stdout and, when
+/// Sentry is initialised, forwards ERROR/WARN events as Sentry breadcrumbs
+/// and errors. Safe to call from either server-api-only or the full webui
+/// mode — the webui path otherwise relies on whatever dioxus sets up.
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+fn init_tracing() {
+    use tracing_subscriber::prelude::*;
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(sentry::integrations::tracing::layer())
+        .try_init();
+}
+
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+fn init_sentry() -> Option<sentry::ClientInitGuard> {
+    let cfg = config::load();
+    let dsn = cfg.sentry.dsn.as_deref()?;
+    let guard = sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            environment: cfg.sentry.environment.clone().map(Into::into),
+            traces_sample_rate: cfg.sentry.traces_sample_rate,
+            ..Default::default()
+        },
+    ));
+    Some(guard)
+}
+
 fn main() {
+    // Sentry must be initialised on the main thread before any runtime
+    // spins up so the panic handler is installed globally. The guard must
+    // live for the lifetime of the process. We set up tracing first so
+    // sentry's tracing layer can forward events.
+    #[cfg(any(feature = "server", feature = "server-api-only"))]
+    let _sentry_guard = init_sentry();
+    #[cfg(all(feature = "server", feature = "webui"))]
+    init_tracing();
+
     #[cfg(all(feature = "server", feature = "webui"))]
     {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
@@ -219,7 +260,7 @@ fn main() {
     // API-only mode: no web UI, just Rocket
     #[cfg(feature = "server-api-only")]
     {
-        tracing_subscriber::fmt::init();
+        init_tracing();
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         rt.block_on(async {
             let (_pool, api_rocket) = init_server().await;

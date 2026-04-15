@@ -2003,30 +2003,59 @@ pub async fn admin_create_cluster(
     .bind(oid)
     .fetch_one(pool.inner())
     .await
-    .map_err(|_| Status::InternalServerError)?;
+    .map_err(|e| {
+        tracing::error!("admin_create_cluster: checking organization {oid}: {e}");
+        Status::InternalServerError
+    })?;
     if !org_exists {
         return Err(Status::NotFound);
     }
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    let (cid, cname): (Uuid, String) = sqlx::query_as(
+    let mut tx = pool.inner().begin().await.map_err(|e| {
+        tracing::error!("admin_create_cluster: begin tx: {e}");
+        Status::InternalServerError
+    })?;
+    #[derive(sqlx::FromRow)]
+    struct InsertedCluster {
+        id: Uuid,
+        name: String,
+    }
+    let row = sqlx::query_as::<_, InsertedCluster>(
         "INSERT INTO clusters (name) VALUES ($1) RETURNING id, name",
     )
     .bind(name)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|_| Status::InternalServerError)?;
+    .map_err(|e| {
+        tracing::error!("admin_create_cluster: insert cluster {name}: {e}");
+        Status::InternalServerError
+    })?;
     sqlx::query(
         "INSERT INTO organization_clusters (organization_id, cluster_id) VALUES ($1, $2)",
     )
     .bind(oid)
-    .bind(cid)
+    .bind(row.id)
     .execute(&mut *tx)
     .await
-    .map_err(|_| Status::InternalServerError)?;
-    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    .map_err(|e| {
+        tracing::error!(
+            "admin_create_cluster: link org {oid} to cluster {}: {e}",
+            row.id
+        );
+        Status::InternalServerError
+    })?;
+    tx.commit().await.map_err(|e| {
+        tracing::error!("admin_create_cluster: commit: {e}");
+        Status::InternalServerError
+    })?;
 
-    Ok((Status::Created, Json(CreatedCluster { id: cid, name: cname })))
+    Ok((
+        Status::Created,
+        Json(CreatedCluster {
+            id: row.id,
+            name: row.name,
+        }),
+    ))
 }
 
 #[utoipa::path(

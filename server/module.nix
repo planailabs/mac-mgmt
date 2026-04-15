@@ -35,6 +35,10 @@ in
             allowed_domains = [ "example.com" ];
             cookie_secret = "generate-with-openssl-rand-hex-32";
           };
+          sentry = {
+            dsn = "https://public@sentry.example.com/42";
+            environment = "production";
+          };
         }
       '';
     };
