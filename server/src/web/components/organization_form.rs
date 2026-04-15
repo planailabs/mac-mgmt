@@ -9,13 +9,29 @@ async fn create_organization(name: String) -> Result<String, ServerFnError> {
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServerFnError::new("Name is required"));
+    }
+
     let id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO organizations (name) VALUES ($1) RETURNING id",
     )
     .bind(&name)
     .fetch_one(&pool)
     .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    .map_err(|e| {
+        // Postgres unique_violation code is 23505; surface a friendly
+        // message instead of the raw constraint error.
+        if let sqlx::Error::Database(db_err) = &e {
+            if db_err.code().as_deref() == Some("23505") {
+                return ServerFnError::new(format!(
+                    "An organization named '{name}' already exists"
+                ));
+            }
+        }
+        ServerFnError::new(e.to_string())
+    })?;
 
     Ok(id.to_string())
 }
