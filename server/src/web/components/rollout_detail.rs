@@ -683,6 +683,12 @@ async fn request_stage_assessment(
     })
 }
 
+/// Re-evaluate this stage *and every other rolling stage* of the same
+/// rollout. A per-stage button suggests per-stage scope, but the rollout
+/// detail page renders both a stage panel and a rollout-wide summary
+/// that aggregates across every rolling stage. Evaluating just one
+/// would leave the summary showing stale data from the 60s auto-pause
+/// loop's last pass. Evaluate all so the whole page refreshes coherently.
 #[server]
 async fn reevaluate_stage(stage_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
@@ -692,22 +698,17 @@ async fn reevaluate_stage(stage_id: String) -> Result<(), ServerFnError> {
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    let eval = crate::rollout_health::evaluate_stage(&pool, sid)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let rollout_id: Uuid =
+        sqlx::query_scalar("SELECT rollout_id FROM rollout_stages WHERE id = $1")
+            .bind(sid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("stage not found"))?;
 
-    if let Some(e) = eval {
-        sqlx::query(
-            "INSERT INTO rollout_stage_health_evaluations (stage_id, passed, report) \
-             VALUES ($1, $2, $3)",
-        )
-        .bind(sid)
-        .bind(e.passed)
-        .bind(serde_json::to_value(&e).unwrap_or_default())
-        .execute(&pool)
+    evaluate_all_rolling_stages(&pool, rollout_id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    }
     Ok(())
 }
 
