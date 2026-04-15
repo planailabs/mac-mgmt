@@ -2322,7 +2322,7 @@ write_files:
 runcmd:
   - [ curl, -fsSL, -o, /usr/local/bin/mac-mgmt, \"{download_url}\" ]
   - [ chmod, \"0755\", /usr/local/bin/mac-mgmt ]
-  - [ /usr/local/bin/mac-mgmt, setup ]
+  - [ env, HOME=/root, /usr/local/bin/mac-mgmt, setup ]
   - [ systemctl, daemon-reload ]
   - [ systemctl, enable, --now, mac-mgmt.service ]
 "
