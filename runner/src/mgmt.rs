@@ -55,6 +55,14 @@ pub struct CreatedCluster {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct AdminClusterRow {
+    pub id: Uuid,
+    pub name: String,
+    #[allow(dead_code)]
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AdminMachineRow {
     pub instance_id: String,
     pub hostname: Option<String>,
@@ -161,6 +169,17 @@ impl MgmtClient {
             );
         }
         Ok(())
+    }
+
+    pub async fn list_clusters(&self) -> Result<Vec<AdminClusterRow>> {
+        let resp = self
+            .http
+            .get(format!("{}/api/admin/clusters", self.base))
+            .headers(self.headers(None)?)
+            .send()
+            .await
+            .context("listing clusters")?;
+        read_json("list_clusters", resp).await
     }
 
     pub async fn create_cluster(&self, name: &str) -> Result<CreatedCluster> {

@@ -379,7 +379,7 @@ impl Orchestrator {
         }
     }
 
-    /// Destroy every cell.
+    /// Destroy every cell the runner is currently tracking in state.
     pub async fn teardown(&self) -> Result<()> {
         let keys: Vec<String> = {
             let s = self.state.lock().await;
@@ -391,6 +391,47 @@ impl Orchestrator {
             }
         }
         Ok(())
+    }
+
+    /// Wipe the fleet and redeploy from scratch. Destroys everything
+    /// tracked in local state AND every orphan cluster on the mgmt
+    /// server whose name starts with `incus.name_prefix` (catches
+    /// half-created clusters from a previous crashed run), drops any
+    /// matching Incus instance, then runs a full reconcile.
+    pub async fn redeploy(&self) -> Result<()> {
+        tracing::info!("redeploy: teardown + orphan sweep + reconcile");
+        self.teardown().await?;
+
+        let prefix = self.config.incus.name_prefix.clone();
+        match self.mgmt.list_clusters().await {
+            Ok(rows) => {
+                for row in rows {
+                    if !row.name.starts_with(&prefix) {
+                        continue;
+                    }
+                    tracing::info!("redeploy: removing orphan cluster {} ({})", row.name, row.id);
+                    // Try to delete any Incus instance sharing the cluster name.
+                    // instance_name derives from the matrix key, which by
+                    // convention equals the cluster name.
+                    if let Err(e) = self.incus.delete_instance(&row.name).await {
+                        tracing::warn!("redeploy: deleting incus instance {}: {e}", row.name);
+                    }
+                    if let Err(e) = self.mgmt.delete_cluster(row.id).await {
+                        tracing::warn!("redeploy: deleting cluster {}: {e}", row.id);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("redeploy: listing clusters for orphan sweep: {e}");
+            }
+        }
+
+        {
+            let mut s = self.state.lock().await;
+            s.cells.clear();
+        }
+        self.save_state().await?;
+        self.reconcile().await
     }
 
     /// Pick a random provisioned cell and reprovision it.

@@ -48,6 +48,15 @@ async fn api_teardown(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Stat
     Ok(Json(Ack { ok: true, detail: None }))
 }
 
+#[rocket::post("/redeploy")]
+async fn api_redeploy(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
+    orch.inner().redeploy().await.map_err(|e| {
+        tracing::error!("redeploy failed: {e:#}");
+        Status::InternalServerError
+    })?;
+    Ok(Json(Ack { ok: true, detail: None }))
+}
+
 #[rocket::post("/reprovision")]
 async fn api_reprovision_random(
     orch: &State<Arc<Orchestrator>>,
@@ -92,6 +101,7 @@ pub async fn serve(orch: Arc<Orchestrator>) -> Result<()> {
                 api_status,
                 api_provision,
                 api_teardown,
+                api_redeploy,
                 api_reprovision_random,
                 api_reprovision_key,
                 api_shutdown,
@@ -142,6 +152,17 @@ impl Cli {
         let r = self
             .http
             .post(format!("{}/teardown", self.base))
+            .send()
+            .await?;
+        r.error_for_status_ref()?;
+        Ok(r.json().await?)
+    }
+
+    pub async fn redeploy(&self) -> Result<Ack> {
+        let r = self
+            .http
+            .post(format!("{}/redeploy", self.base))
+            .timeout(std::time::Duration::from_secs(600))
             .send()
             .await?;
         r.error_for_status_ref()?;

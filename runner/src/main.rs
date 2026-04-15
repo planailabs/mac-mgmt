@@ -54,6 +54,13 @@ enum Cmd {
         #[arg(long, short = 'y')]
         yes: bool,
     },
+    /// Wipe the fleet (including orphan clusters on the server with the
+    /// runner's name prefix) and redeploy from scratch.
+    Redeploy {
+        /// Skip the confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Reprovision a specific cell or a random one.
     Reprovision {
         /// Matrix cell key (e.g. "openclaw-ollama"). If omitted, a random cell is picked.
@@ -93,6 +100,7 @@ fn main() -> Result<()> {
             Cmd::Status { json } => cmd_status(&cfg, json).await,
             Cmd::Provision => cmd_provision(&cfg).await,
             Cmd::Teardown { yes } => cmd_teardown(&cfg, yes).await,
+            Cmd::Redeploy { yes } => cmd_redeploy(&cfg, yes).await,
             Cmd::Reprovision { key } => cmd_reprovision(&cfg, key.as_deref()).await,
             Cmd::Matrix { json } => cmd_matrix(&cfg, json),
         }
@@ -218,6 +226,22 @@ async fn cmd_teardown(cfg: &RunnerConfig, yes: bool) -> Result<()> {
     let cli = api::Cli::new(&cfg.api.bind, cfg.api.port);
     let ack = cli.teardown().await.context("dialing runner daemon")?;
     println!("teardown: ok={}", ack.ok);
+    Ok(())
+}
+
+async fn cmd_redeploy(cfg: &RunnerConfig, yes: bool) -> Result<()> {
+    if !yes {
+        eprintln!(
+            "redeploy will destroy every cluster whose name starts with {:?} \
+             (local fleet + orphans on the mgmt server) and recreate them. \
+             Re-run with --yes to confirm.",
+            cfg.incus.name_prefix
+        );
+        anyhow::bail!("redeploy not confirmed");
+    }
+    let cli = api::Cli::new(&cfg.api.bind, cfg.api.port);
+    let ack = cli.redeploy().await.context("dialing runner daemon")?;
+    println!("redeploy: ok={}", ack.ok);
     Ok(())
 }
 
