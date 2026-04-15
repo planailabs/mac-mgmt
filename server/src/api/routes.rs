@@ -583,7 +583,14 @@ pub async fn setting_set_config(
 ) -> Result<Status, Status> {
     // Validate by deserializing into ClusterConfig
     let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(body.config.clone())
-        .map_err(|_| Status::UnprocessableEntity)?;
+        .map_err(|e| {
+            tracing::error!(
+                "setting_set_config: rejecting cluster={} config: {e}; body={}",
+                auth.cluster_id,
+                serde_json::to_string(&body.config).unwrap_or_default()
+            );
+            Status::UnprocessableEntity
+        })?;
 
     sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
         .bind(auth.cluster_id)
