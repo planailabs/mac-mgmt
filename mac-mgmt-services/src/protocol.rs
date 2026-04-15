@@ -59,6 +59,7 @@ pub enum Response {
         statuses: Vec<ServiceStatus>,
         /// Legacy list of service names kept on the wire for older clients
         /// that predate `statuses`.
+        // compat: added 2026-04-15, removable after 2026-07-15
         #[serde(default)]
         names: Vec<String>,
     },

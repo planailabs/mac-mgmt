@@ -17,4 +17,4 @@ The supervisor and the daemon are upgraded independently (the supervisor keeps r
 - Don't rename or remove existing request/response variants; add new ones and keep handling the old shape.
 - When in doubt, test with one side on the old protocol and one on the new.
 
-Mark every compat shim with a `// compat: added YYYY-MM-DD, removable after YYYY-MM-DD` comment (one year out) so a later cleanup pass can delete shims confidently instead of guessing whether something out in the wild still needs them.
+Mark every compat shim with a `// compat: added YYYY-MM-DD, removable after YYYY-MM-DD` comment (three months out) so a later cleanup pass can delete shims confidently instead of guessing whether something out in the wild still needs them.

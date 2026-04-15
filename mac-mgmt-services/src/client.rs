@@ -118,6 +118,8 @@ impl Client {
     ///
     /// Prefers the `statuses` field (pid/exe included); falls back to the
     /// legacy `names` list when talking to an older supervisor.
+    // compat: added 2026-04-15, removable after 2026-07-15 (drop the names
+    // fallback and return `statuses` directly).
     pub async fn list(&mut self) -> Result<Vec<ServiceStatus>> {
         match self.send(Request::List).await? {
             Response::Services { statuses, names } => {
