@@ -2228,7 +2228,21 @@ pub async fn setting_cloud_init(
         .await
         .map_err(|_| Status::InternalServerError)?
         .flatten();
-        rollout_version.and_then(|v| v).or(pinned).ok_or(Status::UnprocessableEntity)?
+        // Final fallback: highest version in daemon_versions (mirrors
+        // get_update_target). Operators sync this table from xzar via the
+        // admin UI.
+        let latest: Option<String> = sqlx::query_scalar(
+            "SELECT version FROM daemon_versions ORDER BY \
+             string_to_array(version, '.')::int[] DESC LIMIT 1",
+        )
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+        rollout_version
+            .and_then(|v| v)
+            .or(pinned)
+            .or(latest)
+            .ok_or(Status::UnprocessableEntity)?
     };
 
     let server_url = body.server_url.unwrap_or_else(|| {
