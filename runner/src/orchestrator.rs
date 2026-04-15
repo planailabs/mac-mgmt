@@ -85,6 +85,11 @@ impl Orchestrator {
             }
         }
 
+        let now = Utc::now();
+
+        // Step 1: create cluster if missing and persist cluster_id IMMEDIATELY.
+        // Any failure after this point leaves the cluster visible in state so
+        // a crash can't produce an untracked-orphan cluster on the server.
         let cluster_id = match existing.as_ref() {
             Some(c) => c.cluster_id,
             None => {
@@ -94,15 +99,32 @@ impl Orchestrator {
                     .create_cluster(&cluster_name)
                     .await
                     .with_context(|| format!("creating cluster {cluster_name}"))?;
+                let placeholder = CellState {
+                    key: cell.key.clone(),
+                    cluster_id: created.id,
+                    instance_name: instance_name.clone(),
+                    instance_id: String::new(),
+                    created_at: now,
+                    last_reprovisioned_at: now,
+                    pending_since: None,
+                    deploy_failures: 0,
+                    parked: false,
+                };
+                self.persist_cell(placeholder).await?;
                 created.id
             }
         };
 
+        // Step 2: push cluster config.
         self.mgmt
             .put_config(cluster_id, &cell.config)
             .await
             .with_context(|| format!("putting config for cluster {cluster_id}"))?;
 
+        // Step 3: ensure Incus instance. Generate host key + persist the expected
+        // instance_id BEFORE we ask Incus to launch anything, so if the Incus
+        // call fails partway we already know what instance_id to look for on
+        // retry / the watchdog can time it out.
         let incus_exists = self
             .incus
             .instance_exists(&instance_name)
@@ -114,7 +136,6 @@ impl Orchestrator {
             (c.instance_id.clone(), c.created_at, c.pending_since)
         } else {
             if incus_exists && existing.is_none() {
-                // Stray instance from a prior run without state — destroy it so we start clean.
                 tracing::warn!(
                     "instance {instance_name} exists but no runner state; recreating"
                 );
@@ -139,6 +160,25 @@ impl Orchestrator {
                 .get_cloud_init(cluster_id, &req)
                 .await
                 .context("fetching cloud-init")?;
+
+            // Persist the pregenerated instance_id before launching Incus so a
+            // crash between the API call and state save can't orphan the VM.
+            let pre_launch = CellState {
+                key: cell.key.clone(),
+                cluster_id,
+                instance_name: instance_name.clone(),
+                instance_id: hk.instance_id.clone(),
+                created_at: now,
+                last_reprovisioned_at: existing
+                    .as_ref()
+                    .map(|c| c.last_reprovisioned_at)
+                    .unwrap_or(now),
+                pending_since: Some(now),
+                deploy_failures: existing.as_ref().map(|c| c.deploy_failures).unwrap_or(0),
+                parked: false,
+            };
+            self.persist_cell(pre_launch).await?;
+
             let spec = CreateInstanceSpec {
                 name: instance_name.clone(),
                 instance_type: self.config.incus.instance_type.clone(),
@@ -151,7 +191,6 @@ impl Orchestrator {
                 .create_instance(&spec)
                 .await
                 .with_context(|| format!("creating incus instance {instance_name}"))?;
-            let now = Utc::now();
             (hk.instance_id, now, Some(now))
         };
 
@@ -169,12 +208,19 @@ impl Orchestrator {
             deploy_failures: existing.as_ref().map(|c| c.deploy_failures).unwrap_or(0),
             parked: false,
         };
+        self.persist_cell(cell_state.clone()).await?;
+        Ok(cell_state)
+    }
+
+    /// Upsert the given cell into state and fsync to disk. Called after every
+    /// externally-visible change (cluster created, Incus launched, etc.) so a
+    /// crash never leaves the runner disagreeing with reality.
+    async fn persist_cell(&self, cell: CellState) -> Result<()> {
         {
             let mut s = self.state.lock().await;
-            s.upsert(cell_state.clone());
+            s.upsert(cell);
         }
-        self.save_state().await?;
-        Ok(cell_state)
+        self.save_state().await
     }
 
     /// Destroy a cell: stop+delete Incus instance and delete mgmt cluster.
