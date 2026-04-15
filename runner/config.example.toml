@@ -1,0 +1,57 @@
+# mac-mgmt-runner configuration.
+# Default location: /etc/mac-mgmt-runner/config.toml
+# Override with `--config <path>` or MAC_MGMT_RUNNER_CONFIG.
+
+[mgmt]
+# Admin-side URL — the runner uses this to hit /api/admin/*.
+url = "https://mgmt.example.com:7378"
+# Admin bearer token (kind="admin").
+admin_token = "..."
+# Organization every matrix cluster is created under.
+organization_id = "00000000-0000-0000-0000-000000000000"
+# Public URL baked into cloud-init so daemons inside Incus can dial the mgmt server.
+# Optional: if omitted, the server falls back to its configured api.external_url.
+# public_url = "https://mgmt.example.com:7378"
+# Nix system identifier used for the daemon download URL.
+# system = "x86_64-linux-musl"
+# Pin a daemon version; omit to let the server resolve from rollout/pinned.
+# daemon_version = "0.1.5"
+
+[incus]
+url = "https://incus.example:8443"
+client_cert = "/etc/mac-mgmt-runner/incus-client.crt"
+client_key  = "/etc/mac-mgmt-runner/incus-client.key"
+# Optional server CA (omit to skip TLS verification — only for self-signed test hosts).
+# server_ca = "/etc/mac-mgmt-runner/incus-ca.crt"
+project = "default"
+image_alias = "ubuntu/24.04/cloud"
+image_server = "https://images.linuxcontainers.org"
+instance_type = "container"   # or "virtual-machine"
+profiles = ["default"]
+name_prefix = "mmr-"
+
+[api]
+bind = "127.0.0.1"
+port = 9400
+
+[fleet]
+reconcile_interval = "1m"
+random_reprovision_interval = "30m"
+state_path = "/var/lib/mac-mgmt-runner/state.json"
+startup_grace = "3m"
+heartbeat_stale_after = "5m"
+
+[matrix]
+# Model pulled on every ollama-LLM matrix cell. Must support tools.
+ollama_model = "smollm2:1.7b"
+# Restrict the matrix axes (omit for defaults).
+# agents = ["openclaw", "none"]
+# llms = ["ollama", "lms", "cloud"]
+# cloud_providers = ["anthropic", "openai", "groq"]
+
+# API keys for cloud providers. Cells with a cloud LLM are only emitted for
+# providers listed here.
+[matrix.cloud_api_keys]
+# anthropic = "sk-ant-..."
+# openai = "sk-..."
+# groq = "gsk_..."

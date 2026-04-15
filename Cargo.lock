@@ -3058,6 +3058,7 @@ dependencies = [
  "hyper 1.9.0",
  "hyper-util",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
@@ -3764,6 +3765,29 @@ dependencies = [
  "toml",
  "tower",
  "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "mac-mgmt-runner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "futures-util",
+ "hex",
+ "mac-mgmt-common",
+ "rand 0.8.5",
+ "reqwest 0.12.28",
+ "rocket",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -5304,6 +5328,7 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "serde_json",

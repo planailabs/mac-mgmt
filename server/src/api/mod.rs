@@ -70,8 +70,13 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::post_assessment_probe,
         // Admin
         routes::admin_list_clusters,
+        routes::admin_create_cluster,
+        routes::admin_delete_cluster,
+        routes::admin_list_cluster_machines,
         routes::admin_create_token,
         routes::admin_create_org_token,
+        // Setting — cloud-init
+        routes::setting_cloud_init,
         // Admin — Rollouts
         routes::admin_create_rollout_group,
         routes::admin_list_rollout_groups,
@@ -115,6 +120,9 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::CatalogBundle,
         routes::CatalogMcpBundle,
         routes::AdminClusterRow,
+        routes::CreateClusterForOrgBody,
+        routes::CreatedCluster,
+        routes::AdminMachineRow,
         routes::CreateTokenForClusterBody,
         routes::CreateOrgTokenBody,
         routes::CreatedToken,
@@ -226,8 +234,13 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::setting_remove_ssh_key,
                 // Admin token routes
                 routes::admin_list_clusters,
+                routes::admin_create_cluster,
+                routes::admin_delete_cluster,
+                routes::admin_list_cluster_machines,
                 routes::admin_create_token,
                 routes::admin_create_org_token,
+                // Setting cloud-init bootstrap
+                routes::setting_cloud_init,
                 // Proxy token
                 routes::create_proxy_token,
                 // Admin — skill MCP dependencies

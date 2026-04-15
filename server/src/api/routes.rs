@@ -1957,6 +1957,272 @@ pub async fn admin_create_org_token(
     Ok((Status::Created, Json(CreatedToken { token: raw_token })))
 }
 
+// ── Admin — Cluster CRUD ────────────────────────────────────────────
+
+#[derive(Deserialize, ToSchema)]
+pub struct CreateClusterForOrgBody {
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CreatedCluster {
+    id: Uuid,
+    name: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/organizations/{org_id}/clusters",
+    tag = "Admin",
+    summary = "Create a cluster inside an organization",
+    security(("bearer" = [])),
+    params(("org_id" = Uuid, Path, description = "Organization ID")),
+    request_body = CreateClusterForOrgBody,
+    responses(
+        (status = 201, description = "Cluster created", body = CreatedCluster),
+        (status = 400, description = "Invalid request"),
+        (status = 404, description = "Organization not found"),
+    ),
+)]
+#[rocket::post("/admin/organizations/<org_id>/clusters", data = "<body>")]
+pub async fn admin_create_cluster(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    org_id: &str,
+    body: Json<CreateClusterForOrgBody>,
+) -> Result<(Status, Json<CreatedCluster>), Status> {
+    let oid: Uuid = org_id.parse().map_err(|_| Status::BadRequest)?;
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(Status::BadRequest);
+    }
+
+    let org_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)",
+    )
+    .bind(oid)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    if !org_exists {
+        return Err(Status::NotFound);
+    }
+
+    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let (cid, cname): (Uuid, String) = sqlx::query_as(
+        "INSERT INTO clusters (name) VALUES ($1) RETURNING id, name",
+    )
+    .bind(name)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    sqlx::query(
+        "INSERT INTO organization_clusters (organization_id, cluster_id) VALUES ($1, $2)",
+    )
+    .bind(oid)
+    .bind(cid)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+
+    Ok((Status::Created, Json(CreatedCluster { id: cid, name: cname })))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/admin/clusters/{cluster_id}",
+    tag = "Admin",
+    summary = "Delete a cluster (cascades tokens, configs, heartbeats)",
+    security(("bearer" = [])),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 404, description = "Cluster not found"),
+    ),
+)]
+#[rocket::delete("/admin/clusters/<cluster_id>")]
+pub async fn admin_delete_cluster(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    cluster_id: &str,
+) -> Result<Status, Status> {
+    let cid: Uuid = cluster_id.parse().map_err(|_| Status::BadRequest)?;
+    let res = sqlx::query("DELETE FROM clusters WHERE id = $1")
+        .bind(cid)
+        .execute(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    if res.rows_affected() == 0 {
+        return Err(Status::NotFound);
+    }
+    Ok(Status::NoContent)
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct AdminMachineRow {
+    instance_id: String,
+    hostname: Option<String>,
+    version: String,
+    reported_at: DateTime<Utc>,
+    services_extended: Option<serde_json::Value>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/clusters/{cluster_id}/machines",
+    tag = "Admin",
+    summary = "List heartbeat-reporting machines for a cluster",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Machines", body = Vec<AdminMachineRow>),
+    ),
+)]
+#[rocket::get("/admin/clusters/<cluster_id>/machines")]
+pub async fn admin_list_cluster_machines(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    cluster_id: &str,
+) -> Result<Json<Vec<AdminMachineRow>>, Status> {
+    let cid: Uuid = cluster_id.parse().map_err(|_| Status::BadRequest)?;
+    let rows = sqlx::query_as::<_, (String, Option<String>, String, DateTime<Utc>, Option<serde_json::Value>)>(
+        "SELECT instance_id, hostname, version, reported_at, services_extended \
+         FROM daemon_heartbeats WHERE cluster_id = $1 ORDER BY reported_at DESC",
+    )
+    .bind(cid)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+    Ok(Json(rows.into_iter().map(|(instance_id, hostname, version, reported_at, services_extended)| {
+        AdminMachineRow { instance_id, hostname, version, reported_at, services_extended }
+    }).collect()))
+}
+
+// ── Setting — Cloud-init bootstrap ──────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/cloud-init",
+    tag = "Setting — Config",
+    summary = "Generate a cloud-init bootstrap for this cluster",
+    description = "Mints a fresh sync token for the cluster and returns a cloud-init YAML that installs the daemon, writes the config pointing at this server, and starts the service.",
+    security(("bearer" = [])),
+    params(
+        ("system" = Option<String>, Query, description = "Nix system identifier (default: x86_64-linux-musl)"),
+        ("server_url" = Option<String>, Query, description = "Public URL the daemon should dial; defaults to the server's configured api.external_url"),
+        ("daemon_version" = Option<String>, Query, description = "Specific daemon version; omit to auto-resolve from rollout/pinned"),
+        ("label" = Option<String>, Query, description = "Sync token label"),
+    ),
+    responses(
+        (status = 200, description = "Cloud-init YAML"),
+        (status = 422, description = "Could not resolve daemon version or server URL"),
+    ),
+)]
+#[rocket::get("/setting/cloud-init?<system>&<server_url>&<daemon_version>&<label>")]
+pub async fn setting_cloud_init(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    system: Option<String>,
+    server_url: Option<String>,
+    daemon_version: Option<String>,
+    label: Option<String>,
+) -> Result<(ContentType, String), Status> {
+    use rand::Rng;
+
+    let system = system.unwrap_or_else(|| "x86_64-linux-musl".to_string());
+    let label = label.unwrap_or_else(|| format!(
+        "cloud-init-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+    ));
+
+    let version = if let Some(v) = daemon_version {
+        v
+    } else {
+        let rollout_version: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT r.target_version FROM rollouts r \
+             JOIN rollout_stages rs ON rs.rollout_id = r.id \
+             WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                    OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
+               AND r.status = 'rolling' AND rs.status = 'rolling' \
+             ORDER BY r.created_at DESC LIMIT 1",
+        )
+        .bind(auth.cluster_id)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+        let pinned: Option<String> = sqlx::query_scalar(
+            "SELECT pinned_version FROM clusters WHERE id = $1",
+        )
+        .bind(auth.cluster_id)
+        .fetch_optional(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?
+        .flatten();
+        rollout_version.and_then(|v| v).or(pinned).ok_or(Status::UnprocessableEntity)?
+    };
+
+    let server_url = server_url.unwrap_or_else(|| {
+        crate::config::config().api.external_url.clone()
+    });
+    let server_url = server_url.trim_end_matches('/').to_string();
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')",
+    )
+    .bind(auth.cluster_id)
+    .bind(&hash)
+    .bind(&label)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    let yaml = render_cloud_init(&server_url, &raw_token, &version, &system);
+    Ok((ContentType::new("text", "cloud-config"), yaml))
+}
+
+fn render_cloud_init(server_url: &str, token: &str, version: &str, system: &str) -> String {
+    let download_url = format!("{server_url}/api/daemon-download/{version}/{system}");
+    format!(
+"#cloud-config
+packages:
+  - curl
+  - ca-certificates
+
+write_files:
+  - path: /root/.config/mac-mgmt/config.toml
+    owner: root:root
+    permissions: '0600'
+    content: |
+      [server]
+      url = \"{server_url}\"
+      token = \"{token}\"
+  - path: /etc/systemd/system/mac-mgmt.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=mac-mgmt daemon
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/mac-mgmt daemon
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [ curl, -fsSL, -o, /usr/local/bin/mac-mgmt, \"{download_url}\" ]
+  - [ chmod, \"0755\", /usr/local/bin/mac-mgmt ]
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, mac-mgmt.service ]
+"
+    )
+}
+
 // ── Proxy token creation ─────────────────────────────────────────────
 
 #[derive(Serialize, ToSchema)]
