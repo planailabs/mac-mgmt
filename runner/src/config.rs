@@ -155,6 +155,9 @@ pub struct MatrixConfig {
     /// Ollama model to configure on every ollama-llm cell.
     #[serde(default = "default_ollama_model")]
     pub ollama_model: String,
+    /// LM Studio model to configure on every lms-llm cell.
+    #[serde(default = "default_lms_model")]
+    pub lms_model: String,
 }
 
 fn default_system() -> String { "x86_64-linux-musl".into() }
@@ -174,6 +177,7 @@ fn default_heartbeat_stale() -> String { "5m".into() }
 fn default_deploy_timeout() -> String { "15m".into() }
 fn default_max_retries() -> u32 { 3 }
 fn default_ollama_model() -> String { "smollm2:1.7b".into() }
+fn default_lms_model() -> String { "smollm2-1.7b-instruct".into() }
 
 impl RunnerConfig {
     pub fn load(path: &Path) -> Result<Self> {

@@ -6,7 +6,7 @@
 
 use mac_mgmt_common::{
     AgentProvider, CloudConfig, CloudProvider, ClusterConfig, GlobalConfig, LlmProvider,
-    OllamaConfig,
+    LmsConfig, OllamaConfig,
 };
 
 use crate::config::MatrixConfig;
@@ -63,7 +63,7 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
                     cells.push(build_ollama_cell(agent, &matrix.ollama_model));
                 }
                 "lms" => {
-                    cells.push(build_lms_cell(agent));
+                    cells.push(build_lms_cell(agent, &matrix.lms_model));
                 }
                 "none" => {
                     if agent != "none" {
@@ -139,9 +139,15 @@ fn build_ollama_cell(agent: &str, model: &str) -> MatrixCell {
     MatrixCell { key, config: c }
 }
 
-fn build_lms_cell(agent: &str) -> MatrixCell {
+fn build_lms_cell(agent: &str, model: &str) -> MatrixCell {
     let key = format!("{agent}-lms");
-    let c = base_config(agent, LlmProvider::Lms);
+    let mut c = base_config(agent, LlmProvider::Lms);
+    c.lms = LmsConfig {
+        host: "127.0.0.1".into(),
+        port: 1234,
+        models: vec![model.to_string()],
+        default_model: model.to_string(),
+    };
     MatrixCell { key, config: c }
 }
 
