@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use mac_mgmt_common::ClusterConfig;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
@@ -213,17 +212,12 @@ impl MgmtClient {
         Ok(())
     }
 
-    pub async fn put_config(&self, cluster_id: Uuid, config: &ClusterConfig) -> Result<()> {
-        // Serialize once so we can both send it and show it on failure.
-        let config_value = serde_json::to_value(config)
-            .context("serializing cluster config")?;
-
-        // Roundtrip through the same ClusterConfig type — catches any local
-        // field drift between mac_mgmt_common and what the runner generates.
-        serde_json::from_value::<ClusterConfig>(config_value.clone())
-            .context("serialized config failed local roundtrip — mac_mgmt_common mismatch?")?;
-
-        let body = serde_json::json!({ "config": config_value });
+    pub async fn put_config(
+        &self,
+        cluster_id: Uuid,
+        config: &serde_json::Value,
+    ) -> Result<()> {
+        let body = serde_json::json!({ "config": config });
         let resp = self
             .http
             .put(format!("{}/api/setting/config", self.base))
