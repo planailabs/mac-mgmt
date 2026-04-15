@@ -160,7 +160,7 @@ pub struct MatrixConfig {
     pub lms_model: String,
 }
 
-fn default_system() -> String { "x86_64-linux-musl".into() }
+fn default_system() -> String { "x86_64-linux".into() }
 fn default_project() -> String { "default".into() }
 fn default_image() -> String { "ubuntu/24.04/cloud".into() }
 fn default_image_server() -> String { "https://images.linuxcontainers.org".into() }

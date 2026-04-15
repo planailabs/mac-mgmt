@@ -119,7 +119,7 @@ cluster. The body is:
 
 ```json
 {
-  "system": "x86_64-linux-musl",
+  "system": "x86_64-linux",
   "server_url": "https://mgmt.example.com",   // optional
   "daemon_version": "0.1.5",                   // optional
   "label": "prod-bootstrap-2026-04-15",        // optional

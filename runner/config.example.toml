@@ -15,7 +15,7 @@ organization_id = "00000000-0000-0000-0000-000000000000"
 # Optional: if omitted, the server falls back to its configured api.external_url.
 # public_url = "https://mgmt.example.com:7378"
 # Nix system identifier used for the daemon download URL.
-# system = "x86_64-linux-musl"
+# system = "x86_64-linux"
 # Pin a daemon version; omit to let the server resolve from rollout/pinned.
 # daemon_version = "0.1.5"
 
