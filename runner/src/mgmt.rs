@@ -195,19 +195,41 @@ impl MgmtClient {
     }
 
     pub async fn put_config(&self, cluster_id: Uuid, config: &ClusterConfig) -> Result<()> {
-        #[derive(Serialize)]
-        struct Body<'a> {
-            config: &'a ClusterConfig,
-        }
+        // Serialize once so we can both send it and show it on failure.
+        let config_value = serde_json::to_value(config)
+            .context("serializing cluster config")?;
+
+        // Roundtrip through the same ClusterConfig type — catches any local
+        // field drift between mac_mgmt_common and what the runner generates.
+        serde_json::from_value::<ClusterConfig>(config_value.clone())
+            .context("serialized config failed local roundtrip — mac_mgmt_common mismatch?")?;
+
+        let body = serde_json::json!({ "config": config_value });
         let resp = self
             .http
             .put(format!("{}/api/setting/config", self.base))
             .headers(self.headers(Some(cluster_id))?)
-            .json(&Body { config })
+            .json(&body)
             .send()
             .await
             .context("putting cluster config")?;
-        let _ = read_ok(&format!("put_config({cluster_id})"), resp).await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let ct = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let resp_body = resp.text().await.unwrap_or_default();
+            let sent = serde_json::to_string(&body).unwrap_or_default();
+            bail!(
+                "put_config({cluster_id}): status={status} content-type={ct} \
+                 response_body={:?} sent_body={}",
+                resp_body.chars().take(400).collect::<String>(),
+                sent
+            );
+        }
         Ok(())
     }
 

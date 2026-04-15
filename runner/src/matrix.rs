@@ -156,3 +156,31 @@ fn build_none_llm_cell(agent: &str) -> MatrixCell {
     let c = base_config(agent, LlmProvider::None);
     MatrixCell { key, config: c }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every generated cell must roundtrip through JSON cleanly against
+    /// the same mac_mgmt_common::ClusterConfig the server uses — `put_config`
+    /// otherwise hits 422 at runtime.
+    #[test]
+    fn every_cell_roundtrips_through_json() {
+        let mut m = MatrixConfig::default();
+        m.ollama_model = "smollm2:1.7b".into();
+        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.cloud_api_keys
+            .insert("anthropic".into(), "sk-ant-test".into());
+        m.cloud_api_keys
+            .insert("openai".into(), "sk-test".into());
+
+        let cells = generate(&m);
+        assert!(!cells.is_empty(), "matrix should not be empty");
+        for cell in cells {
+            let v = serde_json::to_value(&cell.config)
+                .unwrap_or_else(|e| panic!("serialize {}: {e}", cell.key));
+            let _: ClusterConfig = serde_json::from_value(v)
+                .unwrap_or_else(|e| panic!("roundtrip {}: {e}", cell.key));
+        }
+    }
+}
