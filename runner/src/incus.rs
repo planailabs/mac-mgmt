@@ -128,6 +128,7 @@ impl IncusClient {
             "profiles": spec.profiles,
             "config": {
                 "cloud-init.user-data": spec.cloud_init_user_data,
+                "security.nesting": "true",
             },
             "start": true,
         });
