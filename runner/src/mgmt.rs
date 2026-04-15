@@ -217,12 +217,13 @@ impl MgmtClient {
         cluster_id: Uuid,
         config: &serde_json::Value,
     ) -> Result<()> {
-        let body = serde_json::json!({ "config": config });
+        // Server-side SetConfigBody uses #[serde(flatten)] so the entire
+        // request body IS the ClusterConfig — no envelope.
         let resp = self
             .http
             .put(format!("{}/api/setting/config", self.base))
             .headers(self.headers(Some(cluster_id))?)
-            .json(&body)
+            .json(config)
             .send()
             .await
             .context("putting cluster config")?;
@@ -235,12 +236,11 @@ impl MgmtClient {
                 .unwrap_or("")
                 .to_string();
             let resp_body = resp.text().await.unwrap_or_default();
-            let sent = serde_json::to_string(&body).unwrap_or_default();
+            let sent = serde_json::to_string(config).unwrap_or_default();
             bail!(
                 "put_config({cluster_id}): status={status} content-type={ct} \
-                 response_body={:?} sent_body={}",
-                resp_body.chars().take(400).collect::<String>(),
-                sent
+                 response_body={:?} sent_body={sent}",
+                resp_body.chars().take(400).collect::<String>()
             );
         }
         Ok(())
