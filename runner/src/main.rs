@@ -23,7 +23,7 @@ mod state;
 use crate::config::RunnerConfig;
 use crate::incus::IncusClient;
 use crate::mgmt::MgmtClient;
-use crate::orchestrator::{Orchestrator, deploy_watchdog_loop, reconcile_loop, reprovision_loop};
+use crate::orchestrator::{Orchestrator, reconcile_loop, reprovision_loop};
 
 #[derive(Parser)]
 #[command(name = "mac-mgmt-runner", version, about = "mac-mgmt fleet runner")]
@@ -138,8 +138,9 @@ async fn run_daemon(cfg: RunnerConfig) -> Result<()> {
         }
     });
 
+    // The reconcile loop drives every cell's state machine — including
+    // deploy timeouts, which are handled inside drive_cell's Launching poll.
     tokio::spawn(reconcile_loop(orch.clone()));
-    tokio::spawn(deploy_watchdog_loop(orch.clone()));
     tokio::spawn(reprovision_loop(orch.clone()));
 
     api::serve(orch).await
@@ -174,23 +175,23 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&snap)?);
     } else {
         println!(
-            "matrix: {} cells, {} provisioned",
-            snap.total_cells, snap.provisioned
+            "matrix: {} cells, {} running",
+            snap.total_cells, snap.running
         );
         for c in &snap.cells {
-            let marker = if c.parked {
-                "⛔"
-            } else {
-                match (c.provisioned, c.healthy, c.pending_since.is_some()) {
-                    (false, _, _) => "·",
-                    (true, Some(true), _) => "✔",
-                    (true, Some(false), _) => "✗",
-                    (true, None, true) => "…",
-                    (true, None, false) => " ",
-                }
+            let marker = match (c.parked, c.stage.as_str(), c.healthy) {
+                (true, _, _) => "⛔",
+                (_, "missing" | "pending", _) => "·",
+                (_, "cluster_created" | "config_pushed", _) => "·",
+                (_, "launching", _) => "…",
+                (_, "running", Some(true)) => "✔",
+                (_, "running", Some(false)) => "✗",
+                (_, "running", None) => " ",
+                _ => "?",
             };
             let extra = match (&c.cluster_id, &c.instance_name) {
                 (Some(cid), Some(name)) => format!("  cluster={cid}  incus={name}"),
+                (Some(cid), None) => format!("  cluster={cid}"),
                 _ => String::new(),
             };
             let detail = c
@@ -203,7 +204,7 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
             } else {
                 String::new()
             };
-            println!("  {marker} {}{}{}{}", c.key, extra, fail, detail);
+            println!("  {marker} {:<7} {}{}{}{}", c.stage, c.key, extra, fail, detail);
         }
     }
     Ok(())

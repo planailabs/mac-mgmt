@@ -16,7 +16,7 @@ use rocket::serde::json::Json;
 use rocket::{Shutdown, State};
 use serde::{Deserialize, Serialize};
 
-use crate::orchestrator::{Orchestrator, StatusSnapshot, status_snapshot};
+use crate::orchestrator::{Orchestrator, StatusSnapshot};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Ack {
@@ -27,7 +27,7 @@ pub struct Ack {
 
 #[rocket::get("/status")]
 async fn api_status(orch: &State<Arc<Orchestrator>>) -> Json<StatusSnapshot> {
-    Json(status_snapshot(orch.inner()).await)
+    Json(orch.inner().snapshot().await)
 }
 
 #[rocket::post("/provision")]
