@@ -242,7 +242,7 @@ pkgs.testers.nixosTest {
     # Allow ample time for all 5 events to propagate through the broadcast
     # channel and land in the listener log; a short sleep here is a common
     # source of flakiness under VM load.
-    for _ in range(30):
+    for _i in range(30):
         evts = read_events()
         if len([e for e in evts if e.get("type") == "sync_config"]) >= 5:
             break
