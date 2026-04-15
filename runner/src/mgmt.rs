@@ -2,8 +2,39 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use mac_mgmt_common::ClusterConfig;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
+
+/// Read an HTTP response and return its body as text, bail! with status +
+/// body snippet on non-2xx. Used to produce actionable errors when the
+/// server replies with something unexpected (HTML error pages, empty
+/// bodies from old server versions missing a route, etc).
+async fn read_ok(op: &str, resp: reqwest::Response) -> Result<String> {
+    let status = resp.status();
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let snippet = body.chars().take(400).collect::<String>();
+        bail!("{op}: status={status} content-type={ct} body={snippet:?}");
+    }
+    Ok(body)
+}
+
+async fn read_json<T: DeserializeOwned>(op: &str, resp: reqwest::Response) -> Result<T> {
+    let body = read_ok(op, resp).await?;
+    if body.trim().is_empty() {
+        bail!("{op}: empty response body (older server missing this route?)");
+    }
+    serde_json::from_str::<T>(&body).with_context(|| {
+        let snippet: String = body.chars().take(400).collect();
+        format!("{op}: response was not JSON: {snippet:?}")
+    })
+}
 
 /// HTTP client against the mgmt admin API.
 pub struct MgmtClient {
@@ -93,12 +124,7 @@ impl MgmtClient {
             .send()
             .await
             .context("creating cluster")?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            bail!("create_cluster({name}): {status} {body}");
-        }
-        Ok(resp.json().await.context("decoding created cluster")?)
+        read_json(&format!("create_cluster({name})"), resp).await
     }
 
     pub async fn delete_cluster(&self, cluster_id: Uuid) -> Result<()> {
@@ -109,11 +135,11 @@ impl MgmtClient {
             .send()
             .await
             .context("deleting cluster")?;
-        if !resp.status().is_success() && resp.status().as_u16() != 404 {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            bail!("delete_cluster({cluster_id}): {status} {body}");
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Ok(());
         }
+        let _ = read_ok(&format!("delete_cluster({cluster_id})"), resp).await?;
         Ok(())
     }
 
@@ -130,11 +156,7 @@ impl MgmtClient {
             .send()
             .await
             .context("putting cluster config")?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            bail!("put_config({cluster_id}): {status} {body}");
-        }
+        let _ = read_ok(&format!("put_config({cluster_id})"), resp).await?;
         Ok(())
     }
 
@@ -172,12 +194,7 @@ impl MgmtClient {
             .send()
             .await
             .context("fetching cloud-init")?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            bail!("get_cloud_init({cluster_id}): {status} {body}");
-        }
-        Ok(resp.json().await.context("decoding cloud-init response")?)
+        read_json(&format!("get_cloud_init({cluster_id})"), resp).await
     }
 
     pub async fn list_cluster_machines(&self, cluster_id: Uuid) -> Result<Vec<AdminMachineRow>> {
@@ -191,10 +208,6 @@ impl MgmtClient {
             .send()
             .await
             .context("listing cluster machines")?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            bail!("list_cluster_machines: {status}");
-        }
-        Ok(resp.json().await.context("decoding machines")?)
+        read_json(&format!("list_cluster_machines({cluster_id})"), resp).await
     }
 }
