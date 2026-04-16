@@ -27,9 +27,10 @@ For each configured cell of the `(agent provider) × (LLM provider) ×
    `deploy_failures` counter visible in `status` keeps climbing so the
    operator can see repeat offenders.
 7. Every `vm_chaos_interval` (default 30 minutes), picks a random
-   running cell and applies one of: stop an instance, start a stopped
-   instance, or fully reprovision the cell — exercising restart,
-   recovery, and bootstrap paths continuously. (Legacy config key
+   running cell and either toggles a random instance's power state
+   (running→stop or stopped→start based on live Incus status) or
+   fully reprovisions the cell — exercising restart, recovery, and
+   bootstrap paths continuously. (Legacy config key
    `random_reprovision_interval` still accepted.)
 
 Failures are logged to Sentry with the matrix cell key and attempt

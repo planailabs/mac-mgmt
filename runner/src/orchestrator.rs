@@ -868,11 +868,11 @@ impl Orchestrator {
         Ok(Some(format!("-mcp-bundle {id}")))
     }
 
-    /// Pick a random Running cell and apply one of start / stop /
-    /// reprovision. Actual Incus state of each instance is queried first
-    /// so stop only targets running instances and start only targets
-    /// stopped ones — if the dice roll lands on an op with no matching
-    /// candidates, fall back to reprovision.
+    /// Pick a random Running cell and apply either a toggle (flip a
+    /// random instance's Incus power state) or a reprovision. Both ops
+    /// re-verify the cell is still in the Running stage right before
+    /// firing so a cell that slipped into Launching via another loop
+    /// isn't caught mid-boot.
     pub async fn chaos_vm_tick(&self) -> Result<Option<String>> {
         let candidates: Vec<(String, Vec<String>)> = {
             let s = self.state.lock().await;
@@ -896,70 +896,43 @@ impl Orchestrator {
             return Ok(None);
         };
 
-        // Snapshot each instance's live state so we only act when it
-        // makes sense (don't try to stop an already-stopped VM, etc).
-        let mut statuses: Vec<(String, String)> = Vec::with_capacity(instances.len());
-        for name in &instances {
-            let status = self
-                .incus
-                .instance_status(name)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            statuses.push((name.clone(), status));
+        // 2/3 toggle, 1/3 reprovision — toggles are cheap, reprovisions
+        // are expensive (minutes) so we want them rarer.
+        let reprovision = rand::thread_rng().gen_range(0..3) == 0;
+        if reprovision {
+            tracing::info!("chaos-vm: reprovision {key}");
+            self.reprovision_cell(&key).await?;
+            return Ok(Some(format!("{key}: reprovision")));
         }
-        let running: Vec<String> = statuses
-            .iter()
-            .filter(|(_, s)| s.eq_ignore_ascii_case("running"))
-            .map(|(n, _)| n.clone())
-            .collect();
-        let stopped: Vec<String> = statuses
-            .iter()
-            .filter(|(_, s)| s.eq_ignore_ascii_case("stopped"))
-            .map(|(n, _)| n.clone())
-            .collect();
 
-        let op: u8 = rand::thread_rng().gen_range(0..3);
-        match op {
-            0 if !running.is_empty() => {
-                let name = running
-                    .choose(&mut rand::thread_rng())
-                    .cloned()
-                    .expect("non-empty");
-                if !self.cell_still_running(&key).await {
-                    tracing::debug!("chaos-vm: cell {key} left Running; skipping stop");
-                    return Ok(None);
-                }
-                tracing::info!("chaos-vm: stop {name} (cell={key})");
-                self.incus
-                    .set_instance_state(&name, "stop")
-                    .await
-                    .with_context(|| format!("stopping {name}"))?;
-                Ok(Some(format!("{key}: stop {name}")))
+        let Some(name) = instances.choose(&mut rand::thread_rng()).cloned() else {
+            return Ok(None);
+        };
+        let status = self
+            .incus
+            .instance_status(&name)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let action = match status.to_ascii_lowercase().as_str() {
+            "running" => "stop",
+            "stopped" => "start",
+            other => {
+                tracing::debug!("chaos-vm: {name} has state {other:?}; skipping toggle");
+                return Ok(None);
             }
-            1 if !stopped.is_empty() => {
-                let name = stopped
-                    .choose(&mut rand::thread_rng())
-                    .cloned()
-                    .expect("non-empty");
-                if !self.cell_still_running(&key).await {
-                    tracing::debug!("chaos-vm: cell {key} left Running; skipping start");
-                    return Ok(None);
-                }
-                tracing::info!("chaos-vm: start {name} (cell={key})");
-                self.incus
-                    .set_instance_state(&name, "start")
-                    .await
-                    .with_context(|| format!("starting {name}"))?;
-                Ok(Some(format!("{key}: start {name}")))
-            }
-            _ => {
-                tracing::info!("chaos-vm: reprovision {key}");
-                self.reprovision_cell(&key).await?;
-                Ok(Some(format!("{key}: reprovision")))
-            }
+        };
+        if !self.cell_still_running(&key).await {
+            tracing::debug!("chaos-vm: cell {key} left Running; skipping toggle");
+            return Ok(None);
         }
+        tracing::info!("chaos-vm: toggle {name} {status} → {action} (cell={key})");
+        self.incus
+            .set_instance_state(&name, action)
+            .await
+            .with_context(|| format!("{action} {name}"))?;
+        Ok(Some(format!("{key}: toggle {name} {action}")))
     }
 
     /// Defensive re-check: between the candidate scan and the actual
