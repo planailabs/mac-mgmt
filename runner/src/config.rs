@@ -230,6 +230,46 @@ pub fn parse_duration(s: &str) -> Result<std::time::Duration> {
     humantime_parse(s)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONFIG_MIN: &str = r#"
+[mgmt]
+url = "http://example"
+admin_token = "tkn"
+organization_id = "00000000-0000-0000-0000-000000000000"
+
+[incus]
+url = "http://example:8443"
+client_cert = "/tmp/c"
+client_key = "/tmp/k"
+"#;
+
+    #[test]
+    fn cluster_sizes_default_when_no_matrix_section() {
+        let cfg: RunnerConfig = toml::from_str(CONFIG_MIN).expect("parse");
+        assert_eq!(cfg.matrix.cluster_sizes, vec![1, 2]);
+        assert_eq!(cfg.matrix.ollama_model, "smollm2:1.7b");
+    }
+
+    #[test]
+    fn cluster_sizes_default_when_matrix_section_is_partial() {
+        let mut t = CONFIG_MIN.to_string();
+        t.push_str("\n[matrix]\nollama_model = \"smollm2:1.7b\"\n");
+        let cfg: RunnerConfig = toml::from_str(&t).expect("parse");
+        assert_eq!(cfg.matrix.cluster_sizes, vec![1, 2]);
+    }
+
+    #[test]
+    fn cluster_sizes_respects_explicit_value() {
+        let mut t = CONFIG_MIN.to_string();
+        t.push_str("\n[matrix]\ncluster_sizes = [1]\n");
+        let cfg: RunnerConfig = toml::from_str(&t).expect("parse");
+        assert_eq!(cfg.matrix.cluster_sizes, vec![1]);
+    }
+}
+
 fn humantime_parse(s: &str) -> Result<std::time::Duration> {
     let s = s.trim();
     let (num, unit) = s.split_at(

@@ -21,6 +21,11 @@ mod orchestrator;
 mod state;
 mod ui;
 
+/// Runner crate version from Cargo.toml.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Git commit this binary was built from — see build.rs.
+pub const GIT_SHA: &str = env!("GIT_SHA");
+
 use crate::config::RunnerConfig;
 use crate::incus::IncusClient;
 use crate::mgmt::MgmtClient;

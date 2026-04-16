@@ -24,6 +24,15 @@ struct IndexView<'a> {
     total_cells: usize,
     running: usize,
     paused: bool,
+    cluster_sizes: String,
+    agents: String,
+    llms: String,
+    cloud_providers_configured: usize,
+    ollama_model: String,
+    lms_model: String,
+    runner_version: String,
+    runner_git_sha_short: String,
+    runner_git_sha: String,
     cells: Vec<CellView>,
 }
 
@@ -54,12 +63,22 @@ struct InstanceView {
 }
 
 pub fn render_index(snap: &StatusSnapshot) -> String {
+    let short: String = snap.runner_git_sha.chars().take(12).collect();
     let view = IndexView {
         styles: STYLES,
         script: SCRIPT,
         total_cells: snap.total_cells,
         running: snap.running,
         paused: snap.paused,
+        cluster_sizes: join_ints(&snap.matrix_axes.cluster_sizes),
+        agents: snap.matrix_axes.agents.join(", "),
+        llms: snap.matrix_axes.llms.join(", "),
+        cloud_providers_configured: snap.matrix_axes.cloud_providers_configured,
+        ollama_model: snap.matrix_axes.ollama_model.clone(),
+        lms_model: snap.matrix_axes.lms_model.clone(),
+        runner_version: snap.runner_version.clone(),
+        runner_git_sha_short: short,
+        runner_git_sha: snap.runner_git_sha.clone(),
         cells: snap.cells.iter().map(to_cell_view).collect(),
     };
     let template = match mustache::compile_str(INDEX_TEMPLATE) {
@@ -115,10 +134,17 @@ fn format_utc(t: &DateTime<Utc>) -> String {
     t.format("%Y-%m-%d %H:%M:%SZ").to_string()
 }
 
+fn join_ints(v: &[u32]) -> String {
+    v.iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestrator::{CellInstance, CellStatus, StatusSnapshot};
+    use crate::orchestrator::{CellInstance, CellStatus, MatrixAxes, StatusSnapshot};
     use uuid::Uuid;
 
     fn sample() -> StatusSnapshot {
@@ -126,6 +152,16 @@ mod tests {
             total_cells: 2,
             running: 1,
             paused: false,
+            matrix_axes: MatrixAxes {
+                cluster_sizes: vec![1, 2],
+                agents: vec!["openclaw".into(), "none".into()],
+                llms: vec!["ollama".into(), "lms".into()],
+                cloud_providers_configured: 0,
+                ollama_model: "smollm2:1.7b".into(),
+                lms_model: "smollm2-1.7b-instruct".into(),
+            },
+            runner_version: "0.1.0".into(),
+            runner_git_sha: "deadbeef12345".into(),
             cells: vec![
                 CellStatus {
                     key: "openclaw-ollama".into(),

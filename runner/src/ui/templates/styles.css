@@ -262,6 +262,43 @@ ul.instances .iid {
 
 .empty-dash { color: var(--text-dim); opacity: 0.5; }
 
+.axes {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.95rem;
+  font-size: 0.78rem;
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.axes .ax-label {
+  color: var(--neon);
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  margin-right: 0.45rem;
+}
+
+footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(0, 229, 255, 0.15);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+footer .mono {
+  color: var(--neon);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
 .paused-badge {
   display: inline-block;
   margin-right: 0.6rem;

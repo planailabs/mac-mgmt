@@ -26,6 +26,15 @@
     </span>
   </div>
 
+  <div class="axes">
+    <span><span class="ax-label">sizes</span> [{{cluster_sizes}}]</span>
+    <span><span class="ax-label">agents</span> {{agents}}</span>
+    <span><span class="ax-label">llms</span> {{llms}}</span>
+    <span><span class="ax-label">cloud keys</span> {{cloud_providers_configured}}</span>
+    <span><span class="ax-label">ollama</span> {{ollama_model}}</span>
+    <span><span class="ax-label">lms</span> {{lms_model}}</span>
+  </div>
+
   <div class="panel">
     <table>
       <thead>
@@ -83,6 +92,11 @@
       </tbody>
     </table>
   </div>
+
+  <footer>
+    runner <span class="mono">{{runner_version}}</span>
+    · build <span class="mono" title="{{runner_git_sha}}">{{runner_git_sha_short}}</span>
+  </footer>
 </div>
 </body>
 </html>

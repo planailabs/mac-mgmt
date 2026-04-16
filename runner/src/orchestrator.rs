@@ -1165,6 +1165,26 @@ impl Orchestrator {
             total_cells: matrix.len(),
             running: state.cells.iter().filter(|c| c.stage.is_running()).count(),
             paused: state.paused,
+            matrix_axes: MatrixAxes {
+                cluster_sizes: self.config.matrix.cluster_sizes.clone(),
+                agents: self
+                    .config
+                    .matrix
+                    .agents
+                    .clone()
+                    .unwrap_or_else(|| vec!["openclaw".into(), "none".into()]),
+                llms: self
+                    .config
+                    .matrix
+                    .llms
+                    .clone()
+                    .unwrap_or_else(|| vec!["ollama".into(), "lms".into(), "cloud".into()]),
+                cloud_providers_configured: self.config.matrix.cloud_api_keys.len(),
+                ollama_model: self.config.matrix.ollama_model.clone(),
+                lms_model: self.config.matrix.lms_model.clone(),
+            },
+            runner_version: crate::VERSION.into(),
+            runner_git_sha: crate::GIT_SHA.into(),
             cells,
         }
     }
@@ -1281,7 +1301,27 @@ pub struct StatusSnapshot {
     /// / redeploy.
     #[serde(default)]
     pub paused: bool,
+    /// Effective matrix axes — surfaces the runner's configuration so an
+    /// operator can tell at a glance whether `-n2` cells are expected.
+    #[serde(default)]
+    pub matrix_axes: MatrixAxes,
+    /// Runner binary version (CARGO_PKG_VERSION).
+    #[serde(default)]
+    pub runner_version: String,
+    /// Git commit the runner binary was built from (build.rs).
+    #[serde(default)]
+    pub runner_git_sha: String,
     pub cells: Vec<CellStatus>,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct MatrixAxes {
+    pub cluster_sizes: Vec<u32>,
+    pub agents: Vec<String>,
+    pub llms: Vec<String>,
+    pub cloud_providers_configured: usize,
+    pub ollama_model: String,
+    pub lms_model: String,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
