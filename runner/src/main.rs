@@ -66,6 +66,9 @@ enum Cmd {
         /// Matrix cell key (e.g. "openclaw-ollama"). If omitted, a random cell is picked.
         key: Option<String>,
     },
+    /// Delete every Incus instance and mgmt cluster whose name starts with
+    /// the configured prefix but isn't tracked in local state.
+    Gc,
     /// Print the matrix of ClusterConfig values that would be generated.
     Matrix {
         /// Print JSON per cell instead of keys only.
@@ -102,6 +105,7 @@ fn main() -> Result<()> {
             Cmd::Teardown { yes } => cmd_teardown(&cfg, yes).await,
             Cmd::Redeploy { yes } => cmd_redeploy(&cfg, yes).await,
             Cmd::Reprovision { key } => cmd_reprovision(&cfg, key.as_deref()).await,
+            Cmd::Gc => cmd_gc(&cfg).await,
             Cmd::Matrix { json } => cmd_matrix(&cfg, json),
         }
     })
@@ -255,6 +259,13 @@ async fn cmd_redeploy(cfg: &RunnerConfig, yes: bool) -> Result<()> {
     let cli = api::Cli::new(&cfg.api.bind, cfg.api.port);
     let ack = cli.redeploy().await.context("dialing runner daemon")?;
     println!("redeploy: ok={}", ack.ok);
+    Ok(())
+}
+
+async fn cmd_gc(cfg: &RunnerConfig) -> Result<()> {
+    let cli = api::Cli::new(&cfg.api.bind, cfg.api.port);
+    let ack = cli.gc().await.context("dialing runner daemon")?;
+    println!("gc: ok={}", ack.ok);
     Ok(())
 }
 

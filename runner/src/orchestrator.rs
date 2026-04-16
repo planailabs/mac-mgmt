@@ -526,6 +526,76 @@ impl Orchestrator {
                 tracing::warn!("destroy stale cell {key}: {e:#}");
             }
         }
+
+        // Garbage-collect Incus instances and mgmt clusters that share our
+        // prefix but aren't tracked in local state (survivors from crashed
+        // runs, manual operator edits, etc).
+        if let Err(e) = self.gc().await {
+            tracing::warn!("gc: {e:#}");
+        }
+        Ok(())
+    }
+
+    /// Delete any Incus instance and any mgmt cluster whose name starts
+    /// with `incus.name_prefix` but isn't associated with a known cell
+    /// (by instance name or cluster id) in local state. Safe to run
+    /// alongside reconcile: state is persisted before external resources
+    /// are created, so in-flight cells are always in the tracked set.
+    pub async fn gc(&self) -> Result<()> {
+        let prefix = self.config.incus.name_prefix.clone();
+        let (tracked_instances, tracked_clusters): (
+            std::collections::HashSet<String>,
+            std::collections::HashSet<Uuid>,
+        ) = {
+            let s = self.state.lock().await;
+            let mut names = std::collections::HashSet::new();
+            let mut ids = std::collections::HashSet::new();
+            for cell in &s.cells {
+                if let Some(cid) = cell.stage.cluster_id() {
+                    ids.insert(cid);
+                }
+                for inst in cell.stage.instances() {
+                    names.insert(inst.instance_name.clone());
+                }
+            }
+            (names, ids)
+        };
+
+        match self.incus.list_instances().await {
+            Ok(instances) => {
+                for name in instances {
+                    if !name.starts_with(&prefix) {
+                        continue;
+                    }
+                    if tracked_instances.contains(&name) {
+                        continue;
+                    }
+                    tracing::info!("gc: deleting untracked incus instance {name}");
+                    if let Err(e) = self.incus.delete_instance(&name).await {
+                        tracing::warn!("gc: deleting incus instance {name}: {e:#}");
+                    }
+                }
+            }
+            Err(e) => tracing::warn!("gc: listing incus instances: {e:#}"),
+        }
+
+        match self.mgmt.list_clusters().await {
+            Ok(rows) => {
+                for row in rows {
+                    if !row.name.starts_with(&prefix) {
+                        continue;
+                    }
+                    if tracked_clusters.contains(&row.id) {
+                        continue;
+                    }
+                    tracing::info!("gc: deleting untracked cluster {} ({})", row.name, row.id);
+                    if let Err(e) = self.mgmt.delete_cluster(row.id).await {
+                        tracing::warn!("gc: deleting cluster {}: {e:#}", row.id);
+                    }
+                }
+            }
+            Err(e) => tracing::warn!("gc: listing clusters: {e:#}"),
+        }
         Ok(())
     }
 

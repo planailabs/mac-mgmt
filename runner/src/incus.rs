@@ -186,6 +186,24 @@ impl IncusClient {
         Ok(())
     }
 
+    /// Names of every instance in the configured project (not just the
+    /// runner's fleet). Used by the garbage collector to find prefix-matching
+    /// containers it doesn't know about.
+    pub async fn list_instances(&self) -> Result<Vec<String>> {
+        let v = self
+            .send_and_unwrap(self.http.get(self.url("/1.0/instances")))
+            .await?;
+        let arr = match v.as_array() {
+            Some(a) => a,
+            None => return Ok(Vec::new()),
+        };
+        Ok(arr
+            .iter()
+            .filter_map(|u| u.as_str())
+            .filter_map(|u| u.rsplit('/').next().map(|s| s.to_string()))
+            .collect())
+    }
+
     pub async fn instance_exists(&self, name: &str) -> Result<bool> {
         let resp = self
             .http
