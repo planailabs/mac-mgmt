@@ -220,6 +220,99 @@ mod tests {
         assert!(cells.iter().any(|c| c.key == "openclaw-ollama-n2" && c.node_count == 2));
     }
 
+    /// End-to-end fairness simulation: take the interleaved matrix output
+    /// and run it through a throttled reconcile loop. Every cell must
+    /// reach "running" within a bounded number of ticks, and size=2 cells
+    /// must not all settle strictly after all size=1 cells.
+    #[test]
+    fn throttle_does_not_starve_n2_cells() {
+        let mut m = MatrixConfig::default();
+        m.ollama_model = "smollm2:1.7b".into();
+        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.agents = Some(vec!["openclaw".into(), "none".into()]);
+        m.llms = Some(vec!["ollama".into(), "lms".into()]);
+        m.cluster_sizes = vec![1, 2];
+        let cells = generate(&m);
+        let keys: Vec<String> = cells.iter().map(|c| c.key.clone()).collect();
+
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Stage {
+            Pending,
+            ConfigPushed,
+            Launching(u32), // tick it entered Launching
+            Running,
+        }
+        // Parameters matching production-ish defaults.
+        let cap: usize = 3;
+        let launch_ticks: u32 = 5;
+        let max_ticks: u32 = 200;
+
+        let mut stages: Vec<Stage> = vec![Stage::Pending; keys.len()];
+        let mut settled_at: Vec<Option<u32>> = vec![None; keys.len()];
+
+        for tick in 0..max_ticks {
+            // Pending → ConfigPushed (cheap, no throttle)
+            for s in stages.iter_mut() {
+                if *s == Stage::Pending {
+                    *s = Stage::ConfigPushed;
+                }
+            }
+            // ConfigPushed → Launching (throttle on current Launching count),
+            // iterated in the matrix generator's order — the property under test.
+            for i in 0..stages.len() {
+                if stages[i] != Stage::ConfigPushed {
+                    continue;
+                }
+                let launching = stages
+                    .iter()
+                    .filter(|s| matches!(s, Stage::Launching(_)))
+                    .count();
+                if launching < cap {
+                    stages[i] = Stage::Launching(tick);
+                }
+            }
+            // Launching → Running after fixed launch_ticks
+            for (i, s) in stages.iter_mut().enumerate() {
+                if let Stage::Launching(started) = *s {
+                    if tick.saturating_sub(started) >= launch_ticks {
+                        *s = Stage::Running;
+                        settled_at[i] = Some(tick);
+                    }
+                }
+            }
+            if stages.iter().all(|s| *s == Stage::Running) {
+                break;
+            }
+        }
+
+        for (i, key) in keys.iter().enumerate() {
+            assert!(
+                settled_at[i].is_some(),
+                "cell {key} never reached Running within {max_ticks} ticks",
+            );
+        }
+
+        let n2_ticks: Vec<u32> = keys
+            .iter()
+            .zip(settled_at.iter())
+            .filter(|(k, _)| k.ends_with("-n2"))
+            .filter_map(|(_, t)| *t)
+            .collect();
+        let n1_ticks: Vec<u32> = keys
+            .iter()
+            .zip(settled_at.iter())
+            .filter(|(k, _)| !k.ends_with("-n2"))
+            .filter_map(|(_, t)| *t)
+            .collect();
+        assert!(!n2_ticks.is_empty() && !n1_ticks.is_empty(), "need both sizes");
+        let n2_min = n2_ticks.iter().min().copied().unwrap();
+        let n1_max = n1_ticks.iter().max().copied().unwrap();
+        assert!(
+            n2_min <= n1_max,
+            "interleaving broken: earliest n2 tick {n2_min} > latest n1 tick {n1_max}"
+        );
+    }
+
     /// Sizes must interleave within an (agent, llm) pair so the launch
     /// throttle doesn't starve 2-node cells behind all the 1-node ones.
     #[test]
