@@ -46,10 +46,13 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
         .collect();
     let sizes = if sizes.is_empty() { vec![1] } else { sizes };
 
+    // Interleave sizes so every (agent × llm) pair alternates between its
+    // 1-node and 2-node variants in the output. Without this, size=1 cells
+    // come first and starve size=2 at the max_concurrent_launches throttle.
     let mut cells = Vec::new();
-    for size in &sizes {
-        for agent in &agents {
-            for llm in &llms {
+    for agent in &agents {
+        for llm in &llms {
+            for size in &sizes {
                 match llm.as_str() {
                     "cloud" => {
                         for cp in &cloud_providers {
@@ -215,6 +218,33 @@ mod tests {
         assert_eq!(cells.len(), 2);
         assert!(cells.iter().any(|c| c.key == "openclaw-ollama" && c.node_count == 1));
         assert!(cells.iter().any(|c| c.key == "openclaw-ollama-n2" && c.node_count == 2));
+    }
+
+    /// Sizes must interleave within an (agent, llm) pair so the launch
+    /// throttle doesn't starve 2-node cells behind all the 1-node ones.
+    #[test]
+    fn cells_interleave_sizes_per_agent_llm_pair() {
+        let mut m = MatrixConfig::default();
+        m.ollama_model = "smollm2:1.7b".into();
+        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.agents = Some(vec!["openclaw".into(), "none".into()]);
+        m.llms = Some(vec!["ollama".into(), "lms".into()]);
+        m.cluster_sizes = vec![1, 2];
+        let keys: Vec<String> = generate(&m).into_iter().map(|c| c.key).collect();
+        // 1-node and 2-node for the same (agent, llm) must be adjacent.
+        assert_eq!(
+            keys,
+            vec![
+                "openclaw-ollama",
+                "openclaw-ollama-n2",
+                "openclaw-lms",
+                "openclaw-lms-n2",
+                "none-ollama",
+                "none-ollama-n2",
+                "none-lms",
+                "none-lms-n2",
+            ]
+        );
     }
 
     #[test]
