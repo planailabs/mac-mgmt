@@ -165,11 +165,23 @@ struct ActiveRolloutEntry {
 #[server]
 async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
     let user = current_user().await?;
-    user.require_admin()?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    // Matches SyncTokenList's create_token gate: global admins pass (None
+    // filter), org admins/writers pass only for clusters in their orgs.
+    // A cloud-init grant is effectively a sync-token grant, so we don't
+    // want this to be stricter than the adjacent "create sync token" button.
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
 
     // Resolve daemon version: active rollout → pinned → latest semver from
     // daemon_versions. Mirrors the admin-only /api/setting/cloud-init path.
@@ -397,7 +409,7 @@ pub fn ClusterDetail(id: String) -> Element {
                     PinnedVersion { cluster_id: cid2.clone(), version: pinned.clone(), read_only, on_change: move |_| cluster.restart() }
                     NixpkgsCommit { cluster_id: cid2.clone(), commit: nix_commit.clone(), read_only, on_change: move |_| cluster.restart() }
                     ActiveRollouts { cluster_id: cid2.clone() }
-                    if is_admin {
+                    if can_write {
                         button {
                             class: "bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-700",
                             onclick: move |_| cloud_init_open.set(true),
@@ -406,7 +418,7 @@ pub fn ClusterDetail(id: String) -> Element {
                     }
                 }
 
-                if is_admin {
+                if can_write {
                     CloudInitModal {
                         cluster_id: cid2.clone(),
                         cluster_name: name_for_modal,
