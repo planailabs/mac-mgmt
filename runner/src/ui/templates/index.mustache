@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mac-mgmt-runner</title>
+<style>{{{styles}}}</style>
+<script>{{{script}}}</script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>mac-mgmt-runner</h1>
+    <span class="tagline">fleet orchestrator · live</span>
+  </header>
+
+  <div class="toolbar">
+    <button onclick="runAction('/provision', null, event)">Provision</button>
+    <button onclick="runAction('/reprovision', null, event)">Reprovision random</button>
+    <button onclick="runAction('/gc', null, event)">GC</button>
+    <button onclick="runAction('/chaos', null, event)">Chaos tick</button>
+    <button class="danger" onclick="runAction('/redeploy', 'Redeploy will destroy every matching cluster and rebuild. Continue?', event)">Redeploy</button>
+    <button class="danger" onclick="runAction('/teardown', 'Teardown will destroy every provisioned cell. Continue?', event)">Teardown</button>
+    <span class="summary"><strong>{{total_cells}}</strong> cells · <strong>{{running}}</strong> running</span>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Cell</th>
+          <th>Stage</th>
+          <th>Nodes</th>
+          <th>Cluster</th>
+          <th>Instances</th>
+          <th>Health</th>
+          <th>Detail</th>
+          <th>Launching since</th>
+          <th>Fails</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#cells}}
+        <tr>
+          <td class="cell-key">{{key}}</td>
+          <td><span class="stage {{stage}}">{{stage}}</span></td>
+          <td>{{node_count}}</td>
+          <td class="mono">
+            {{#cluster_id}}{{.}}{{/cluster_id}}
+            {{^cluster_id}}<span class="empty-dash">—</span>{{/cluster_id}}
+          </td>
+          <td>
+            {{#has_instances}}
+            <ul class="instances">
+              {{#instances}}
+              <li>
+                <div class="iname mono">{{instance_name}}</div>
+                <div class="iid mono" title="{{instance_id}}">{{instance_id_short}}</div>
+              </li>
+              {{/instances}}
+            </ul>
+            {{/has_instances}}
+            {{^has_instances}}<span class="empty-dash">—</span>{{/has_instances}}
+          </td>
+          <td>
+            {{#healthy_yes}}<span class="health-yes">✔ healthy</span>{{/healthy_yes}}
+            {{#healthy_no}}<span class="health-no">✗ unhealthy</span>{{/healthy_no}}
+            {{#healthy_unknown}}<span class="health-unknown">—</span>{{/healthy_unknown}}
+          </td>
+          <td class="mono">
+            {{#detail}}{{.}}{{/detail}}
+            {{^detail}}<span class="empty-dash">—</span>{{/detail}}
+          </td>
+          <td class="mono">
+            {{#launching_since}}{{.}}{{/launching_since}}
+            {{^launching_since}}<span class="empty-dash">—</span>{{/launching_since}}
+          </td>
+          <td class="{{fails_class}}">{{deploy_failures}}</td>
+        </tr>
+        {{/cells}}
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

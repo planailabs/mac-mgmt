@@ -19,6 +19,7 @@ mod matrix;
 mod mgmt;
 mod orchestrator;
 mod state;
+mod ui;
 
 use crate::config::RunnerConfig;
 use crate::incus::IncusClient;
