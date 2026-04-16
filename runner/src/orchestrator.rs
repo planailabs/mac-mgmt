@@ -868,6 +868,59 @@ impl Orchestrator {
         Ok(Some(format!("-mcp-bundle {id}")))
     }
 
+    /// Pick a random Running cell and apply one of start / stop /
+    /// reprovision. Returns a short description of what happened.
+    pub async fn chaos_vm_tick(&self) -> Result<Option<String>> {
+        let candidates: Vec<(String, Vec<String>)> = {
+            let s = self.state.lock().await;
+            s.cells
+                .iter()
+                .filter(|c| c.stage.is_running())
+                .map(|c| {
+                    (
+                        c.key.clone(),
+                        c.stage
+                            .instances()
+                            .iter()
+                            .map(|i| i.instance_name.clone())
+                            .collect(),
+                    )
+                })
+                .collect()
+        };
+        let Some((key, instances)) = candidates.choose(&mut rand::thread_rng()).cloned()
+        else {
+            return Ok(None);
+        };
+
+        let op: u8 = rand::thread_rng().gen_range(0..3);
+        match op {
+            0 => {
+                let Some(name) = instances.choose(&mut rand::thread_rng()).cloned() else {
+                    return Ok(None);
+                };
+                tracing::info!("chaos-vm: stop {name} (cell={key})");
+                // Ignore errors — instance may already be stopped.
+                let _ = self.incus.stop_instance(&name).await;
+                Ok(Some(format!("{key}: stop {name}")))
+            }
+            1 => {
+                let Some(name) = instances.choose(&mut rand::thread_rng()).cloned() else {
+                    return Ok(None);
+                };
+                tracing::info!("chaos-vm: start {name} (cell={key})");
+                // Ignore errors — instance may already be running.
+                let _ = self.incus.set_instance_state(&name, "start").await;
+                Ok(Some(format!("{key}: start {name}")))
+            }
+            _ => {
+                tracing::info!("chaos-vm: reprovision {key}");
+                self.reprovision_cell(&key).await?;
+                Ok(Some(format!("{key}: reprovision")))
+            }
+        }
+    }
+
     pub async fn reprovision_random(&self) -> Result<Option<String>> {
         let keys: Vec<String> = {
             let s = self.state.lock().await;
@@ -1074,18 +1127,21 @@ pub async fn chaos_loop(orch: Arc<Orchestrator>) {
     }
 }
 
-pub async fn reprovision_loop(orch: Arc<Orchestrator>) {
-    let interval = parse_duration(&orch.config.fleet.random_reprovision_interval)
+/// Periodically picks a random Running cell and applies a VM-level chaos
+/// op (start / stop / reprovision). Interval is fleet.vm_chaos_interval
+/// (default 30m). No-op if the fleet has no running cells.
+pub async fn vm_chaos_loop(orch: Arc<Orchestrator>) {
+    let interval = parse_duration(&orch.config.fleet.vm_chaos_interval)
         .unwrap_or(Duration::from_secs(1800));
     tokio::time::sleep(interval / 2).await;
     let mut ticker = tokio::time::interval(interval);
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        match orch.reprovision_random().await {
-            Ok(Some(k)) => tracing::info!("random reprovision: {k}"),
-            Ok(None) => tracing::debug!("random reprovision: no running cells to cycle"),
-            Err(e) => tracing::error!("random reprovision: {e:#}"),
+        match orch.chaos_vm_tick().await {
+            Ok(Some(k)) => tracing::info!("vm chaos: {k}"),
+            Ok(None) => tracing::debug!("vm chaos: no running cells"),
+            Err(e) => tracing::error!("vm chaos: {e:#}"),
         }
     }
 }

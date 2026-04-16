@@ -23,7 +23,7 @@ mod state;
 use crate::config::RunnerConfig;
 use crate::incus::IncusClient;
 use crate::mgmt::MgmtClient;
-use crate::orchestrator::{Orchestrator, chaos_loop, reconcile_loop, reprovision_loop};
+use crate::orchestrator::{Orchestrator, chaos_loop, reconcile_loop, vm_chaos_loop};
 
 #[derive(Parser)]
 #[command(name = "mac-mgmt-runner", version, about = "mac-mgmt fleet runner")]
@@ -149,7 +149,7 @@ async fn run_daemon(cfg: RunnerConfig) -> Result<()> {
     // The reconcile loop drives every cell's state machine — including
     // deploy timeouts, which are handled inside drive_cell's Launching poll.
     tokio::spawn(reconcile_loop(orch.clone()));
-    tokio::spawn(reprovision_loop(orch.clone()));
+    tokio::spawn(vm_chaos_loop(orch.clone()));
     tokio::spawn(chaos_loop(orch.clone()));
 
     api::serve(orch).await

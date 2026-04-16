@@ -92,9 +92,11 @@ pub struct FleetConfig {
     /// Reconcile loop interval — how often we re-check the fleet.
     #[serde(default = "default_reconcile")]
     pub reconcile_interval: String,
-    /// Random re-provision interval — how often to destroy + recreate a random instance.
-    #[serde(default = "default_reprovision")]
-    pub random_reprovision_interval: String,
+    /// Interval between random VM-level chaos operations (start / stop /
+    /// reprovision) on a random running cell. Aliased by the older name
+    /// `random_reprovision_interval` for backwards compat.
+    #[serde(default = "default_vm_chaos", alias = "random_reprovision_interval")]
+    pub vm_chaos_interval: String,
     /// Path to the runner's state file.
     #[serde(default = "default_state_path")]
     pub state_path: PathBuf,
@@ -125,7 +127,7 @@ impl Default for FleetConfig {
     fn default() -> Self {
         Self {
             reconcile_interval: default_reconcile(),
-            random_reprovision_interval: default_reprovision(),
+            vm_chaos_interval: default_vm_chaos(),
             state_path: default_state_path(),
             startup_grace: default_grace(),
             heartbeat_stale_after: default_heartbeat_stale(),
@@ -183,7 +185,7 @@ fn default_name_prefix() -> String { "mmr-".into() }
 fn default_api_bind() -> String { "127.0.0.1".into() }
 fn default_api_port() -> u16 { 9400 }
 fn default_reconcile() -> String { "1m".into() }
-fn default_reprovision() -> String { "30m".into() }
+fn default_vm_chaos() -> String { "30m".into() }
 fn default_state_path() -> PathBuf { PathBuf::from("/var/lib/mac-mgmt-runner/state.json") }
 fn default_grace() -> String { "3m".into() }
 fn default_heartbeat_stale() -> String { "5m".into() }

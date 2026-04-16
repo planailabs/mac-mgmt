@@ -38,7 +38,9 @@ port = 9400
 
 [fleet]
 reconcile_interval = "1m"
-random_reprovision_interval = "30m"
+# Interval between random VM-level chaos ops (start / stop / reprovision)
+# on a random running cell. Accepts the legacy key random_reprovision_interval.
+vm_chaos_interval = "30m"
 state_path = "/var/lib/mac-mgmt-runner/state.json"
 startup_grace = "3m"
 heartbeat_stale_after = "5m"
