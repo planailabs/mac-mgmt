@@ -15,6 +15,9 @@ struct FleetEntry {
     hostname: String,
     environment: String,
     version: String,
+    /// Git commit the daemon binary was built from. `None` on older daemons.
+    #[serde(default)]
+    git_sha: Option<String>,
     services: serde_json::Value,
     tunnels: serde_json::Value,
     relay_proxy_hostname: Option<String>,
@@ -53,6 +56,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         hostname: String,
         environment: String,
         version: String,
+        git_sha: Option<String>,
         services: serde_json::Value,
         tunnels: serde_json::Value,
         relay_proxy_hostname: Option<String>,
@@ -121,7 +125,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 
     let rows = if let Some(ids) = effective {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              WHERE dh.cluster_id = ANY($1) \
@@ -133,7 +137,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              ORDER BY dh.reported_at DESC",
@@ -152,6 +156,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
             hostname: r.hostname,
             environment: r.environment,
             version: r.version,
+            git_sha: r.git_sha,
             services: r.services,
             tunnels: r.tunnels,
             relay_proxy_hostname: r.relay_proxy_hostname,
@@ -586,7 +591,22 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm", "{entry.version}" }
+                                                td { class: "px-6 py-4 text-sm",
+                                                    div { "{entry.version}" }
+                                                    if let Some(sha) = &entry.git_sha {
+                                                        {
+                                                            let short: String = sha.chars().take(12).collect();
+                                                            let title = sha.clone();
+                                                            rsx! {
+                                                                div {
+                                                                    class: "text-xs font-mono text-gray-500 dark:text-gray-400",
+                                                                    title: "{title}",
+                                                                    "{short}"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                                 td { class: "px-6 py-4 text-sm {status_class}", "{status_text}" }
                                                 td { class: "px-6 py-4 text-xs font-mono text-gray-600 dark:text-gray-300",
                                                     if let Some(lc) = &load_cell {

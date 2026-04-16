@@ -42,6 +42,11 @@ mod ws_reconnect;
 #[cfg(feature = "services")]
 mod services;
 
+/// Git commit this binary was built from. Captured at build time by
+/// build.rs (GIT_SHA env or `git rev-parse HEAD`); "unknown" when
+/// neither is available.
+pub const GIT_SHA: &str = env!("GIT_SHA");
+
 #[derive(Parser)]
 #[command(name = "mac-mgmt", version, about = "Mac management daemon")]
 struct Cli {

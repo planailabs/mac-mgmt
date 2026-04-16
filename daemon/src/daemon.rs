@@ -859,6 +859,7 @@ async fn do_send_heartbeat(
         tunnels: serde_json::Value::Array(tunnels),
         relay_proxy_hostname,
         nixpkgs_commit: crate::nix::current_nixpkgs_commit(),
+        git_sha: Some(crate::GIT_SHA.to_string()),
         public_key: public_key_b64,
         signature: sig_b64,
         signed_at,

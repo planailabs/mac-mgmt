@@ -38,6 +38,11 @@ pub struct HeartbeatBody {
     /// Current nixpkgs commit pin (if any) the daemon is using.
     #[serde(default)]
     pub nixpkgs_commit: Option<String>,
+    /// Git commit the daemon binary was built from. Populated from the
+    /// GIT_SHA env or `git rev-parse HEAD` in build.rs. Optional for
+    /// backwards compatibility with older daemons.
+    #[serde(default)]
+    pub git_sha: Option<String>,
     /// Ed25519 public key bytes (base64-encoded SSH wire format).
     /// The server verifies that SHA-256(public_key) == instance_id.
     #[serde(default)]
