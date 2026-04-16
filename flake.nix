@@ -20,7 +20,7 @@
         overlays = [
           (import rust-overlay)
           (final: prev: { mac-mgmt-gitSha = self.rev or self.dirtyRev or "unknown"; })
-          self.overlays.default
+          (import ./overlay.nix)
         ];
         pkgs = import nixpkgs { inherit system overlays; };
         toolchain = pkgs.rust-bin.stable.latest.default.override {
