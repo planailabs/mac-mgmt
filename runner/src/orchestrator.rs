@@ -542,11 +542,19 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// Delete any Incus instance and any mgmt cluster whose name starts
-    /// with `incus.name_prefix` but isn't associated with a known cell
-    /// (by instance name or cluster id) in local state. Safe to run
-    /// alongside reconcile: state is persisted before external resources
-    /// are created, so in-flight cells are always in the tracked set.
+    /// Garbage-collect drift between local state and the outside world:
+    ///
+    ///   1. Delete any Incus instance / mgmt cluster whose name starts
+    ///      with `incus.name_prefix` but isn't tracked locally (forward
+    ///      sweep — catches resources the runner didn't create).
+    ///   2. Drop any local cell whose cluster_id no longer exists on
+    ///      the mgmt server (reverse sweep — catches state that
+    ///      outlived the resource it described, e.g. a cluster deleted
+    ///      from the web UI).
+    ///
+    /// Safe to run alongside reconcile: state is persisted before
+    /// external resources are created, so in-flight cells are always in
+    /// the tracked set.
     pub async fn gc(&self) -> Result<()> {
         let prefix = self.config.incus.name_prefix.clone();
         let (tracked_instances, tracked_clusters): (
@@ -567,41 +575,90 @@ impl Orchestrator {
             (names, ids)
         };
 
-        match self.incus.list_instances().await {
-            Ok(instances) => {
-                for name in instances {
-                    if !name.starts_with(&prefix) {
-                        continue;
-                    }
-                    if tracked_instances.contains(&name) {
-                        continue;
-                    }
-                    tracing::info!("gc: deleting untracked incus instance {name}");
-                    if let Err(e) = self.incus.delete_instance(&name).await {
-                        tracing::warn!("gc: deleting incus instance {name}: {e:#}");
-                    }
+        let incus_names: std::collections::HashSet<String> =
+            match self.incus.list_instances().await {
+                Ok(v) => v.into_iter().collect(),
+                Err(e) => {
+                    tracing::warn!("gc: listing incus instances: {e:#}");
+                    return Ok(());
                 }
+            };
+        let server_clusters: Vec<(Uuid, String)> = match self.mgmt.list_clusters().await {
+            Ok(rows) => rows.into_iter().map(|r| (r.id, r.name)).collect(),
+            Err(e) => {
+                tracing::warn!("gc: listing clusters: {e:#}");
+                return Ok(());
             }
-            Err(e) => tracing::warn!("gc: listing incus instances: {e:#}"),
+        };
+        let server_cluster_ids: std::collections::HashSet<Uuid> =
+            server_clusters.iter().map(|(id, _)| *id).collect();
+
+        // Forward sweep — untracked Incus instances with our prefix.
+        for name in &incus_names {
+            if !name.starts_with(&prefix) || tracked_instances.contains(name) {
+                continue;
+            }
+            tracing::info!("gc: deleting untracked incus instance {name}");
+            if let Err(e) = self.incus.delete_instance(name).await {
+                tracing::warn!("gc: deleting incus instance {name}: {e:#}");
+            }
         }
 
-        match self.mgmt.list_clusters().await {
-            Ok(rows) => {
-                for row in rows {
-                    if !row.name.starts_with(&prefix) {
-                        continue;
-                    }
-                    if tracked_clusters.contains(&row.id) {
-                        continue;
-                    }
-                    tracing::info!("gc: deleting untracked cluster {} ({})", row.name, row.id);
-                    if let Err(e) = self.mgmt.delete_cluster(row.id).await {
-                        tracing::warn!("gc: deleting cluster {}: {e:#}", row.id);
-                    }
-                }
+        // Forward sweep — untracked clusters with our prefix.
+        for (id, name) in &server_clusters {
+            if !name.starts_with(&prefix) || tracked_clusters.contains(id) {
+                continue;
             }
-            Err(e) => tracing::warn!("gc: listing clusters: {e:#}"),
+            tracing::info!("gc: deleting untracked cluster {name} ({id})");
+            if let Err(e) = self.mgmt.delete_cluster(*id).await {
+                tracing::warn!("gc: deleting cluster {id}: {e:#}");
+            }
         }
+
+        // Reverse sweep — stale state entries whose cluster vanished.
+        // Pending cells (no cluster_id) are never stale; skip them so a
+        // cell that's about to create its cluster doesn't get wiped.
+        let stale_keys: Vec<String> = {
+            let s = self.state.lock().await;
+            s.cells
+                .iter()
+                .filter_map(|cell| {
+                    let cid = cell.stage.cluster_id()?;
+                    if server_cluster_ids.contains(&cid) {
+                        None
+                    } else {
+                        Some(cell.key.clone())
+                    }
+                })
+                .collect()
+        };
+        for key in stale_keys {
+            tracing::info!("gc: dropping stale state for {key} (cluster gone from server)");
+            // Don't call destroy_cell — the cluster is already gone. Just
+            // remove any lingering Incus instance (forward sweep may have
+            // missed it if it was added between our snapshot calls) and
+            // delete the state entry.
+            let inst_names: Vec<String> = {
+                let s = self.state.lock().await;
+                s.find(&key)
+                    .map(|c| {
+                        c.stage
+                            .instances()
+                            .iter()
+                            .map(|i| i.instance_name.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            for name in inst_names {
+                let _ = self.incus.delete_instance(&name).await;
+            }
+            {
+                let mut s = self.state.lock().await;
+                s.remove(&key);
+            }
+        }
+        self.save_state().await?;
         Ok(())
     }
 
