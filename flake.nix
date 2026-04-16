@@ -10,13 +10,18 @@
 
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     {
+      overlays.default = import ./overlay.nix;
       nixosModules.default = import ./server/module.nix;
       nixosModules.relay = import ./relay/module.nix;
       nixosModules.runner = import ./runner/module.nix;
     } //
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
+        overlays = [
+          (import rust-overlay)
+          (final: prev: { mac-mgmt-gitSha = self.rev or self.dirtyRev or "unknown"; })
+          self.overlays.default
+        ];
         pkgs = import nixpkgs { inherit system overlays; };
         toolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-analyzer" ];
@@ -32,21 +37,8 @@
           pkgs.libiconv
         ];
 
-        gitSha = self.rev or self.dirtyRev or "unknown";
-
-        mac-mgmt = pkgs.rustPlatform.buildRustPackage {
-          pname = "mac-mgmt";
-          version = "0.1.0";
-          src = ./.;
-          cargoLock.lockFile = ./Cargo.lock;
-          buildInputs = darwinDeps;
-          env.GIT_SHA = gitSha;
-        };
-
-        mac-mgmt-server = pkgs.callPackage ./server/package.nix { inherit gitSha; };
-        mac-mgmt-relay = pkgs.callPackage ./relay/package.nix { };
-        mac-mgmt-runner = pkgs.callPackage ./runner/package.nix { inherit gitSha; };
-        relay-ssh = pkgs.callPackage ./relay-ssh/package.nix { };
+        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh;
+        relay-ssh = mac-mgmt-relay-ssh;
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
         # `-framework CoreFoundation` etc when cross-compiling Apple targets
