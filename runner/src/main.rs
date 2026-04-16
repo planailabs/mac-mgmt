@@ -23,7 +23,7 @@ mod state;
 use crate::config::RunnerConfig;
 use crate::incus::IncusClient;
 use crate::mgmt::MgmtClient;
-use crate::orchestrator::{Orchestrator, reconcile_loop, reprovision_loop};
+use crate::orchestrator::{Orchestrator, chaos_loop, reconcile_loop, reprovision_loop};
 
 #[derive(Parser)]
 #[command(name = "mac-mgmt-runner", version, about = "mac-mgmt fleet runner")]
@@ -69,6 +69,9 @@ enum Cmd {
     /// Delete every Incus instance and mgmt cluster whose name starts with
     /// the configured prefix but isn't tracked in local state.
     Gc,
+    /// Fire one round of the install/uninstall chaos loop (skills,
+    /// bundles, mcp-servers, mcp-bundles on a random running cluster).
+    Chaos,
     /// Print the matrix of ClusterConfig values that would be generated.
     Matrix {
         /// Print JSON per cell instead of keys only.
@@ -106,6 +109,7 @@ fn main() -> Result<()> {
             Cmd::Redeploy { yes } => cmd_redeploy(&cfg, yes).await,
             Cmd::Reprovision { key } => cmd_reprovision(&cfg, key.as_deref()).await,
             Cmd::Gc => cmd_gc(&cfg).await,
+            Cmd::Chaos => cmd_chaos(&cfg).await,
             Cmd::Matrix { json } => cmd_matrix(&cfg, json),
         }
     })
@@ -146,6 +150,7 @@ async fn run_daemon(cfg: RunnerConfig) -> Result<()> {
     // deploy timeouts, which are handled inside drive_cell's Launching poll.
     tokio::spawn(reconcile_loop(orch.clone()));
     tokio::spawn(reprovision_loop(orch.clone()));
+    tokio::spawn(chaos_loop(orch.clone()));
 
     api::serve(orch).await
 }
@@ -265,6 +270,17 @@ async fn cmd_gc(cfg: &RunnerConfig) -> Result<()> {
     let cli = api::Cli::new(&cfg.api.bind, cfg.api.port);
     let ack = cli.gc().await.context("dialing runner daemon")?;
     println!("gc: ok={}", ack.ok);
+    Ok(())
+}
+
+async fn cmd_chaos(cfg: &RunnerConfig) -> Result<()> {
+    let cli = api::Cli::new(&cfg.api.bind, cfg.api.port);
+    let ack = cli.chaos().await.context("dialing runner daemon")?;
+    println!(
+        "chaos: ok={} {}",
+        ack.ok,
+        ack.detail.as_deref().unwrap_or("(nothing to do)")
+    );
     Ok(())
 }
 

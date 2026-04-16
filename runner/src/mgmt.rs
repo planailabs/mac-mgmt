@@ -74,6 +74,38 @@ pub struct RolloutGroupRow {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SkillChannelRow {
+    pub id: Uuid,
+    pub installed: bool,
+    #[serde(default)]
+    pub cluster_skill_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OptionRow {
+    pub id: Uuid,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpServerOptionRow {
+    pub id: Uuid,
+    pub installed: bool,
+    #[serde(default)]
+    pub cluster_mcp_server_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClusterBundleRow {
+    pub cluster_bundle_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClusterMcpBundleRow {
+    pub cluster_mcp_bundle_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AdminMachineRow {
     pub instance_id: String,
     pub hostname: Option<String>,
@@ -373,6 +405,214 @@ impl MgmtClient {
              status={status} body={:?}",
             body.chars().take(300).collect::<String>()
         );
+    }
+
+    // ── Setting: skills/bundles/mcp-servers/mcp-bundles ──────────────
+
+    pub async fn list_available_skill_channels(
+        &self,
+        cluster_id: Uuid,
+    ) -> Result<Vec<SkillChannelRow>> {
+        let resp = self
+            .http
+            .get(format!(
+                "{}/api/setting/available/skill-channels",
+                self.base
+            ))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        read_json(&format!("available_skill_channels({cluster_id})"), resp).await
+    }
+
+    pub async fn add_skill(&self, cluster_id: Uuid, skill_channel_id: Uuid) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body {
+            skill_channel_id: Uuid,
+        }
+        let resp = self
+            .http
+            .post(format!("{}/api/setting/skills", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .json(&Body { skill_channel_id })
+            .send()
+            .await?;
+        let _ = read_ok(&format!("add_skill({cluster_id}, {skill_channel_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn remove_skill(&self, cluster_id: Uuid, cluster_skill_id: Uuid) -> Result<()> {
+        let resp = self
+            .http
+            .delete(format!(
+                "{}/api/setting/skills/{}",
+                self.base, cluster_skill_id
+            ))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        let _ = read_ok(&format!("remove_skill({cluster_skill_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn list_available_bundles(&self, cluster_id: Uuid) -> Result<Vec<OptionRow>> {
+        let resp = self
+            .http
+            .get(format!("{}/api/setting/available/bundles", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        read_json(&format!("available_bundles({cluster_id})"), resp).await
+    }
+
+    pub async fn list_cluster_bundles(
+        &self,
+        cluster_id: Uuid,
+    ) -> Result<Vec<ClusterBundleRow>> {
+        let resp = self
+            .http
+            .get(format!("{}/api/setting/bundles", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        read_json(&format!("cluster_bundles({cluster_id})"), resp).await
+    }
+
+    pub async fn add_bundle(&self, cluster_id: Uuid, bundle_id: Uuid) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body {
+            bundle_id: Uuid,
+        }
+        let resp = self
+            .http
+            .post(format!("{}/api/setting/bundles", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .json(&Body { bundle_id })
+            .send()
+            .await?;
+        let _ = read_ok(&format!("add_bundle({cluster_id}, {bundle_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn remove_bundle(&self, cluster_id: Uuid, cluster_bundle_id: Uuid) -> Result<()> {
+        let resp = self
+            .http
+            .delete(format!(
+                "{}/api/setting/bundles/{}",
+                self.base, cluster_bundle_id
+            ))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        let _ = read_ok(&format!("remove_bundle({cluster_bundle_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn list_available_mcp_servers(
+        &self,
+        cluster_id: Uuid,
+    ) -> Result<Vec<McpServerOptionRow>> {
+        let resp = self
+            .http
+            .get(format!("{}/api/setting/available/mcp-servers", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        read_json(&format!("available_mcp_servers({cluster_id})"), resp).await
+    }
+
+    pub async fn add_mcp_server(&self, cluster_id: Uuid, mcp_server_id: Uuid) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body {
+            mcp_server_id: Uuid,
+        }
+        let resp = self
+            .http
+            .post(format!("{}/api/setting/mcp-servers", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .json(&Body { mcp_server_id })
+            .send()
+            .await?;
+        let _ = read_ok(&format!("add_mcp_server({cluster_id}, {mcp_server_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn remove_mcp_server(
+        &self,
+        cluster_id: Uuid,
+        cluster_mcp_server_id: Uuid,
+    ) -> Result<()> {
+        let resp = self
+            .http
+            .delete(format!(
+                "{}/api/setting/mcp-servers/{}",
+                self.base, cluster_mcp_server_id
+            ))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        let _ = read_ok(&format!("remove_mcp_server({cluster_mcp_server_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn list_available_mcp_bundles(
+        &self,
+        cluster_id: Uuid,
+    ) -> Result<Vec<OptionRow>> {
+        let resp = self
+            .http
+            .get(format!("{}/api/setting/available/mcp-bundles", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        read_json(&format!("available_mcp_bundles({cluster_id})"), resp).await
+    }
+
+    pub async fn list_cluster_mcp_bundles(
+        &self,
+        cluster_id: Uuid,
+    ) -> Result<Vec<ClusterMcpBundleRow>> {
+        let resp = self
+            .http
+            .get(format!("{}/api/setting/mcp-bundles", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        read_json(&format!("cluster_mcp_bundles({cluster_id})"), resp).await
+    }
+
+    pub async fn add_mcp_bundle(&self, cluster_id: Uuid, bundle_id: Uuid) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body {
+            bundle_id: Uuid,
+        }
+        let resp = self
+            .http
+            .post(format!("{}/api/setting/mcp-bundles", self.base))
+            .headers(self.headers(Some(cluster_id))?)
+            .json(&Body { bundle_id })
+            .send()
+            .await?;
+        let _ = read_ok(&format!("add_mcp_bundle({cluster_id}, {bundle_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn remove_mcp_bundle(
+        &self,
+        cluster_id: Uuid,
+        cluster_mcp_bundle_id: Uuid,
+    ) -> Result<()> {
+        let resp = self
+            .http
+            .delete(format!(
+                "{}/api/setting/mcp-bundles/{}",
+                self.base, cluster_mcp_bundle_id
+            ))
+            .headers(self.headers(Some(cluster_id))?)
+            .send()
+            .await?;
+        let _ = read_ok(&format!("remove_mcp_bundle({cluster_mcp_bundle_id})"), resp).await?;
+        Ok(())
     }
 
     pub async fn list_cluster_machines(&self, cluster_id: Uuid) -> Result<Vec<AdminMachineRow>> {

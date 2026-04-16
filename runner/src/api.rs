@@ -66,6 +66,15 @@ async fn api_gc(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
     Ok(Json(Ack { ok: true, detail: None }))
 }
 
+#[rocket::post("/chaos")]
+async fn api_chaos(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
+    let detail = orch.inner().chaos_tick().await.map_err(|e| {
+        tracing::error!("chaos failed: {e:#}");
+        Status::InternalServerError
+    })?;
+    Ok(Json(Ack { ok: true, detail }))
+}
+
 #[rocket::post("/reprovision")]
 async fn api_reprovision_random(
     orch: &State<Arc<Orchestrator>>,
@@ -112,6 +121,7 @@ pub async fn serve(orch: Arc<Orchestrator>) -> Result<()> {
                 api_teardown,
                 api_redeploy,
                 api_gc,
+                api_chaos,
                 api_reprovision_random,
                 api_reprovision_key,
                 api_shutdown,
@@ -186,6 +196,12 @@ impl Cli {
             .timeout(std::time::Duration::from_secs(300))
             .send()
             .await?;
+        r.error_for_status_ref()?;
+        Ok(r.json().await?)
+    }
+
+    pub async fn chaos(&self) -> Result<Ack> {
+        let r = self.http.post(format!("{}/chaos", self.base)).send().await?;
         r.error_for_status_ref()?;
         Ok(r.json().await?)
     }

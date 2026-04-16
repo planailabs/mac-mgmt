@@ -113,6 +113,12 @@ pub struct FleetConfig {
     /// slot frees up (another cell reaches Running or times out).
     #[serde(default = "default_max_concurrent_launches")]
     pub max_concurrent_launches: usize,
+    /// Base interval between random install/uninstall actions across
+    /// running clusters (skills, bundles, mcp servers, mcp bundles).
+    /// Actual delay is jittered ±50% around this value. Set to "0" or "off"
+    /// to disable the churn entirely.
+    #[serde(default = "default_chaos_interval")]
+    pub chaos_interval: String,
 }
 
 impl Default for FleetConfig {
@@ -125,6 +131,7 @@ impl Default for FleetConfig {
             heartbeat_stale_after: default_heartbeat_stale(),
             deploy_timeout: default_deploy_timeout(),
             max_concurrent_launches: default_max_concurrent_launches(),
+            chaos_interval: default_chaos_interval(),
         }
     }
 }
@@ -182,6 +189,7 @@ fn default_grace() -> String { "3m".into() }
 fn default_heartbeat_stale() -> String { "5m".into() }
 fn default_deploy_timeout() -> String { "15m".into() }
 fn default_max_concurrent_launches() -> usize { 3 }
+fn default_chaos_interval() -> String { "5m".into() }
 fn default_ollama_model() -> String { "smollm2:1.7b".into() }
 fn default_lms_model() -> String { "smollm2-1.7b-instruct".into() }
 fn default_cluster_sizes() -> Vec<u32> { vec![1, 2] }

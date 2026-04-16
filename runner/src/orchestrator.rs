@@ -28,6 +28,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use rand::Rng;
 use rand::seq::SliceRandom;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -714,6 +715,143 @@ impl Orchestrator {
         self.reconcile().await
     }
 
+    /// Pick a random Running cluster, pick a random resource type
+    /// (skill / bundle / mcp-server / mcp-bundle), and either install a
+    /// not-yet-installed item or remove an installed one. No-op if the
+    /// fleet has no running cells or the chosen endpoint returned nothing
+    /// actionable.
+    pub async fn chaos_tick(&self) -> Result<Option<String>> {
+        let clusters: Vec<(String, Uuid)> = {
+            let s = self.state.lock().await;
+            s.cells
+                .iter()
+                .filter_map(|c| {
+                    if c.stage.is_running() {
+                        c.stage.cluster_id().map(|cid| (c.key.clone(), cid))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        let Some((key, cluster_id)) = clusters.choose(&mut rand::thread_rng()).cloned() else {
+            return Ok(None);
+        };
+
+        let kind_idx: usize = rand::thread_rng().gen_range(0..4);
+        let install: bool = rand::thread_rng().gen_bool(0.5);
+
+        let result = match (kind_idx, install) {
+            (0, true) => self.chaos_install_skill(cluster_id).await,
+            (0, false) => self.chaos_uninstall_skill(cluster_id).await,
+            (1, true) => self.chaos_install_bundle(cluster_id).await,
+            (1, false) => self.chaos_uninstall_bundle(cluster_id).await,
+            (2, true) => self.chaos_install_mcp_server(cluster_id).await,
+            (2, false) => self.chaos_uninstall_mcp_server(cluster_id).await,
+            (_, true) => self.chaos_install_mcp_bundle(cluster_id).await,
+            (_, false) => self.chaos_uninstall_mcp_bundle(cluster_id).await,
+        };
+
+        match result {
+            Ok(Some(detail)) => {
+                tracing::info!("chaos: cell={key} {detail}");
+                Ok(Some(format!("{key}: {detail}")))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => {
+                tracing::warn!("chaos: cell={key} failed: {e:#}");
+                let _ = sentry::integrations::anyhow::capture_anyhow(&e);
+                Err(e)
+            }
+        }
+    }
+
+    async fn chaos_install_skill(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_available_skill_channels(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.add_skill(cluster_id, id).await?;
+        Ok(Some(format!("+skill {id}")))
+    }
+
+    async fn chaos_uninstall_skill(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_available_skill_channels(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows
+            .iter()
+            .filter_map(|r| r.cluster_skill_id.filter(|_| r.installed))
+            .collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.remove_skill(cluster_id, id).await?;
+        Ok(Some(format!("-skill {id}")))
+    }
+
+    async fn chaos_install_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_available_bundles(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.add_bundle(cluster_id, id).await?;
+        Ok(Some(format!("+bundle {id}")))
+    }
+
+    async fn chaos_uninstall_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_cluster_bundles(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows.iter().map(|r| r.cluster_bundle_id).collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.remove_bundle(cluster_id, id).await?;
+        Ok(Some(format!("-bundle {id}")))
+    }
+
+    async fn chaos_install_mcp_server(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_available_mcp_servers(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.add_mcp_server(cluster_id, id).await?;
+        Ok(Some(format!("+mcp-server {id}")))
+    }
+
+    async fn chaos_uninstall_mcp_server(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_available_mcp_servers(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows
+            .iter()
+            .filter_map(|r| r.cluster_mcp_server_id.filter(|_| r.installed))
+            .collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.remove_mcp_server(cluster_id, id).await?;
+        Ok(Some(format!("-mcp-server {id}")))
+    }
+
+    async fn chaos_install_mcp_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_available_mcp_bundles(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.add_mcp_bundle(cluster_id, id).await?;
+        Ok(Some(format!("+mcp-bundle {id}")))
+    }
+
+    async fn chaos_uninstall_mcp_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
+        let rows = self.mgmt.list_cluster_mcp_bundles(cluster_id).await?;
+        let candidates: Vec<Uuid> = rows.iter().map(|r| r.cluster_mcp_bundle_id).collect();
+        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+            return Ok(None);
+        };
+        self.mgmt.remove_mcp_bundle(cluster_id, id).await?;
+        Ok(Some(format!("-mcp-bundle {id}")))
+    }
+
     pub async fn reprovision_random(&self) -> Result<Option<String>> {
         let keys: Vec<String> = {
             let s = self.state.lock().await;
@@ -885,6 +1023,41 @@ pub async fn reconcile_loop(orch: Arc<Orchestrator>) {
 }
 
 /// Periodically picks a random Running cell and reprovisions it.
+/// Periodically fires a random install/uninstall against a random running
+/// cluster. Interval is jittered ±50% around `fleet.chaos_interval`. Set
+/// chaos_interval to "0" or "off" to disable the loop entirely.
+pub async fn chaos_loop(orch: Arc<Orchestrator>) {
+    let raw = orch.config.fleet.chaos_interval.trim();
+    if raw.is_empty() || raw == "off" || raw == "0" {
+        tracing::info!("chaos loop disabled");
+        return;
+    }
+    let base = match parse_duration(raw) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("invalid chaos_interval {raw:?}: {e}; disabling chaos loop");
+            return;
+        }
+    };
+    // Offset the first fire so chaos doesn't pile on top of an initial
+    // reconcile wave.
+    tokio::time::sleep(base).await;
+    loop {
+        let base_secs = base.as_secs().max(60) as f64;
+        let jitter = {
+            let mut rng = rand::thread_rng();
+            rng.gen_range(0.5..1.5)
+        };
+        let delay = Duration::from_secs_f64(base_secs * jitter);
+        tokio::time::sleep(delay).await;
+        match orch.chaos_tick().await {
+            Ok(Some(d)) => tracing::debug!("chaos tick: {d}"),
+            Ok(None) => tracing::debug!("chaos tick: nothing to do"),
+            Err(e) => tracing::warn!("chaos tick: {e:#}"),
+        }
+    }
+}
+
 pub async fn reprovision_loop(orch: Arc<Orchestrator>) {
     let interval = parse_duration(&orch.config.fleet.random_reprovision_interval)
         .unwrap_or(Duration::from_secs(1800));

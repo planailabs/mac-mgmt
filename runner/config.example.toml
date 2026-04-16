@@ -49,6 +49,11 @@ deploy_timeout = "15m"
 # Keeps concurrent Incus provisioning load bounded; additional cells wait
 # at ConfigPushed until a slot frees up.
 max_concurrent_launches = 3
+# Base interval between random install/uninstall actions on running clusters
+# (exercises /api/setting/skills, /bundles, /mcp-servers, /mcp-bundles).
+# Each fire picks one cluster + one resource + install-or-uninstall at random.
+# Actual delay is jittered ±50%. Set to "0" or "off" to disable.
+chaos_interval = "5m"
 
 # Optional Sentry integration for deploy timeouts, reconcile errors, and panics.
 [sentry]
