@@ -424,20 +424,27 @@ fn profile_original_urls() -> Result<HashMap<String, String>> {
 
 /// Pre-build a nix derivation so it lands in the store before any profile
 /// mutation. Bails on build failure so the profile stays untouched.
-fn pre_build_nix(nix_bin: &str, flake_ref: &str) -> Result<()> {
-    tracing::info!("pre-building nix from {flake_ref}");
+/// Build the flake ref into the store without mutating any profile, so a
+/// subsequent non-atomic profile operation (remove+add) doesn't get stuck
+/// half-done if the build fails.
+fn pre_build_package(nix_bin: &str, pkg: &str, flake_ref: &str) -> Result<()> {
+    tracing::info!("pre-building {pkg} from {flake_ref}");
     let build = Command::new(nix_bin)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args(["build", "--no-link", "--impure", flake_ref])
         .output()
-        .context("failed to run nix build for nix pre-build")?;
+        .context("failed to run nix build for pre-build")?;
     if !build.status.success() {
         let stderr = String::from_utf8_lossy(&build.stderr);
-        sentry_ext::capture_cmd_failure("nix build (pre-upgrade nix)", build.status.code(), stderr.trim());
-        anyhow::bail!("nix build for nix upgrade failed: {}", stderr.trim());
+        sentry_ext::capture_cmd_failure(
+            &format!("nix build (pre-upgrade {pkg})"),
+            build.status.code(),
+            stderr.trim(),
+        );
+        anyhow::bail!("nix build for {pkg} upgrade failed: {}", stderr.trim());
     }
-    tracing::info!("pre-build of nix succeeded");
+    tracing::info!("pre-build of {pkg} succeeded");
     Ok(())
 }
 
@@ -488,13 +495,6 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
         return run_profile_cmd(nix_bin, "install", pkg, &["add", &desired]);
     }
 
-    // When upgrading nix itself, pre-build the derivation so it lands in the
-    // store before any profile mutation.  This way a build failure cannot leave
-    // the profile in a state where nix is partially removed / unusable.
-    if pkg == "nix" {
-        pre_build_nix(nix_bin, &desired)?;
-    }
-
     let installed_url = profile_original_urls()
         .ok()
         .and_then(|m| m.get(pkg).cloned());
@@ -506,12 +506,14 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
 
     // Pin moved (or installed under a different URL) → swap the package over.
     if has_replace_support() {
-        // Atomic via the fork's verb.
+        // `replace` is atomic: if the build fails the old generation stays
+        // active, so pre-building would only duplicate work.
         run_profile_cmd(nix_bin, "replace", pkg, &["replace", pkg, &desired])
     } else {
-        // Fallback: remove + add. Non-atomic — if `add` fails the package is
-        // left uninstalled and recovers on the next ensure_installed cycle.
-        tracing::info!("nix profile replace unsupported, falling back to remove+add for {pkg}");
+        // Fallback is non-atomic (remove then add). Pre-build first so a
+        // build failure doesn't leave the profile with the package missing.
+        tracing::info!("nix profile replace unsupported, pre-building {pkg} before remove+add");
+        pre_build_package(nix_bin, pkg, &desired)?;
         run_profile_cmd(nix_bin, "remove", pkg, &["remove", pkg])?;
         run_profile_cmd(nix_bin, "add", pkg, &["add", &desired])
     }
@@ -590,12 +592,12 @@ fn upgrade_nix_inner() -> Result<()> {
     tracing::info!("nix is profile-managed, trying nix profile upgrade nix");
     sentry_ext::breadcrumb("nix", "nix is profile-managed, trying profile upgrade", &[]);
 
-    // Pre-build the new nix derivation before swapping the profile, so a
-    // build failure doesn't leave the profile half-upgraded / the old binary
-    // briefly unusable.
+    // `nix profile upgrade` is non-atomic: it removes nix and then re-adds
+    // it. Pre-build the new derivation first so a build failure doesn't
+    // leave nix missing from the profile.
     match profile_original_urls() {
         Ok(urls) => match urls.get("nix") {
-            Some(url) => pre_build_nix(nix_bin_str, &format!("{url}#nix"))?,
+            Some(url) => pre_build_package(nix_bin_str, "nix", &format!("{url}#nix"))?,
             None => tracing::warn!("no originalUrl for nix element, skipping pre-build"),
         },
         Err(e) => tracing::warn!("could not list profile to pre-build nix: {e}"),
