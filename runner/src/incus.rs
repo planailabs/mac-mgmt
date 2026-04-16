@@ -186,24 +186,20 @@ impl IncusClient {
         Ok(())
     }
 
-    /// Names of every instance in the configured project (not just the
-    /// runner's fleet). Used by the garbage collector to find prefix-matching
-    /// containers it doesn't know about.
+    /// Names of every instance in the configured project. Incus returns
+    /// entries as URLs like `/1.0/instances/<name>?project=<p>`.
     pub async fn list_instances(&self) -> Result<Vec<String>> {
         let v = self
             .send_and_unwrap(self.http.get(self.url("/1.0/instances")))
             .await?;
-        let arr = match v.as_array() {
-            Some(a) => a,
-            None => return Ok(Vec::new()),
-        };
-        Ok(arr
-            .iter()
-            .filter_map(|u| u.as_str())
-            .filter_map(|u| u.rsplit('/').next().map(|s| s.to_string()))
-            .collect())
+        let urls: Vec<&str> = v
+            .as_array()
+            .map(|a| a.iter().filter_map(|u| u.as_str()).collect())
+            .unwrap_or_default();
+        Ok(parse_instance_urls(&urls, &self.project))
     }
 
+    #[allow(dead_code)]
     pub async fn instance_exists(&self, name: &str) -> Result<bool> {
         let resp = self
             .http
@@ -212,5 +208,62 @@ impl IncusClient {
             .await
             .context("checking instance existence")?;
         Ok(resp.status().is_success())
+    }
+}
+
+/// Split `GET /1.0/instances` URL list into instance names, dropping any
+/// entry whose `project=` hint doesn't match `project`. Pulled out so we
+/// can regression-test the parsing without a live Incus host.
+fn parse_instance_urls(urls: &[&str], project: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for u in urls {
+        let (path, query) = match u.split_once('?') {
+            Some((p, q)) => (p, Some(q)),
+            None => (*u, None),
+        };
+        if let Some(q) = query {
+            let p = q
+                .split('&')
+                .filter_map(|kv| kv.split_once('='))
+                .find(|(k, _)| *k == "project")
+                .map(|(_, v)| v);
+            if let Some(p) = p {
+                if p != project {
+                    continue;
+                }
+            }
+        }
+        if let Some(name) = path.rsplit('/').next() {
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_instances_strips_query_and_filters_project() {
+        let urls = vec![
+            "/1.0/instances/test-mmr-openclaw-lms?project=test-mmr",
+            "/1.0/instances/test-mmr-openclaw-ollama?project=test-mmr",
+            "/1.0/instances/other-project-vm?project=other",
+            "/1.0/instances/no-query-name",
+            "/1.0/instances/multi-arg?project=test-mmr&foo=bar",
+        ];
+        let got = parse_instance_urls(&urls, "test-mmr");
+        assert_eq!(
+            got,
+            vec![
+                "test-mmr-openclaw-lms",
+                "test-mmr-openclaw-ollama",
+                "no-query-name",
+                "multi-arg",
+            ]
+        );
     }
 }
