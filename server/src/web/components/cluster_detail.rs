@@ -163,6 +163,87 @@ struct ActiveRolloutEntry {
 }
 
 #[server]
+async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    // Resolve daemon version: active rollout → pinned → latest semver from
+    // daemon_versions. Mirrors the admin-only /api/setting/cloud-init path.
+    let rollout_version: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT r.target_version FROM rollouts r \
+         JOIN rollout_stages rs ON rs.rollout_id = r.id \
+         WHERE (rs.group_id = '00000000-0000-0000-0000-000000000000'::uuid \
+                OR rs.group_id IN (SELECT group_id FROM rollout_group_members WHERE cluster_id = $1)) \
+           AND r.status = 'rolling' AND rs.status = 'rolling' \
+         ORDER BY r.created_at DESC LIMIT 1",
+    )
+    .bind(cid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let pinned: Option<String> = sqlx::query_scalar(
+        "SELECT pinned_version FROM clusters WHERE id = $1",
+    )
+    .bind(cid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .flatten();
+    let latest: Option<String> = sqlx::query_scalar(
+        "SELECT version FROM daemon_versions ORDER BY \
+         string_to_array(version, '.')::int[] DESC LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let version = rollout_version
+        .and_then(|v| v)
+        .or(pinned)
+        .or(latest)
+        .ok_or_else(|| {
+            ServerFnError::new(
+                "no daemon version available (no rollout, no pinned_version, no daemon_versions rows)",
+            )
+        })?;
+
+    let server_url = crate::config::config()
+        .api
+        .external_url
+        .trim_end_matches('/')
+        .to_string();
+
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+    let raw_token = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let label = format!(
+        "cloud-init-webui-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+    );
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')",
+    )
+    .bind(cid)
+    .bind(&hash)
+    .bind(&label)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(crate::api::routes::render_cloud_init(
+        &server_url,
+        &raw_token,
+        &version,
+        "x86_64-linux-musl",
+        None,
+    ))
+}
+
+#[server]
 async fn get_active_rollouts(cluster_id: String) -> Result<Vec<ActiveRolloutEntry>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -221,6 +302,7 @@ pub fn ClusterDetail(id: String) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
     let mut confirm_delete = use_signal(|| false);
+    let mut cloud_init_open = use_signal(|| false);
     let nav = navigator();
 
     match &*cluster.read() {
@@ -231,6 +313,7 @@ pub fn ClusterDetail(id: String) -> Element {
             let cid = c.id.to_string();
             let cid2 = cid.clone();
             let name = c.name.clone();
+            let name_for_modal = name.clone();
             rsx! {
                 div { class: "flex items-center gap-3 mb-2",
                     if *editing.read() {
@@ -314,6 +397,21 @@ pub fn ClusterDetail(id: String) -> Element {
                     PinnedVersion { cluster_id: cid2.clone(), version: pinned.clone(), read_only, on_change: move |_| cluster.restart() }
                     NixpkgsCommit { cluster_id: cid2.clone(), commit: nix_commit.clone(), read_only, on_change: move |_| cluster.restart() }
                     ActiveRollouts { cluster_id: cid2.clone() }
+                    if is_admin {
+                        button {
+                            class: "bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-700",
+                            onclick: move |_| cloud_init_open.set(true),
+                            "Cloud-init…"
+                        }
+                    }
+                }
+
+                if is_admin {
+                    CloudInitModal {
+                        cluster_id: cid2.clone(),
+                        cluster_name: name_for_modal,
+                        open: cloud_init_open,
+                    }
                 }
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
@@ -566,6 +664,152 @@ fn NixpkgsCommit(cluster_id: String, commit: Option<String>, read_only: bool, on
                             editing.set(true);
                         },
                         "Set"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn CloudInitModal(cluster_id: String, cluster_name: String, mut open: Signal<bool>) -> Element {
+    let mut yaml = use_signal(|| None::<String>);
+    let mut loading = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let mut copied = use_signal(|| false);
+
+    // Fetch the cloud-init YAML on the first open. Resetting `yaml` when
+    // the modal closes would mint a fresh sync token on every reopen; we
+    // keep the cached body until the component unmounts so repeat opens
+    // within a session are free.
+    let cid_for_fetch = cluster_id.clone();
+    use_effect(move || {
+        if *open.read() && yaml.read().is_none() && !*loading.read() {
+            let cid = cid_for_fetch.clone();
+            loading.set(true);
+            error.set(None);
+            spawn(async move {
+                match get_cloud_init(cid).await {
+                    Ok(y) => yaml.set(Some(y)),
+                    Err(e) => error.set(Some(e.to_string())),
+                }
+                loading.set(false);
+            });
+        }
+    });
+
+    if !*open.read() {
+        return rsx! {};
+    }
+
+    let current_yaml = yaml.read().clone().unwrap_or_default();
+    let current_error = error.read().clone();
+    let is_loading = *loading.read();
+    let filename = format!(
+        "cloud-init-{}.yaml",
+        cluster_name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+            .collect::<String>()
+    );
+
+    rsx! {
+        div {
+            class: "fixed inset-0 z-50 flex items-center justify-center bg-black/50",
+            onclick: move |_| open.set(false),
+            div {
+                class: "bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col",
+                onclick: move |e| e.stop_propagation(),
+
+                div { class: "px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between",
+                    div {
+                        h2 { class: "font-semibold text-base", "Cloud-init for {cluster_name}" }
+                        p { class: "text-xs text-gray-500 dark:text-gray-400 mt-0.5",
+                            "Generates a fresh sync token and a ready-to-use cloud-config. Paste into any VM's user-data."
+                        }
+                    }
+                    button {
+                        r#type: "button",
+                        class: "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 text-xl leading-none",
+                        onclick: move |_| open.set(false),
+                        "×"
+                    }
+                }
+
+                div { class: "px-4 py-3 overflow-y-auto flex-1",
+                    if is_loading {
+                        p { class: "text-sm text-gray-500 dark:text-gray-400", "Generating…" }
+                    } else if let Some(e) = &current_error {
+                        p { class: "text-sm text-red-600 dark:text-red-400", "Error: {e}" }
+                    } else {
+                        textarea {
+                            class: "w-full h-80 font-mono text-xs border border-gray-300 dark:border-gray-600 rounded p-2 dark:bg-gray-900 dark:text-gray-100",
+                            readonly: true,
+                            value: "{current_yaml}",
+                        }
+                    }
+                }
+
+                div { class: "px-4 py-3 border-t dark:border-gray-700 flex justify-end gap-2",
+                    if !is_loading && current_error.is_none() {
+                        button {
+                            r#type: "button",
+                            class: "px-3 py-1 rounded text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-200",
+                            onclick: {
+                                let yaml_text = current_yaml.clone();
+                                move |_| {
+                                    // JSON-encode the YAML so embedded quotes / newlines survive
+                                    // the trip through document::eval.
+                                    let encoded = serde_json::to_string(&yaml_text).unwrap_or_default();
+                                    let js = format!(
+                                        "navigator.clipboard.writeText({encoded}).then(() => {{}}, () => {{}});"
+                                    );
+                                    let _ = document::eval(&js);
+                                    copied.set(true);
+                                    let _ = document::eval(
+                                        "setTimeout(() => { \
+                                             const el = document.querySelector('[data-copy-ack]'); \
+                                             if (el) el.textContent = 'Copy'; \
+                                         }, 1500);",
+                                    );
+                                }
+                            },
+                            "[data-copy-ack]": "1",
+                            if *copied.read() { "Copied!" } else { "Copy" }
+                        }
+                        button {
+                            r#type: "button",
+                            class: "px-3 py-1 rounded text-sm bg-blue-600 text-white hover:bg-blue-700",
+                            onclick: {
+                                let yaml_text = current_yaml.clone();
+                                let filename = filename.clone();
+                                move |_| {
+                                    let encoded_text = serde_json::to_string(&yaml_text).unwrap_or_default();
+                                    let encoded_name = serde_json::to_string(&filename).unwrap_or_default();
+                                    let js = format!(
+                                        "{{ \
+                                            const blob = new Blob([{encoded_text}], {{ type: 'text/yaml' }}); \
+                                            const url = URL.createObjectURL(blob); \
+                                            const a = document.createElement('a'); \
+                                            a.href = url; \
+                                            a.download = {encoded_name}; \
+                                            document.body.appendChild(a); \
+                                            a.click(); \
+                                            document.body.removeChild(a); \
+                                            URL.revokeObjectURL(url); \
+                                        }}"
+                                    );
+                                    let _ = document::eval(&js);
+                                }
+                            },
+                            "Download"
+                        }
+                    }
+                    button {
+                        r#type: "button",
+                        class: "px-3 py-1 rounded text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-200",
+                        onclick: move |_| open.set(false),
+                        "Close"
                     }
                 }
             }

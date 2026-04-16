@@ -1,6 +1,6 @@
 mod auth;
 pub mod push;
-mod routes;
+pub(crate) mod routes;
 
 use rocket::config::Shutdown;
 use rocket::Config;

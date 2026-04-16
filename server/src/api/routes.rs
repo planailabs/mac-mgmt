@@ -2276,7 +2276,7 @@ pub async fn setting_cloud_init(
     }))
 }
 
-fn render_cloud_init(
+pub(crate) fn render_cloud_init(
     server_url: &str,
     token: &str,
     version: &str,
