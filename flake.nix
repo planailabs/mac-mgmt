@@ -10,17 +10,17 @@
 
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     {
-      overlays.default = import ./overlay.nix;
+      overlays.default = import ./overlay.nix {};
       nixosModules.default = import ./server/module.nix;
       nixosModules.relay = import ./relay/module.nix;
       nixosModules.runner = import ./runner/module.nix;
     } //
     flake-utils.lib.eachDefaultSystem (system:
       let
+        gitSha = self.rev or self.dirtyRev or "unknown";
         overlays = [
           (import rust-overlay)
-          (final: prev: { mac-mgmt-gitSha = self.rev or self.dirtyRev or "unknown"; })
-          (import ./overlay.nix)
+          (import ./overlay.nix { inherit gitSha; })
         ];
         pkgs = import nixpkgs { inherit system overlays; };
         toolchain = pkgs.rust-bin.stable.latest.default.override {

@@ -1,7 +1,6 @@
+{ gitSha ? "unknown" }:
+
 final: prev:
-let
-  gitSha = final.mac-mgmt-gitSha or "unknown";
-in
 {
   mac-mgmt = prev.rustPlatform.buildRustPackage {
     pname = "mac-mgmt";
