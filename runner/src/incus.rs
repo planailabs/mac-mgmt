@@ -199,6 +199,28 @@ impl IncusClient {
         Ok(parse_instance_urls(&urls, &self.project))
     }
 
+    /// Current Incus status string for an instance — e.g. "Running",
+    /// "Stopped", "Frozen". `None` if the instance doesn't exist.
+    pub async fn instance_status(&self, name: &str) -> Result<Option<String>> {
+        let resp = self
+            .http
+            .get(self.url(&format!("/1.0/instances/{name}/state")))
+            .send()
+            .await
+            .context("fetching instance state")?;
+        if resp.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        let env: Envelope = resp.json().await.context("decoding state envelope")?;
+        let Some(meta) = env.metadata else {
+            return Ok(None);
+        };
+        Ok(meta
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()))
+    }
+
     #[allow(dead_code)]
     pub async fn instance_exists(&self, name: &str) -> Result<bool> {
         let resp = self

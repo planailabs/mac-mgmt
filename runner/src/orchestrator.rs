@@ -869,7 +869,10 @@ impl Orchestrator {
     }
 
     /// Pick a random Running cell and apply one of start / stop /
-    /// reprovision. Returns a short description of what happened.
+    /// reprovision. Actual Incus state of each instance is queried first
+    /// so stop only targets running instances and start only targets
+    /// stopped ones — if the dice roll lands on an op with no matching
+    /// candidates, fall back to reprovision.
     pub async fn chaos_vm_tick(&self) -> Result<Option<String>> {
         let candidates: Vec<(String, Vec<String>)> = {
             let s = self.state.lock().await;
@@ -893,24 +896,54 @@ impl Orchestrator {
             return Ok(None);
         };
 
+        // Snapshot each instance's live state so we only act when it
+        // makes sense (don't try to stop an already-stopped VM, etc).
+        let mut statuses: Vec<(String, String)> = Vec::with_capacity(instances.len());
+        for name in &instances {
+            let status = self
+                .incus
+                .instance_status(name)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            statuses.push((name.clone(), status));
+        }
+        let running: Vec<String> = statuses
+            .iter()
+            .filter(|(_, s)| s.eq_ignore_ascii_case("running"))
+            .map(|(n, _)| n.clone())
+            .collect();
+        let stopped: Vec<String> = statuses
+            .iter()
+            .filter(|(_, s)| s.eq_ignore_ascii_case("stopped"))
+            .map(|(n, _)| n.clone())
+            .collect();
+
         let op: u8 = rand::thread_rng().gen_range(0..3);
         match op {
-            0 => {
-                let Some(name) = instances.choose(&mut rand::thread_rng()).cloned() else {
-                    return Ok(None);
-                };
+            0 if !running.is_empty() => {
+                let name = running
+                    .choose(&mut rand::thread_rng())
+                    .cloned()
+                    .expect("non-empty");
                 tracing::info!("chaos-vm: stop {name} (cell={key})");
-                // Ignore errors — instance may already be stopped.
-                let _ = self.incus.stop_instance(&name).await;
+                self.incus
+                    .set_instance_state(&name, "stop")
+                    .await
+                    .with_context(|| format!("stopping {name}"))?;
                 Ok(Some(format!("{key}: stop {name}")))
             }
-            1 => {
-                let Some(name) = instances.choose(&mut rand::thread_rng()).cloned() else {
-                    return Ok(None);
-                };
+            1 if !stopped.is_empty() => {
+                let name = stopped
+                    .choose(&mut rand::thread_rng())
+                    .cloned()
+                    .expect("non-empty");
                 tracing::info!("chaos-vm: start {name} (cell={key})");
-                // Ignore errors — instance may already be running.
-                let _ = self.incus.set_instance_state(&name, "start").await;
+                self.incus
+                    .set_instance_state(&name, "start")
+                    .await
+                    .with_context(|| format!("starting {name}"))?;
                 Ok(Some(format!("{key}: start {name}")))
             }
             _ => {
