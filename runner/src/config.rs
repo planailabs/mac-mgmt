@@ -108,10 +108,6 @@ pub struct FleetConfig {
     /// heartbeat before the runner tears it down and retries.
     #[serde(default = "default_deploy_timeout")]
     pub deploy_timeout: String,
-    /// After this many consecutive deploy timeouts for the same cell, stop
-    /// retrying until the operator intervenes (still logs to Sentry).
-    #[serde(default = "default_max_retries")]
-    pub max_deploy_retries: u32,
     /// Maximum number of cells that may be in the Launching stage
     /// concurrently. Cells in ConfigPushed are held back until the launch
     /// slot frees up (another cell reaches Running or times out).
@@ -128,7 +124,6 @@ impl Default for FleetConfig {
             startup_grace: default_grace(),
             heartbeat_stale_after: default_heartbeat_stale(),
             deploy_timeout: default_deploy_timeout(),
-            max_deploy_retries: default_max_retries(),
             max_concurrent_launches: default_max_concurrent_launches(),
         }
     }
@@ -186,7 +181,6 @@ fn default_state_path() -> PathBuf { PathBuf::from("/var/lib/mac-mgmt-runner/sta
 fn default_grace() -> String { "3m".into() }
 fn default_heartbeat_stale() -> String { "5m".into() }
 fn default_deploy_timeout() -> String { "15m".into() }
-fn default_max_retries() -> u32 { 3 }
 fn default_max_concurrent_launches() -> usize { 3 }
 fn default_ollama_model() -> String { "smollm2:1.7b".into() }
 fn default_lms_model() -> String { "smollm2-1.7b-instruct".into() }

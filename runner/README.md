@@ -22,8 +22,10 @@ For each configured cell of the `(agent provider) × (LLM provider) ×
 5. Launches an Incus container/VM with the cloud-init as `user-data`.
 6. Watches for a heartbeat with the expected `instance_id`. If none
    arrives within `deploy_timeout` (default 15 minutes) the instance is
-   torn down and recreated with a new host key. After
-   `max_deploy_retries` the cell is parked and reported to Sentry.
+   torn down and recreated with a new host key; the cell retries
+   indefinitely. Each timeout is reported to Sentry and the
+   `deploy_failures` counter visible in `status` keeps climbing so the
+   operator can see repeat offenders.
 7. Destroys and re-creates a random cell every
    `random_reprovision_interval` (default 30 minutes) to exercise the
    bootstrap path continuously.
@@ -80,22 +82,22 @@ dial `http://{api.bind}:{api.port}` — default `127.0.0.1:9400`.
 ### Status output
 
 ```
-matrix: 8 cells, 5 provisioned
-  ✔ openclaw-ollama             cluster=... incus=mmr-openclaw-ollama
-  ✔ openclaw-cloud-anthropic    cluster=... incus=mmr-openclaw-cloud-anthropic
-  … openclaw-cloud-openai       cluster=... incus=mmr-openclaw-cloud-openai   [starting]
-  ✗ none-ollama                 cluster=... incus=mmr-none-ollama             fail=1  [mgmt error: ...]
-  ⛔ none-cloud-groq             cluster=... incus=mmr-none-cloud-groq         fail=3
+matrix: 8 cells, 5 running
+  ✔ running openclaw-ollama             cluster=... incus=mmr-openclaw-ollama
+  ✔ running openclaw-cloud-anthropic    cluster=... incus=mmr-openclaw-cloud-anthropic
+  … launching openclaw-cloud-openai     cluster=... incus=mmr-openclaw-cloud-openai
+  ✗ running none-ollama                 cluster=... incus=mmr-none-ollama  fail=1  [mgmt error: ...]
 ```
 
 - `✔` — healthy heartbeat within `heartbeat_stale_after`
 - ` ` — healthy but no explicit probe data
-- `…` — still inside startup grace (pregenerated `instance_id` not yet
-  reported)
+- `…` — still launching (no matching heartbeat yet)
 - `✗` — unhealthy (stale heartbeat or a failing service probe)
-- `⛔` — parked: exceeded `max_deploy_retries`. Run
-  `reprovision <key>` to unpark.
 - `·` — not provisioned
+
+Cells that time out in `launching` are torn down and retried forever;
+the `fail=N` counter in the row keeps climbing so repeat offenders are
+visible.
 
 ## HTTP API
 

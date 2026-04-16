@@ -183,14 +183,13 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
             snap.total_cells, snap.running
         );
         for c in &snap.cells {
-            let marker = match (c.parked, c.stage.as_str(), c.healthy) {
-                (true, _, _) => "⛔",
-                (_, "missing" | "pending", _) => "·",
-                (_, "cluster_created" | "config_pushed", _) => "·",
-                (_, "launching", _) => "…",
-                (_, "running", Some(true)) => "✔",
-                (_, "running", Some(false)) => "✗",
-                (_, "running", None) => " ",
+            let marker = match (c.stage.as_str(), c.healthy) {
+                ("missing" | "pending", _) => "·",
+                ("cluster_created" | "config_pushed", _) => "·",
+                ("launching", _) => "…",
+                ("running", Some(true)) => "✔",
+                ("running", Some(false)) => "✗",
+                ("running", None) => " ",
                 _ => "?",
             };
             let extra = match &c.cluster_id {

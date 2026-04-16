@@ -45,9 +45,6 @@ heartbeat_stale_after = "5m"
 # How long a fresh instance has to produce its first heartbeat before the
 # runner destroys it and retries with a new host key.
 deploy_timeout = "15m"
-# After this many consecutive deploy timeouts for the same matrix cell, park
-# the cell. Parked cells are not auto-retried — run `reprovision <key>` to resume.
-max_deploy_retries = 3
 # Maximum number of cells that may be in the Launching stage at once.
 # Keeps concurrent Incus provisioning load bounded; additional cells wait
 # at ConfigPushed until a slot frees up.

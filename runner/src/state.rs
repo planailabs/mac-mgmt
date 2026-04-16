@@ -27,7 +27,7 @@ pub struct CellState {
     #[serde(flatten)]
     pub stage: CellStage,
     /// Count of consecutive deploy timeouts. Resets to zero after the cell
-    /// reaches `Running`. Once it hits `max_deploy_retries` the cell is parked.
+    /// reaches `Running`. Shown in status output for observability.
     #[serde(default)]
     pub deploy_failures: u32,
     /// When the cell was last explicitly reprovisioned.
@@ -65,7 +65,7 @@ pub enum CellStage {
     /// Incus instances created and booting. The cell transitions to
     /// `Running` when every `instances[].instance_id` shows up in the
     /// cluster's heartbeats, or back to `ConfigPushed` after the
-    /// deploy_timeout expires (retry) / `Parked` (exhausted retries).
+    /// deploy_timeout expires (retry indefinitely).
     Launching {
         cluster_id: Uuid,
         instances: Vec<InstanceSpec>,
@@ -79,14 +79,6 @@ pub enum CellStage {
         /// When the cell first transitioned into Running.
         since: DateTime<Utc>,
     },
-    /// Cell exceeded `max_deploy_retries` and will not be auto-retried
-    /// until the operator runs `reprovision <key>`.
-    Parked {
-        cluster_id: Option<Uuid>,
-        #[serde(default)]
-        instances: Vec<InstanceSpec>,
-        reason: String,
-    },
 }
 
 impl CellStage {
@@ -97,15 +89,14 @@ impl CellStage {
             | CellStage::ConfigPushed { cluster_id, .. }
             | CellStage::Launching { cluster_id, .. }
             | CellStage::Running { cluster_id, .. } => Some(*cluster_id),
-            CellStage::Parked { cluster_id, .. } => *cluster_id,
         }
     }
 
     pub fn instances(&self) -> &[InstanceSpec] {
         match self {
-            CellStage::Launching { instances, .. }
-            | CellStage::Running { instances, .. }
-            | CellStage::Parked { instances, .. } => instances,
+            CellStage::Launching { instances, .. } | CellStage::Running { instances, .. } => {
+                instances
+            }
             _ => &[],
         }
     }
@@ -115,10 +106,6 @@ impl CellStage {
             CellStage::Launching { since, .. } => Some(*since),
             _ => None,
         }
-    }
-
-    pub fn is_parked(&self) -> bool {
-        matches!(self, CellStage::Parked { .. })
     }
 
     pub fn is_running(&self) -> bool {
@@ -133,7 +120,6 @@ impl CellStage {
             CellStage::ConfigPushed { .. } => "config_pushed",
             CellStage::Launching { .. } => "launching",
             CellStage::Running { .. } => "running",
-            CellStage::Parked { .. } => "parked",
         }
     }
 }
@@ -212,11 +198,6 @@ mod tests {
                 cluster_id: cid,
                 instances: insts.clone(),
                 since: now,
-            },
-            CellStage::Parked {
-                cluster_id: Some(cid),
-                instances: insts.clone(),
-                reason: "exceeded 3 timeouts".into(),
             },
         ];
         for stage in stages {

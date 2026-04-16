@@ -137,10 +137,6 @@ impl Orchestrator {
         self.save_state().await
     }
 
-    fn max_retries(&self) -> u32 {
-        self.config.fleet.max_deploy_retries
-    }
-
     fn deploy_timeout(&self) -> chrono::Duration {
         let std = parse_duration(&self.config.fleet.deploy_timeout)
             .unwrap_or(Duration::from_secs(15 * 60));
@@ -161,7 +157,6 @@ impl Orchestrator {
         };
 
         match current.clone() {
-            CellStage::Parked { .. } => Ok(current),
             CellStage::Running { .. } => {
                 // Keep the server's config in sync in case the matrix spec changed.
                 if let Some(cid) = current.cluster_id() {
@@ -416,11 +411,10 @@ impl Orchestrator {
             s.find(&cell.key).map(|c| c.deploy_failures).unwrap_or(0) + 1
         };
         tracing::warn!(
-            "cell {} deploy timed out after {} min, attempt {}/{} ({} nodes)",
+            "cell {} deploy timed out after {} min, attempt {} ({} nodes)",
             cell.key,
             age.num_minutes(),
             failures,
-            self.max_retries(),
             instances.len()
         );
         sentry::configure_scope(|scope| {
@@ -437,46 +431,22 @@ impl Orchestrator {
         );
 
         // Tear down every failed VM; leave the cluster in place so put_config
-        // state isn't lost (we'll re-enter Launching with fresh host keys).
+        // state isn't lost (we'll re-enter Launching with fresh host keys on
+        // the next reconcile tick).
         for inst in instances {
             if let Err(e) = self.incus.delete_instance(&inst.instance_name).await {
                 tracing::warn!("deleting failed instance {}: {e}", inst.instance_name);
             }
         }
 
-        if failures >= self.max_retries() {
-            let reason = format!(
-                "exceeded {} consecutive deploy timeouts",
-                self.max_retries()
-            );
-            let stage = CellStage::Parked {
-                cluster_id: Some(cluster_id),
-                instances: instances.to_vec(),
-                reason: reason.clone(),
-            };
-            let mut cs = self.cell_with_stage(cell, stage.clone(), Utc::now()).await;
-            cs.deploy_failures = failures;
-            self.persist_cell(cs).await?;
-            tracing::error!("cell {} parked: {reason}", cell.key);
-            sentry::capture_message(
-                &format!(
-                    "mac-mgmt-runner cell parked: {} after {} failures",
-                    cell.key, failures
-                ),
-                sentry::Level::Error,
-            );
-            Ok(stage)
-        } else {
-            // Fall back to ConfigPushed so the next reconcile tick re-enters Launching.
-            let stage = CellStage::ConfigPushed {
-                cluster_id,
-                at: Utc::now(),
-            };
-            let mut cs = self.cell_with_stage(cell, stage.clone(), Utc::now()).await;
-            cs.deploy_failures = failures;
-            self.persist_cell(cs).await?;
-            Ok(stage)
-        }
+        let stage = CellStage::ConfigPushed {
+            cluster_id,
+            at: Utc::now(),
+        };
+        let mut cs = self.cell_with_stage(cell, stage.clone(), Utc::now()).await;
+        cs.deploy_failures = failures;
+        self.persist_cell(cs).await?;
+        Ok(stage)
     }
 
     /// Build a CellState for `cell` carrying `stage`, preserving
@@ -512,9 +482,7 @@ impl Orchestrator {
         for _ in 0..MAX_STEPS {
             last = self.drive_cell(cell).await?;
             match last {
-                CellStage::Running { .. }
-                | CellStage::Parked { .. }
-                | CellStage::Launching { .. } => break,
+                CellStage::Running { .. } | CellStage::Launching { .. } => break,
                 _ => continue,
             }
         }
@@ -781,9 +749,6 @@ impl Orchestrator {
 
             let (healthy, detail) = match s.as_ref().map(|c| &c.stage) {
                 None | Some(CellStage::Pending) => (None, None),
-                Some(CellStage::Parked { reason, .. }) => {
-                    (Some(false), Some(reason.clone()))
-                }
                 Some(CellStage::ClusterCreated { .. })
                 | Some(CellStage::ConfigPushed { .. }) => {
                     (None, Some("provisioning".into()))
@@ -861,7 +826,6 @@ impl Orchestrator {
                 instances,
                 launching_since: s.as_ref().and_then(|c| c.stage.launching_since()),
                 deploy_failures: s.as_ref().map(|c| c.deploy_failures).unwrap_or(0),
-                parked: s.as_ref().map(|c| c.stage.is_parked()).unwrap_or(false),
                 healthy,
                 detail,
             });
@@ -955,7 +919,6 @@ pub struct CellStatus {
     pub instances: Vec<CellInstance>,
     pub launching_since: Option<DateTime<Utc>>,
     pub deploy_failures: u32,
-    pub parked: bool,
     pub healthy: Option<bool>,
     pub detail: Option<String>,
 }
