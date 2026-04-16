@@ -37,7 +37,7 @@ use crate::host_key;
 use crate::incus::{CreateInstanceSpec, IncusClient};
 use crate::matrix::{MatrixCell, generate};
 use crate::mgmt::{CloudInitRequest, MgmtClient};
-use crate::state::{CellStage, CellState, FleetState};
+use crate::state::{CellStage, CellState, FleetState, InstanceSpec};
 
 pub struct Orchestrator {
     pub config: RunnerConfig,
@@ -98,8 +98,13 @@ impl Orchestrator {
 
     /// Incus instance name for a matrix cell. Kept identical to the
     /// mgmt cluster name so they can be correlated at a glance.
-    fn instance_name(&self, key: &str) -> String {
-        let raw = format!("{}{}", self.config.incus.name_prefix, key);
+    fn instance_name(&self, key: &str, index: u32, total: u32) -> String {
+        let base = format!("{}{}", self.config.incus.name_prefix, key);
+        let raw = if total <= 1 {
+            base
+        } else {
+            format!("{base}-{index}")
+        };
         let sanitized: String = raw
             .chars()
             .map(|c| {
@@ -175,11 +180,10 @@ impl Orchestrator {
             }
             CellStage::Launching {
                 cluster_id,
-                instance_id,
-                instance_name,
+                instances,
                 since,
             } => {
-                self.poll_launching(matrix_cell, cluster_id, &instance_id, &instance_name, since)
+                self.poll_launching(matrix_cell, cluster_id, instances, since)
                     .await
             }
         }
@@ -240,108 +244,141 @@ impl Orchestrator {
         cell: &MatrixCell,
         cluster_id: Uuid,
     ) -> Result<CellStage> {
-        let instance_name = self.instance_name(&cell.key);
+        let node_count = cell.node_count.max(1);
 
-        // If an Incus instance is already there from a crashed prior run
-        // (and we're about to generate a new host key), wipe it first.
-        if self.incus.instance_exists(&instance_name).await.unwrap_or(false) {
-            tracing::warn!(
-                "instance {instance_name} already exists at launch time; deleting to start clean"
-            );
-            let _ = self.incus.delete_instance(&instance_name).await;
+        // Predict instance names up front so stray leftovers from a crashed
+        // prior run can be cleaned out before we generate fresh host keys.
+        let names: Vec<String> = (1..=node_count)
+            .map(|i| self.instance_name(&cell.key, i, node_count))
+            .collect();
+        for name in &names {
+            if self.incus.instance_exists(name).await.unwrap_or(false) {
+                tracing::warn!(
+                    "instance {name} already exists at launch time; deleting to start clean"
+                );
+                let _ = self.incus.delete_instance(name).await;
+            }
         }
 
-        let hk = host_key::generate().context("generating ed25519 host key")?;
-        tracing::info!(
-            "launching incus instance {instance_name} instance_id={}",
-            hk.instance_id
-        );
+        // Phase 1: generate all host keys + fetch cloud-init for each node,
+        // persisting the predicted instance_ids BEFORE any Incus launch so a
+        // crash between these two phases can't orphan a VM.
+        let mut planned: Vec<(InstanceSpec, String)> = Vec::with_capacity(names.len());
+        for (idx, name) in names.iter().enumerate() {
+            let hk = host_key::generate().context("generating ed25519 host key")?;
+            let label = format!(
+                "runner-{}-{}",
+                &hk.instance_id[..hk.instance_id.len().min(12)],
+                idx + 1
+            );
+            let req = CloudInitRequest {
+                system: &self.config.mgmt.system,
+                server_url: self.config.mgmt.public_url.as_deref(),
+                daemon_version: self.config.mgmt.daemon_version.as_deref(),
+                label: Some(&label),
+                host_key_pem: Some(&hk.private_pem),
+                instance_id: Some(&hk.instance_id),
+            };
+            let resp = self
+                .mgmt
+                .get_cloud_init(cluster_id, &req)
+                .await
+                .context("fetching cloud-init")?;
+            planned.push((
+                InstanceSpec {
+                    instance_name: name.clone(),
+                    instance_id: hk.instance_id,
+                },
+                resp.cloud_init,
+            ));
+        }
 
-        let label = format!("runner-{}", &hk.instance_id[..hk.instance_id.len().min(12)]);
-        let req = CloudInitRequest {
-            system: &self.config.mgmt.system,
-            server_url: self.config.mgmt.public_url.as_deref(),
-            daemon_version: self.config.mgmt.daemon_version.as_deref(),
-            label: Some(&label),
-            host_key_pem: Some(&hk.private_pem),
-            instance_id: Some(&hk.instance_id),
-        };
-        let resp = self
-            .mgmt
-            .get_cloud_init(cluster_id, &req)
-            .await
-            .context("fetching cloud-init")?;
-
-        // Persist the predicted instance_id before issuing the Incus call so
-        // a crash between the two leaves state pointing at the VM we are
-        // about to create rather than an orphan.
         let now = Utc::now();
-        let stage_pre = CellStage::Launching {
+        let instances: Vec<InstanceSpec> =
+            planned.iter().map(|(i, _)| i.clone()).collect();
+        let stage = CellStage::Launching {
             cluster_id,
-            instance_name: instance_name.clone(),
-            instance_id: hk.instance_id.clone(),
+            instances: instances.clone(),
             since: now,
         };
-        self.persist_cell(self.cell_with_stage(cell, stage_pre.clone(), now).await)
+        self.persist_cell(self.cell_with_stage(cell, stage.clone(), now).await)
             .await?;
 
-        let spec = CreateInstanceSpec {
-            name: instance_name.clone(),
-            instance_type: self.config.incus.instance_type.clone(),
-            image_alias: self.config.incus.image_alias.clone(),
-            image_server: self.config.incus.image_server.clone(),
-            profiles: self.config.incus.profiles.clone(),
-            cloud_init_user_data: resp.cloud_init,
-        };
-        self.incus
-            .create_instance(&spec)
-            .await
-            .with_context(|| format!("creating incus instance {instance_name}"))?;
+        // Phase 2: create Incus instances. Any failure bubbles out; the
+        // state already records what we intended and the next reconcile
+        // tick will treat missing VMs as a timeout + retry.
+        for (inst, user_data) in planned {
+            tracing::info!(
+                "launching incus instance {} instance_id={}",
+                inst.instance_name,
+                inst.instance_id
+            );
+            let spec = CreateInstanceSpec {
+                name: inst.instance_name.clone(),
+                instance_type: self.config.incus.instance_type.clone(),
+                image_alias: self.config.incus.image_alias.clone(),
+                image_server: self.config.incus.image_server.clone(),
+                profiles: self.config.incus.profiles.clone(),
+                cloud_init_user_data: user_data,
+            };
+            self.incus
+                .create_instance(&spec)
+                .await
+                .with_context(|| format!("creating incus instance {}", inst.instance_name))?;
+        }
 
-        Ok(stage_pre)
+        Ok(stage)
     }
 
     async fn poll_launching(
         &self,
         cell: &MatrixCell,
         cluster_id: Uuid,
-        instance_id: &str,
-        instance_name: &str,
+        instances: Vec<InstanceSpec>,
         since: DateTime<Utc>,
     ) -> Result<CellStage> {
-        // Heartbeat check — has the daemon come up?
-        match self.mgmt.list_cluster_machines(cluster_id).await {
-            Ok(rows) if rows.iter().any(|r| r.instance_id == instance_id) => {
+        // Heartbeat check — have all daemons come up?
+        let rows = match self.mgmt.list_cluster_machines(cluster_id).await {
+            Ok(rows) => Some(rows),
+            Err(e) => {
+                tracing::warn!("heartbeat check for {}: {e}", cell.key);
+                None
+            }
+        };
+        if let Some(rows) = rows {
+            let all_up = instances
+                .iter()
+                .all(|inst| rows.iter().any(|r| r.instance_id == inst.instance_id));
+            if all_up {
                 let now = Utc::now();
                 let stage = CellStage::Running {
                     cluster_id,
-                    instance_name: instance_name.to_string(),
-                    instance_id: instance_id.to_string(),
+                    instances: instances.clone(),
                     since: now,
                 };
                 let mut cs = self.cell_with_stage(cell, stage.clone(), now).await;
                 cs.deploy_failures = 0;
                 self.persist_cell(cs).await?;
-                tracing::info!("cell {} came online (instance_id={})", cell.key, instance_id);
+                tracing::info!(
+                    "cell {} came online ({} node{})",
+                    cell.key,
+                    instances.len(),
+                    if instances.len() == 1 { "" } else { "s" }
+                );
                 return Ok(stage);
             }
-            Err(e) => {
-                tracing::warn!("heartbeat check for {}: {e}", cell.key);
-            }
-            _ => {}
         }
 
         // Still launching — is it stuck?
         let age = Utc::now() - since;
         if age > self.deploy_timeout() {
             return self
-                .on_launch_timeout(cell, cluster_id, instance_name, age)
+                .on_launch_timeout(cell, cluster_id, &instances, age)
                 .await;
         }
         Ok(CellStage::Launching {
             cluster_id,
-            instance_name: instance_name.to_string(),
-            instance_id: instance_id.to_string(),
+            instances,
             since,
         })
     }
@@ -350,7 +387,7 @@ impl Orchestrator {
         &self,
         cell: &MatrixCell,
         cluster_id: Uuid,
-        instance_name: &str,
+        instances: &[InstanceSpec],
         age: chrono::Duration,
     ) -> Result<CellStage> {
         let failures = {
@@ -358,11 +395,12 @@ impl Orchestrator {
             s.find(&cell.key).map(|c| c.deploy_failures).unwrap_or(0) + 1
         };
         tracing::warn!(
-            "cell {} deploy timed out after {} min, attempt {}/{}",
+            "cell {} deploy timed out after {} min, attempt {}/{} ({} nodes)",
             cell.key,
             age.num_minutes(),
             failures,
-            self.max_retries()
+            self.max_retries(),
+            instances.len()
         );
         sentry::configure_scope(|scope| {
             scope.set_tag("cell", &cell.key);
@@ -370,16 +408,19 @@ impl Orchestrator {
         });
         sentry::capture_message(
             &format!(
-                "mac-mgmt-runner deploy timeout: cell={} attempt={failures}",
-                cell.key
+                "mac-mgmt-runner deploy timeout: cell={} attempt={failures} nodes={}",
+                cell.key,
+                instances.len()
             ),
             sentry::Level::Warning,
         );
 
-        // Tear down the failed VM; leave the cluster in place so put_config
-        // state isn't lost (we'll re-enter Launching with a fresh host key).
-        if let Err(e) = self.incus.delete_instance(instance_name).await {
-            tracing::warn!("deleting failed instance {instance_name}: {e}");
+        // Tear down every failed VM; leave the cluster in place so put_config
+        // state isn't lost (we'll re-enter Launching with fresh host keys).
+        for inst in instances {
+            if let Err(e) = self.incus.delete_instance(&inst.instance_name).await {
+                tracing::warn!("deleting failed instance {}: {e}", inst.instance_name);
+            }
         }
 
         if failures >= self.max_retries() {
@@ -389,7 +430,7 @@ impl Orchestrator {
             );
             let stage = CellStage::Parked {
                 cluster_id: Some(cluster_id),
-                instance_name: Some(instance_name.to_string()),
+                instances: instances.to_vec(),
                 reason: reason.clone(),
             };
             let mut cs = self.cell_with_stage(cell, stage.clone(), Utc::now()).await;
@@ -501,9 +542,9 @@ impl Orchestrator {
         };
         tracing::info!("destroying cell {key} (stage={})", cell.stage.label());
 
-        if let Some(name) = cell.stage.instance_name() {
-            if let Err(e) = self.incus.delete_instance(name).await {
-                tracing::warn!("deleting incus instance {name}: {e}");
+        for inst in cell.stage.instances() {
+            if let Err(e) = self.incus.delete_instance(&inst.instance_name).await {
+                tracing::warn!("deleting incus instance {}: {e}", inst.instance_name);
             }
         }
         if let Some(cid) = cell.stage.cluster_id() {
@@ -656,20 +697,28 @@ impl Orchestrator {
                 | Some(CellStage::ConfigPushed { .. }) => {
                     (None, Some("provisioning".into()))
                 }
-                Some(CellStage::Launching { instance_id, since, .. }) => {
+                Some(CellStage::Launching { instances, since, .. }) => {
                     let waited = (now - *since).num_seconds().max(0);
                     (
                         None,
                         Some(format!(
-                            "launching (waited {waited}s, iid={})",
-                            &instance_id[..instance_id.len().min(12)]
+                            "launching (waited {waited}s, {} node{})",
+                            instances.len(),
+                            if instances.len() == 1 { "" } else { "s" }
                         )),
                     )
                 }
-                Some(CellStage::Running { cluster_id, instance_id, .. }) => {
+                Some(CellStage::Running { cluster_id, instances, .. }) => {
                     match self.mgmt.list_cluster_machines(*cluster_id).await {
                         Ok(rows) => {
-                            let latest = rows.iter().find(|r| &r.instance_id == instance_id);
+                            // Pick the oldest heartbeat among our known
+                            // instance_ids as the representative.
+                            let latest = instances
+                                .iter()
+                                .filter_map(|inst| {
+                                    rows.iter().find(|r| r.instance_id == inst.instance_id)
+                                })
+                                .min_by_key(|r| r.reported_at);
                             let heartbeat_fresh = latest
                                 .map(|r| {
                                     (now - r.reported_at).to_std().unwrap_or_default()
@@ -697,6 +746,19 @@ impl Orchestrator {
                 }
             };
 
+            let instances = s
+                .as_ref()
+                .map(|c| {
+                    c.stage
+                        .instances()
+                        .iter()
+                        .map(|i| CellInstance {
+                            instance_name: i.instance_name.clone(),
+                            instance_id: i.instance_id.clone(),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             cells.push(CellStatus {
                 key: mc.key.clone(),
                 stage: s
@@ -704,12 +766,8 @@ impl Orchestrator {
                     .map(|c| c.stage.label().to_string())
                     .unwrap_or_else(|| "missing".into()),
                 cluster_id: s.as_ref().and_then(|c| c.stage.cluster_id()),
-                instance_name: s
-                    .as_ref()
-                    .and_then(|c| c.stage.instance_name().map(|v| v.to_string())),
-                instance_id: s
-                    .as_ref()
-                    .and_then(|c| c.stage.instance_id().map(|v| v.to_string())),
+                node_count: mc.node_count,
+                instances,
                 launching_since: s.as_ref().and_then(|c| c.stage.launching_since()),
                 deploy_failures: s.as_ref().map(|c| c.deploy_failures).unwrap_or(0),
                 parked: s.as_ref().map(|c| c.stage.is_parked()).unwrap_or(false),
@@ -802,11 +860,17 @@ pub struct CellStatus {
     pub key: String,
     pub stage: String,
     pub cluster_id: Option<Uuid>,
-    pub instance_name: Option<String>,
-    pub instance_id: Option<String>,
+    pub node_count: u32,
+    pub instances: Vec<CellInstance>,
     pub launching_since: Option<DateTime<Utc>>,
     pub deploy_failures: u32,
     pub parked: bool,
     pub healthy: Option<bool>,
     pub detail: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CellInstance {
+    pub instance_name: String,
+    pub instance_id: String,
 }

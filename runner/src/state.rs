@@ -34,9 +34,18 @@ pub struct CellState {
     pub last_reprovisioned_at: DateTime<Utc>,
 }
 
+/// One Incus instance belonging to a cell. Multi-node cells carry several.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceSpec {
+    /// Incus instance name (also used as the daemon hostname).
+    pub instance_name: String,
+    /// Predicted daemon fingerprint; the cell transitions to `Running`
+    /// when every instance's id shows up in heartbeats.
+    pub instance_id: String,
+}
+
 /// Cell lifecycle. Each variant encodes precisely which external
-/// resources exist — no more "instance_id is empty string means not yet
-/// known" sentinels. Serialized with `#[serde(tag = "stage")]` so the
+/// resources exist. Serialized with `#[serde(tag = "stage")]` so the
 /// JSON on disk reads naturally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "stage", rename_all = "snake_case")]
@@ -53,32 +62,29 @@ pub enum CellStage {
         cluster_id: Uuid,
         at: DateTime<Utc>,
     },
-    /// Incus instance created and booting. `instance_id` is the predicted
-    /// daemon fingerprint; the cell transitions to `Running` when a
-    /// heartbeat with this id arrives, or back to `Pending` after the
-    /// deploy_timeout expires.
+    /// Incus instances created and booting. The cell transitions to
+    /// `Running` when every `instances[].instance_id` shows up in the
+    /// cluster's heartbeats, or back to `ConfigPushed` after the
+    /// deploy_timeout expires (retry) / `Parked` (exhausted retries).
     Launching {
         cluster_id: Uuid,
-        instance_name: String,
-        instance_id: String,
-        /// When the Incus launch was issued — drives the watchdog timeout.
+        instances: Vec<InstanceSpec>,
+        /// When the Incus launches were issued — drives the watchdog timeout.
         since: DateTime<Utc>,
     },
-    /// Heartbeat has been seen matching the predicted instance_id.
+    /// Every expected instance has heartbeated.
     Running {
         cluster_id: Uuid,
-        instance_name: String,
-        instance_id: String,
+        instances: Vec<InstanceSpec>,
         /// When the cell first transitioned into Running.
         since: DateTime<Utc>,
     },
     /// Cell exceeded `max_deploy_retries` and will not be auto-retried
-    /// until the operator runs `reprovision <key>`. `cluster_id` /
-    /// `instance_name` are carried over so a subsequent teardown can
-    /// clean up anything that slipped through.
+    /// until the operator runs `reprovision <key>`.
     Parked {
         cluster_id: Option<Uuid>,
-        instance_name: Option<String>,
+        #[serde(default)]
+        instances: Vec<InstanceSpec>,
         reason: String,
     },
 }
@@ -95,20 +101,12 @@ impl CellStage {
         }
     }
 
-    pub fn instance_name(&self) -> Option<&str> {
+    pub fn instances(&self) -> &[InstanceSpec] {
         match self {
-            CellStage::Launching { instance_name, .. }
-            | CellStage::Running { instance_name, .. } => Some(instance_name),
-            CellStage::Parked { instance_name, .. } => instance_name.as_deref(),
-            _ => None,
-        }
-    }
-
-    pub fn instance_id(&self) -> Option<&str> {
-        match self {
-            CellStage::Launching { instance_id, .. }
-            | CellStage::Running { instance_id, .. } => Some(instance_id),
-            _ => None,
+            CellStage::Launching { instances, .. }
+            | CellStage::Running { instances, .. }
+            | CellStage::Parked { instances, .. } => instances,
+            _ => &[],
         }
     }
 
@@ -191,25 +189,33 @@ mod tests {
     fn cell_stage_roundtrips_through_json() {
         let now = Utc::now();
         let cid = Uuid::new_v4();
+        let insts = vec![
+            InstanceSpec {
+                instance_name: "mmr-foo-1".into(),
+                instance_id: "abc123".into(),
+            },
+            InstanceSpec {
+                instance_name: "mmr-foo-2".into(),
+                instance_id: "def456".into(),
+            },
+        ];
         let stages = vec![
             CellStage::Pending,
             CellStage::ClusterCreated { cluster_id: cid, at: now },
             CellStage::ConfigPushed { cluster_id: cid, at: now },
             CellStage::Launching {
                 cluster_id: cid,
-                instance_name: "mmr-foo".into(),
-                instance_id: "abc123".into(),
+                instances: insts.clone(),
                 since: now,
             },
             CellStage::Running {
                 cluster_id: cid,
-                instance_name: "mmr-foo".into(),
-                instance_id: "abc123".into(),
+                instances: insts.clone(),
                 since: now,
             },
             CellStage::Parked {
                 cluster_id: Some(cid),
-                instance_name: Some("mmr-foo".into()),
+                instances: insts.clone(),
                 reason: "exceeded 3 timeouts".into(),
             },
         ];
@@ -224,7 +230,7 @@ mod tests {
             let back: CellState = serde_json::from_str(&s).expect("deserialize");
             assert_eq!(cell.stage.label(), back.stage.label());
             assert_eq!(cell.stage.cluster_id(), back.stage.cluster_id());
-            assert_eq!(cell.stage.instance_id(), back.stage.instance_id());
+            assert_eq!(cell.stage.instances().len(), back.stage.instances().len());
         }
     }
 }

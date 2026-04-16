@@ -158,6 +158,11 @@ pub struct MatrixConfig {
     /// LM Studio model to configure on every lms-llm cell.
     #[serde(default = "default_lms_model")]
     pub lms_model: String,
+    /// Cluster sizes to exercise. For each size, every (agent × llm) combo
+    /// is emitted as an independent cell; size 1 uses the bare key while
+    /// larger sizes append `-n{size}`. Default: [1, 2].
+    #[serde(default = "default_cluster_sizes")]
+    pub cluster_sizes: Vec<u32>,
 }
 
 fn default_system() -> String { "x86_64-linux".into() }
@@ -178,6 +183,7 @@ fn default_deploy_timeout() -> String { "15m".into() }
 fn default_max_retries() -> u32 { 3 }
 fn default_ollama_model() -> String { "smollm2:1.7b".into() }
 fn default_lms_model() -> String { "smollm2-1.7b-instruct".into() }
+fn default_cluster_sizes() -> Vec<u32> { vec![1, 2] }
 
 impl RunnerConfig {
     pub fn load(path: &Path) -> Result<Self> {

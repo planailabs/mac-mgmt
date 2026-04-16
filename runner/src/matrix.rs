@@ -13,8 +13,11 @@ use crate::config::MatrixConfig;
 #[derive(Debug, Clone)]
 pub struct MatrixCell {
     pub key: String,
-    /// JSON body sent as `{"config": <this>}` to PUT /api/setting/config.
+    /// JSON body for PUT /api/setting/config (already unwrapped — the
+    /// server's SetConfigBody is `#[serde(flatten)]`).
     pub config: Value,
+    /// How many Incus instances this cell launches under one mgmt cluster.
+    pub node_count: u32,
 }
 
 pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
@@ -35,39 +38,54 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
         .map(String::from)
         .collect()
     });
+    let sizes: Vec<u32> = matrix
+        .cluster_sizes
+        .iter()
+        .copied()
+        .filter(|&n| n >= 1)
+        .collect();
+    let sizes = if sizes.is_empty() { vec![1] } else { sizes };
 
     let mut cells = Vec::new();
-    for agent in &agents {
-        for llm in &llms {
-            match llm.as_str() {
-                "cloud" => {
-                    for cp in &cloud_providers {
-                        if !is_known_cloud_provider(cp) {
-                            continue;
+    for size in &sizes {
+        for agent in &agents {
+            for llm in &llms {
+                match llm.as_str() {
+                    "cloud" => {
+                        for cp in &cloud_providers {
+                            if !is_known_cloud_provider(cp) {
+                                continue;
+                            }
+                            let Some(api_key) = matrix.cloud_api_keys.get(cp).cloned() else {
+                                continue;
+                            };
+                            cells.push(build_cloud_cell(agent, cp, &api_key, *size));
                         }
-                        let Some(api_key) = matrix.cloud_api_keys.get(cp).cloned() else {
-                            continue;
-                        };
-                        cells.push(build_cloud_cell(agent, cp, &api_key));
                     }
-                }
-                "ollama" => {
-                    cells.push(build_ollama_cell(agent, &matrix.ollama_model));
-                }
-                "lms" => {
-                    cells.push(build_lms_cell(agent, &matrix.lms_model));
-                }
-                "none" => {
-                    if agent != "none" {
-                        cells.push(build_none_llm_cell(agent));
+                    "ollama" => {
+                        cells.push(build_ollama_cell(agent, &matrix.ollama_model, *size));
                     }
+                    "lms" => {
+                        cells.push(build_lms_cell(agent, &matrix.lms_model, *size));
+                    }
+                    "none" => {
+                        if agent != "none" {
+                            cells.push(build_none_llm_cell(agent, *size));
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
 
     cells
+}
+
+/// Cells with `size == 1` keep their legacy key for continuity with existing
+/// state files; larger sizes append `-n{size}`.
+fn with_size(key: String, size: u32) -> String {
+    if size <= 1 { key } else { format!("{key}-n{size}") }
 }
 
 fn is_known_cloud_provider(s: &str) -> bool {
@@ -109,8 +127,8 @@ fn global(agent: &str, llm: &str) -> Value {
     })
 }
 
-fn build_cloud_cell(agent: &str, provider: &str, api_key: &str) -> MatrixCell {
-    let key = format!("{agent}-cloud-{provider}");
+fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> MatrixCell {
+    let key = with_size(format!("{agent}-cloud-{provider}"), size);
     let config = json!({
         "global": global(agent, "cloud"),
         "cloud": {
@@ -119,11 +137,11 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str) -> MatrixCell {
             "default_model": cloud_default_model(provider),
         },
     });
-    MatrixCell { key, config }
+    MatrixCell { key, config, node_count: size }
 }
 
-fn build_ollama_cell(agent: &str, model: &str) -> MatrixCell {
-    let key = format!("{agent}-ollama");
+fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
+    let key = with_size(format!("{agent}-ollama"), size);
     let config = json!({
         "global": global(agent, "ollama"),
         "ollama": {
@@ -131,11 +149,11 @@ fn build_ollama_cell(agent: &str, model: &str) -> MatrixCell {
             "default_model": model,
         },
     });
-    MatrixCell { key, config }
+    MatrixCell { key, config, node_count: size }
 }
 
-fn build_lms_cell(agent: &str, model: &str) -> MatrixCell {
-    let key = format!("{agent}-lms");
+fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
+    let key = with_size(format!("{agent}-lms"), size);
     let config = json!({
         "global": global(agent, "lms"),
         "lms": {
@@ -143,15 +161,15 @@ fn build_lms_cell(agent: &str, model: &str) -> MatrixCell {
             "default_model": model,
         },
     });
-    MatrixCell { key, config }
+    MatrixCell { key, config, node_count: size }
 }
 
-fn build_none_llm_cell(agent: &str) -> MatrixCell {
-    let key = format!("{agent}-nollm");
+fn build_none_llm_cell(agent: &str, size: u32) -> MatrixCell {
+    let key = with_size(format!("{agent}-nollm"), size);
     let config = json!({
         "global": global(agent, "none"),
     });
-    MatrixCell { key, config }
+    MatrixCell { key, config, node_count: size }
 }
 
 #[cfg(test)]
@@ -167,6 +185,7 @@ mod tests {
         let mut m = MatrixConfig::default();
         m.ollama_model = "smollm2:1.7b".into();
         m.lms_model = "smollm2-1.7b-instruct".into();
+        m.cluster_sizes = vec![1, 2];
         m.cloud_api_keys
             .insert("anthropic".into(), "sk-ant-test".into());
         m.cloud_api_keys
@@ -181,10 +200,29 @@ mod tests {
     }
 
     #[test]
+    fn cluster_sizes_multiply_matrix() {
+        let mut m = MatrixConfig::default();
+        m.ollama_model = "smollm2:1.7b".into();
+        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.agents = Some(vec!["openclaw".into()]);
+        m.llms = Some(vec!["ollama".into()]);
+
+        m.cluster_sizes = vec![1];
+        assert_eq!(generate(&m).len(), 1);
+
+        m.cluster_sizes = vec![1, 2];
+        let cells = generate(&m);
+        assert_eq!(cells.len(), 2);
+        assert!(cells.iter().any(|c| c.key == "openclaw-ollama" && c.node_count == 1));
+        assert!(cells.iter().any(|c| c.key == "openclaw-ollama-n2" && c.node_count == 2));
+    }
+
+    #[test]
     fn sparse_configs_omit_irrelevant_sections() {
         let mut m = MatrixConfig::default();
         m.ollama_model = "smollm2:1.7b".into();
         m.lms_model = "smollm2-1.7b-instruct".into();
+        m.cluster_sizes = vec![1];
         let cells = generate(&m);
         for cell in cells {
             let obj = cell.config.as_object().expect("object");

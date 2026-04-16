@@ -189,10 +189,19 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
                 (_, "running", None) => " ",
                 _ => "?",
             };
-            let extra = match (&c.cluster_id, &c.instance_name) {
-                (Some(cid), Some(name)) => format!("  cluster={cid}  incus={name}"),
-                (Some(cid), None) => format!("  cluster={cid}"),
+            let extra = match &c.cluster_id {
+                Some(cid) if c.instances.is_empty() => format!("  cluster={cid}"),
+                Some(cid) => {
+                    let names: Vec<&str> =
+                        c.instances.iter().map(|i| i.instance_name.as_str()).collect();
+                    format!("  cluster={cid}  incus={}", names.join(","))
+                }
                 _ => String::new(),
+            };
+            let nodes = if c.node_count > 1 {
+                format!("  n={}", c.node_count)
+            } else {
+                String::new()
             };
             let detail = c
                 .detail
@@ -204,7 +213,10 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
             } else {
                 String::new()
             };
-            println!("  {marker} {:<7} {}{}{}{}", c.stage, c.key, extra, fail, detail);
+            println!(
+                "  {marker} {:<7} {}{}{}{}{}",
+                c.stage, c.key, nodes, extra, fail, detail
+            );
         }
     }
     Ok(())
