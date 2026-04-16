@@ -130,6 +130,13 @@ fn global(agent: &str, llm: &str) -> Value {
     })
 }
 
+fn relay() -> Value {
+    json!({
+        "url": "wss://relay.plan.ai",
+        "remote_ssh_enabled": true,
+    })
+}
+
 fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> MatrixCell {
     let key = with_size(format!("{agent}-cloud-{provider}"), size);
     let config = json!({
@@ -139,6 +146,7 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> Ma
             "api_key": api_key,
             "default_model": cloud_default_model(provider),
         },
+        "relay": relay(),
     });
     MatrixCell { key, config, node_count: size }
 }
@@ -151,6 +159,7 @@ fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
             "models": [model],
             "default_model": model,
         },
+        "relay": relay(),
     });
     MatrixCell { key, config, node_count: size }
 }
@@ -163,6 +172,7 @@ fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
             "models": [model],
             "default_model": model,
         },
+        "relay": relay(),
     });
     MatrixCell { key, config, node_count: size }
 }
@@ -171,6 +181,7 @@ fn build_none_llm_cell(agent: &str, size: u32) -> MatrixCell {
     let key = with_size(format!("{agent}-nollm"), size);
     let config = json!({
         "global": global(agent, "none"),
+        "relay": relay(),
     });
     MatrixCell { key, config, node_count: size }
 }
@@ -355,7 +366,7 @@ mod tests {
             assert!(present.iter().any(|k| *k == "global"), "{}: no global", cell.key);
             assert!(!present.iter().any(|k| *k == "daemon"), "{}: daemon leaked", cell.key);
             assert!(!present.iter().any(|k| *k == "metrics"), "{}: metrics leaked", cell.key);
-            assert!(!present.iter().any(|k| *k == "relay"), "{}: relay leaked", cell.key);
+            assert!(present.iter().any(|k| *k == "relay"), "{}: relay missing", cell.key);
             assert!(
                 !present.iter().any(|k| *k == "notifications"),
                 "{}: notifications leaked", cell.key
