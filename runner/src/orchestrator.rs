@@ -850,17 +850,11 @@ impl Orchestrator {
         };
 
         let kind_idx: usize = rand::thread_rng().gen_range(0..4);
-        let install: bool = rand::thread_rng().gen_bool(0.5);
-
-        let result = match (kind_idx, install) {
-            (0, true) => self.chaos_install_skill(cluster_id).await,
-            (0, false) => self.chaos_uninstall_skill(cluster_id).await,
-            (1, true) => self.chaos_install_bundle(cluster_id).await,
-            (1, false) => self.chaos_uninstall_bundle(cluster_id).await,
-            (2, true) => self.chaos_install_mcp_server(cluster_id).await,
-            (2, false) => self.chaos_uninstall_mcp_server(cluster_id).await,
-            (_, true) => self.chaos_install_mcp_bundle(cluster_id).await,
-            (_, false) => self.chaos_uninstall_mcp_bundle(cluster_id).await,
+        let result = match kind_idx {
+            0 => self.chaos_skill(cluster_id).await,
+            1 => self.chaos_bundle(cluster_id).await,
+            2 => self.chaos_mcp_server(cluster_id).await,
+            _ => self.chaos_mcp_bundle(cluster_id).await,
         };
 
         match result {
@@ -877,90 +871,124 @@ impl Orchestrator {
         }
     }
 
-    async fn chaos_install_skill(&self, cluster_id: Uuid) -> Result<Option<String>> {
-        let rows = self.mgmt.list_available_skill_channels(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
-            return Ok(None);
-        };
-        self.mgmt.add_skill(cluster_id, id).await?;
-        Ok(Some(format!("+skill {id}")))
+    /// Decide install vs uninstall weighted by the current install ratio:
+    ///   P(uninstall) = installed / total
+    ///   P(install)   = not_installed / total
+    /// This pulls the fleet toward the middle — if most items are already
+    /// installed, chaos leans toward removal; if most are missing, chaos
+    /// leans toward installation. Returns true for install.
+    fn roll_install(installed: usize, not_installed: usize) -> Option<bool> {
+        let total = installed + not_installed;
+        if total == 0 {
+            return None;
+        }
+        Some(rand::thread_rng().gen_range(0..total) < not_installed)
     }
 
-    async fn chaos_uninstall_skill(&self, cluster_id: Uuid) -> Result<Option<String>> {
+    async fn chaos_skill(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_skill_channels(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows
+        let installable: Vec<Uuid> =
+            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let uninstallable: Vec<Uuid> = rows
             .iter()
             .filter_map(|r| r.cluster_skill_id.filter(|_| r.installed))
             .collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+        let Some(install) = Self::roll_install(uninstallable.len(), installable.len()) else {
             return Ok(None);
         };
-        self.mgmt.remove_skill(cluster_id, id).await?;
-        Ok(Some(format!("-skill {id}")))
+        if install {
+            let Some(id) = installable.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.add_skill(cluster_id, id).await?;
+            Ok(Some(format!("+skill {id}")))
+        } else {
+            let Some(id) = uninstallable.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.remove_skill(cluster_id, id).await?;
+            Ok(Some(format!("-skill {id}")))
+        }
     }
 
-    async fn chaos_install_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
+    async fn chaos_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_bundles(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+        let installable: Vec<Uuid> =
+            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let installed_count = rows.iter().filter(|r| r.installed).count();
+        let Some(install) = Self::roll_install(installed_count, installable.len()) else {
             return Ok(None);
         };
-        self.mgmt.add_bundle(cluster_id, id).await?;
-        Ok(Some(format!("+bundle {id}")))
+        if install {
+            let Some(id) = installable.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.add_bundle(cluster_id, id).await?;
+            Ok(Some(format!("+bundle {id}")))
+        } else {
+            // bundles need the cluster_bundle_id for DELETE — separate endpoint.
+            let cluster_rows = self.mgmt.list_cluster_bundles(cluster_id).await?;
+            let ids: Vec<Uuid> = cluster_rows.iter().map(|r| r.cluster_bundle_id).collect();
+            let Some(id) = ids.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.remove_bundle(cluster_id, id).await?;
+            Ok(Some(format!("-bundle {id}")))
+        }
     }
 
-    async fn chaos_uninstall_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
-        let rows = self.mgmt.list_cluster_bundles(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows.iter().map(|r| r.cluster_bundle_id).collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
-            return Ok(None);
-        };
-        self.mgmt.remove_bundle(cluster_id, id).await?;
-        Ok(Some(format!("-bundle {id}")))
-    }
-
-    async fn chaos_install_mcp_server(&self, cluster_id: Uuid) -> Result<Option<String>> {
+    async fn chaos_mcp_server(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_mcp_servers(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
-            return Ok(None);
-        };
-        self.mgmt.add_mcp_server(cluster_id, id).await?;
-        Ok(Some(format!("+mcp-server {id}")))
-    }
-
-    async fn chaos_uninstall_mcp_server(&self, cluster_id: Uuid) -> Result<Option<String>> {
-        let rows = self.mgmt.list_available_mcp_servers(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows
+        let installable: Vec<Uuid> =
+            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let uninstallable: Vec<Uuid> = rows
             .iter()
             .filter_map(|r| r.cluster_mcp_server_id.filter(|_| r.installed))
             .collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+        let Some(install) = Self::roll_install(uninstallable.len(), installable.len()) else {
             return Ok(None);
         };
-        self.mgmt.remove_mcp_server(cluster_id, id).await?;
-        Ok(Some(format!("-mcp-server {id}")))
+        if install {
+            let Some(id) = installable.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.add_mcp_server(cluster_id, id).await?;
+            Ok(Some(format!("+mcp-server {id}")))
+        } else {
+            let Some(id) = uninstallable.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.remove_mcp_server(cluster_id, id).await?;
+            Ok(Some(format!("-mcp-server {id}")))
+        }
     }
 
-    async fn chaos_install_mcp_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
+    async fn chaos_mcp_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_mcp_bundles(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
+        let installable: Vec<Uuid> =
+            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let installed_count = rows.iter().filter(|r| r.installed).count();
+        let Some(install) = Self::roll_install(installed_count, installable.len()) else {
             return Ok(None);
         };
-        self.mgmt.add_mcp_bundle(cluster_id, id).await?;
-        Ok(Some(format!("+mcp-bundle {id}")))
-    }
-
-    async fn chaos_uninstall_mcp_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
-        let rows = self.mgmt.list_cluster_mcp_bundles(cluster_id).await?;
-        let candidates: Vec<Uuid> = rows.iter().map(|r| r.cluster_mcp_bundle_id).collect();
-        let Some(id) = candidates.choose(&mut rand::thread_rng()).copied() else {
-            return Ok(None);
-        };
-        self.mgmt.remove_mcp_bundle(cluster_id, id).await?;
-        Ok(Some(format!("-mcp-bundle {id}")))
+        if install {
+            let Some(id) = installable.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.add_mcp_bundle(cluster_id, id).await?;
+            Ok(Some(format!("+mcp-bundle {id}")))
+        } else {
+            let cluster_rows = self.mgmt.list_cluster_mcp_bundles(cluster_id).await?;
+            let ids: Vec<Uuid> = cluster_rows
+                .iter()
+                .map(|r| r.cluster_mcp_bundle_id)
+                .collect();
+            let Some(id) = ids.choose(&mut rand::thread_rng()).copied() else {
+                return Ok(None);
+            };
+            self.mgmt.remove_mcp_bundle(cluster_id, id).await?;
+            Ok(Some(format!("-mcp-bundle {id}")))
+        }
     }
 
     /// Pick a random Running cell and apply either a toggle (flip a
@@ -1341,4 +1369,40 @@ pub struct CellStatus {
 pub struct CellInstance {
     pub instance_name: String,
     pub instance_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roll_install_corners() {
+        for _ in 0..50 {
+            assert_eq!(Orchestrator::roll_install(0, 10), Some(true));
+        }
+        for _ in 0..50 {
+            assert_eq!(Orchestrator::roll_install(10, 0), Some(false));
+        }
+        assert_eq!(Orchestrator::roll_install(0, 0), None);
+    }
+
+    /// With 1 installed and 9 not-installed, install should land ~90%
+    /// of the time. 500 samples, tolerate ±10%.
+    #[test]
+    fn roll_install_bias_reflects_ratio() {
+        let mut installs = 0;
+        let mut uninstalls = 0;
+        for _ in 0..500 {
+            match Orchestrator::roll_install(1, 9) {
+                Some(true) => installs += 1,
+                Some(false) => uninstalls += 1,
+                None => unreachable!(),
+            }
+        }
+        let ratio = installs as f64 / (installs + uninstalls) as f64;
+        assert!(
+            (0.80..=0.98).contains(&ratio),
+            "expected ~0.90 install ratio for (1 installed, 9 not), got {ratio:.2}"
+        );
+    }
 }
