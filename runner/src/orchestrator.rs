@@ -47,6 +47,12 @@ pub struct Orchestrator {
     pub state: Mutex<FleetState>,
     /// Cached rollout group id for the fleet; populated on first use.
     rollout_group: tokio::sync::OnceCell<Uuid>,
+    /// Serialises all fleet-mutating operations so concurrent tasks
+    /// (reconcile loop, chaos loops, HTTP handlers) can't race each
+    /// other. Held for the duration of each top-level entry point
+    /// (reconcile, teardown, redeploy, reprovision, gc, chaos_tick,
+    /// chaos_vm_tick). Read-only paths (snapshot, is_paused) skip it.
+    op_lock: Mutex<()>,
 }
 
 impl Orchestrator {
@@ -58,6 +64,7 @@ impl Orchestrator {
             incus,
             state: Mutex::new(state),
             rollout_group: tokio::sync::OnceCell::new(),
+            op_lock: Mutex::new(()),
         })
     }
 
@@ -144,6 +151,7 @@ impl Orchestrator {
     /// (provision, reprovision, redeploy) so the automatic loops start
     /// touching the fleet again.
     pub async fn resume(&self) -> Result<()> {
+        let _guard = self.op_lock.lock().await;
         self.set_paused(false).await
     }
 
@@ -526,6 +534,11 @@ impl Orchestrator {
     }
 
     pub async fn reconcile(&self) -> Result<()> {
+        let _guard = self.op_lock.lock().await;
+        self.reconcile_inner().await
+    }
+
+    async fn reconcile_inner(&self) -> Result<()> {
         if self.is_paused().await {
             tracing::debug!("reconcile: paused, skipping");
             return Ok(());
@@ -559,7 +572,7 @@ impl Orchestrator {
         // Garbage-collect Incus instances and mgmt clusters that share our
         // prefix but aren't tracked in local state (survivors from crashed
         // runs, manual operator edits, etc).
-        if let Err(e) = self.gc().await {
+        if let Err(e) = self.gc_inner().await {
             tracing::warn!("gc: {e:#}");
         }
         Ok(())
@@ -579,6 +592,11 @@ impl Orchestrator {
     /// external resources are created, so in-flight cells are always in
     /// the tracked set.
     pub async fn gc(&self) -> Result<()> {
+        let _guard = self.op_lock.lock().await;
+        self.gc_inner().await
+    }
+
+    async fn gc_inner(&self) -> Result<()> {
         if self.is_paused().await {
             tracing::debug!("gc: paused, skipping");
             return Ok(());
@@ -723,11 +741,15 @@ impl Orchestrator {
     /// Reprovision: destroy + reset to Pending so reconcile drives it
     /// back up. Clears deploy_failures and marks last_reprovisioned_at.
     pub async fn reprovision_cell(&self, key: &str) -> Result<()> {
+        let _guard = self.op_lock.lock().await;
+        self.reprovision_cell_inner(key).await
+    }
+
+    async fn reprovision_cell_inner(&self, key: &str) -> Result<()> {
         let cells = self.matrix();
         let Some(cell) = cells.iter().find(|c| c.key == key) else {
             anyhow::bail!("unknown matrix cell: {key}");
         };
-        // Explicit operator action — wake the runner back up.
         self.set_paused(false).await?;
         self.destroy_cell(key).await?;
         let now = Utc::now();
@@ -744,6 +766,11 @@ impl Orchestrator {
     }
 
     pub async fn teardown(&self) -> Result<()> {
+        let _guard = self.op_lock.lock().await;
+        self.teardown_inner().await
+    }
+
+    async fn teardown_inner(&self) -> Result<()> {
         let keys: Vec<String> = {
             let s = self.state.lock().await;
             s.cells.iter().map(|c| c.key.clone()).collect()
@@ -789,9 +816,9 @@ impl Orchestrator {
     /// tracked locally AND every orphan cluster on the mgmt server whose
     /// name starts with `incus.name_prefix`, then reconciles fresh.
     pub async fn redeploy(&self) -> Result<()> {
+        let _guard = self.op_lock.lock().await;
         tracing::info!("redeploy: teardown + orphan sweep + reconcile");
-        self.teardown().await?;
-        // teardown left us paused — this is an explicit rebuild, so resume.
+        self.teardown_inner().await?;
         self.set_paused(false).await?;
 
         let prefix = self.config.incus.name_prefix.clone();
@@ -820,7 +847,7 @@ impl Orchestrator {
             s.cells.clear();
         }
         self.save_state().await?;
-        self.reconcile().await
+        self.reconcile_inner().await
     }
 
     /// Pick a random Running cluster, pick a random resource type
@@ -1028,7 +1055,7 @@ impl Orchestrator {
         let reprovision = rand::thread_rng().gen_range(0..10) == 0;
         if reprovision {
             tracing::info!("chaos-vm: reprovision {key}");
-            self.reprovision_cell(&key).await?;
+            self.reprovision_cell_inner(&key).await?;
             return Ok(Some(format!("{key}: reprovision")));
         }
 
@@ -1071,7 +1098,7 @@ impl Orchestrator {
     }
 
     pub async fn reprovision_random(&self) -> Result<Option<String>> {
-        // Explicit operator action — wake the runner back up.
+        let _guard = self.op_lock.lock().await;
         self.set_paused(false).await?;
         let keys: Vec<String> = {
             let s = self.state.lock().await;
@@ -1088,7 +1115,7 @@ impl Orchestrator {
             };
             k.clone()
         };
-        self.reprovision_cell(&key).await?;
+        self.reprovision_cell_inner(&key).await?;
         Ok(Some(key))
     }
 
