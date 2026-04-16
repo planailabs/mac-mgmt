@@ -927,6 +927,10 @@ impl Orchestrator {
                     .choose(&mut rand::thread_rng())
                     .cloned()
                     .expect("non-empty");
+                if !self.cell_still_running(&key).await {
+                    tracing::debug!("chaos-vm: cell {key} left Running; skipping stop");
+                    return Ok(None);
+                }
                 tracing::info!("chaos-vm: stop {name} (cell={key})");
                 self.incus
                     .set_instance_state(&name, "stop")
@@ -939,6 +943,10 @@ impl Orchestrator {
                     .choose(&mut rand::thread_rng())
                     .cloned()
                     .expect("non-empty");
+                if !self.cell_still_running(&key).await {
+                    tracing::debug!("chaos-vm: cell {key} left Running; skipping start");
+                    return Ok(None);
+                }
                 tracing::info!("chaos-vm: start {name} (cell={key})");
                 self.incus
                     .set_instance_state(&name, "start")
@@ -952,6 +960,14 @@ impl Orchestrator {
                 Ok(Some(format!("{key}: reprovision")))
             }
         }
+    }
+
+    /// Defensive re-check: between the candidate scan and the actual
+    /// Incus call, another loop could have reprovisioned the cell and
+    /// pushed it back into Launching. Skip the op if so.
+    async fn cell_still_running(&self, key: &str) -> bool {
+        let s = self.state.lock().await;
+        s.find(key).map(|c| c.stage.is_running()).unwrap_or(false)
     }
 
     pub async fn reprovision_random(&self) -> Result<Option<String>> {
