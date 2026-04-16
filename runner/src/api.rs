@@ -35,6 +35,11 @@ async fn api_status(orch: &State<Arc<Orchestrator>>) -> Json<StatusSnapshot> {
 
 #[rocket::post("/provision")]
 async fn api_provision(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
+    // Explicit operator action — resume from a prior teardown pause.
+    if let Err(e) = orch.inner().resume().await {
+        tracing::error!("resume before provision: {e:#}");
+        return Err(Status::InternalServerError);
+    }
     orch.inner().reconcile().await.map_err(|e| {
         tracing::error!("provision failed: {e:#}");
         Status::InternalServerError

@@ -261,3 +261,18 @@ ul.instances .iid {
 }
 
 .empty-dash { color: var(--text-dim); opacity: 0.5; }
+
+.paused-badge {
+  display: inline-block;
+  margin-right: 0.6rem;
+  padding: 0.15rem 0.55rem;
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+  text-transform: uppercase;
+  box-shadow: 0 0 10px rgba(255, 204, 63, 0.35);
+  animation: pulse 1.2s ease-in-out infinite;
+}

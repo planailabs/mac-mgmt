@@ -17,6 +17,12 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FleetState {
     pub cells: Vec<CellState>,
+    /// Set by `teardown` — while true, every automatic loop (reconcile,
+    /// gc, chaos, vm-chaos) sits idle. Cleared by any explicit
+    /// provision / reprovision / redeploy so the operator has to ask
+    /// for the fleet to come back.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

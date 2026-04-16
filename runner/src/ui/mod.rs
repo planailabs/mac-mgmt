@@ -23,6 +23,7 @@ struct IndexView<'a> {
     script: &'a str,
     total_cells: usize,
     running: usize,
+    paused: bool,
     cells: Vec<CellView>,
 }
 
@@ -58,6 +59,7 @@ pub fn render_index(snap: &StatusSnapshot) -> String {
         script: SCRIPT,
         total_cells: snap.total_cells,
         running: snap.running,
+        paused: snap.paused,
         cells: snap.cells.iter().map(to_cell_view).collect(),
     };
     let template = match mustache::compile_str(INDEX_TEMPLATE) {
@@ -123,6 +125,7 @@ mod tests {
         StatusSnapshot {
             total_cells: 2,
             running: 1,
+            paused: false,
             cells: vec![
                 CellStatus {
                     key: "openclaw-ollama".into(),

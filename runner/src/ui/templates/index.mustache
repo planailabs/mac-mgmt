@@ -20,7 +20,10 @@
     <button onclick="runAction('/chaos', null, event)">Chaos tick</button>
     <button class="danger" onclick="runAction('/redeploy', 'Redeploy will destroy every matching cluster and rebuild. Continue?', event)">Redeploy</button>
     <button class="danger" onclick="runAction('/teardown', 'Teardown will destroy every provisioned cell. Continue?', event)">Teardown</button>
-    <span class="summary"><strong>{{total_cells}}</strong> cells · <strong>{{running}}</strong> running</span>
+    <span class="summary">
+      {{#paused}}<span class="paused-badge">PAUSED · awaiting reprovision</span>{{/paused}}
+      <strong>{{total_cells}}</strong> cells · <strong>{{running}}</strong> running
+    </span>
   </div>
 
   <div class="panel">

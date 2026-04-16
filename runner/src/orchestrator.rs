@@ -128,6 +128,25 @@ impl Orchestrator {
         s.save(&self.config.fleet.state_path)
     }
 
+    pub async fn is_paused(&self) -> bool {
+        self.state.lock().await.paused
+    }
+
+    async fn set_paused(&self, paused: bool) -> Result<()> {
+        {
+            let mut s = self.state.lock().await;
+            s.paused = paused;
+        }
+        self.save_state().await
+    }
+
+    /// Clear the pause flag. Called by explicit operator actions
+    /// (provision, reprovision, redeploy) so the automatic loops start
+    /// touching the fleet again.
+    pub async fn resume(&self) -> Result<()> {
+        self.set_paused(false).await
+    }
+
     /// Upsert + fsync. Always use this to persist a cell — never touch
     /// state.cells directly outside the helpers in this module.
     async fn persist_cell(&self, cell: CellState) -> Result<()> {
@@ -507,6 +526,10 @@ impl Orchestrator {
     }
 
     pub async fn reconcile(&self) -> Result<()> {
+        if self.is_paused().await {
+            tracing::debug!("reconcile: paused, skipping");
+            return Ok(());
+        }
         let cells = self.matrix();
         let known_keys: std::collections::HashSet<String> =
             cells.iter().map(|c| c.key.clone()).collect();
@@ -556,6 +579,10 @@ impl Orchestrator {
     /// external resources are created, so in-flight cells are always in
     /// the tracked set.
     pub async fn gc(&self) -> Result<()> {
+        if self.is_paused().await {
+            tracing::debug!("gc: paused, skipping");
+            return Ok(());
+        }
         let prefix = self.config.incus.name_prefix.clone();
         let (tracked_instances, tracked_clusters): (
             std::collections::HashSet<String>,
@@ -700,6 +727,8 @@ impl Orchestrator {
         let Some(cell) = cells.iter().find(|c| c.key == key) else {
             anyhow::bail!("unknown matrix cell: {key}");
         };
+        // Explicit operator action — wake the runner back up.
+        self.set_paused(false).await?;
         self.destroy_cell(key).await?;
         let now = Utc::now();
         self.persist_cell(CellState {
@@ -724,6 +753,10 @@ impl Orchestrator {
                 tracing::warn!("destroy {key}: {e:#}");
             }
         }
+        // Park the runner. Automatic loops will sit idle until the
+        // operator triggers provision / reprovision / redeploy again.
+        self.set_paused(true).await?;
+        tracing::info!("teardown: runner paused — awaiting explicit resume");
         // Sweep any clusters on the mgmt server with our prefix that aren't
         // in local state (crashed runs, manual interference) so teardown
         // genuinely leaves nothing behind.
@@ -758,6 +791,8 @@ impl Orchestrator {
     pub async fn redeploy(&self) -> Result<()> {
         tracing::info!("redeploy: teardown + orphan sweep + reconcile");
         self.teardown().await?;
+        // teardown left us paused — this is an explicit rebuild, so resume.
+        self.set_paused(false).await?;
 
         let prefix = self.config.incus.name_prefix.clone();
         match self.mgmt.list_clusters().await {
@@ -794,6 +829,9 @@ impl Orchestrator {
     /// fleet has no running cells or the chosen endpoint returned nothing
     /// actionable.
     pub async fn chaos_tick(&self) -> Result<Option<String>> {
+        if self.is_paused().await {
+            return Ok(None);
+        }
         let clusters: Vec<(String, Uuid)> = {
             let s = self.state.lock().await;
             s.cells
@@ -931,6 +969,9 @@ impl Orchestrator {
     /// firing so a cell that slipped into Launching via another loop
     /// isn't caught mid-boot.
     pub async fn chaos_vm_tick(&self) -> Result<Option<String>> {
+        if self.is_paused().await {
+            return Ok(None);
+        }
         let candidates: Vec<(String, Vec<String>)> = {
             let s = self.state.lock().await;
             s.cells
@@ -1002,6 +1043,8 @@ impl Orchestrator {
     }
 
     pub async fn reprovision_random(&self) -> Result<Option<String>> {
+        // Explicit operator action — wake the runner back up.
+        self.set_paused(false).await?;
         let keys: Vec<String> = {
             let s = self.state.lock().await;
             s.cells
@@ -1121,6 +1164,7 @@ impl Orchestrator {
         StatusSnapshot {
             total_cells: matrix.len(),
             running: state.cells.iter().filter(|c| c.stage.is_running()).count(),
+            paused: state.paused,
             cells,
         }
     }
@@ -1232,6 +1276,11 @@ pub async fn vm_chaos_loop(orch: Arc<Orchestrator>) {
 pub struct StatusSnapshot {
     pub total_cells: usize,
     pub running: usize,
+    /// `true` while the runner is parked after a teardown — automatic
+    /// loops are idle until an operator triggers provision / reprovision
+    /// / redeploy.
+    #[serde(default)]
+    pub paused: bool,
     pub cells: Vec<CellStatus>,
 }
 
