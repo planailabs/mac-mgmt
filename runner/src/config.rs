@@ -112,6 +112,11 @@ pub struct FleetConfig {
     /// retrying until the operator intervenes (still logs to Sentry).
     #[serde(default = "default_max_retries")]
     pub max_deploy_retries: u32,
+    /// Maximum number of cells that may be in the Launching stage
+    /// concurrently. Cells in ConfigPushed are held back until the launch
+    /// slot frees up (another cell reaches Running or times out).
+    #[serde(default = "default_max_concurrent_launches")]
+    pub max_concurrent_launches: usize,
 }
 
 impl Default for FleetConfig {
@@ -124,6 +129,7 @@ impl Default for FleetConfig {
             heartbeat_stale_after: default_heartbeat_stale(),
             deploy_timeout: default_deploy_timeout(),
             max_deploy_retries: default_max_retries(),
+            max_concurrent_launches: default_max_concurrent_launches(),
         }
     }
 }
@@ -181,6 +187,7 @@ fn default_grace() -> String { "3m".into() }
 fn default_heartbeat_stale() -> String { "5m".into() }
 fn default_deploy_timeout() -> String { "15m".into() }
 fn default_max_retries() -> u32 { 3 }
+fn default_max_concurrent_launches() -> usize { 3 }
 fn default_ollama_model() -> String { "smollm2:1.7b".into() }
 fn default_lms_model() -> String { "smollm2-1.7b-instruct".into() }
 fn default_cluster_sizes() -> Vec<u32> { vec![1, 2] }

@@ -176,6 +176,27 @@ impl Orchestrator {
                 self.enter_config_pushed(matrix_cell, cluster_id).await
             }
             CellStage::ConfigPushed { cluster_id, .. } => {
+                // Throttle: at most `max_concurrent_launches` cells may be in
+                // the Launching stage at once. Over budget → stay at
+                // ConfigPushed; the next reconcile tick picks up the slack
+                // once some cell reaches Running or times out.
+                let cap = self.config.fleet.max_concurrent_launches;
+                let launching = {
+                    let s = self.state.lock().await;
+                    s.cells
+                        .iter()
+                        .filter(|c| matches!(c.stage, CellStage::Launching { .. }))
+                        .count()
+                };
+                if cap > 0 && launching >= cap {
+                    tracing::debug!(
+                        "cell {}: launch queue full ({}/{}), staying at ConfigPushed",
+                        matrix_cell.key,
+                        launching,
+                        cap
+                    );
+                    return Ok(current);
+                }
                 self.enter_launching(matrix_cell, cluster_id).await
             }
             CellStage::Launching {
