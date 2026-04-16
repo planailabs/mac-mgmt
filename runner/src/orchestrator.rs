@@ -44,6 +44,8 @@ pub struct Orchestrator {
     pub mgmt: MgmtClient,
     pub incus: IncusClient,
     pub state: Mutex<FleetState>,
+    /// Cached rollout group id for the fleet; populated on first use.
+    rollout_group: tokio::sync::OnceCell<Uuid>,
 }
 
 impl Orchestrator {
@@ -54,7 +56,40 @@ impl Orchestrator {
             mgmt,
             incus,
             state: Mutex::new(state),
+            rollout_group: tokio::sync::OnceCell::new(),
         })
+    }
+
+    fn rollout_group_name(&self) -> String {
+        format!("{}fleet", self.config.incus.name_prefix)
+    }
+
+    /// Resolve the rollout group id for the fleet, creating it on the mgmt
+    /// server if it doesn't exist yet. Result is cached for the process
+    /// lifetime.
+    async fn ensure_rollout_group(&self) -> Result<Uuid> {
+        if let Some(id) = self.rollout_group.get() {
+            return Ok(*id);
+        }
+        let name = self.rollout_group_name();
+        let groups = self.mgmt.list_rollout_groups().await?;
+        let id = if let Some(g) = groups.iter().find(|g| g.name == name) {
+            g.id
+        } else {
+            let desc = format!(
+                "mac-mgmt-runner fleet ({} matrix cells)",
+                self.matrix().len()
+            );
+            self.mgmt.create_rollout_group(&name, &desc).await?;
+            let groups = self.mgmt.list_rollout_groups().await?;
+            groups
+                .into_iter()
+                .find(|g| g.name == name)
+                .map(|g| g.id)
+                .ok_or_else(|| anyhow::anyhow!("rollout group {name} missing after create"))?
+        };
+        let _ = self.rollout_group.set(id);
+        Ok(id)
     }
 
     pub fn matrix(&self) -> Vec<MatrixCell> {
@@ -162,6 +197,25 @@ impl Orchestrator {
         let stage = CellStage::ClusterCreated { cluster_id: created.id, at: now };
         self.persist_cell(self.cell_with_stage(cell, stage.clone(), now).await)
             .await?;
+
+        // Enrol the new cluster in the fleet's rollout group. Failures here
+        // don't abort the cell's state machine — the cluster already exists
+        // and the next reconcile tick will retry membership.
+        match self.ensure_rollout_group().await {
+            Ok(group_id) => {
+                if let Err(e) = self
+                    .mgmt
+                    .add_rollout_group_member(group_id, created.id)
+                    .await
+                {
+                    tracing::warn!(
+                        "adding cluster {} to rollout group {group_id}: {e:#}",
+                        created.id
+                    );
+                }
+            }
+            Err(e) => tracing::warn!("resolving rollout group: {e:#}"),
+        }
         Ok(stage)
     }
 
@@ -494,6 +548,31 @@ impl Orchestrator {
         for key in keys {
             if let Err(e) = self.destroy_cell(&key).await {
                 tracing::warn!("destroy {key}: {e:#}");
+            }
+        }
+        // Sweep any clusters on the mgmt server with our prefix that aren't
+        // in local state (crashed runs, manual interference) so teardown
+        // genuinely leaves nothing behind.
+        let prefix = self.config.incus.name_prefix.clone();
+        if let Ok(rows) = self.mgmt.list_clusters().await {
+            for row in rows {
+                if !row.name.starts_with(&prefix) {
+                    continue;
+                }
+                tracing::info!("teardown: removing stray cluster {} ({})", row.name, row.id);
+                let _ = self.incus.delete_instance(&row.name).await;
+                if let Err(e) = self.mgmt.delete_cluster(row.id).await {
+                    tracing::warn!("teardown: deleting cluster {}: {e:#}", row.id);
+                }
+            }
+        }
+        // Drop the rollout group now that its last member is gone.
+        let group_name = self.rollout_group_name();
+        if let Ok(groups) = self.mgmt.list_rollout_groups().await {
+            if let Some(g) = groups.into_iter().find(|g| g.name == group_name) {
+                if let Err(e) = self.mgmt.delete_rollout_group(g.id).await {
+                    tracing::warn!("teardown: deleting rollout group {}: {e:#}", g.id);
+                }
             }
         }
         Ok(())

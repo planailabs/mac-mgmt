@@ -62,6 +62,18 @@ pub struct AdminClusterRow {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct RolloutGroupRow {
+    pub id: Uuid,
+    pub name: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub description: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub member_count: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AdminMachineRow {
     pub instance_id: String,
     pub hostname: Option<String>,
@@ -281,6 +293,86 @@ impl MgmtClient {
             .await
             .context("fetching cloud-init")?;
         read_json(&format!("get_cloud_init({cluster_id})"), resp).await
+    }
+
+    pub async fn list_rollout_groups(&self) -> Result<Vec<RolloutGroupRow>> {
+        let resp = self
+            .http
+            .get(format!("{}/api/admin/rollout-groups", self.base))
+            .headers(self.headers(None)?)
+            .send()
+            .await
+            .context("listing rollout groups")?;
+        read_json("list_rollout_groups", resp).await
+    }
+
+    pub async fn create_rollout_group(&self, name: &str, description: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            name: &'a str,
+            description: &'a str,
+        }
+        let resp = self
+            .http
+            .post(format!("{}/api/admin/rollout-groups", self.base))
+            .headers(self.headers(None)?)
+            .json(&Body { name, description })
+            .send()
+            .await
+            .context("creating rollout group")?;
+        let _ = read_ok(&format!("create_rollout_group({name})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn delete_rollout_group(&self, group_id: Uuid) -> Result<()> {
+        let resp = self
+            .http
+            .delete(format!(
+                "{}/api/admin/rollout-groups/{}",
+                self.base, group_id
+            ))
+            .headers(self.headers(None)?)
+            .send()
+            .await
+            .context("deleting rollout group")?;
+        if resp.status().as_u16() == 404 {
+            return Ok(());
+        }
+        let _ = read_ok(&format!("delete_rollout_group({group_id})"), resp).await?;
+        Ok(())
+    }
+
+    pub async fn add_rollout_group_member(
+        &self,
+        group_id: Uuid,
+        cluster_id: Uuid,
+    ) -> Result<()> {
+        #[derive(Serialize)]
+        struct Body {
+            cluster_id: Uuid,
+        }
+        let resp = self
+            .http
+            .post(format!(
+                "{}/api/admin/rollout-groups/{}/members",
+                self.base, group_id
+            ))
+            .headers(self.headers(None)?)
+            .json(&Body { cluster_id })
+            .send()
+            .await
+            .context("adding rollout group member")?;
+        // 409 = already a member, which is fine for idempotent reconcile.
+        let status = resp.status();
+        if status.is_success() || status.as_u16() == 409 {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        bail!(
+            "add_rollout_group_member(group={group_id}, cluster={cluster_id}): \
+             status={status} body={:?}",
+            body.chars().take(300).collect::<String>()
+        );
     }
 
     pub async fn list_cluster_machines(&self, cluster_id: Uuid) -> Result<Vec<AdminMachineRow>> {
