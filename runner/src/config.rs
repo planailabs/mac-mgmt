@@ -148,7 +148,7 @@ pub struct SentryConfig {
     pub environment: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatrixConfig {
     /// Cloud provider API keys. Providers without a key here are skipped when generating the matrix.
     #[serde(default)]
@@ -173,6 +173,26 @@ pub struct MatrixConfig {
     /// larger sizes append `-n{size}`. Default: [1, 2].
     #[serde(default = "default_cluster_sizes")]
     pub cluster_sizes: Vec<u32>,
+}
+
+/// Hand-rolled Default — the derived one would make `cluster_sizes`
+/// an empty `Vec` (and `ollama_model`/`lms_model` empty strings) which
+/// kicks in when the whole `[matrix]` section is absent from
+/// config.toml: `RunnerConfig`'s `#[serde(default)] matrix: MatrixConfig`
+/// calls `Default::default()` on the struct, bypassing every
+/// per-field `#[serde(default = …)]`. Mirror the serde defaults here.
+impl Default for MatrixConfig {
+    fn default() -> Self {
+        Self {
+            cloud_api_keys: Default::default(),
+            agents: None,
+            llms: None,
+            cloud_providers: None,
+            ollama_model: default_ollama_model(),
+            lms_model: default_lms_model(),
+            cluster_sizes: default_cluster_sizes(),
+        }
+    }
 }
 
 fn default_system() -> String { "x86_64-linux".into() }
