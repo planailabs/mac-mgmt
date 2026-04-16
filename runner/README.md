@@ -105,16 +105,24 @@ visible.
 ## HTTP API
 
 ```
-GET  /status
+GET  /                       # self-contained HTML dashboard
+GET  /status                 # JSON snapshot
 POST /provision
 POST /teardown
+POST /redeploy
+POST /gc
+POST /chaos
 POST /reprovision            # random
 POST /reprovision/<key>      # specific cell
 POST /shutdown
 ```
 
-All responses are JSON. No auth — bind to `127.0.0.1` and expose via
-SSH / unix firewall.
+`GET /` serves a small single-page dashboard with the fleet summary,
+a per-cell table (stage, node count, cluster id, instance names/ids,
+heartbeat freshness + probe summary, deploy-failure counter) and
+action buttons that POST to the JSON endpoints. Auto-refreshes every
+5 seconds. No auth — bind to `127.0.0.1` and expose via SSH / unix
+firewall.
 
 ## Cloud-init endpoint (server side)
 
