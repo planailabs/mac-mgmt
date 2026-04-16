@@ -896,9 +896,10 @@ impl Orchestrator {
             return Ok(None);
         };
 
-        // 2/3 toggle, 1/3 reprovision — toggles are cheap, reprovisions
-        // are expensive (minutes) so we want them rarer.
-        let reprovision = rand::thread_rng().gen_range(0..3) == 0;
+        // 9/10 toggle, 1/10 reprovision — toggles are cheap, reprovisions
+        // are expensive (minutes) and disruptive to the whole cell so
+        // we want them rare.
+        let reprovision = rand::thread_rng().gen_range(0..10) == 0;
         if reprovision {
             tracing::info!("chaos-vm: reprovision {key}");
             self.reprovision_cell(&key).await?;
