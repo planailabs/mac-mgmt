@@ -3,6 +3,7 @@
   rustPlatform,
   openssl,
   pkg-config,
+  gitSha ? "unknown",
 }:
 
 rustPlatform.buildRustPackage {
@@ -12,6 +13,7 @@ rustPlatform.buildRustPackage {
   cargoLock.lockFile = ../Cargo.lock;
 
   cargoBuildFlags = [ "-p" "mac-mgmt-runner" ];
+  env.GIT_SHA = gitSha;
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [ openssl ];

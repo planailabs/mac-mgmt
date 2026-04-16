@@ -8,7 +8,7 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     {
       nixosModules.default = import ./server/module.nix;
       nixosModules.relay = import ./relay/module.nix;
@@ -32,17 +32,20 @@
           pkgs.libiconv
         ];
 
+        gitSha = self.rev or self.dirtyRev or "unknown";
+
         mac-mgmt = pkgs.rustPlatform.buildRustPackage {
           pname = "mac-mgmt";
           version = "0.1.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           buildInputs = darwinDeps;
+          env.GIT_SHA = gitSha;
         };
 
-        mac-mgmt-server = pkgs.callPackage ./server/package.nix { };
+        mac-mgmt-server = pkgs.callPackage ./server/package.nix { inherit gitSha; };
         mac-mgmt-relay = pkgs.callPackage ./relay/package.nix { };
-        mac-mgmt-runner = pkgs.callPackage ./runner/package.nix { };
+        mac-mgmt-runner = pkgs.callPackage ./runner/package.nix { inherit gitSha; };
         relay-ssh = pkgs.callPackage ./relay-ssh/package.nix { };
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy

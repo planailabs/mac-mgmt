@@ -10,6 +10,7 @@
   binaryen,
   tailwindcss_3,
   lld,
+  gitSha ? "unknown",
 }:
 
 let
@@ -42,6 +43,7 @@ rustPlatform.buildRustPackage {
   ];
 
   SWAGGER_UI_DOWNLOAD_URL = "file://${swagger-ui}";
+  env.GIT_SHA = gitSha;
 
   doCheck = false;
 
