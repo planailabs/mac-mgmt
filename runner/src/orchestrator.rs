@@ -208,6 +208,22 @@ impl Orchestrator {
 
     async fn enter_cluster_created(&self, cell: &MatrixCell) -> Result<CellStage> {
         let name = self.cluster_name(&cell.key);
+
+        // A cluster with our name but no entry in local state is an orphan
+        // (crashed prior run, operator poking around, gc hasn't run yet).
+        // Clusters.name is UNIQUE so we can't create a fresh one alongside
+        // — wipe the orphan (and any matching Incus instance) first.
+        if let Ok(rows) = self.mgmt.list_clusters().await {
+            if let Some(stray) = rows.into_iter().find(|r| r.name == name) {
+                tracing::warn!(
+                    "cluster {name} already exists ({}); deleting before recreate",
+                    stray.id
+                );
+                let _ = self.incus.delete_instance(&name).await;
+                let _ = self.mgmt.delete_cluster(stray.id).await;
+            }
+        }
+
         tracing::info!("creating cluster {name}");
         let created = self
             .mgmt
