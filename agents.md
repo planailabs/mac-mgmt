@@ -19,6 +19,17 @@ The supervisor and the daemon are upgraded independently (the supervisor keeps r
 
 Mark every compat shim with a `// compat: added YYYY-MM-DD, removable after YYYY-MM-DD` comment (three months out) so a later cleanup pass can delete shims confidently instead of guessing whether something out in the wild still needs them.
 
+## Daemon: verify builds across feature combinations
+
+When changing daemon code, ensure it compiles not only with default features but also with these additional feature combinations:
+
+- `--no-default-features` (no features at all)
+- `--no-default-features --features self-update` (only self-update)
+- `--all-features` (all features enabled)
+- `--no-default-features --features services,relay,self-update` (non-default features enabled alongside defaults)
+
+Run `cargo check -p mac-mgmt` with each combination to catch gating issues early. Code behind a feature gate must not reference items from another feature without the appropriate `#[cfg(feature = "...")]` guard.
+
 ## Server: database migrations are append-only
 
 Never modify an existing migration file in `server/migrations/`. Migrations that have already been applied to a database cannot be re-run, so editing them has no effect on deployed instances and causes checksum mismatches. Always create a new migration with the next sequence number instead (e.g. if `033_*.sql` exists, create `034_*.sql`).
