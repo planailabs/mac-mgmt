@@ -295,39 +295,62 @@ pub async fn run(
             }
             ControlMessage::FileListRequest { request_id, tunnel_name, path } => {
                 tracing::debug!("file list {request_id}: {tunnel_name}");
-                let registry = file_tunnel_registry.read().await;
-                let tunnel = registry.get(&tunnel_name).cloned();
-                drop(registry);
-                let out_tx = outgoing_tx.clone();
-                tokio::spawn(async move {
-                    let (status, body) = match tunnel {
-                        Some(t) => crate::file_tunnels::handle_list(&t, path.as_deref()),
-                        None => (404, serde_json::json!({ "error": "file tunnel not found" })),
-                    };
-                    let msg = serde_json::json!({
-                        "type": "file_response",
-                        "request_id": request_id,
-                        "status": status,
-                        "body": body.to_string(),
+                #[cfg(feature = "services")]
+                {
+                    let registry = file_tunnel_registry.read().await;
+                    let tunnel = registry.get(&tunnel_name).cloned();
+                    drop(registry);
+                    let out_tx = outgoing_tx.clone();
+                    tokio::spawn(async move {
+                        let (status, body) = match tunnel {
+                            Some(t) => crate::file_tunnels::handle_list(&t, path.as_deref()),
+                            None => (404, serde_json::json!({ "error": "file tunnel not found" })),
+                        };
+                        let msg = serde_json::json!({
+                            "type": "file_response",
+                            "request_id": request_id,
+                            "status": status,
+                            "body": body.to_string(),
+                        });
+                        let _ = out_tx.send(msg.to_string()).await;
                     });
-                    let _ = out_tx.send(msg.to_string()).await;
-                });
+                }
+                #[cfg(not(feature = "services"))]
+                {
+                    let out_tx = outgoing_tx.clone();
+                    tokio::spawn(async move {
+                        let msg = serde_json::json!({
+                            "type": "file_response",
+                            "request_id": request_id,
+                            "status": 404,
+                            "body": serde_json::json!({ "error": "file tunnels not available" }).to_string(),
+                        });
+                        let _ = out_tx.send(msg.to_string()).await;
+                    });
+                }
             }
             ControlMessage::FileSessionRequest { session_id, session_secret, tunnel_name, mode, path, expected_mtime } => {
-                tracing::info!("file session {session_id}: {mode} {tunnel_name}");
-                let registry = file_tunnel_registry.read().await;
-                let tunnel = registry.get(&tunnel_name).cloned();
-                drop(registry);
-                let relay = relay_url.to_string();
-                let tok = token.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_file_session(
-                        &relay, &tok, &session_id, &session_secret,
-                        tunnel, &mode, path.as_deref(), expected_mtime,
-                    ).await {
-                        tracing::error!("file session {session_id} failed: {e:#}");
-                    }
-                });
+                #[cfg(feature = "services")]
+                {
+                    tracing::info!("file session {session_id}: {mode} {tunnel_name}");
+                    let registry = file_tunnel_registry.read().await;
+                    let tunnel = registry.get(&tunnel_name).cloned();
+                    drop(registry);
+                    let relay = relay_url.to_string();
+                    let tok = token.to_string();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_file_session(
+                            &relay, &tok, &session_id, &session_secret,
+                            tunnel, &mode, path.as_deref(), expected_mtime,
+                        ).await {
+                            tracing::error!("file session {session_id} failed: {e:#}");
+                        }
+                    });
+                }
+                #[cfg(not(feature = "services"))]
+                {
+                    let _ = (&session_id, &session_secret, &tunnel_name, &mode, &path, &expected_mtime);
+                }
             }
         }
     }
@@ -735,6 +758,7 @@ async fn proxy_session_stream(
 
 /// Handle a file session: connect data WS to relay, then dispatch to
 /// the appropriate file tunnel handler (read or write).
+#[cfg(feature = "services")]
 async fn handle_file_session(
     relay_url: &str,
     token: &str,

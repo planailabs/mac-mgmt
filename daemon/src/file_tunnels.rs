@@ -23,6 +23,15 @@ pub struct FileTunnelRegistry {
     tunnels: HashMap<String, FileTunnel>,
 }
 
+/// Stub when services feature is disabled — the relay client still needs the type.
+#[cfg(not(feature = "services"))]
+pub struct FileTunnelRegistry;
+
+#[cfg(not(feature = "services"))]
+impl FileTunnelRegistry {
+    pub fn new() -> Self { Self }
+}
+
 #[cfg(feature = "services")]
 impl FileTunnelRegistry {
     pub fn new() -> Self {
