@@ -98,22 +98,14 @@ async fn proxy_security_headers(
         .map(String::from);
     let is_preflight = request.method() == axum::http::Method::OPTIONS;
 
-    // Check if the Origin matches any allowed CORS origin.
-    // Entries can be full URLs ("http://localhost:8080") for exact match,
-    // or bare host/host:port suffixes ("localhost", "localhost:8080").
+    // Check if the Origin exactly matches any allowed CORS origin.
+    // Entries must be full URLs (e.g. "http://localhost:8080").
     let allowed_origin = origin.as_ref().and_then(|o| {
-        let host_port = o
-            .trim_start_matches("https://")
-            .trim_start_matches("http://");
-        let matched = cors_origins.iter().any(|allowed| {
-            // Full URL match (e.g. "http://localhost:8080" == origin)
-            if allowed.contains("://") {
-                return o == allowed;
-            }
-            // Suffix match against host:port
-            host_port.ends_with(allowed)
-        });
-        if matched { Some(o.clone()) } else { None }
+        if cors_origins.iter().any(|allowed| o == allowed) {
+            Some(o.clone())
+        } else {
+            None
+        }
     });
 
     // Handle CORS preflight (OPTIONS) — return immediately without hitting the handler.

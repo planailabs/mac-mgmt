@@ -33,9 +33,9 @@ pub struct RelayConfig {
     pub proxy_url: Option<String>,
 
     /// Origins allowed to make cross-origin requests to the proxy (e.g. the
-    /// management server's web UI). Defaults to `["localhost"]`.
-    /// Entries can be full URLs (`"http://localhost:8080"`) for exact match,
-    /// or bare host/host:port suffixes (`"localhost"`, `"example.com:7377"`).
+    /// management server's web UI). Each entry is a full origin URL
+    /// (e.g. `"http://localhost:8080"`) matched exactly against the
+    /// request's Origin header.
     #[serde(default = "default_cors_origins")]
     pub cors_origins: Vec<String>,
 
@@ -46,7 +46,7 @@ pub struct RelayConfig {
 }
 
 fn default_cors_origins() -> Vec<String> {
-    vec!["localhost".to_string()]
+    vec!["http://localhost".to_string()]
 }
 
 fn default_data_dir() -> String {

@@ -18,9 +18,8 @@ proxy_hostname = "localhost"
 proxy_url = "http://localhost:7379"
 
 # Origins allowed to make cross-origin requests to the proxy
-# (e.g. the management server's web UI). Can be full URLs
-# ("http://localhost:8080") or host/host:port suffixes ("localhost").
-# Default: ["localhost"]
+# (e.g. the management server's web UI). Full origin URLs, matched exactly.
+# Default: ["http://localhost"]
 cors_origins = ["localhost:8080"]
 
 # Directory for persistent data (port reservations).
