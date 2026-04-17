@@ -99,6 +99,32 @@ fn build_relay_file_url(relay_url: &str, instance_prefix: &str, tunnel_name: &st
     format!("{scheme}{instance_prefix}.{relay_host}/api/files/{tunnel_name}{suffix}")
 }
 
+async fn relay_file_list(
+    relay_url: &str,
+    token: &str,
+    instance_prefix: &str,
+    tunnel_name: &str,
+    path: Option<&str>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut url = build_relay_file_url(relay_url, instance_prefix, tunnel_name, "");
+    if let Some(p) = path {
+        url = format!("{url}?path={p}");
+    }
+    let js = format!(
+        r#"
+        const resp = await fetch("{url}", {{
+            headers: {{ "Authorization": "Bearer {token}" }}
+        }});
+        const body = await resp.text();
+        return body;
+        "#,
+    );
+    let result: serde_json::Value = document::eval(&js).await.map_err(|e| format!("{e}"))?;
+    let text: String = result.as_str().unwrap_or("").to_string();
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("parse: {e}"))?;
+    Ok(v["entries"].as_array().cloned().unwrap_or_default())
+}
+
 async fn relay_file_read(
     relay_url: &str,
     token: &str,
@@ -210,6 +236,10 @@ pub fn FleetFiles(instance_id: String) -> Element {
     let mut editor_error = use_signal(|| Option::<String>::None);
     let mut editor_is_binary = use_signal(|| false);
     let mut save_status = use_signal(|| Option::<String>::None);
+    // Directory expansion: tunnel_name → list of file entries
+    let mut dir_entries: Signal<std::collections::HashMap<String, Vec<serde_json::Value>>> =
+        use_signal(|| std::collections::HashMap::new());
+    let mut dir_loading = use_signal(|| Option::<String>::None);
 
     let ctx = use_server_future(move || {
         let iid = instance_id.clone();
@@ -305,7 +335,10 @@ pub fn FleetFiles(instance_id: String) -> Element {
                             let description = ft["description"].as_str().unwrap_or("").to_string();
                             let writable = ft["writable"].as_bool().unwrap_or(false);
                             let kind = ft["kind"].as_str().unwrap_or("file").to_string();
-                            let is_selected = selected_tunnel.read().as_deref() == Some(&name);
+                            let is_dir = kind == "directory";
+                            let is_expanded = dir_entries.read().contains_key(&name);
+                            let is_selected = selected_tunnel.read().as_deref() == Some(&name)
+                                && selected_path.read().is_none();
 
                             let bg = if is_selected {
                                 "bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700"
@@ -314,14 +347,33 @@ pub fn FleetFiles(instance_id: String) -> Element {
                             };
 
                             let name_click = name.clone();
-                            let kind_click = kind.clone();
+                            let name_entries = name.clone();
                             rsx! {
                                 button {
                                     class: "w-full text-left p-2 rounded border mb-1 {bg}",
                                     onclick: move |_| {
                                         let n = name_click.clone();
-                                        selected_tunnel.set(Some(n.clone()));
-                                        if kind_click == "file" {
+                                        if is_dir {
+                                            // Toggle directory expansion
+                                            if dir_entries.read().contains_key(&n) {
+                                                dir_entries.write().remove(&n);
+                                            } else {
+                                                let ru = relay_url.read().clone();
+                                                let tok = proxy_token.read().clone();
+                                                let prefix = instance_prefix.read().clone();
+                                                let tn = n.clone();
+                                                dir_loading.set(Some(tn.clone()));
+                                                spawn(async move {
+                                                    match relay_file_list(&ru, &tok, &prefix, &tn, None).await {
+                                                        Ok(entries) => { dir_entries.write().insert(tn, entries); }
+                                                        Err(e) => editor_error.set(Some(e)),
+                                                    }
+                                                    dir_loading.set(None);
+                                                });
+                                            }
+                                        } else {
+                                            // Single file tunnel — load directly
+                                            selected_tunnel.set(Some(n.clone()));
                                             selected_path.set(None);
                                             let ru = relay_url.read().clone();
                                             let tok = proxy_token.read().clone();
@@ -342,14 +394,15 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                                 }
                                                 editor_loading.set(false);
                                             });
-                                        } else {
-                                            selected_path.set(None);
-                                            editor_content.set(String::new());
-                                            editor_error.set(Some("Select a file from the directory listing".into()));
                                         }
                                     },
                                     div { class: "flex items-center justify-between",
                                         div {
+                                            if is_dir {
+                                                span { class: "mr-1 text-xs",
+                                                    if is_expanded { "v" } else { ">" }
+                                                }
+                                            }
                                             span { class: "font-medium text-sm", "{name}" }
                                             if !writable {
                                                 span { class: "ml-2 text-xs px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded", "read-only" }
@@ -359,6 +412,69 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                     }
                                     if !description.is_empty() {
                                         p { class: "text-xs text-gray-500 mt-1", "{description}" }
+                                    }
+                                }
+                                // Expanded directory entries
+                                if is_dir {
+                                    if dir_loading.read().as_deref() == Some(&*name_entries) {
+                                        div { class: "ml-4 py-1 text-xs text-gray-500", "Loading..." }
+                                    }
+                                    if let Some(entries) = dir_entries.read().get(&name_entries) {
+                                        for entry in entries.iter() {
+                                            {
+                                                let fname = entry["name"].as_str().unwrap_or("").to_string();
+                                                let fkind = entry["kind"].as_str().unwrap_or("file");
+                                                let fsize = entry["size"].as_u64().unwrap_or(0);
+                                                let tunnel_for_file = name_entries.clone();
+                                                let fname_click = fname.clone();
+                                                let is_file_selected = selected_tunnel.read().as_deref() == Some(&*tunnel_for_file)
+                                                    && selected_path.read().as_deref() == Some(&*fname);
+                                                let file_bg = if is_file_selected {
+                                                    "bg-blue-50 dark:bg-blue-900/30"
+                                                } else {
+                                                    "hover:bg-gray-50 dark:hover:bg-gray-700"
+                                                };
+                                                if fkind == "file" {
+                                                    rsx! {
+                                                        button {
+                                                            class: "w-full text-left ml-4 pl-2 py-1 rounded text-sm {file_bg}",
+                                                            onclick: move |_| {
+                                                                let tn = tunnel_for_file.clone();
+                                                                let fp = fname_click.clone();
+                                                                selected_tunnel.set(Some(tn.clone()));
+                                                                selected_path.set(Some(fp.clone()));
+                                                                let ru = relay_url.read().clone();
+                                                                let tok = proxy_token.read().clone();
+                                                                let prefix = instance_prefix.read().clone();
+                                                                spawn(async move {
+                                                                    editor_loading.set(true);
+                                                                    editor_error.set(None);
+                                                                    save_status.set(None);
+                                                                    match relay_file_read(&ru, &tok, &prefix, &tn, Some(&fp)).await {
+                                                                        Ok((content, mtime, _size, is_binary)) => {
+                                                                            editor_content.set(content);
+                                                                            editor_mtime.set(mtime);
+                                                                            editor_is_binary.set(is_binary);
+                                                                            editor_dirty.set(false);
+                                                                        }
+                                                                        Err(e) => editor_error.set(Some(e)),
+                                                                    }
+                                                                    editor_loading.set(false);
+                                                                });
+                                                            },
+                                                            span { class: "text-gray-700 dark:text-gray-300", "{fname}" }
+                                                            span { class: "ml-2 text-xs text-gray-400", "{fsize}B" }
+                                                        }
+                                                    }
+                                                } else {
+                                                    rsx! {
+                                                        div { class: "ml-4 pl-2 py-1 text-sm text-gray-500",
+                                                            "{fname}/"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
