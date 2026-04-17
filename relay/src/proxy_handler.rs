@@ -57,10 +57,17 @@ pub struct ProxyState {
     pub registry: Arc<DaemonRegistry>,
     pub server_api_url: String,
     pub proxy_hostname: String,
+    /// Origin suffixes allowed for CORS on the file API (e.g. `["localhost"]`).
+    pub cors_origins: Vec<String>,
 }
+
+/// Shared CORS config passed via axum Extension.
+#[derive(Clone)]
+struct CorsConfig(Arc<Vec<String>>);
 
 /// Build the Axum router for proxy endpoints (served on wildcard subdomains).
 pub fn router(state: ProxyState) -> Router {
+    let cors = CorsConfig(Arc::new(state.cors_origins.clone()));
     Router::new()
         // Bootstrap: stores token as cookie, redirects to /
         .route("/proxy", get(proxy_bootstrap))
@@ -73,29 +80,86 @@ pub fn router(state: ProxyState) -> Router {
         // Catch-all: reverse proxy for HTTP and WS upgrades
         .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
+        .layer(axum::Extension(cors))
         .with_state(state)
 }
 
-/// Security headers that isolate the subdomain.
+/// Security headers + CORS for the proxy subdomain.
 async fn proxy_security_headers(
+    axum::Extension(cors): axum::Extension<CorsConfig>,
     request: axum::extract::Request,
     next: Next,
 ) -> axum::response::Response {
+    let cors_origins = &cors.0;
+    let origin = request
+        .headers()
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    let is_preflight = request.method() == axum::http::Method::OPTIONS;
+
+    // Check if the Origin matches any allowed CORS origin suffix.
+    let allowed_origin = origin.as_ref().and_then(|o| {
+        let host = o
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(':')
+            .next()
+            .unwrap_or("");
+        if cors_origins.iter().any(|allowed| host.ends_with(allowed)) {
+            Some(o.clone())
+        } else {
+            None
+        }
+    });
+
+    // Handle CORS preflight (OPTIONS) — return immediately without hitting the handler.
+    if is_preflight {
+        if let Some(ref ao) = allowed_origin {
+            return axum::response::Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .header("access-control-allow-origin", ao.as_str())
+                .header("access-control-allow-methods", "GET, POST, OPTIONS")
+                .header("access-control-allow-headers", "authorization, content-type")
+                .header("access-control-expose-headers", "x-file-mtime, x-file-size")
+                .header("access-control-max-age", "3600")
+                .body(Body::empty())
+                .unwrap()
+                .into_response();
+        } else {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    // Isolate from other subdomains
+
     headers.insert(
         axum::http::header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    headers.insert(
-        "cross-origin-opener-policy",
-        HeaderValue::from_static("same-origin"),
-    );
-    headers.insert(
-        "cross-origin-resource-policy",
-        HeaderValue::from_static("same-origin"),
-    );
+
+    // Add CORS headers if the origin is allowed.
+    if let Some(ao) = allowed_origin {
+        if let Ok(val) = HeaderValue::from_str(&ao) {
+            headers.insert("access-control-allow-origin", val);
+        }
+        headers.insert(
+            "access-control-expose-headers",
+            HeaderValue::from_static("x-file-mtime, x-file-size"),
+        );
+    } else {
+        // No CORS — keep strict isolation for same-origin proxy requests.
+        headers.insert(
+            "cross-origin-opener-policy",
+            HeaderValue::from_static("same-origin"),
+        );
+        headers.insert(
+            "cross-origin-resource-policy",
+            HeaderValue::from_static("same-origin"),
+        );
+    }
+
     response
 }
 

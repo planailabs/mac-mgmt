@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
             registry: Arc::clone(&registry),
             server_api_url: cfg.server_api_url.clone(),
             proxy_hostname: proxy_hostname.clone(),
+            cors_origins: cfg.cors_origins.clone(),
         };
         (proxy_hostname.clone(), proxy_handler::router(proxy_state))
     });

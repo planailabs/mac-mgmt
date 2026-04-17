@@ -32,10 +32,21 @@ pub struct RelayConfig {
     /// config. Defaults to `https://{proxy_hostname}` if not set.
     pub proxy_url: Option<String>,
 
+    /// Origins allowed to make cross-origin requests to the proxy file API
+    /// (e.g. the management server's web UI). Defaults to `["localhost"]`.
+    /// Each entry is matched as a suffix against the request Origin header,
+    /// so `"localhost"` allows `http://localhost:7377`, `https://localhost`, etc.
+    #[serde(default = "default_cors_origins")]
+    pub cors_origins: Vec<String>,
+
     /// Directory for persistent data (port reservations, etc.).
     /// Defaults to the current working directory.
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
+}
+
+fn default_cors_origins() -> Vec<String> {
+    vec!["localhost".to_string()]
 }
 
 fn default_data_dir() -> String {
