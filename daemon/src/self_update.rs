@@ -176,22 +176,36 @@ fn version_cmp(ver: &str) -> i32 {
     a.cmp(&b) as i32
 }
 
-/// Realise `store_path` via `nix-store --realise` and replace the
+/// Realise `store_path` and register a GC root so `nix-collect-garbage`
+/// doesn't sweep the derivation out from under us. Then replace the
 /// current executable with a symlink to `{store_path}/bin/mac-mgmt`.
 ///
-/// Using a symlink instead of a byte-copy means `current_exe() →
-/// canonicalize()` on the next run resolves to the store path directly,
-/// so the store-path comparison in `check_and_apply` works without a
-/// separate marker file.
+/// The GC root lives at `{exe_dir}/.mac-mgmt.gcroot` and is created
+/// via `nix-store --realise --add-root`, which both downloads the path
+/// and registers the root atomically. The binary symlink lets
+/// `current_exe() → canonicalize()` resolve to the store path so
+/// `check_and_apply` can compare store paths directly.
 fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
-    tracing::info!("realising {store_path}");
+    let current_exe = std::env::current_exe().context("failed to get current exe path")?;
+    let parent = current_exe.parent().context("current exe has no parent dir")?;
+    let gcroot = parent.join(".mac-mgmt.gcroot");
+
+    // Remove a prior gcroot so --add-root can create a fresh symlink.
+    let _ = std::fs::remove_file(&gcroot);
+
+    tracing::info!("realising {store_path} (gcroot {})", gcroot.display());
     let output = Command::new("nix-store")
-        .args(["--realise", store_path])
+        .args([
+            "--realise",
+            "--add-root",
+            gcroot.to_str().unwrap_or(".mac-mgmt.gcroot"),
+            store_path,
+        ])
         .output()
-        .context("failed to run nix-store --realise")?;
+        .context("failed to run nix-store --realise --add-root")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("nix-store --realise failed: {stderr}");
+        anyhow::bail!("nix-store --realise --add-root failed: {stderr}");
     }
 
     let new_bin = Path::new(store_path).join("bin").join("mac-mgmt");
@@ -199,20 +213,13 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
         anyhow::bail!("binary not found at {}", new_bin.display());
     }
 
-    let current_exe = std::env::current_exe().context("failed to get current exe path")?;
-    let parent = current_exe.parent().context("current exe has no parent dir")?;
     let tmp_link = parent.join(".mac-mgmt.update");
-
-    // Remove any leftover temp from a prior interrupted update.
     let _ = std::fs::remove_file(&tmp_link);
 
     std::os::unix::fs::symlink(&new_bin, &tmp_link).with_context(|| {
         format!("symlink {} -> {}", tmp_link.display(), new_bin.display())
     })?;
 
-    // Atomic rename over the current exe. The running process keeps its
-    // open fd to the old inode; on restart (systemd, launchd) the new
-    // symlink is followed.
     std::fs::rename(&tmp_link, &current_exe)
         .context("failed to rename new binary link over current")?;
 
