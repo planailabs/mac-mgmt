@@ -206,22 +206,9 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     // Remove any leftover temp from a prior interrupted update.
     let _ = std::fs::remove_file(&tmp_link);
 
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&new_bin, &tmp_link).with_context(|| {
-            format!(
-                "symlink {} -> {}",
-                tmp_link.display(),
-                new_bin.display()
-            )
-        })?;
-    }
-    #[cfg(not(unix))]
-    {
-        // Non-unix: fall back to copy (symlinks may not be available).
-        std::fs::copy(&new_bin, &tmp_link)
-            .context("failed to copy new binary to temp location")?;
-    }
+    std::os::unix::fs::symlink(&new_bin, &tmp_link).with_context(|| {
+        format!("symlink {} -> {}", tmp_link.display(), new_bin.display())
+    })?;
 
     // Atomic rename over the current exe. The running process keeps its
     // open fd to the old inode; on restart (systemd, launchd) the new
