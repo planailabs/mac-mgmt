@@ -53,7 +53,7 @@ pub async fn get_file_editor_context(
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
 
     sqlx::query(
         "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
