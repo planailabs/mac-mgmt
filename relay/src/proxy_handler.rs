@@ -602,7 +602,7 @@ async fn file_list(
     if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
         return resp;
     }
-    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -647,7 +647,7 @@ async fn file_read(
     if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
         return resp;
     }
-    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -762,7 +762,7 @@ async fn file_write(
     if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
         return resp;
     }
-    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 

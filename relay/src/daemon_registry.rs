@@ -384,6 +384,12 @@ impl DaemonRegistry {
         daemons.get(instance_id).map(|d| d.control_tx.clone())
     }
 
+    /// Resolve a prefix to a full instance ID, then return its control channel.
+    pub fn resolve_control_tx(&self, prefix: &str) -> Option<mpsc::Sender<ControlMsg>> {
+        let full_id = self.resolve_prefix(prefix)?;
+        self.get_control_tx(&full_id)
+    }
+
     /// Update the advertised tunnels for a connected daemon. Capped at 100 per daemon.
     pub fn update_tunnels(&self, instance_id: &str, tunnels: Vec<ServiceTunnel>) {
         let mut daemons = self.daemons.write().unwrap();

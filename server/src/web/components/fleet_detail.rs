@@ -32,9 +32,11 @@ struct FleetDetailData {
     #[serde(default)]
     tunnels: Option<serde_json::Value>,
     /// Relay proxy hostname (e.g. "relay.plan.ai") from the heartbeat.
-    /// Required to build a working proxy URL; absent -> no tunnel buttons.
     #[serde(default)]
     relay_proxy_hostname: Option<String>,
+    /// Full relay proxy URL (e.g. "http://localhost:7379") for building tunnel links.
+    #[serde(default)]
+    relay_proxy_url: Option<String>,
     /// Exposed file tunnels for remote config editing.
     #[serde(default)]
     file_tunnels: Option<serde_json::Value>,
@@ -123,12 +125,13 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         services: serde_json::Value,
         tunnels: serde_json::Value,
         relay_proxy_hostname: Option<String>,
+        relay_proxy_url: Option<String>,
         file_tunnels: serde_json::Value,
     }
     let hb: HbRow = sqlx::query_as(
         "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.hostname, dh.environment, \
                 dh.version, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
-                dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.file_tunnels \
+                dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.file_tunnels \
          FROM daemon_heartbeats dh JOIN clusters c ON c.id = dh.cluster_id \
          WHERE dh.instance_id = $1 \
          ORDER BY dh.reported_at DESC LIMIT 1",
@@ -220,6 +223,7 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         services: Some(hb.services),
         tunnels: Some(hb.tunnels),
         relay_proxy_hostname: hb.relay_proxy_hostname,
+        relay_proxy_url: hb.relay_proxy_url,
         file_tunnels: Some(hb.file_tunnels),
         inventory: ass.as_ref().map(|a| a.inventory.clone()),
         inventory_collected_at: ass.as_ref().map(|a| a.collected_at),
@@ -309,6 +313,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                 .collect()
         })
         .unwrap_or_default();
+    let proxy_url = d.relay_proxy_url.clone();
     let proxy_hostname = d.relay_proxy_hostname.clone();
     let instance_prefix: String = d.instance_id.chars().take(12).collect();
 
@@ -366,18 +371,19 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Tunnels ──
-        // Clickable only when both the tunnels array and relay_proxy_hostname
-        // are present. Without a proxy hostname the daemon is either on a
+        // Clickable only when both the tunnels array and relay_proxy_url
+        // are present. Without a proxy URL the daemon is either on a
         // bare relay or offline, so the buttons have nowhere to point.
         if !tunnel_names.is_empty() {
             div { class: "mb-6",
                 h3 { class: "text-lg font-semibold mb-2", "Tunnels" }
-                if let Some(ref hostname) = proxy_hostname {
+                if let Some(ref purl) = proxy_url {
                     div { class: "flex flex-wrap gap-2",
                         for tname in tunnel_names.iter() {
                             {
                                 let tn = tname.clone();
-                                let ph = hostname.clone();
+                                let pu = purl.clone();
+                                let ph = proxy_hostname.clone().unwrap_or_default();
                                 let iid = instance_prefix.clone();
                                 rsx! {
                                     button {
@@ -385,13 +391,15 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                         title: "Open a short-lived proxy URL in a new tab",
                                         onclick: move |_| {
                                             let tn = tn.clone();
+                                            let pu = pu.clone();
                                             let ph = ph.clone();
                                             let iid = iid.clone();
                                             async move {
                                                 match create_detail_proxy_token().await {
                                                     Ok(res) => {
+                                                        let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
                                                         let url = format!(
-                                                            "https://{iid}-{tn}.{ph}/proxy?proxy_token={}",
+                                                            "{scheme}{iid}-{tn}.{ph}/proxy?proxy_token={}",
                                                             res.proxy_token
                                                         );
                                                         let _ = document::eval(&format!(

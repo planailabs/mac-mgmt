@@ -876,7 +876,7 @@ async fn file_list_handler(
     if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting", "proxy"]).await {
         return resp;
     }
-    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let request_id = Uuid::new_v4().to_string();
@@ -907,7 +907,7 @@ async fn file_read_handler(
     if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting", "proxy"]).await {
         return resp;
     }
-    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -984,7 +984,7 @@ async fn file_write_handler(
     if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting", "proxy"]).await {
         return resp;
     }
-    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 

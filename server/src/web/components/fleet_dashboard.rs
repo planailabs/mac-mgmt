@@ -21,6 +21,7 @@ struct FleetEntry {
     services: serde_json::Value,
     tunnels: serde_json::Value,
     relay_proxy_hostname: Option<String>,
+    relay_proxy_url: Option<String>,
     reported_at: DateTime<Utc>,
     /// Latest dynamic sample piggybacked on the heartbeat (CPU/mem/thermal).
     #[serde(default)]
@@ -60,6 +61,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         services: serde_json::Value,
         tunnels: serde_json::Value,
         relay_proxy_hostname: Option<String>,
+        relay_proxy_url: Option<String>,
         reported_at: DateTime<Utc>,
         sample: Option<serde_json::Value>,
         services_extended: Option<serde_json::Value>,
@@ -125,7 +127,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 
     let rows = if let Some(ids) = effective {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              WHERE dh.cluster_id = ANY($1) \
@@ -137,7 +139,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              ORDER BY dh.reported_at DESC",
@@ -160,6 +162,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
             services: r.services,
             tunnels: r.tunnels,
             relay_proxy_hostname: r.relay_proxy_hostname,
+            relay_proxy_url: r.relay_proxy_url,
             reported_at: r.reported_at,
             sample: r.sample,
             services_extended: r.services_extended,
@@ -652,6 +655,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                 }
                                                 td { class: "px-6 py-4 text-sm",
                                                     {
+                                                        let proxy_url = entry.relay_proxy_url.clone();
                                                         let proxy_hostname = entry.relay_proxy_hostname.clone();
                                                         let tunnel_names: Vec<String> = entry.tunnels
                                                             .as_array()
@@ -662,25 +666,28 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
 
                                                         rsx! {
                                                             if is_online {
-                                                                if let Some(ref hostname) = proxy_hostname {
+                                                                if let Some(ref purl) = proxy_url {
                                                                     div { class: "flex gap-1 flex-wrap",
                                                                         for tname in &tunnel_names {
                                                                             {
                                                                                 let iid = entry.instance_id.chars().take(12).collect::<String>();
                                                                                 let tn = tname.clone();
-                                                                                let ph = hostname.clone();
+                                                                                let pu = purl.clone();
+                                                                                let ph = proxy_hostname.clone().unwrap_or_default();
                                                                                 rsx! {
                                                                                     button {
                                                                                         class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
                                                                                         onclick: move |_| {
                                                                                             let iid = iid.clone();
                                                                                             let tn = tn.clone();
+                                                                                            let pu = pu.clone();
                                                                                             let ph = ph.clone();
                                                                                             async move {
                                                                                                 match create_fleet_proxy_token().await {
                                                                                                     Ok(result) => {
+                                                                                                        let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
                                                                                                         let url = format!(
-                                                                                                            "https://{iid}-{tn}.{ph}/proxy?proxy_token={}",
+                                                                                                            "{scheme}{iid}-{tn}.{ph}/proxy?proxy_token={}",
                                                                                                             result.proxy_token
                                                                                                         );
                                                                                                         // Open in new tab
