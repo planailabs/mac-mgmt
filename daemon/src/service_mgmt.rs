@@ -669,6 +669,7 @@ impl ServiceManager {
 
 /// File tunnels for the daemon's own config directory (not a ManagedService).
 fn daemon_config_file_tunnels() -> Vec<FileTunnelDef> {
+    use crate::managed_service::FileValidator;
     vec![FileTunnelDef {
         name: "daemon-config".into(),
         service: "daemon".into(),
@@ -676,7 +677,10 @@ fn daemon_config_file_tunnels() -> Vec<FileTunnelDef> {
         kind: FileTunnelKind::Directory,
         writable: true,
         include: Some(vec!["config.toml".into(), "ollama-env".into()]),
-        validators: Vec::new(),
+        validators: vec![FileValidator {
+            glob: "config.toml".into(),
+            command: vec!["mac-mgmt".into(), "check-config".into()],
+        }],
         description: "Daemon configuration directory".into(),
     }]
 }

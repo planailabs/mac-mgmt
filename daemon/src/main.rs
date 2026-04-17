@@ -102,7 +102,11 @@ enum Commands {
         store_path: Option<String>,
     },
     /// Validate the config file and exit
-    CheckConfig,
+    CheckConfig {
+        /// Path to config file (defaults to the standard config path)
+        #[arg(long)]
+        path: Option<String>,
+    },
     /// Show daemon and service status
     Status {
         /// Metrics port (reads from config if omitted)
@@ -269,13 +273,20 @@ async fn main() -> Result<()> {
         Commands::Sync => {
             logs::trigger_sync(None).await?;
         }
-        Commands::CheckConfig => {
-            let cfg = config::load().await.map_err(|e| {
-                eprintln!("config error: {e}");
+        Commands::CheckConfig { path } => {
+            let path = path
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(config::config_path);
+            let contents = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                eprintln!("failed to read {}: {e}", path.display());
                 std::process::exit(1);
-            }).unwrap();
+            });
+            let cfg: mac_mgmt_common::DaemonConfig = toml::from_str(&contents).unwrap_or_else(|e| {
+                eprintln!("parse error: {e}");
+                std::process::exit(1);
+            });
             if let Err(e) = cfg.daemon.validate() {
-                eprintln!("config error: {e}");
+                eprintln!("validation error: {e}");
                 std::process::exit(1);
             }
             println!("config OK");
