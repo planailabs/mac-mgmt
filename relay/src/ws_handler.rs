@@ -579,6 +579,7 @@ struct ScrapeOutcome {
     instance_id: String,
     hostname: String,
     cluster_id: String,
+    cluster_name: String,
     families: Vec<prometheus::proto::MetricFamily>,
     up: bool,
     duration_secs: f64,
@@ -675,6 +676,7 @@ async fn scrape_one(
         .cluster_id
         .map(|c| c.to_string())
         .unwrap_or_default();
+    let cluster_name = tunnel.cluster_name.clone().unwrap_or_default();
 
     let Some(control_tx) = registry.get_control_tx(&instance_id) else {
         tracing::debug!("federated metrics: {instance_id} has no control channel");
@@ -682,6 +684,7 @@ async fn scrape_one(
             instance_id,
             hostname,
             cluster_id,
+            cluster_name,
             families: Vec::new(),
             up: false,
             duration_secs: started.elapsed().as_secs_f64(),
@@ -704,6 +707,7 @@ async fn scrape_one(
             instance_id,
             hostname,
             cluster_id,
+            cluster_name,
             families: Vec::new(),
             up: false,
             duration_secs: started.elapsed().as_secs_f64(),
@@ -714,11 +718,12 @@ async fn scrape_one(
 
     match result {
         Ok(Ok(resp)) if resp.status == 200 => {
-            match parse_and_relabel(&resp.body, &instance_id, &hostname, &cluster_id) {
+            match parse_and_relabel(&resp.body, &instance_id, &hostname, &cluster_id, &cluster_name) {
                 Ok(families) => ScrapeOutcome {
                     instance_id,
                     hostname,
                     cluster_id,
+                    cluster_name,
                     families,
                     up: true,
                     duration_secs: started.elapsed().as_secs_f64(),
@@ -729,6 +734,7 @@ async fn scrape_one(
                         instance_id,
                         hostname,
                         cluster_id,
+                        cluster_name,
                         families: Vec::new(),
                         up: false,
                         duration_secs: started.elapsed().as_secs_f64(),
@@ -745,6 +751,7 @@ async fn scrape_one(
                 instance_id,
                 hostname,
                 cluster_id,
+                cluster_name,
                 families: Vec::new(),
                 up: false,
                 duration_secs: started.elapsed().as_secs_f64(),
@@ -756,6 +763,7 @@ async fn scrape_one(
                 instance_id,
                 hostname,
                 cluster_id,
+                cluster_name,
                 families: Vec::new(),
                 up: false,
                 duration_secs: started.elapsed().as_secs_f64(),
@@ -767,6 +775,7 @@ async fn scrape_one(
                 instance_id,
                 hostname,
                 cluster_id,
+                cluster_name,
                 families: Vec::new(),
                 up: false,
                 duration_secs: started.elapsed().as_secs_f64(),

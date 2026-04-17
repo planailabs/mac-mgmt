@@ -28,13 +28,15 @@ use protobuf::MessageField;
 /// Standard Prometheus 0.0.4 text content type.
 pub const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
-/// Parse a single daemon's `/metrics` body, inject `instance_id`, `hostname`
-/// and `cluster_id` labels into every sample, and produce typed families.
+/// Parse a single daemon's `/metrics` body, inject `instance_id`, `hostname`,
+/// `cluster_id` and `cluster_name` labels into every sample, and produce
+/// typed families.
 pub fn parse_and_relabel(
     body: &str,
     instance_id: &str,
     hostname: &str,
     cluster_id: &str,
+    cluster_name: &str,
 ) -> Result<Vec<MetricFamily>, std::io::Error> {
     let scrape = Scrape::parse(body.lines().map(|l| Ok(l.to_string())))?;
 
@@ -65,6 +67,7 @@ pub fn parse_and_relabel(
         ("instance_id", instance_id),
         ("hostname", hostname),
         ("cluster_id", cluster_id),
+        ("cluster_name", cluster_name),
     ];
 
     for sample in scrape.samples {
@@ -417,7 +420,8 @@ mod tests {
     use super::*;
 
     fn render(body: &str, instance: &str, host: &str, cluster: &str) -> String {
-        let families = parse_and_relabel(body, instance, host, cluster).expect("parse ok");
+        let families =
+            parse_and_relabel(body, instance, host, cluster, "test-cluster").expect("parse ok");
         let bytes = encode_families(&families).expect("encode ok");
         String::from_utf8(bytes).expect("utf8")
     }
