@@ -13,7 +13,7 @@ fn plist_path() -> PathBuf {
     PathBuf::from("/Library/LaunchDaemons").join(format!("{PLIST_LABEL}.plist"))
 }
 
-fn current_username() -> Result<String> {
+pub(crate) fn current_username() -> Result<String> {
     let uid = unsafe { libc::getuid() };
     let pw = unsafe { libc::getpwuid(uid) };
     if pw.is_null() {

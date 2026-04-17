@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use std::process::Command;
 
 use crate::managed_service::{FileTunnelDef, ManagedService, TunnelDef};
 use crate::sentry_ext;
