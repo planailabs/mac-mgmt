@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::connectors::merge_json;
-use crate::managed_service::{ManagedService, TunnelDef};
+use crate::managed_service::{FileTunnelDef, FileTunnelKind, FileValidator, ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OpenClawConfig;
 
@@ -384,5 +384,36 @@ impl ManagedService for OpenClaw {
             host,
             tcp_port: port,
         }]
+    }
+
+    fn expose_files(&self) -> Vec<FileTunnelDef> {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
+        let mut files = vec![FileTunnelDef {
+            name: "openclaw-config".into(),
+            service: String::new(),
+            path: home.join(".openclaw").to_string_lossy().into(),
+            kind: FileTunnelKind::Directory,
+            writable: true,
+            include: Some(vec!["openclaw.json".into()]),
+            validators: vec![FileValidator {
+                glob: "*.json".into(),
+                command: vec!["openclaw".into(), "config".into(), "validate".into()],
+            }],
+            description: "OpenClaw gateway configuration".into(),
+        }];
+        let skills_dir = home.join(".plan-ai-skills");
+        if skills_dir.exists() {
+            files.push(FileTunnelDef {
+                name: "openclaw-skills".into(),
+                service: String::new(),
+                path: skills_dir.to_string_lossy().into(),
+                kind: FileTunnelKind::Directory,
+                writable: false,
+                include: None,
+                validators: Vec::new(),
+                description: "Plan.ai skills directory".into(),
+            });
+        }
+        files
     }
 }

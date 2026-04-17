@@ -18,7 +18,7 @@ use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
 use crate::config_providers::{ConfigStore, ConnectorSnapshot};
-use crate::managed_service::{ManagedService, ServiceMode, TunnelDef};
+use crate::managed_service::{FileTunnelDef, FileTunnelKind, ManagedService, ServiceMode, TunnelDef};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
 use crate::sentry_ext;
@@ -607,6 +607,32 @@ impl ServiceManager {
             .collect()
     }
 
+    pub fn collect_file_tunnels(&self) -> Vec<FileTunnelDef> {
+        let mut file_tunnels: Vec<FileTunnelDef> = self
+            .services
+            .iter()
+            .filter(|s| s.phase.is_healthy())
+            .flat_map(|s| {
+                let mut fts = s.service.expose_files();
+                for ft in &mut fts {
+                    ft.service = s.name.clone();
+                }
+                fts
+            })
+            .collect();
+        // Install-only services can also expose files.
+        for svc in &self.install_only {
+            let mut fts = svc.expose_files();
+            for ft in &mut fts {
+                ft.service = svc.name().to_string();
+            }
+            file_tunnels.extend(fts);
+        }
+        // The daemon's own config directory is always available.
+        file_tunnels.extend(daemon_config_file_tunnels());
+        file_tunnels
+    }
+
     // ── Shutdown ─────────────────────────────────────────────────────
 
     pub async fn shutdown(&mut self) {
@@ -640,6 +666,20 @@ impl ServiceManager {
             s.phase = ServicePhase::Stopped;
         }
     }
+}
+
+/// File tunnels for the daemon's own config directory (not a ManagedService).
+fn daemon_config_file_tunnels() -> Vec<FileTunnelDef> {
+    vec![FileTunnelDef {
+        name: "daemon-config".into(),
+        service: "daemon".into(),
+        path: crate::config::config_dir().to_string_lossy().into(),
+        kind: FileTunnelKind::Directory,
+        writable: true,
+        include: Some(vec!["config.toml".into(), "ollama-env".into()]),
+        validators: Vec::new(),
+        description: "Daemon configuration directory".into(),
+    }]
 }
 
 /// Launch the services supervisor as a tokio task inside the current process.

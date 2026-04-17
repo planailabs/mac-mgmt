@@ -35,6 +35,9 @@ struct FleetDetailData {
     /// Required to build a working proxy URL; absent -> no tunnel buttons.
     #[serde(default)]
     relay_proxy_hostname: Option<String>,
+    /// Exposed file tunnels for remote config editing.
+    #[serde(default)]
+    file_tunnels: Option<serde_json::Value>,
     inventory: Option<serde_json::Value>,
     inventory_collected_at: Option<DateTime<Utc>>,
     security: Option<serde_json::Value>,
@@ -120,11 +123,12 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         services: serde_json::Value,
         tunnels: serde_json::Value,
         relay_proxy_hostname: Option<String>,
+        file_tunnels: serde_json::Value,
     }
     let hb: HbRow = sqlx::query_as(
         "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.hostname, dh.environment, \
                 dh.version, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
-                dh.services, dh.tunnels, dh.relay_proxy_hostname \
+                dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.file_tunnels \
          FROM daemon_heartbeats dh JOIN clusters c ON c.id = dh.cluster_id \
          WHERE dh.instance_id = $1 \
          ORDER BY dh.reported_at DESC LIMIT 1",
@@ -216,6 +220,7 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         services: Some(hb.services),
         tunnels: Some(hb.tunnels),
         relay_proxy_hostname: hb.relay_proxy_hostname,
+        file_tunnels: Some(hb.file_tunnels),
         inventory: ass.as_ref().map(|a| a.inventory.clone()),
         inventory_collected_at: ass.as_ref().map(|a| a.collected_at),
         security: ass.as_ref().map(|a| a.security.clone()),
@@ -416,6 +421,25 @@ fn render_detail(d: &FleetDetailData) -> Element {
                         }
                     }
                 }
+            }
+        }
+
+        // ── File Tunnels (Config Editor) ──
+        {
+            let ft_arr: Vec<serde_json::Value> = d.file_tunnels
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if !ft_arr.is_empty() {
+                rsx! {
+                    crate::web::components::file_editor::FileEditorPanel {
+                        instance_id: d.instance_id.clone(),
+                        file_tunnels: ft_arr,
+                    }
+                }
+            } else {
+                rsx! {}
             }
         }
 

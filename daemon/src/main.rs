@@ -28,6 +28,8 @@ mod sentry_ext;
 mod nix;
 mod os_mgmt;
 #[cfg(feature = "relay")]
+mod file_tunnels;
+#[cfg(feature = "relay")]
 mod remote_ssh;
 mod scripts;
 #[cfg(feature = "self-update")]

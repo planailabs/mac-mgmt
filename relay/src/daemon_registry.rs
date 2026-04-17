@@ -46,6 +46,22 @@ pub enum ControlMsg {
         body: Option<String>,
         response_tx: mpsc::Sender<ProxyStreamEvent>,
     },
+    /// List files in a file tunnel (response on control channel).
+    FileListRequest {
+        request_id: String,
+        tunnel_name: String,
+        path: Option<String>,
+        response_tx: oneshot::Sender<FileResponse>,
+    },
+    /// Start a data session for file read or write.
+    FileSessionRequest {
+        session_id: String,
+        session_secret: String,
+        tunnel_name: String,
+        mode: String,
+        path: Option<String>,
+        expected_mtime: Option<i64>,
+    },
 }
 
 /// Events streamed back from daemon for a proxy stream request.
@@ -57,6 +73,13 @@ pub enum ProxyStreamEvent {
     BodyChunk(Vec<u8>),
     /// Response complete.
     End,
+}
+
+/// Response from daemon for a file tunnel operation.
+#[derive(Debug)]
+pub struct FileResponse {
+    pub status: u16,
+    pub body: serde_json::Value,
 }
 
 /// Response from daemon for a proxied metrics request.

@@ -61,6 +61,10 @@ pub struct HeartbeatBody {
     /// Optional for back-compat.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub services_extended: Vec<ServiceExtState>,
+    /// Exposed file tunnels for remote config editing through the relay.
+    /// Optional for back-compat with older daemons.
+    #[serde(default)]
+    pub file_tunnels: serde_json::Value,
 }
 
 /// Small dynamic sample sent with each heartbeat. GDPR allowlist: no user data,

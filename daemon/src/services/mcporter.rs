@@ -1,6 +1,7 @@
 use anyhow::Result;
+use std::path::PathBuf;
 
-use crate::managed_service::{ManagedService, ServiceMode};
+use crate::managed_service::{FileTunnelDef, FileTunnelKind, ManagedService, ServiceMode};
 use crate::sentry_ext;
 
 const PKG: &str = "mcporter";
@@ -62,5 +63,24 @@ impl ManagedService for McPorter {
         crate::nix::profile_install(PKG, true)?;
         tracing::info!("{PKG} upgraded");
         Ok(true)
+    }
+
+    fn expose_files(&self) -> Vec<FileTunnelDef> {
+        let config_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/root"))
+            .join(".mcporter");
+        if !config_dir.exists() {
+            return Vec::new();
+        }
+        vec![FileTunnelDef {
+            name: "mcporter-config".into(),
+            service: String::new(),
+            path: config_dir.to_string_lossy().into(),
+            kind: FileTunnelKind::Directory,
+            writable: false,
+            include: Some(vec!["*.json".into()]),
+            validators: Vec::new(),
+            description: "McPorter MCP server configuration (managed by daemon)".into(),
+        }]
     }
 }

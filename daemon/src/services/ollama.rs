@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
-use crate::managed_service::{ManagedService, TunnelDef};
+use crate::managed_service::{FileTunnelDef, FileTunnelKind, ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OllamaConfig;
 
@@ -225,6 +225,20 @@ impl ManagedService for Ollama {
             name: "ollama".into(),
             host: self.effective_host().to_string(),
             tcp_port: self.effective_port(),
+        }]
+    }
+
+    fn expose_files(&self) -> Vec<FileTunnelDef> {
+        let env_path = crate::config::config_dir().join("ollama-env");
+        vec![FileTunnelDef {
+            name: "ollama-env".into(),
+            service: String::new(),
+            path: env_path.to_string_lossy().into(),
+            kind: FileTunnelKind::File,
+            writable: true,
+            include: None,
+            validators: Vec::new(),
+            description: "Ollama environment variables (key=value)".into(),
         }]
     }
 }

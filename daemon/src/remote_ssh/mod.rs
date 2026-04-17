@@ -12,6 +12,7 @@ use std::sync::Arc;
 use russh::keys::{PrivateKey, PublicKey};
 use tokio::sync::RwLock;
 
+use crate::file_tunnels::FileTunnelRegistry;
 pub use relay_client::TunnelTarget;
 
 #[derive(Debug)]
@@ -37,6 +38,8 @@ pub struct Manager {
     ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>>,
     /// Signal the main loop to send a heartbeat (e.g. after tunnel changes).
     heartbeat_tx: tokio::sync::mpsc::Sender<()>,
+    /// File tunnel registry shared with the relay client.
+    file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
 }
 
 impl Manager {
@@ -58,6 +61,7 @@ impl Manager {
         let ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>> =
             Arc::new(RwLock::new(None));
         let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel(4);
+        let file_tunnel_registry = Arc::new(RwLock::new(FileTunnelRegistry::new()));
 
         let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move {
@@ -79,10 +83,11 @@ impl Manager {
             let tdefs = Arc::clone(&tunnel_defs);
             let rph = Arc::clone(&relay_proxy_hostname);
             let wstx = Arc::clone(&ws_outgoing_tx);
+            let ftreg = Arc::clone(&file_tunnel_registry);
             tokio::spawn(async move {
                 let hk = Arc::unwrap_or_clone(host_key);
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph, wstx,
+                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph, wstx, ftreg,
                 ).await {
                     tracing::error!("relay client exited: {e:#}");
                 }
@@ -101,6 +106,7 @@ impl Manager {
             relay_proxy_hostname,
             ws_outgoing_tx,
             heartbeat_tx,
+            file_tunnel_registry,
         }, heartbeat_rx)
     }
 
@@ -168,6 +174,16 @@ impl Manager {
         if self.heartbeat_tx.try_send(()).is_err() {
             tracing::debug!("heartbeat signal channel full, heartbeat will fire on next tick");
         }
+    }
+
+    /// Update the file tunnel registry. Non-blocking.
+    #[cfg(feature = "services")]
+    pub fn update_file_tunnel_defs(&self, defs: Vec<crate::managed_service::FileTunnelDef>) {
+        let Ok(mut reg) = self.file_tunnel_registry.try_write() else {
+            tracing::warn!("file_tunnel_registry lock contention, skipping update");
+            return;
+        };
+        reg.update(defs);
     }
 
     /// Clean up resources (FIFO) on shutdown.

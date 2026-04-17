@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 
 use super::ssh_server::{self, SshSession};
 use super::ws_stream::WsStream;
+use crate::file_tunnels::FileTunnelRegistry;
 use crate::ws_reconnect::{self, WsClientConfig};
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +50,21 @@ enum ControlMessage {
         tunnel_name: String,
         mode: String,
         path: String,
+    },
+    /// List files in a file tunnel (response sent on the control channel).
+    FileListRequest {
+        request_id: String,
+        tunnel_name: String,
+        path: Option<String>,
+    },
+    /// Start a data session for file read or write.
+    FileSessionRequest {
+        session_id: String,
+        session_secret: String,
+        tunnel_name: String,
+        mode: String,
+        path: Option<String>,
+        expected_mtime: Option<i64>,
     },
 }
 
@@ -138,6 +154,7 @@ pub async fn run(
     tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
     relay_proxy_hostname: Arc<RwLock<Option<String>>>,
     ws_outgoing_tx: Arc<RwLock<Option<mpsc::Sender<String>>>>,
+    file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
 ) -> Result<()> {
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
@@ -267,6 +284,42 @@ pub async fn run(
                         &relay, &tok, &session_id, &session_secret, target, &mode, &path,
                     ).await {
                         tracing::error!("proxy session {session_id} failed: {e:#}");
+                    }
+                });
+            }
+            ControlMessage::FileListRequest { request_id, tunnel_name, path } => {
+                tracing::debug!("file list {request_id}: {tunnel_name}");
+                let registry = file_tunnel_registry.read().await;
+                let tunnel = registry.get(&tunnel_name).cloned();
+                drop(registry);
+                let out_tx = outgoing_tx.clone();
+                tokio::spawn(async move {
+                    let (status, body) = match tunnel {
+                        Some(t) => crate::file_tunnels::handle_list(&t, path.as_deref()),
+                        None => (404, serde_json::json!({ "error": "file tunnel not found" })),
+                    };
+                    let msg = serde_json::json!({
+                        "type": "file_response",
+                        "request_id": request_id,
+                        "status": status,
+                        "body": body.to_string(),
+                    });
+                    let _ = out_tx.send(msg.to_string()).await;
+                });
+            }
+            ControlMessage::FileSessionRequest { session_id, session_secret, tunnel_name, mode, path, expected_mtime } => {
+                tracing::info!("file session {session_id}: {mode} {tunnel_name}");
+                let registry = file_tunnel_registry.read().await;
+                let tunnel = registry.get(&tunnel_name).cloned();
+                drop(registry);
+                let relay = relay_url.to_string();
+                let tok = token.to_string();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_file_session(
+                        &relay, &tok, &session_id, &session_secret,
+                        tunnel, &mode, path.as_deref(), expected_mtime,
+                    ).await {
+                        tracing::error!("file session {session_id} failed: {e:#}");
                     }
                 });
             }
@@ -731,5 +784,60 @@ async fn proxy_session_stream(
 
     let _ = sink.send(tungstenite::Message::Close(None)).await;
     tracing::debug!("proxy stream session ended");
+    Ok(())
+}
+
+/// Handle a file session: connect data WS to relay, then dispatch to
+/// the appropriate file tunnel handler (read or write).
+#[cfg(feature = "services")]
+async fn handle_file_session(
+    relay_url: &str,
+    token: &str,
+    session_id: &str,
+    session_secret: &str,
+    tunnel: Option<crate::managed_service::FileTunnelDef>,
+    mode: &str,
+    path: Option<&str>,
+    expected_mtime: Option<i64>,
+) -> anyhow::Result<()> {
+    use tokio_tungstenite::tungstenite;
+
+    let Some(tunnel) = tunnel else {
+        anyhow::bail!("file tunnel not found");
+    };
+
+    // Connect data WS to relay
+    let ws_url = format!(
+        "{relay_url}/api/daemon/session/{session_id}?session_secret={}",
+        urlencoding::encode(session_secret),
+    );
+    let host = crate::ws_reconnect::extract_host(relay_url)?;
+    let request = tungstenite::http::Request::builder()
+        .uri(ws_url.parse::<tungstenite::http::Uri>()?)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Sec-WebSocket-Key", tungstenite::handshake::client::generate_key())
+        .header("Sec-WebSocket-Version", "13")
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Host", &host)
+        .body(())?;
+
+    let (data_ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .context("file session data WS connect failed")?;
+
+    tracing::debug!("file session {session_id} data WS connected");
+
+    match mode {
+        "read" => {
+            crate::file_tunnels::handle_read_session(&tunnel, path, data_ws).await;
+        }
+        "write" => {
+            crate::file_tunnels::handle_write_session(&tunnel, path, expected_mtime, data_ws)
+                .await;
+        }
+        _ => anyhow::bail!("unknown file session mode: {mode}"),
+    }
+
     Ok(())
 }

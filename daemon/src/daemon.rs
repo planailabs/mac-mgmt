@@ -202,6 +202,26 @@ impl Daemon {
             #[cfg(not(feature = "services"))]
             let tunnels: Vec<serde_json::Value> = vec![];
 
+            #[cfg(feature = "services")]
+            let file_tunnels: Vec<serde_json::Value> = self
+                .svc_mgr
+                .collect_file_tunnels()
+                .iter()
+                .map(|ft| {
+                    serde_json::json!({
+                        "name": ft.name,
+                        "service": ft.service,
+                        "path": ft.path,
+                        "kind": ft.kind,
+                        "writable": ft.writable,
+                        "include": ft.include,
+                        "description": ft.description,
+                    })
+                })
+                .collect();
+            #[cfg(not(feature = "services"))]
+            let file_tunnels: Vec<serde_json::Value> = vec![];
+
             let sample = self.assessor.latest_sample_snapshot();
             let services_extended = self.assessor.latest_probes_snapshot();
 
@@ -219,6 +239,7 @@ impl Daemon {
                     &hk,
                     services,
                     tunnels,
+                    file_tunnels,
                     relay_proxy_hostname,
                     sample,
                     services_extended,
@@ -380,6 +401,12 @@ impl Daemon {
     fn update_relay_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
         let td = self.svc_mgr.collect_tunnels();
         relay_mgr.update_tunnel_defs(td);
+    }
+
+    #[cfg(all(feature = "services", feature = "relay"))]
+    fn update_relay_file_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+        let fd = self.svc_mgr.collect_file_tunnels();
+        relay_mgr.update_file_tunnel_defs(fd);
     }
 
     #[cfg(feature = "services")]
@@ -680,6 +707,8 @@ pub async fn run(
                 daemon.handle_health_tick().await;
                 #[cfg(all(feature = "services", feature = "relay"))]
                 daemon.update_relay_tunnel_defs(&relay_mgr);
+                #[cfg(all(feature = "services", feature = "relay"))]
+                daemon.update_relay_file_tunnel_defs(&relay_mgr);
                 #[cfg(feature = "services")]
                 daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
@@ -841,6 +870,7 @@ async fn do_send_heartbeat(
     host_key: &russh::keys::PrivateKey,
     services: Vec<serde_json::Value>,
     tunnels: Vec<serde_json::Value>,
+    file_tunnels: Vec<serde_json::Value>,
     relay_proxy_hostname: Option<String>,
     sample: Option<mac_mgmt_common::DynamicSample>,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
@@ -879,6 +909,7 @@ async fn do_send_heartbeat(
         environment: ENVIRONMENT.to_string(),
         services: serde_json::Value::Array(services),
         tunnels: serde_json::Value::Array(tunnels),
+        file_tunnels: serde_json::Value::Array(file_tunnels),
         relay_proxy_hostname,
         nixpkgs_commit: crate::nix::current_nixpkgs_commit(),
         git_sha: Some(crate::GIT_SHA.to_string()),

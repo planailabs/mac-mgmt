@@ -16,6 +16,56 @@ pub struct TunnelDef {
     pub tcp_port: u16,
 }
 
+// ── File tunnels ────────────────────────────────────────────────────────
+
+/// A file or directory that a managed service exposes for remote editing
+/// through the relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileTunnelDef {
+    /// Short, URL-safe label (e.g. "ollama-env", "openclaw-config").
+    pub name: String,
+    /// The owning service name. Populated by `ServiceManager`, not the service.
+    #[serde(default)]
+    pub service: String,
+    /// Absolute path to the file or directory root on disk.
+    pub path: String,
+    /// Whether this entry is a single file or a directory.
+    pub kind: FileTunnelKind,
+    /// Whether writes are allowed (`false` = read-only).
+    pub writable: bool,
+    /// For `Directory` kind: only expose files matching these globs.
+    /// `None` = all files. Examples: `["*.json", "*.toml"]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    /// Per-file validation rules. After a write, the first validator whose
+    /// glob matches the written filename is run. If it exits non-zero the
+    /// write is rolled back. `{}` in command args is replaced with the
+    /// file's absolute path; if no `{}` is present the command runs as-is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validators: Vec<FileValidator>,
+    /// Human-readable description for the UI.
+    pub description: String,
+}
+
+/// A glob → command pair: after writing a file whose name matches `glob`,
+/// the command is executed. Non-zero exit rolls back the write.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileValidator {
+    /// Glob pattern to match filenames (e.g. `"*.json"`, `"openclaw.json"`, `"*"`).
+    pub glob: String,
+    /// Command + args. `{}` in any arg is replaced with the written file's
+    /// absolute path.
+    pub command: Vec<String>,
+}
+
+/// Whether a [`FileTunnelDef`] points at a single file or a directory tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileTunnelKind {
+    File,
+    Directory,
+}
+
 /// Whether the daemon should spawn and manage a long-running process,
 /// or only install the package (no child process).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +178,12 @@ pub trait ManagedService {
     /// Return the TCP tunnels this service exposes for browser proxying
     /// through the relay. Override to advertise one or more tunnels.
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
+        Vec::new()
+    }
+
+    /// Return the files/directories this service exposes for remote editing
+    /// through the relay. Override to advertise config files.
+    fn expose_files(&self) -> Vec<FileTunnelDef> {
         Vec::new()
     }
 }
