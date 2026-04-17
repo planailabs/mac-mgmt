@@ -325,6 +325,11 @@ pub fn FleetFiles(instance_id: String) -> Element {
                 h2 { class: "text-xl font-semibold", "Configuration Files" }
             }
 
+            div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-800 dark:text-amber-200",
+                "Changes here apply to this instance only and are not synced across the cluster. "
+                "Use the cluster configuration for settings that should be consistent across all instances."
+            }
+
             div { class: "grid grid-cols-1 lg:grid-cols-3 gap-4",
                 // Left panel: file tree
                 div { class: "lg:col-span-1 bg-white dark:bg-gray-800 rounded shadow p-4 max-h-[calc(100vh-12rem)] overflow-y-auto",
