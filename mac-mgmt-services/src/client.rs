@@ -128,7 +128,7 @@ impl Client {
                 } else {
                     Ok(names
                         .into_iter()
-                        .map(|name| ServiceStatus { name, pid: None, exe: None })
+                        .map(|name| ServiceStatus { name, pid: None, exe: None, resolved_program: None })
                         .collect())
                 }
             }

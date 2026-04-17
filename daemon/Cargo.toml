@@ -48,3 +48,4 @@ humantime = "2"
 notify = "7"
 strip-ansi-escapes = "0.2"
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network"] }
+which = { workspace = true }

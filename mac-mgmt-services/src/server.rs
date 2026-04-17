@@ -214,6 +214,10 @@ struct Entry {
     stop_tx: mpsc::Sender<()>,
     /// Live PID of the currently running child (0 when none).
     pid: Arc<AtomicU32>,
+    /// Canonical path of `spec.program` resolved at spawn time.
+    /// Stored so `List` can return it for store-path drift detection
+    /// even when the binary is a shebang wrapper script.
+    resolved_program: Option<String>,
 }
 
 impl SupervisorState {
@@ -243,7 +247,12 @@ impl SupervisorState {
                         let pid = entry.pid.load(Ordering::Relaxed);
                         let pid = if pid == 0 { None } else { Some(pid) };
                         let exe = pid.and_then(resolve_exe);
-                        ServiceStatus { name: name.clone(), pid, exe }
+                        ServiceStatus {
+                            name: name.clone(),
+                            pid,
+                            exe,
+                            resolved_program: entry.resolved_program.clone(),
+                        }
                     })
                     .collect();
                 Response::services(statuses)
@@ -275,6 +284,7 @@ impl SupervisorState {
         }
 
         tracing::info!("supervisor: registering {name}");
+        let resolved_program = resolve_program(&spec.program);
         let (stop_tx, stop_rx) = mpsc::channel(1);
         let pid = Arc::new(AtomicU32::new(0));
         let task_name = name.clone();
@@ -283,7 +293,7 @@ impl SupervisorState {
         let task = tokio::spawn(run_service(task_name, task_spec, notif_tx, stop_rx, task_pid));
         self.services.lock().await.insert(
             name,
-            Entry { spec, supervisor: task, stop_tx, pid },
+            Entry { spec, supervisor: task, stop_tx, pid, resolved_program },
         );
     }
 
@@ -457,6 +467,23 @@ fn resolve_exe(pid: u32) -> Option<String> {
 #[cfg(not(target_os = "linux"))]
 fn resolve_exe(_pid: u32) -> Option<String> {
     None
+}
+
+/// Resolve `spec.program` to a canonical path at spawn time.  For bare
+/// names (no `/`) this does a PATH lookup via the `which` crate; then
+/// canonicalises the result.  The canonical path is what `binary_store_path`
+/// on the daemon side produces, so comparing the two correctly detects
+/// store-path drift even when the binary is a shebang wrapper script (where
+/// `/proc/<pid>/exe` would point at the interpreter instead).
+fn resolve_program(program: &str) -> Option<String> {
+    let abs = if program.contains('/') {
+        std::path::PathBuf::from(program)
+    } else {
+        which::which(program).ok()?
+    };
+    std::fs::canonicalize(abs)
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Strip common ANSI escape sequences without pulling in an extra dep.

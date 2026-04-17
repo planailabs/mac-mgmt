@@ -42,6 +42,12 @@ pub struct ServiceStatus {
     /// platforms that don't expose this cheaply or when the child has no pid.
     #[serde(default)]
     pub exe: Option<String>,
+    /// Canonical path of `spec.program` resolved at spawn time via
+    /// `which` + `canonicalize`. Unlike `exe` (which points to the
+    /// interpreter for scripts), this always points to the script/binary
+    /// itself, making store-path drift detection work for shebang wrappers.
+    #[serde(default)]
+    pub resolved_program: Option<String>,
 }
 
 /// Supervisor → daemon reply.

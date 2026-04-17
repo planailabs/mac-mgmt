@@ -209,15 +209,7 @@ pub fn import_service(
     manifest: &mut InstallManifest,
     manifest_path: &std::path::Path,
 ) -> Result<bool> {
-    let binary_found = Command::new("which")
-        .arg(svc.svc.name())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !binary_found {
+    if which::which(svc.svc.name()).is_err() {
         return Ok(false);
     }
 

@@ -426,12 +426,8 @@ pub fn installed_elements() -> Result<Vec<String>> {
 /// Returns the store path prefix (e.g., `/nix/store/abc123-ollama-0.1/`),
 /// or None if the binary isn't in the nix store.
 pub fn binary_store_path(binary_name: &str) -> Option<String> {
-    let output = Command::new("which").arg(binary_name).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    store_path_prefix(&path)
+    let path = which::which(binary_name).ok()?;
+    store_path_prefix(path.to_str()?)
 }
 
 /// Extract the `/nix/store/<hash>-<name>-<version>` prefix from an absolute
@@ -574,21 +570,18 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
 /// Falls back to scanning `/nix/store/*/bin/nix` when nix isn't on PATH
 /// (e.g. after a botched profile remove left the profile link broken).
 fn resolve_nix_binary() -> Result<PathBuf> {
-    let output = Command::new("which")
-        .arg("nix")
-        .output()
-        .context("failed to run which nix")?;
-
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let canonical = std::fs::canonicalize(&path)
-            .with_context(|| format!("failed to canonicalize nix path: {path}"))?;
-        tracing::info!("resolved nix binary: {}", canonical.display());
-        return Ok(canonical);
+    match which::which("nix") {
+        Ok(path) => {
+            let canonical = std::fs::canonicalize(&path)
+                .with_context(|| format!("failed to canonicalize nix path: {}", path.display()))?;
+            tracing::info!("resolved nix binary: {}", canonical.display());
+            Ok(canonical)
+        }
+        Err(_) => {
+            tracing::warn!("nix not found in PATH, scanning /nix/store for a usable binary");
+            find_nix_in_store()
+        }
     }
-
-    tracing::warn!("nix not found in PATH, scanning /nix/store for a usable binary");
-    find_nix_in_store()
 }
 
 /// Walk `/nix/store/*/bin/nix` and return the first executable that
@@ -638,14 +631,7 @@ fn find_nix_in_store() -> Result<PathBuf> {
 /// binary in `/nix/store` and use it to reinstall nix into the profile
 /// so subsequent operations work normally.
 pub fn ensure_nix_on_path() {
-    let has_nix = Command::new("which")
-        .arg("nix")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if has_nix {
+    if which::which("nix").is_ok() {
         return;
     }
     tracing::warn!("nix not on PATH at startup — attempting store-based recovery");

@@ -267,8 +267,10 @@ impl ServiceManager {
 
     /// Ask the supervisor for its current view of the running children and
     /// set each service's `running_store_path` to the nix store prefix of
-    /// the live executable. Any services the supervisor doesn't report or
-    /// whose exe isn't in the nix store get cleared.
+    /// the spawned program.  Prefers `resolved_program` (the canonical path
+    /// of `spec.program` captured at spawn time) over `exe` (`/proc/pid/exe`)
+    /// because for shebang wrapper scripts the latter points at the
+    /// interpreter, not the wrapper itself.
     async fn refresh_running_store_paths(&mut self) {
         let Some(client) = self.client.as_mut() else { return };
         let statuses = match client.list().await {
@@ -281,10 +283,18 @@ impl ServiceManager {
         let mut by_name: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::with_capacity(statuses.len());
         for status in statuses {
+            // Prefer `resolved_program` (always the script/binary itself)
+            // over `exe` (which may be the interpreter for scripts).
             let prefix = status
-                .exe
+                .resolved_program
                 .as_deref()
-                .and_then(crate::nix::store_path_prefix);
+                .and_then(crate::nix::store_path_prefix)
+                .or_else(|| {
+                    status
+                        .exe
+                        .as_deref()
+                        .and_then(crate::nix::store_path_prefix)
+                });
             by_name.insert(status.name, prefix);
         }
         for state in &mut self.services {
