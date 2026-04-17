@@ -18,3 +18,7 @@ The supervisor and the daemon are upgraded independently (the supervisor keeps r
 - When in doubt, test with one side on the old protocol and one on the new.
 
 Mark every compat shim with a `// compat: added YYYY-MM-DD, removable after YYYY-MM-DD` comment (three months out) so a later cleanup pass can delete shims confidently instead of guessing whether something out in the wild still needs them.
+
+## Server: database migrations are append-only
+
+Never modify an existing migration file in `server/migrations/`. Migrations that have already been applied to a database cannot be re-run, so editing them has no effect on deployed instances and causes checksum mismatches. Always create a new migration with the next sequence number instead (e.g. if `033_*.sql` exists, create `034_*.sql`).
