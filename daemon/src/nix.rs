@@ -717,10 +717,12 @@ fn upgrade_nix_inner() -> Result<()> {
         tracing::info!("nix was not added from a flake, will remove and reinstall");
         sentry_ext::breadcrumb("nix", "nix not from flake, removing and reinstalling", &[]);
 
-        // Stage 3: remove nix (and nix-manual if present) from profile, then reinstall
-        // Use the resolved absolute path for all subsequent nix commands
+        // Stage 3: remove nix (and nix-manual if present) from profile, then reinstall.
+        // Pre-build the target derivation first so a build failure can't
+        // leave the profile with nix removed and nothing to replace it.
+        let desired = desired_flake_ref("nix")?;
+        pre_build_package(nix_bin_str, "nix", &desired)?;
 
-        // Remove nix-manual first if installed, as it clashes with the nix flake package
         let installed = installed_elements()?;
         if installed.iter().any(|name| name == "nix-manual") {
             run_profile_cmd(nix_bin_str, "remove", "nix-manual", &["remove", "nix-manual"])?;
