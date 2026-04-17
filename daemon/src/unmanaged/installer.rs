@@ -97,13 +97,13 @@ pub fn ensure_service(
         ServiceStrategy::InstallOnly => {}
     }
 
-    // 4. Models: pull after service is running. Idempotent — already-
-    //    pulled models are a fast no-op from the service's perspective.
+    // 4. Post-start (model pulling, etc): run after the service is up.
+    //    Idempotent — already-pulled models are a fast no-op.
     if manifest.get_or_create(&name).service_active {
         if !manifest.get_or_create(&name).models_pulled {
-            tracing::info!("{name}: pulling models");
-            if let Err(e) = svc.pull_models() {
-                tracing::warn!("{name}: model pull failed: {e:#}");
+            tracing::info!("{name}: running post_start");
+            if let Err(e) = svc.post_start() {
+                tracing::warn!("{name}: post_start failed: {e:#}");
             }
             manifest.get_or_create(&name).models_pulled = true;
             manifest.save(manifest_path)?;
