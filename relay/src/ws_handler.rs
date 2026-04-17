@@ -865,7 +865,7 @@ async fn file_list_handler(
     Query(query): Query<FileQuery>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await {
+    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting", "proxy"]).await {
         return resp;
     }
     let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
@@ -906,7 +906,7 @@ async fn file_read_handler(
     Query(query): Query<FileQuery>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await {
+    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting", "proxy"]).await {
         return resp;
     }
     let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
@@ -1024,7 +1024,7 @@ async fn file_write_handler(
     State(state): State<AppState>,
     body: axum::body::Body,
 ) -> axum::response::Response {
-    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await {
+    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting", "proxy"]).await {
         return resp;
     }
     let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {

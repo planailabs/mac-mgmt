@@ -36,6 +36,52 @@ pub struct FileWriteResult {
 
 // ── Server functions ────────────────────────────────────────────────────
 
+/// Resolve the relay API URL and a short-lived proxy token for a given instance.
+/// Uses the `relay_proxy_hostname` from the daemon's heartbeat to construct the
+/// relay URL, so no extra `[relay]` config section is needed on the server.
+#[cfg(feature = "server")]
+async fn resolve_relay(
+    pool: &sqlx::PgPool,
+    instance_id: &str,
+    cluster_id: uuid::Uuid,
+) -> Result<(String, String), ServerFnError> {
+    // Get the relay proxy hostname from the heartbeat.
+    let relay_hostname: Option<String> = sqlx::query_scalar(
+        "SELECT relay_proxy_hostname FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+    )
+    .bind(instance_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("instance not found"))?;
+
+    let relay_hostname = relay_hostname
+        .ok_or_else(|| ServerFnError::new("daemon has no relay proxy hostname"))?;
+
+    let relay_url = format!("https://{relay_hostname}");
+
+    // Create a short-lived proxy token.
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
+
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
+         VALUES ($1, $2, 'file-tunnel', 'proxy', $3)",
+    )
+    .bind(cluster_id)
+    .bind(&hash)
+    .bind(expires_at)
+    .execute(pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok((relay_url, raw_token))
+}
+
 /// List files in a file tunnel (directory listing or single-file metadata).
 #[server]
 pub async fn file_tunnel_list(
@@ -46,7 +92,6 @@ pub async fn file_tunnel_list(
     let user = current_user().await?;
     let pool = crate::server_pool()?;
 
-    // Verify the user has access to this instance's cluster.
     let cluster_id: uuid::Uuid = sqlx::query_scalar(
         "SELECT cluster_id FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
     )
@@ -58,22 +103,16 @@ pub async fn file_tunnel_list(
 
     user.require_cluster_read(&pool, cluster_id).await?;
 
-    let relay = crate::config::config()
-        .relay
-        .as_ref()
-        .ok_or_else(|| ServerFnError::new("relay not configured"))?;
+    let (relay_url, token) = resolve_relay(&pool, &instance_id, cluster_id).await?;
 
-    let mut url = format!(
-        "{}/api/daemon/{}/files/{}",
-        relay.url, instance_id, tunnel_name
-    );
+    let mut url = format!("{relay_url}/api/daemon/{instance_id}/files/{tunnel_name}");
     if let Some(ref p) = path {
         url = format!("{url}?path={}", urlencoding::encode(p));
     }
 
     let resp = reqwest::Client::new()
         .get(&url)
-        .bearer_auth(&relay.token)
+        .bearer_auth(&token)
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
@@ -122,22 +161,16 @@ pub async fn file_tunnel_read(
 
     user.require_cluster_read(&pool, cluster_id).await?;
 
-    let relay = crate::config::config()
-        .relay
-        .as_ref()
-        .ok_or_else(|| ServerFnError::new("relay not configured"))?;
+    let (relay_url, token) = resolve_relay(&pool, &instance_id, cluster_id).await?;
 
-    let mut url = format!(
-        "{}/api/daemon/{}/files/{}/read",
-        relay.url, instance_id, tunnel_name
-    );
+    let mut url = format!("{relay_url}/api/daemon/{instance_id}/files/{tunnel_name}/read");
     if let Some(ref p) = path {
         url = format!("{url}?path={}", urlencoding::encode(p));
     }
 
     let resp = reqwest::Client::new()
         .get(&url)
-        .bearer_auth(&relay.token)
+        .bearer_auth(&token)
         .timeout(std::time::Duration::from_secs(60))
         .send()
         .await
@@ -161,7 +194,6 @@ pub async fn file_tunnel_read(
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
-    // Cap buffered content at 10 MB
     let bytes = resp
         .bytes()
         .await
@@ -171,7 +203,6 @@ pub async fn file_tunnel_read(
         return Err(ServerFnError::new("file too large for editor (>10MB)"));
     }
 
-    // Try to decode as UTF-8; fall back to base64 for binary
     match String::from_utf8(bytes.to_vec()) {
         Ok(text) => Ok(FileReadResult {
             content: text,
@@ -215,15 +246,9 @@ pub async fn file_tunnel_write(
 
     user.require_cluster_write(&pool, cluster_id).await?;
 
-    let relay = crate::config::config()
-        .relay
-        .as_ref()
-        .ok_or_else(|| ServerFnError::new("relay not configured"))?;
+    let (relay_url, token) = resolve_relay(&pool, &instance_id, cluster_id).await?;
 
-    let mut url = format!(
-        "{}/api/daemon/{}/files/{}/write",
-        relay.url, instance_id, tunnel_name
-    );
+    let mut url = format!("{relay_url}/api/daemon/{instance_id}/files/{tunnel_name}/write");
     let mut query_parts = Vec::new();
     if let Some(ref p) = path {
         query_parts.push(format!("path={}", urlencoding::encode(p)));
@@ -246,7 +271,7 @@ pub async fn file_tunnel_write(
 
     let resp = reqwest::Client::new()
         .post(&url)
-        .bearer_auth(&relay.token)
+        .bearer_auth(&token)
         .body(body_bytes)
         .timeout(std::time::Duration::from_secs(60))
         .send()

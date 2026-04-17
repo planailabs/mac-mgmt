@@ -13,17 +13,8 @@ pub struct ServerConfig {
     pub oidc: Option<OidcConfig>,
     pub xzar: Option<XzarConfig>,
     pub anthropic: Option<AnthropicConfig>,
-    pub relay: Option<RelayProxyConfig>,
     #[serde(default)]
     pub sentry: SentryConfig,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RelayProxyConfig {
-    /// Relay HTTP API URL (e.g. "https://relay.plan.ai")
-    pub url: String,
-    /// Token with admin or setting kind for relay API calls.
-    pub token: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
