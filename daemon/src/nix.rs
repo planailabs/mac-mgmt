@@ -2,9 +2,21 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 
 use crate::sentry_ext;
+
+/// Serialises all nix profile mutations so concurrent callers (e.g.
+/// multiple managed-service upgrade checks firing in parallel) can't
+/// corrupt the profile by racing add/remove/upgrade/replace. Held
+/// for the duration of every public entry point that touches the
+/// profile (`profile_install`, `profile_remove`, `upgrade_nix`,
+/// `packages_with_upgrades`).
+static PROFILE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn profile_lock() -> &'static Mutex<()> {
+    PROFILE_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 const NIX_SOURCE_BASE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
 
@@ -322,6 +334,7 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
 /// longer resolvable), the error is logged and drift detection still runs so that
 /// the package can be reinstalled from the correct flake URL.
 pub fn packages_with_upgrades(packages: &[&str]) -> Result<Vec<String>> {
+    let _guard = profile_lock().lock().unwrap_or_else(|e| e.into_inner());
     let upgrade_result = if has_dry_run_support() {
         tracing::debug!("using --dry-run for upgrade check");
         packages_with_upgrades_dry_run(packages)
@@ -358,6 +371,7 @@ pub fn packages_with_upgrades(packages: &[&str]) -> Result<Vec<String>> {
 
 /// Remove a package from the nix profile by element name.
 pub fn profile_remove(pkg: &str) -> Result<()> {
+    let _guard = profile_lock().lock().unwrap_or_else(|e| e.into_inner());
     run_profile_cmd("nix", "remove", pkg, &["remove", pkg])
 }
 
@@ -403,6 +417,7 @@ pub fn store_path_prefix(path: &str) -> Option<String> {
 
 /// Install or upgrade a package via `nix profile`.
 pub fn profile_install(pkg: &str, upgrade: bool) -> Result<()> {
+    let _guard = profile_lock().lock().unwrap_or_else(|e| e.into_inner());
     profile_install_with_nix("nix", pkg, upgrade)
 }
 
@@ -550,6 +565,7 @@ fn resolve_nix_binary() -> Result<PathBuf> {
 /// On success, invalidates the cached `nix profile` capability probes since
 /// the new binary may support more (or fewer) verbs/flags than the old one.
 pub fn upgrade_nix() -> Result<()> {
+    let _guard = profile_lock().lock().unwrap_or_else(|e| e.into_inner());
     let result = upgrade_nix_inner();
     if result.is_ok() {
         invalidate_capability_cache();
