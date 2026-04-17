@@ -18,7 +18,7 @@ use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
 use crate::config_providers::{ConfigStore, ConnectorSnapshot};
-use crate::managed_service::{FileTunnelDef, FileTunnelKind, ManagedService, ServiceMode, TunnelDef};
+use crate::managed_service::{FileTunnel, FileTunnelDef, ManagedService, ServiceMode, TunnelDef};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
 use crate::sentry_ext;
@@ -607,28 +607,27 @@ impl ServiceManager {
             .collect()
     }
 
-    pub fn collect_file_tunnels(&self) -> Vec<FileTunnelDef> {
-        let mut file_tunnels: Vec<FileTunnelDef> = self
+    pub fn collect_file_tunnels(&self) -> Vec<FileTunnel> {
+        let mut file_tunnels: Vec<FileTunnel> = self
             .services
             .iter()
             .flat_map(|s| {
-                let mut fts = s.service.expose_files();
-                for ft in &mut fts {
-                    ft.service = s.name.clone();
-                }
-                fts
+                s.service.expose_files().into_iter().map(|def| FileTunnel {
+                    def,
+                    service: s.name.clone(),
+                })
             })
             .collect();
         for svc in &self.install_only {
-            let mut fts = svc.expose_files();
-            for ft in &mut fts {
-                ft.service = svc.name().to_string();
-            }
-            file_tunnels.extend(fts);
+            let svc_name = svc.name().to_string();
+            file_tunnels.extend(svc.expose_files().into_iter().map(|def| FileTunnel {
+                def,
+                service: svc_name.clone(),
+            }));
         }
         file_tunnels.extend(daemon_config_file_tunnels());
         // Only announce tunnels whose path exists on disk.
-        file_tunnels.retain(|ft| std::path::Path::new(&ft.path).exists());
+        file_tunnels.retain(|ft| std::path::Path::new(ft.path()).exists());
         file_tunnels
     }
 
@@ -668,20 +667,22 @@ impl ServiceManager {
 }
 
 /// File tunnels for the daemon's own config directory (not a ManagedService).
-fn daemon_config_file_tunnels() -> Vec<FileTunnelDef> {
-    use crate::managed_service::FileValidator;
-    vec![FileTunnelDef {
-        name: "daemon-config".into(),
+fn daemon_config_file_tunnels() -> Vec<FileTunnel> {
+    use crate::managed_service::{FileTunnel, FileValidator};
+    vec![FileTunnel {
+        def: FileTunnelDef::Folder {
+            name: "daemon-config".into(),
+            path: crate::config::config_dir().to_string_lossy().into(),
+            writable: true,
+            allow_write: Vec::new(),
+            include: Some(vec!["config.toml".into(), "ollama-env".into()]),
+            validators: vec![FileValidator {
+                glob: "config.toml".into(),
+                command: vec!["mac-mgmt".into(), "check-config".into()],
+            }],
+            description: "Daemon configuration directory".into(),
+        },
         service: "daemon".into(),
-        path: crate::config::config_dir().to_string_lossy().into(),
-        kind: FileTunnelKind::Directory,
-        writable: true,
-        include: Some(vec!["config.toml".into(), "ollama-env".into()]),
-        validators: vec![FileValidator {
-            glob: "config.toml".into(),
-            command: vec!["mac-mgmt".into(), "check-config".into()],
-        }],
-        description: "Daemon configuration directory".into(),
     }]
 }
 

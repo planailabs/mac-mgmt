@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::managed_service::{FileTunnelDef, FileTunnelKind, ManagedService, ServiceMode};
+use crate::managed_service::{FileTunnelDef, ManagedService, ServiceMode};
 use crate::sentry_ext;
 
 const PKG: &str = "mcporter";
@@ -72,12 +72,11 @@ impl ManagedService for McPorter {
         if !config_dir.exists() {
             return Vec::new();
         }
-        vec![FileTunnelDef {
+        vec![FileTunnelDef::Folder {
             name: "mcporter-config".into(),
-            service: String::new(),
             path: config_dir.to_string_lossy().into(),
-            kind: FileTunnelKind::Directory,
             writable: false,
+            allow_write: Vec::new(),
             include: Some(vec!["*.json".into()]),
             validators: Vec::new(),
             description: "McPorter MCP server configuration (managed by daemon)".into(),

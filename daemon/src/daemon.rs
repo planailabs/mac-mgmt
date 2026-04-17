@@ -208,15 +208,20 @@ impl Daemon {
                 .collect_file_tunnels()
                 .iter()
                 .map(|ft| {
-                    serde_json::json!({
-                        "name": ft.name,
+                    let mut val = serde_json::json!({
+                        "name": ft.name(),
                         "service": ft.service,
-                        "path": ft.path,
-                        "kind": ft.kind,
-                        "writable": ft.writable,
-                        "include": ft.include,
-                        "description": ft.description,
-                    })
+                        "path": ft.path(),
+                        "writable": ft.writable(),
+                        "description": ft.description(),
+                    });
+                    if let crate::managed_service::FileTunnelDef::Folder { include, .. } = &ft.def {
+                        val.as_object_mut().unwrap().insert("kind".into(), "directory".into());
+                        val.as_object_mut().unwrap().insert("include".into(), serde_json::to_value(include).unwrap_or(serde_json::Value::Null));
+                    } else {
+                        val.as_object_mut().unwrap().insert("kind".into(), "file".into());
+                    }
+                    val
                 })
                 .collect();
             #[cfg(not(feature = "services"))]

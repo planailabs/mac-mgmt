@@ -801,7 +801,7 @@ async fn handle_file_session(
     token: &str,
     session_id: &str,
     session_secret: &str,
-    tunnel: Option<crate::managed_service::FileTunnelDef>,
+    tunnel: Option<crate::managed_service::FileTunnel>,
     mode: &str,
     path: Option<&str>,
     expected_mtime: Option<i64>,

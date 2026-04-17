@@ -19,32 +19,91 @@ pub struct TunnelDef {
 // ── File tunnels ────────────────────────────────────────────────────────
 
 /// A file or directory that a managed service exposes for remote editing
-/// through the relay.
+/// through the relay. This is what the service defines.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileTunnelDef {
-    /// Short, URL-safe label (e.g. "ollama-env", "openclaw-config").
-    pub name: String,
-    /// The owning service name. Populated by `ServiceManager`, not the service.
-    #[serde(default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FileTunnelDef {
+    File {
+        /// Short, URL-safe label (e.g. "ollama-env", "openclaw-config").
+        name: String,
+        /// Absolute path to the file on disk.
+        path: String,
+        /// Whether writes are allowed (`false` = read-only).
+        writable: bool,
+        /// Human-readable description for the UI.
+        description: String,
+    },
+    Folder {
+        /// Short, URL-safe label (e.g. "ollama-env", "openclaw-config").
+        name: String,
+        /// Absolute path to the directory root on disk.
+        path: String,
+        /// Whether writes are allowed (`false` = read-only).
+        writable: bool,
+        /// Glob patterns for files that are allowed to be written.
+        /// If empty, all files/folders are writable (if `writable` is true).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        allow_write: Vec<String>,
+        /// Only expose files matching these globs.
+        /// `None` = all files. Examples: `["*.json", "*.toml"]`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        include: Option<Vec<String>>,
+        /// Per-file validation rules. After a write, the first validator whose
+        /// glob matches the written filename is run. If it exits non-zero the
+        /// write is rolled back. `{}` in command args is replaced with the
+        /// file's absolute path; if no `{}` is present the command runs as-is.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        validators: Vec<FileValidator>,
+        /// Human-readable description for the UI.
+        description: String,
+    },
+}
+
+impl FileTunnelDef {
+    pub fn name(&self) -> &str {
+        match self {
+            FileTunnelDef::File { name, .. } => name,
+            FileTunnelDef::Folder { name, .. } => name,
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        match self {
+            FileTunnelDef::File { path, .. } => path,
+            FileTunnelDef::Folder { path, .. } => path,
+        }
+    }
+
+    pub fn writable(&self) -> bool {
+        match self {
+            FileTunnelDef::File { writable, .. } => *writable,
+            FileTunnelDef::Folder { writable, .. } => *writable,
+        }
+    }
+
+    pub fn description(&self) -> &str {
+        match self {
+            FileTunnelDef::File { description, .. } => description,
+            FileTunnelDef::Folder { description, .. } => description,
+        }
+    }
+}
+
+/// A complete file tunnel definition, including the owning service and kind.
+/// This is what the daemon uses internally and advertises to the relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileTunnel {
+    #[serde(flatten)]
+    pub def: FileTunnelDef,
+    /// The owning service name.
     pub service: String,
-    /// Absolute path to the file or directory root on disk.
-    pub path: String,
-    /// Whether this entry is a single file or a directory.
-    pub kind: FileTunnelKind,
-    /// Whether writes are allowed (`false` = read-only).
-    pub writable: bool,
-    /// For `Directory` kind: only expose files matching these globs.
-    /// `None` = all files. Examples: `["*.json", "*.toml"]`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include: Option<Vec<String>>,
-    /// Per-file validation rules. After a write, the first validator whose
-    /// glob matches the written filename is run. If it exits non-zero the
-    /// write is rolled back. `{}` in command args is replaced with the
-    /// file's absolute path; if no `{}` is present the command runs as-is.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub validators: Vec<FileValidator>,
-    /// Human-readable description for the UI.
-    pub description: String,
+}
+
+impl std::ops::Deref for FileTunnel {
+    type Target = FileTunnelDef;
+    fn deref(&self) -> &Self::Target {
+        &self.def
+    }
 }
 
 /// A glob → command pair: after writing a file whose name matches `glob`,
@@ -56,14 +115,6 @@ pub struct FileValidator {
     /// Command + args. `{}` in any arg is replaced with the written file's
     /// absolute path.
     pub command: Vec<String>,
-}
-
-/// Whether a [`FileTunnelDef`] points at a single file or a directory tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileTunnelKind {
-    File,
-    Directory,
 }
 
 /// Whether the daemon should spawn and manage a long-running process,

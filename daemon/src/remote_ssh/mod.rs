@@ -187,7 +187,7 @@ impl Manager {
 
     /// Update the file tunnel registry. Non-blocking.
     #[cfg(feature = "services")]
-    pub fn update_file_tunnel_defs(&self, defs: Vec<crate::managed_service::FileTunnelDef>) {
+    pub fn update_file_tunnel_defs(&self, defs: Vec<crate::managed_service::FileTunnel>) {
         let Ok(mut reg) = self.file_tunnel_registry.try_write() else {
             tracing::warn!("file_tunnel_registry lock contention, skipping update");
             return;

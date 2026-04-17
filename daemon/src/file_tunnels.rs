@@ -7,7 +7,7 @@ use tokio_tungstenite::tungstenite;
 use futures_util::{SinkExt, StreamExt};
 
 #[cfg(feature = "services")]
-use crate::managed_service::{FileTunnelDef, FileTunnelKind};
+use crate::managed_service::{FileTunnel, FileTunnelDef};
 
 /// Maximum file size for read/write operations (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
@@ -20,7 +20,7 @@ const STREAM_CHUNK_SIZE: usize = 1024 * 1024;
 /// Tracks the current set of file tunnel definitions advertised by services.
 #[cfg(feature = "services")]
 pub struct FileTunnelRegistry {
-    tunnels: HashMap<String, FileTunnelDef>,
+    tunnels: HashMap<String, FileTunnel>,
 }
 
 #[cfg(feature = "services")]
@@ -31,14 +31,14 @@ impl FileTunnelRegistry {
         }
     }
 
-    pub fn update(&mut self, defs: Vec<FileTunnelDef>) {
+    pub fn update(&mut self, defs: Vec<FileTunnel>) {
         self.tunnels.clear();
         for d in defs {
-            self.tunnels.insert(d.name.clone(), d);
+            self.tunnels.insert(d.name().to_string(), d);
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<&FileTunnelDef> {
+    pub fn get(&self, name: &str) -> Option<&FileTunnel> {
         self.tunnels.get(name)
     }
 }
@@ -48,16 +48,16 @@ impl FileTunnelRegistry {
 /// Resolve the requested path within a file tunnel, canonicalize it, and
 /// verify it falls within the tunnel's allowed root.
 #[cfg(feature = "services")]
-fn resolve_path(tunnel: &FileTunnelDef, relative_path: Option<&str>) -> Result<PathBuf, String> {
-    let root = PathBuf::from(&tunnel.path);
+fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<PathBuf, String> {
+    let root = PathBuf::from(tunnel.path());
 
-    let target = match (&tunnel.kind, relative_path) {
-        (FileTunnelKind::File, None | Some("")) => root.clone(),
-        (FileTunnelKind::File, Some(_)) => {
+    let target = match (&tunnel.def, relative_path) {
+        (FileTunnelDef::File { .. }, None | Some("")) => root.clone(),
+        (FileTunnelDef::File { .. }, Some(_)) => {
             return Err("sub-paths not allowed for file tunnels".into());
         }
-        (FileTunnelKind::Directory, None | Some("")) => root.clone(),
-        (FileTunnelKind::Directory, Some(rel)) => {
+        (FileTunnelDef::Folder { .. }, None | Some("")) => root.clone(),
+        (FileTunnelDef::Folder { .. }, Some(rel)) => {
             if rel.contains("..") {
                 return Err("path traversal not allowed".into());
             }
@@ -69,24 +69,24 @@ fn resolve_path(tunnel: &FileTunnelDef, relative_path: Option<&str>) -> Result<P
         .canonicalize()
         .map_err(|e| format!("path not found: {e}"))?;
 
-    match tunnel.kind {
-        FileTunnelKind::File => {
-            let root_canonical = root
-                .canonicalize()
-                .map_err(|e| format!("tunnel root error: {e}"))?;
-            if canonical != root_canonical {
-                return Err("path does not match tunnel file".into());
+        match &tunnel.def {
+            FileTunnelDef::File { .. } => {
+                let root_canonical = root
+                    .canonicalize()
+                    .map_err(|e| format!("tunnel root error: {e}"))?;
+                if canonical != root_canonical {
+                    return Err("path does not match tunnel file".into());
+                }
+            }
+            FileTunnelDef::Folder { .. } => {
+                let root_canonical = root
+                    .canonicalize()
+                    .map_err(|e| format!("tunnel root error: {e}"))?;
+                if !canonical.starts_with(&root_canonical) {
+                    return Err("path outside tunnel root".into());
+                }
             }
         }
-        FileTunnelKind::Directory => {
-            let root_canonical = root
-                .canonicalize()
-                .map_err(|e| format!("tunnel root error: {e}"))?;
-            if !canonical.starts_with(&root_canonical) {
-                return Err("path outside tunnel root".into());
-            }
-        }
-    }
 
     Ok(canonical)
 }
@@ -95,8 +95,11 @@ fn resolve_path(tunnel: &FileTunnelDef, relative_path: Option<&str>) -> Result<P
 /// Returns `true` if `include` is `None` (all files allowed) or if the
 /// filename matches at least one pattern.
 #[cfg(feature = "services")]
-fn matches_include(tunnel: &FileTunnelDef, filename: &str) -> bool {
-    let Some(ref patterns) = tunnel.include else {
+fn matches_include(tunnel: &FileTunnel, filename: &str) -> bool {
+    let FileTunnelDef::Folder { include, .. } = &tunnel.def else {
+        return true;
+    };
+    let Some(patterns) = include else {
         return true;
     };
     for pat_str in patterns {
@@ -109,15 +112,36 @@ fn matches_include(tunnel: &FileTunnelDef, filename: &str) -> bool {
     false
 }
 
+#[cfg(feature = "services")]
+fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
+    let FileTunnelDef::Folder { allow_write, .. } = &tunnel.def else {
+        return true;
+    };
+    if allow_write.is_empty() {
+        return true;
+    }
+    for pat_str in allow_write {
+        if let Ok(pat) = glob::Pattern::new(pat_str) {
+            if pat.matches(filename) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Find the first matching validator for a filename. Returns the command
 /// with `{}` placeholders replaced by the file's absolute path.
 #[cfg(feature = "services")]
-fn find_validator(tunnel: &FileTunnelDef, file_path: &Path) -> Option<Vec<String>> {
+fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<Vec<String>> {
+    let FileTunnelDef::Folder { validators, .. } = &tunnel.def else {
+        return None;
+    };
     let filename = file_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
-    for v in &tunnel.validators {
+    for v in validators {
         if let Ok(pat) = glob::Pattern::new(&v.glob) {
             if pat.matches(filename) {
                 let path_str = file_path.to_string_lossy();
@@ -147,7 +171,7 @@ fn mtime_secs(path: &Path) -> Option<i64> {
 /// Handle a file list request. Returns `(status, body_json)`.
 #[cfg(feature = "services")]
 pub fn handle_list(
-    tunnel: &FileTunnelDef,
+    tunnel: &FileTunnel,
     rel_path: Option<&str>,
 ) -> (u16, serde_json::Value) {
     let path = match resolve_path(tunnel, rel_path) {
@@ -228,7 +252,7 @@ pub fn handle_list(
 /// 3. Daemon closes WS
 #[cfg(feature = "services")]
 pub async fn handle_read_session(
-    tunnel: &FileTunnelDef,
+    tunnel: &FileTunnel,
     rel_path: Option<&str>,
     ws: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -251,7 +275,7 @@ pub async fn handle_read_session(
     };
 
     // For directory tunnels, verify the file passes the include filter
-    if tunnel.kind == FileTunnelKind::Directory {
+    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -328,7 +352,7 @@ pub async fn handle_read_session(
 /// 5. Daemon closes WS
 #[cfg(feature = "services")]
 pub async fn handle_write_session(
-    tunnel: &FileTunnelDef,
+    tunnel: &FileTunnel,
     rel_path: Option<&str>,
     expected_mtime: Option<i64>,
     ws: tokio_tungstenite::WebSocketStream<
@@ -346,7 +370,7 @@ pub async fn handle_write_session(
     }
 
     // Pre-flight checks
-    if !tunnel.writable {
+    if !tunnel.writable() {
         send_result!(serde_json::json!({ "status": 403, "error": "tunnel is read-only" }));
     }
 
@@ -356,14 +380,19 @@ pub async fn handle_write_session(
     };
 
     // For directory tunnels, verify the file passes the include filter
-    if tunnel.kind == FileTunnelKind::Directory {
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
         if !matches_include(tunnel, filename) {
             send_result!(serde_json::json!({ "status": 403, "error": "file not included in tunnel filter" }));
         }
+    }
+
+    if !matches_allow_write(tunnel, filename) {
+        send_result!(serde_json::json!({ "status": 403, "error": "file not allowed by write filter" }));
     }
 
     // Optimistic concurrency check
