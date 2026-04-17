@@ -12,5 +12,15 @@ server_api_url = "http://localhost:7378"
 # When set, *.relay.plan.ai routes are handled as proxy endpoints.
 proxy_hostname = "localhost"
 
+# Full external URL of the relay API. Sent to daemons and included in
+# heartbeats so the server can reach the relay without extra config.
+# Defaults to https://{proxy_hostname} if not set.
+proxy_url = "http://localhost:7379"
+
+# Origins allowed to make cross-origin requests to the proxy file API
+# (e.g. the management server's web UI domain). Matched as host suffix.
+# Default: ["localhost"]
+cors_origins = ["localhost"]
+
 # Directory for persistent data (port reservations).
 data_dir = "/tmp/mac-mgmt-relay"
