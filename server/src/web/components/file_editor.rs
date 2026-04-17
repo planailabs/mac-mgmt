@@ -6,19 +6,21 @@ use crate::web::user::current_user;
 
 // ── Wire types ─────────────────────────────────────────────────────────
 
-/// Returned by the single server function — relay URL + short-lived token.
-/// The browser uses these to call the relay file API directly.
+/// Returned by the server function — relay context + available file tunnels.
+/// The token is only minted when this page is opened.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEditorContext {
     pub relay_url: String,
     pub proxy_token: String,
     pub instance_id: String,
+    pub instance_prefix: String,
+    pub file_tunnels: Vec<serde_json::Value>,
 }
 
 // ── Server function ─────────────────────────────────────────────────────
 
-/// Mint a short-lived proxy token and return the relay URL.
-/// This is the ONLY server function — all file I/O goes browser → relay directly.
+/// Mint a proxy token and return relay URL + file tunnel metadata.
+/// Called only when the files page is opened.
 #[server]
 pub async fn get_file_editor_context(
     instance_id: String,
@@ -26,14 +28,14 @@ pub async fn get_file_editor_context(
     let user = current_user().await?;
     let pool = crate::server_pool()?;
 
-    // Resolve cluster + relay URL from the heartbeat.
     #[derive(sqlx::FromRow)]
     struct HbInfo {
         cluster_id: uuid::Uuid,
         relay_proxy_url: Option<String>,
+        file_tunnels: serde_json::Value,
     }
     let hb: HbInfo = sqlx::query_as(
-        "SELECT cluster_id, relay_proxy_url FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+        "SELECT cluster_id, relay_proxy_url, file_tunnels FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
     )
     .bind(&instance_id)
     .fetch_optional(&pool)
@@ -47,7 +49,7 @@ pub async fn get_file_editor_context(
         .relay_proxy_url
         .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL"))?;
 
-    // Mint a short-lived proxy token (5 minutes).
+    // Mint a 6-hour proxy token.
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
@@ -66,46 +68,37 @@ pub async fn get_file_editor_context(
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+    let instance_prefix = if instance_id.len() >= 12 {
+        instance_id[..12].to_string()
+    } else {
+        instance_id.clone()
+    };
+
+    let file_tunnels = hb
+        .file_tunnels
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
     Ok(FileEditorContext {
         relay_url,
         proxy_token: raw_token,
         instance_id,
+        instance_prefix,
+        file_tunnels,
     })
 }
 
 // ── Client-side relay calls via JS fetch ────────────────────────────────
 
-/// Call the relay file list API directly from the browser.
-async fn relay_file_list(
-    relay_url: &str,
-    token: &str,
-    instance_prefix: &str,
-    tunnel_name: &str,
-    path: Option<&str>,
-) -> Result<serde_json::Value, String> {
-    let mut url = format!(
-        "{scheme}{instance_prefix}.{relay_host}/api/files/{tunnel_name}",
-        scheme = if relay_url.starts_with("https://") { "https://" } else { "http://" },
-        relay_host = relay_url.trim_start_matches("https://").trim_start_matches("http://"),
-    );
-    if let Some(p) = path {
-        url = format!("{url}?path={p}");
-    }
-    let js = format!(
-        r#"
-        const resp = await fetch("{url}", {{
-            headers: {{ "Authorization": "Bearer {token}" }}
-        }});
-        const body = await resp.text();
-        return body;
-        "#,
-    );
-    let result: serde_json::Value = document::eval(&js).await.map_err(|e| format!("{e}"))?;
-    let text: String = result.as_str().unwrap_or("").to_string();
-    serde_json::from_str(&text).map_err(|e| format!("parse error: {e}"))
+fn build_relay_file_url(relay_url: &str, instance_prefix: &str, tunnel_name: &str, suffix: &str) -> String {
+    let scheme = if relay_url.starts_with("https://") { "https://" } else { "http://" };
+    let relay_host = relay_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    format!("{scheme}{instance_prefix}.{relay_host}/api/files/{tunnel_name}{suffix}")
 }
 
-/// Read a file from the relay directly from the browser.
 async fn relay_file_read(
     relay_url: &str,
     token: &str,
@@ -113,10 +106,7 @@ async fn relay_file_read(
     tunnel_name: &str,
     path: Option<&str>,
 ) -> Result<(String, i64, u64, bool), String> {
-    let mut url = format!(
-        "https://{instance_prefix}.{relay_host}/api/files/{tunnel_name}/read",
-        relay_host = relay_url.trim_start_matches("https://").trim_start_matches("http://"),
-    );
+    let mut url = build_relay_file_url(relay_url, instance_prefix, tunnel_name, "/read");
     if let Some(p) = path {
         url = format!("{url}?path={p}");
     }
@@ -136,12 +126,10 @@ async fn relay_file_read(
         let is_binary = false;
         try {{
             content = await blob.text();
-            // Check if it's valid UTF-8 by round-tripping
             const encoder = new TextEncoder();
             const decoder = new TextDecoder("utf-8", {{ fatal: true }});
             decoder.decode(encoder.encode(content));
         }} catch(e) {{
-            // Binary file — base64 encode
             const buf = await blob.arrayBuffer();
             const bytes = new Uint8Array(buf);
             let binary = "";
@@ -166,7 +154,6 @@ async fn relay_file_read(
     ))
 }
 
-/// Write a file to the relay directly from the browser.
 async fn relay_file_write(
     relay_url: &str,
     token: &str,
@@ -176,10 +163,7 @@ async fn relay_file_write(
     content: &str,
     expected_mtime: Option<i64>,
 ) -> Result<serde_json::Value, String> {
-    let mut url = format!(
-        "https://{instance_prefix}.{relay_host}/api/files/{tunnel_name}/write",
-        relay_host = relay_url.trim_start_matches("https://").trim_start_matches("http://"),
-    );
+    let mut url = build_relay_file_url(relay_url, instance_prefix, tunnel_name, "/write");
     let mut query_parts = Vec::new();
     if let Some(p) = path {
         query_parts.push(format!("path={p}"));
@@ -190,7 +174,6 @@ async fn relay_file_write(
     if !query_parts.is_empty() {
         url = format!("{url}?{}", query_parts.join("&"));
     }
-    // Escape content for JS string embedding
     let escaped = content.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
     let js = format!(
         r#"
@@ -211,12 +194,13 @@ async fn relay_file_write(
     serde_json::from_str(&text).map_err(|e| format!("parse: {e}"))
 }
 
-// ── UI Components ──────────────────────────────────────────────────────
+// ── Page component ─────────────────────────────────────────────────────
 
-/// File editor panel embedded in the fleet detail page.
-/// Shows available file tunnels on the left and an editor on the right.
+/// Standalone page for editing configuration files on a daemon instance.
+/// Route: /fleet/:instance_id/files
+/// Token is minted only when this page loads.
 #[component]
-pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>) -> Element {
+pub fn FleetFiles(instance_id: String) -> Element {
     let mut selected_tunnel = use_signal(|| Option::<String>::None);
     let mut selected_path = use_signal(|| Option::<String>::None);
     let mut editor_content = use_signal(|| String::new());
@@ -227,7 +211,6 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
     let mut editor_is_binary = use_signal(|| false);
     let mut save_status = use_signal(|| Option::<String>::None);
 
-    // Fetch relay context (URL + token) once on mount
     let ctx = use_server_future(move || {
         let iid = instance_id.clone();
         async move { get_file_editor_context(iid).await }
@@ -237,8 +220,10 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
         Some(Ok(c)) => Some(c.clone()),
         Some(Err(e)) => {
             return rsx! {
-                div { class: "mb-6 p-3 bg-red-50 dark:bg-red-900/30 rounded text-sm text-red-700",
-                    "File editor unavailable: {e}"
+                div { class: "max-w-6xl mx-auto px-4 py-6",
+                    div { class: "p-4 bg-red-50 dark:bg-red-900/30 rounded text-sm text-red-700 dark:text-red-300",
+                        "File editor unavailable: {e}"
+                    }
                 }
             };
         }
@@ -247,18 +232,18 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
 
     let Some(ctx_data) = ctx_data else {
         return rsx! {
-            div { class: "mb-6 text-sm text-gray-500", "Loading file editor..." }
+            div { class: "max-w-6xl mx-auto px-4 py-6",
+                p { class: "text-sm text-gray-500", "Loading file editor..." }
+            }
         };
     };
 
     let relay_url = use_signal(|| ctx_data.relay_url.clone());
     let proxy_token = use_signal(|| ctx_data.proxy_token.clone());
-    let instance_prefix = use_signal(|| {
-        let iid = &ctx_data.instance_id;
-        if iid.len() >= 12 { iid[..12].to_string() } else { iid.clone() }
-    });
+    let instance_prefix = use_signal(|| ctx_data.instance_prefix.clone());
+    let file_tunnels = ctx_data.file_tunnels.clone();
+    let back_url = format!("/fleet/{}", ctx_data.instance_id);
 
-    // Save handler
     let save_file = move |_| {
         let tunnel_name = selected_tunnel.read().clone();
         let path = selected_path.read().clone();
@@ -299,11 +284,20 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
     };
 
     rsx! {
-        div { class: "mb-6",
-            h3 { class: "text-lg font-semibold mb-2", "Configuration Files" }
+        div { class: "max-w-6xl mx-auto px-4 py-6",
+            // Header with back link
+            div { class: "flex items-center gap-3 mb-4",
+                Link {
+                    to: back_url,
+                    class: "text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400",
+                    "Back to instance"
+                }
+                h2 { class: "text-xl font-semibold", "Configuration Files" }
+            }
+
             div { class: "grid grid-cols-1 lg:grid-cols-3 gap-4",
                 // Left panel: file tree
-                div { class: "lg:col-span-1 bg-white dark:bg-gray-800 rounded shadow p-4 max-h-96 overflow-y-auto",
+                div { class: "lg:col-span-1 bg-white dark:bg-gray-800 rounded shadow p-4 max-h-[calc(100vh-12rem)] overflow-y-auto",
                     for ft in &file_tunnels {
                         {
                             let name = ft["name"].as_str().unwrap_or("").to_string();
@@ -421,7 +415,7 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
                             }
                         } else {
                             textarea {
-                                class: "w-full h-96 font-mono text-sm p-2 border rounded bg-gray-50 dark:bg-gray-900 dark:border-gray-600 resize-y",
+                                class: "w-full h-[calc(100vh-16rem)] font-mono text-sm p-2 border rounded bg-gray-50 dark:bg-gray-900 dark:border-gray-600 resize-y",
                                 spellcheck: false,
                                 value: "{editor_content}",
                                 oninput: move |e| {

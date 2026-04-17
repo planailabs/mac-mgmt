@@ -424,18 +424,21 @@ fn render_detail(d: &FleetDetailData) -> Element {
             }
         }
 
-        // ── File Tunnels (Config Editor) ──
+        // ── Configuration Files link ──
         {
-            let ft_arr: Vec<serde_json::Value> = d.file_tunnels
+            let has_files = d.file_tunnels
                 .as_ref()
                 .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            if !ft_arr.is_empty() {
+                .is_some_and(|a| !a.is_empty());
+            if has_files {
+                let files_url = format!("/fleet/{}/files", d.instance_id);
                 rsx! {
-                    crate::web::components::file_editor::FileEditorPanel {
-                        instance_id: d.instance_id.clone(),
-                        file_tunnels: ft_arr,
+                    div { class: "mb-6",
+                        Link {
+                            to: files_url,
+                            class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
+                            "Configuration Files"
+                        }
                     }
                 }
             } else {

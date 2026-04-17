@@ -6,6 +6,7 @@ use super::components::bundle_list::BundleList;
 use super::components::cluster_detail::ClusterDetail;
 use super::components::cluster_form::ClusterForm;
 use super::components::cluster_list::ClusterList;
+use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
 use super::components::fleet_detail::FleetDetail;
 use super::components::layout::Layout;
@@ -78,6 +79,8 @@ pub enum Route {
     FleetDashboard { stage_id: Option<String> },
     #[route("/fleet/:instance_id")]
     FleetDetail { instance_id: String },
+    #[route("/fleet/:instance_id/files")]
+    FleetFiles { instance_id: String },
     #[route("/rollout-groups")]
     RolloutGroupList {},
     #[route("/rollout-groups/:id")]
