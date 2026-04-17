@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
         Arc::clone(&registry),
         cfg.server_api_url.clone(),
         cfg.proxy_hostname.clone(),
+        cfg.proxy_url.clone(),
     );
 
     // Proxy router (if proxy_hostname is configured)

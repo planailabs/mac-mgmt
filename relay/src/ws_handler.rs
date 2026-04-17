@@ -31,13 +31,15 @@ struct AppState {
     registry: Arc<DaemonRegistry>,
     server_api_url: String,
     proxy_hostname: Option<String>,
+    proxy_url: Option<String>,
 }
 
-pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, proxy_hostname: Option<String>) -> Router {
+pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, proxy_hostname: Option<String>, proxy_url: Option<String>) -> Router {
     let state = AppState {
         registry,
         server_api_url,
         proxy_hostname,
+        proxy_url,
     };
 
     Router::new()
@@ -253,10 +255,16 @@ async fn handle_daemon_ws(
 
     let (mut ws_sink, mut ws_stream) = socket.split();
 
-    // Send registration confirmation (include proxy_hostname if configured)
+    // Send registration confirmation (include proxy_hostname and proxy_url if configured)
     let mut reg_msg = serde_json::json!({ "type": "registered", "ssh_port": port });
     if let Some(ref ph) = state.proxy_hostname {
         reg_msg["proxy_hostname"] = serde_json::Value::String(ph.clone());
+    }
+    if let Some(ref pu) = state.proxy_url {
+        reg_msg["proxy_url"] = serde_json::Value::String(pu.clone());
+    } else if let Some(ref ph) = state.proxy_hostname {
+        // Default: derive from proxy_hostname
+        reg_msg["proxy_url"] = serde_json::Value::String(format!("https://{ph}"));
     }
     let reg_msg = reg_msg;
     if let Err(e) = ws_sink

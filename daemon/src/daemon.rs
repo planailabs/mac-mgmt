@@ -185,7 +185,7 @@ impl Daemon {
         self.dispatcher.dispatch(&DaemonEvent::DaemonStopped);
     }
 
-    fn send_heartbeat(&self, relay_proxy_hostname: Option<String>) {
+    fn send_heartbeat(&self, relay_proxy_hostname: Option<String>, relay_proxy_url: Option<String>) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
             #[cfg(feature = "services")]
             let services = self.svc_mgr.collect_statuses();
@@ -241,6 +241,7 @@ impl Daemon {
                     tunnels,
                     file_tunnels,
                     relay_proxy_hostname,
+                    relay_proxy_url,
                     sample,
                     services_extended,
                 )
@@ -676,12 +677,24 @@ pub async fn run(
     #[cfg(feature = "relay")]
     relay_mgr.sync_ssh_keys();
 
-    // Helper macro purely for cfg-gated relay proxy hostname access.
+    // Helper macros purely for cfg-gated relay proxy access.
     macro_rules! relay_proxy_hostname {
         () => {{
             #[cfg(feature = "relay")]
             {
                 relay_mgr.relay_proxy_hostname()
+            }
+            #[cfg(not(feature = "relay"))]
+            {
+                None::<String>
+            }
+        }};
+    }
+    macro_rules! relay_proxy_url {
+        () => {{
+            #[cfg(feature = "relay")]
+            {
+                relay_mgr.relay_proxy_url()
             }
             #[cfg(not(feature = "relay"))]
             {
@@ -714,14 +727,14 @@ pub async fn run(
                 daemon.refresh_assessment_sample().await;
                 // Send heartbeat BEFORE connectors — connectors run blocking
                 // CLI commands that can hang for minutes.
-                daemon.send_heartbeat(relay_proxy_hostname!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
                 #[cfg(feature = "services")]
                 tokio::task::block_in_place(|| daemon.svc_mgr.run_connectors_tick());
             }
 
             _ = heartbeat_tick.tick() => {
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(relay_proxy_hostname!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
             }
 
             _ = assessment_inventory_tick.tick() => {
@@ -775,7 +788,7 @@ pub async fn run(
                 { std::future::pending::<Option<()>>().await }
             } => {
                 tracing::debug!("relay signalled heartbeat");
-                daemon.send_heartbeat(relay_proxy_hostname!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
             }
         }
     }
@@ -872,6 +885,7 @@ async fn do_send_heartbeat(
     tunnels: Vec<serde_json::Value>,
     file_tunnels: Vec<serde_json::Value>,
     relay_proxy_hostname: Option<String>,
+    relay_proxy_url: Option<String>,
     sample: Option<mac_mgmt_common::DynamicSample>,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
 ) -> bool {
@@ -911,6 +925,7 @@ async fn do_send_heartbeat(
         tunnels: serde_json::Value::Array(tunnels),
         file_tunnels: serde_json::Value::Array(file_tunnels),
         relay_proxy_hostname,
+        relay_proxy_url,
         nixpkgs_commit: crate::nix::current_nixpkgs_commit(),
         git_sha: Some(crate::GIT_SHA.to_string()),
         public_key: public_key_b64,

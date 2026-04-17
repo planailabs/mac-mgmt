@@ -34,6 +34,7 @@ pub struct Manager {
     server_token: Option<String>,
     tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
     relay_proxy_hostname: Arc<RwLock<Option<String>>>,
+    relay_proxy_url: Arc<RwLock<Option<String>>>,
     /// Shared channel to send messages on the relay WS (for tunnel re-advertisements).
     ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>>,
     /// Signal the main loop to send a heartbeat (e.g. after tunnel changes).
@@ -58,6 +59,7 @@ impl Manager {
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
         let tunnel_defs = Arc::new(RwLock::new(HashMap::new()));
         let relay_proxy_hostname = Arc::new(RwLock::new(None));
+        let relay_proxy_url: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
         let ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>> =
             Arc::new(RwLock::new(None));
         let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel(4);
@@ -82,12 +84,13 @@ impl Manager {
             let allowed = Arc::clone(&ssh_allowed);
             let tdefs = Arc::clone(&tunnel_defs);
             let rph = Arc::clone(&relay_proxy_hostname);
+            let rpu = Arc::clone(&relay_proxy_url);
             let wstx = Arc::clone(&ws_outgoing_tx);
             let ftreg = Arc::clone(&file_tunnel_registry);
             tokio::spawn(async move {
                 let hk = Arc::unwrap_or_clone(host_key);
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph, wstx, ftreg,
+                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph, rpu, wstx, ftreg,
                 ).await {
                     tracing::error!("relay client exited: {e:#}");
                 }
@@ -104,6 +107,7 @@ impl Manager {
             server_token,
             tunnel_defs,
             relay_proxy_hostname,
+            relay_proxy_url,
             ws_outgoing_tx,
             heartbeat_tx,
             file_tunnel_registry,
@@ -137,6 +141,11 @@ impl Manager {
     /// Uses try_read to avoid blocking the main loop.
     pub fn relay_proxy_hostname(&self) -> Option<String> {
         self.relay_proxy_hostname.try_read().ok()?.clone()
+    }
+
+    /// Return the relay's full proxy URL (set after registration).
+    pub fn relay_proxy_url(&self) -> Option<String> {
+        self.relay_proxy_url.try_read().ok()?.clone()
     }
 
     /// Update the tunnel definitions and re-advertise to the relay.

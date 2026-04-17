@@ -37,17 +37,17 @@ pub struct FileWriteResult {
 // ── Server functions ────────────────────────────────────────────────────
 
 /// Resolve the relay API URL and a short-lived proxy token for a given instance.
-/// Uses the `relay_proxy_hostname` from the daemon's heartbeat to construct the
-/// relay URL, so no extra `[relay]` config section is needed on the server.
+/// Uses `relay_proxy_url` from the daemon's heartbeat (full URL with scheme and
+/// port), so no extra `[relay]` config section is needed on the server.
 #[cfg(feature = "server")]
 async fn resolve_relay(
     pool: &sqlx::PgPool,
     instance_id: &str,
     cluster_id: uuid::Uuid,
 ) -> Result<(String, String), ServerFnError> {
-    // Get the relay proxy hostname from the heartbeat.
-    let relay_hostname: Option<String> = sqlx::query_scalar(
-        "SELECT relay_proxy_hostname FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+    // Get the relay proxy URL from the heartbeat.
+    let relay_url: Option<String> = sqlx::query_scalar(
+        "SELECT relay_proxy_url FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
     )
     .bind(instance_id)
     .fetch_optional(pool)
@@ -55,10 +55,8 @@ async fn resolve_relay(
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("instance not found"))?;
 
-    let relay_hostname = relay_hostname
-        .ok_or_else(|| ServerFnError::new("daemon has no relay proxy hostname"))?;
-
-    let relay_url = format!("https://{relay_hostname}");
+    let relay_url = relay_url
+        .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL — relay may be outdated"))?;
 
     // Create a short-lived proxy token.
     use rand::Rng;

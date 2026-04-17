@@ -35,6 +35,10 @@ pub struct HeartbeatBody {
     /// Relay proxy hostname (e.g. "relay.plan.ai"), received from the relay.
     #[serde(default)]
     pub relay_proxy_hostname: Option<String>,
+    /// Full relay API URL (e.g. "https://relay.plan.ai" or "http://localhost:8080").
+    /// Used by the server to call file-tunnel endpoints without extra config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_proxy_url: Option<String>,
     /// Current nixpkgs commit pin (if any) the daemon is using.
     #[serde(default)]
     pub nixpkgs_commit: Option<String>,

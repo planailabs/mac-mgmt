@@ -26,6 +26,12 @@ pub struct RelayConfig {
     /// When set, the relay serves browser proxy endpoints for TCP tunnels.
     pub proxy_hostname: Option<String>,
 
+    /// Full external URL of the relay API (e.g. "https://relay.plan.ai" or
+    /// "http://localhost:8080"). Sent to daemons and included in heartbeats
+    /// so the server can call the relay's file-tunnel endpoints without extra
+    /// config. Defaults to `https://{proxy_hostname}` if not set.
+    pub proxy_url: Option<String>,
+
     /// Directory for persistent data (port reservations, etc.).
     /// Defaults to the current working directory.
     #[serde(default = "default_data_dir")]

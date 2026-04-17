@@ -21,6 +21,8 @@ enum ControlMessage {
         ssh_port: u16,
         #[serde(default)]
         proxy_hostname: Option<String>,
+        #[serde(default)]
+        proxy_url: Option<String>,
     },
     SessionRequest {
         session_id: String,
@@ -153,6 +155,7 @@ pub async fn run(
     metrics_port: u16,
     tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
     relay_proxy_hostname: Arc<RwLock<Option<String>>>,
+    relay_proxy_url: Arc<RwLock<Option<String>>>,
     ws_outgoing_tx: Arc<RwLock<Option<mpsc::Sender<String>>>>,
     file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
 ) -> Result<()> {
@@ -203,13 +206,16 @@ pub async fn run(
         };
 
         match control {
-            ControlMessage::Registered { ssh_port, proxy_hostname } => {
+            ControlMessage::Registered { ssh_port, proxy_hostname, proxy_url } => {
                 tracing::info!(
-                    "relay registered: instance={instance_id} ssh_port={ssh_port} proxy_hostname={proxy_hostname:?}"
+                    "relay registered: instance={instance_id} ssh_port={ssh_port} proxy_hostname={proxy_hostname:?} proxy_url={proxy_url:?}"
                 );
-                // Store the relay's proxy hostname for heartbeats.
+                // Store the relay's proxy hostname and URL for heartbeats.
                 if let Some(ph) = proxy_hostname {
                     *relay_proxy_hostname.write().await = Some(ph);
+                }
+                if let Some(pu) = proxy_url {
+                    *relay_proxy_url.write().await = Some(pu);
                 }
                 // Advertise our tunnels to the relay.
                 let tunnels: Vec<serde_json::Value> = {
