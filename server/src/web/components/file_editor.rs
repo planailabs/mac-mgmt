@@ -6,59 +6,48 @@ use crate::web::user::current_user;
 
 // ── Wire types ─────────────────────────────────────────────────────────
 
+/// Returned by the single server function — relay URL + short-lived token.
+/// The browser uses these to call the relay file API directly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileListResult {
-    pub entries: Vec<FileEntry>,
+pub struct FileEditorContext {
+    pub relay_url: String,
+    pub proxy_token: String,
+    pub instance_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileEntry {
-    pub name: String,
-    pub kind: String,
-    pub size: u64,
-    pub mtime: i64,
-}
+// ── Server function ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileReadResult {
-    pub content: String,
-    pub mtime: i64,
-    pub size: u64,
-    pub is_binary: bool,
-}
+/// Mint a short-lived proxy token and return the relay URL.
+/// This is the ONLY server function — all file I/O goes browser → relay directly.
+#[server]
+pub async fn get_file_editor_context(
+    instance_id: String,
+) -> Result<FileEditorContext, ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileWriteResult {
-    pub status: u16,
-    pub mtime: Option<i64>,
-    pub error: Option<String>,
-}
-
-// ── Server functions ────────────────────────────────────────────────────
-
-/// Resolve the relay API URL and a short-lived proxy token for a given instance.
-/// Uses `relay_proxy_url` from the daemon's heartbeat (full URL with scheme and
-/// port), so no extra `[relay]` config section is needed on the server.
-#[cfg(feature = "server")]
-async fn resolve_relay(
-    pool: &sqlx::PgPool,
-    instance_id: &str,
-    cluster_id: uuid::Uuid,
-) -> Result<(String, String), ServerFnError> {
-    // Get the relay proxy URL from the heartbeat.
-    let relay_url: Option<String> = sqlx::query_scalar(
-        "SELECT relay_proxy_url FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+    // Resolve cluster + relay URL from the heartbeat.
+    #[derive(sqlx::FromRow)]
+    struct HbInfo {
+        cluster_id: uuid::Uuid,
+        relay_proxy_url: Option<String>,
+    }
+    let hb: HbInfo = sqlx::query_as(
+        "SELECT cluster_id, relay_proxy_url FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
     )
-    .bind(instance_id)
-    .fetch_optional(pool)
+    .bind(&instance_id)
+    .fetch_optional(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("instance not found"))?;
 
-    let relay_url = relay_url
-        .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL — relay may be outdated"))?;
+    user.require_cluster_read(&pool, hb.cluster_id).await?;
 
-    // Create a short-lived proxy token.
+    let relay_url = hb
+        .relay_proxy_url
+        .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL"))?;
+
+    // Mint a short-lived proxy token (5 minutes).
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
@@ -70,186 +59,129 @@ async fn resolve_relay(
         "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
          VALUES ($1, $2, 'file-tunnel', 'proxy', $3)",
     )
-    .bind(cluster_id)
+    .bind(hb.cluster_id)
     .bind(&hash)
     .bind(expires_at)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok((relay_url, raw_token))
+    Ok(FileEditorContext {
+        relay_url,
+        proxy_token: raw_token,
+        instance_id,
+    })
 }
 
-/// List files in a file tunnel (directory listing or single-file metadata).
-#[server]
-pub async fn file_tunnel_list(
-    instance_id: String,
-    tunnel_name: String,
-    path: Option<String>,
-) -> Result<FileListResult, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
+// ── Client-side relay calls via JS fetch ────────────────────────────────
 
-    let cluster_id: uuid::Uuid = sqlx::query_scalar(
-        "SELECT cluster_id FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
-    )
-    .bind(&instance_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("instance not found"))?;
-
-    user.require_cluster_read(&pool, cluster_id).await?;
-
-    let (relay_url, token) = resolve_relay(&pool, &instance_id, cluster_id).await?;
-
-    let mut url = format!("{relay_url}/api/daemon/{instance_id}/files/{tunnel_name}");
-    if let Some(ref p) = path {
-        url = format!("{url}?path={}", urlencoding::encode(p));
+/// Call the relay file list API directly from the browser.
+async fn relay_file_list(
+    relay_url: &str,
+    token: &str,
+    instance_prefix: &str,
+    tunnel_name: &str,
+    path: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let mut url = format!(
+        "https://{instance_prefix}.{relay_host}/api/files/{tunnel_name}",
+        relay_host = relay_url.trim_start_matches("https://").trim_start_matches("http://"),
+    );
+    if let Some(p) = path {
+        url = format!("{url}?path={p}");
     }
-
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .bearer_auth(&token)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(ServerFnError::new(format!("relay error: {body}")));
-    }
-
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let entries: Vec<FileEntry> = body["entries"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|e| serde_json::from_value(e.clone()).ok())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(FileListResult { entries })
+    let js = format!(
+        r#"
+        const resp = await fetch("{url}", {{
+            headers: {{ "Authorization": "Bearer {token}" }}
+        }});
+        const body = await resp.text();
+        return body;
+        "#,
+    );
+    let result: serde_json::Value = document::eval(&js).await.map_err(|e| format!("{e}"))?;
+    let text: String = result.as_str().unwrap_or("").to_string();
+    serde_json::from_str(&text).map_err(|e| format!("parse error: {e}"))
 }
 
-/// Read a file's contents from a file tunnel.
-#[server]
-pub async fn file_tunnel_read(
-    instance_id: String,
-    tunnel_name: String,
-    path: Option<String>,
-) -> Result<FileReadResult, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let cluster_id: uuid::Uuid = sqlx::query_scalar(
-        "SELECT cluster_id FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
-    )
-    .bind(&instance_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("instance not found"))?;
-
-    user.require_cluster_read(&pool, cluster_id).await?;
-
-    let (relay_url, token) = resolve_relay(&pool, &instance_id, cluster_id).await?;
-
-    let mut url = format!("{relay_url}/api/daemon/{instance_id}/files/{tunnel_name}/read");
-    if let Some(ref p) = path {
-        url = format!("{url}?path={}", urlencoding::encode(p));
+/// Read a file from the relay directly from the browser.
+async fn relay_file_read(
+    relay_url: &str,
+    token: &str,
+    instance_prefix: &str,
+    tunnel_name: &str,
+    path: Option<&str>,
+) -> Result<(String, i64, u64, bool), String> {
+    let mut url = format!(
+        "https://{instance_prefix}.{relay_host}/api/files/{tunnel_name}/read",
+        relay_host = relay_url.trim_start_matches("https://").trim_start_matches("http://"),
+    );
+    if let Some(p) = path {
+        url = format!("{url}?path={p}");
     }
-
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .bearer_auth(&token)
-        .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(ServerFnError::new(format!("relay error: {body}")));
+    let js = format!(
+        r#"
+        const resp = await fetch("{url}", {{
+            headers: {{ "Authorization": "Bearer {token}" }}
+        }});
+        if (!resp.ok) {{
+            const err = await resp.text();
+            return JSON.stringify({{ error: err, status: resp.status }});
+        }}
+        const mtime = parseInt(resp.headers.get("x-file-mtime") || "0");
+        const size = parseInt(resp.headers.get("x-file-size") || "0");
+        const blob = await resp.blob();
+        let content;
+        let is_binary = false;
+        try {{
+            content = await blob.text();
+            // Check if it's valid UTF-8 by round-tripping
+            const encoder = new TextEncoder();
+            const decoder = new TextDecoder("utf-8", {{ fatal: true }});
+            decoder.decode(encoder.encode(content));
+        }} catch(e) {{
+            // Binary file — base64 encode
+            const buf = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            content = btoa(binary);
+            is_binary = true;
+        }}
+        return JSON.stringify({{ content, mtime, size, is_binary }});
+        "#,
+    );
+    let result: serde_json::Value = document::eval(&js).await.map_err(|e| format!("{e}"))?;
+    let text: String = result.as_str().unwrap_or("").to_string();
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("parse: {e}"))?;
+    if let Some(err) = v.get("error") {
+        return Err(err.as_str().unwrap_or("unknown error").to_string());
     }
-
-    let mtime: i64 = resp
-        .headers()
-        .get("x-file-mtime")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    let size: u64 = resp
-        .headers()
-        .get("x-file-size")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if bytes.len() > 10 * 1024 * 1024 {
-        return Err(ServerFnError::new("file too large for editor (>10MB)"));
-    }
-
-    match String::from_utf8(bytes.to_vec()) {
-        Ok(text) => Ok(FileReadResult {
-            content: text,
-            mtime,
-            size,
-            is_binary: false,
-        }),
-        Err(_) => {
-            use base64::Engine;
-            Ok(FileReadResult {
-                content: base64::engine::general_purpose::STANDARD.encode(&bytes),
-                mtime,
-                size,
-                is_binary: true,
-            })
-        }
-    }
+    Ok((
+        v["content"].as_str().unwrap_or("").to_string(),
+        v["mtime"].as_i64().unwrap_or(0),
+        v["size"].as_u64().unwrap_or(0),
+        v["is_binary"].as_bool().unwrap_or(false),
+    ))
 }
 
-/// Write a file's contents to a file tunnel.
-#[server]
-pub async fn file_tunnel_write(
-    instance_id: String,
-    tunnel_name: String,
-    path: Option<String>,
-    content: String,
-    is_binary: bool,
+/// Write a file to the relay directly from the browser.
+async fn relay_file_write(
+    relay_url: &str,
+    token: &str,
+    instance_prefix: &str,
+    tunnel_name: &str,
+    path: Option<&str>,
+    content: &str,
     expected_mtime: Option<i64>,
-) -> Result<FileWriteResult, ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let cluster_id: uuid::Uuid = sqlx::query_scalar(
-        "SELECT cluster_id FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
-    )
-    .bind(&instance_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .ok_or_else(|| ServerFnError::new("instance not found"))?;
-
-    user.require_cluster_write(&pool, cluster_id).await?;
-
-    let (relay_url, token) = resolve_relay(&pool, &instance_id, cluster_id).await?;
-
-    let mut url = format!("{relay_url}/api/daemon/{instance_id}/files/{tunnel_name}/write");
+) -> Result<serde_json::Value, String> {
+    let mut url = format!(
+        "https://{instance_prefix}.{relay_host}/api/files/{tunnel_name}/write",
+        relay_host = relay_url.trim_start_matches("https://").trim_start_matches("http://"),
+    );
     let mut query_parts = Vec::new();
-    if let Some(ref p) = path {
-        query_parts.push(format!("path={}", urlencoding::encode(p)));
+    if let Some(p) = path {
+        query_parts.push(format!("path={p}"));
     }
     if let Some(mt) = expected_mtime {
         query_parts.push(format!("expected_mtime={mt}"));
@@ -257,35 +189,25 @@ pub async fn file_tunnel_write(
     if !query_parts.is_empty() {
         url = format!("{url}?{}", query_parts.join("&"));
     }
-
-    let body_bytes: Vec<u8> = if is_binary {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(&content)
-            .map_err(|e| ServerFnError::new(format!("invalid base64: {e}")))?
-    } else {
-        content.into_bytes()
-    };
-
-    let resp = reqwest::Client::new()
-        .post(&url)
-        .bearer_auth(&token)
-        .body(body_bytes)
-        .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let result: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(FileWriteResult {
-        status: result["status"].as_u64().unwrap_or(500) as u16,
-        mtime: result["mtime"].as_i64(),
-        error: result["error"].as_str().map(String::from),
-    })
+    // Escape content for JS string embedding
+    let escaped = content.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+    let js = format!(
+        r#"
+        const resp = await fetch("{url}", {{
+            method: "POST",
+            headers: {{
+                "Authorization": "Bearer {token}",
+                "Content-Type": "application/octet-stream"
+            }},
+            body: `{escaped}`
+        }});
+        const body = await resp.text();
+        return body;
+        "#,
+    );
+    let result: serde_json::Value = document::eval(&js).await.map_err(|e| format!("{e}"))?;
+    let text: String = result.as_str().unwrap_or("").to_string();
+    serde_json::from_str(&text).map_err(|e| format!("parse: {e}"))
 }
 
 // ── UI Components ──────────────────────────────────────────────────────
@@ -304,43 +226,71 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
     let mut editor_is_binary = use_signal(|| false);
     let mut save_status = use_signal(|| Option::<String>::None);
 
-    let instance_id_sig = use_signal(|| instance_id.clone());
+    // Fetch relay context (URL + token) once on mount
+    let ctx = use_server_future(move || {
+        let iid = instance_id.clone();
+        async move { get_file_editor_context(iid).await }
+    })?;
 
-    // Save file content
+    let ctx_data = match &*ctx.read() {
+        Some(Ok(c)) => Some(c.clone()),
+        Some(Err(e)) => {
+            return rsx! {
+                div { class: "mb-6 p-3 bg-red-50 dark:bg-red-900/30 rounded text-sm text-red-700",
+                    "File editor unavailable: {e}"
+                }
+            };
+        }
+        None => None,
+    };
+
+    let Some(ctx_data) = ctx_data else {
+        return rsx! {
+            div { class: "mb-6 text-sm text-gray-500", "Loading file editor..." }
+        };
+    };
+
+    let relay_url = use_signal(|| ctx_data.relay_url.clone());
+    let proxy_token = use_signal(|| ctx_data.proxy_token.clone());
+    let instance_prefix = use_signal(|| {
+        let iid = &ctx_data.instance_id;
+        if iid.len() >= 12 { iid[..12].to_string() } else { iid.clone() }
+    });
+
+    // Save handler
     let save_file = move |_| {
         let tunnel_name = selected_tunnel.read().clone();
         let path = selected_path.read().clone();
         let content = editor_content.read().clone();
         let mtime = *editor_mtime.read();
-        let is_binary = *editor_is_binary.read();
-        let iid = instance_id_sig.read().clone();
+        let ru = relay_url.read().clone();
+        let tok = proxy_token.read().clone();
+        let prefix = instance_prefix.read().clone();
 
         if let Some(tunnel_name) = tunnel_name {
             spawn(async move {
                 editor_loading.set(true);
                 save_status.set(None);
-                match file_tunnel_write(iid, tunnel_name, path, content, is_binary, Some(mtime))
-                    .await
-                {
+                match relay_file_write(
+                    &ru, &tok, &prefix, &tunnel_name,
+                    path.as_deref(), &content, Some(mtime),
+                ).await {
                     Ok(result) => {
-                        if result.status == 200 {
-                            if let Some(new_mtime) = result.mtime {
+                        let status = result["status"].as_u64().unwrap_or(500);
+                        if status == 200 {
+                            if let Some(new_mtime) = result["mtime"].as_i64() {
                                 editor_mtime.set(new_mtime);
                             }
                             editor_dirty.set(false);
                             save_status.set(Some("Saved".into()));
-                        } else if result.status == 409 {
-                            save_status.set(Some(
-                                "Conflict: file changed on disk. Reload and retry.".into(),
-                            ));
+                        } else if status == 409 {
+                            save_status.set(Some("Conflict: file changed on disk. Reload and retry.".into()));
                         } else {
-                            save_status
-                                .set(Some(result.error.unwrap_or_else(|| "Save failed".into())));
+                            let err = result["error"].as_str().unwrap_or("Save failed");
+                            save_status.set(Some(err.to_string()));
                         }
                     }
-                    Err(e) => {
-                        save_status.set(Some(e.to_string()));
-                    }
+                    Err(e) => save_status.set(Some(e)),
                 }
                 editor_loading.set(false);
             });
@@ -378,22 +328,22 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
                                         selected_tunnel.set(Some(n.clone()));
                                         if kind_click == "file" {
                                             selected_path.set(None);
-                                            let iid = instance_id_sig.read().clone();
+                                            let ru = relay_url.read().clone();
+                                            let tok = proxy_token.read().clone();
+                                            let prefix = instance_prefix.read().clone();
                                             let tn = n;
                                             spawn(async move {
                                                 editor_loading.set(true);
                                                 editor_error.set(None);
                                                 save_status.set(None);
-                                                match file_tunnel_read(iid, tn, None).await {
-                                                    Ok(result) => {
-                                                        editor_content.set(result.content);
-                                                        editor_mtime.set(result.mtime);
-                                                        editor_is_binary.set(result.is_binary);
+                                                match relay_file_read(&ru, &tok, &prefix, &tn, None).await {
+                                                    Ok((content, mtime, _size, is_binary)) => {
+                                                        editor_content.set(content);
+                                                        editor_mtime.set(mtime);
+                                                        editor_is_binary.set(is_binary);
                                                         editor_dirty.set(false);
                                                     }
-                                                    Err(e) => {
-                                                        editor_error.set(Some(e.to_string()));
-                                                    }
+                                                    Err(e) => editor_error.set(Some(e)),
                                                 }
                                                 editor_loading.set(false);
                                             });
@@ -429,7 +379,6 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
                     if selected_tunnel.read().is_none() {
                         p { class: "text-sm text-gray-500 italic", "Select a file to view or edit" }
                     } else {
-                        // Header bar
                         div { class: "flex items-center justify-between mb-2",
                             div {
                                 span { class: "font-medium text-sm",
@@ -455,14 +404,12 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
                             }
                         }
 
-                        // Error display
                         if let Some(ref err) = *editor_error.read() {
                             div { class: "mb-2 p-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-300",
                                 "{err}"
                             }
                         }
 
-                        // Editor area
                         if *editor_loading.read() && editor_content.read().is_empty() {
                             div { class: "flex items-center justify-center h-64",
                                 span { class: "text-gray-500", "Loading..." }

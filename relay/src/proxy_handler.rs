@@ -11,8 +11,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use axum::extract::Path;
+use futures_util::{SinkExt, StreamExt};
+use std::time::Duration;
+
 use crate::bridge;
-use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse, ProxyStreamEvent};
+use crate::daemon_registry::{ControlMsg, DaemonRegistry, FileResponse, ProxyResponse, ProxyStreamEvent};
 use crate::ws_handler::{SelfInfo, validate_token};
 
 /// Cache validated proxy tokens for 5 minutes to avoid hitting the server API
@@ -62,6 +66,10 @@ pub fn router(state: ProxyState) -> Router {
         .route("/proxy", get(proxy_bootstrap))
         // JSON request/response API (kept for programmatic use)
         .route("/proxy_request", post(proxy_request))
+        // File tunnel API (browser → relay direct)
+        .route("/api/files/{tunnel_name}", get(file_list))
+        .route("/api/files/{tunnel_name}/read", get(file_read))
+        .route("/api/files/{tunnel_name}/write", post(file_write))
         // Catch-all: reverse proxy for HTTP and WS upgrades
         .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
@@ -113,6 +121,48 @@ fn parse_subdomain(headers: &HeaderMap, proxy_hostname: &str) -> Option<(String,
     Some((instance_prefix.to_string(), tunnel_name.to_string()))
 }
 
+/// Extract the instance ID prefix from a subdomain. Handles both formats:
+/// - `{prefix}.relay.plan.ai` (file-tunnel access, no tunnel name)
+/// - `{prefix}-{tunnel}.relay.plan.ai` (existing TCP tunnel access)
+/// Returns just the instance prefix in both cases.
+fn parse_instance_prefix(headers: &HeaderMap, proxy_hostname: &str) -> Option<String> {
+    let host = headers.get("host").and_then(|v| v.to_str().ok())?;
+    let host_no_port = host.split(':').next().unwrap_or(host);
+    let subdomain = host_no_port.strip_suffix(&format!(".{proxy_hostname}"))?;
+
+    // If subdomain contains a dash and the part before the last dash is long
+    // enough to be an instance prefix, parse it. Otherwise treat the whole
+    // subdomain as the prefix.
+    let prefix = if let Some(dash_pos) = subdomain.rfind('-') {
+        let candidate = &subdomain[..dash_pos];
+        if candidate.len() >= 12 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
+            candidate
+        } else {
+            subdomain
+        }
+    } else {
+        subdomain
+    };
+
+    if prefix.len() >= 12 && prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(prefix.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract proxy_token from Bearer header or cookie.
+fn extract_token(headers: &HeaderMap) -> Option<String> {
+    // Try Bearer header first (for API/CORS calls from the web UI).
+    if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            return Some(token.to_string());
+        }
+    }
+    // Fall back to cookie.
+    extract_cookie_token(headers)
+}
+
 /// Extract proxy_token from cookie.
 fn extract_cookie_token(headers: &HeaderMap) -> Option<String> {
     headers
@@ -131,16 +181,15 @@ fn extract_cookie_token(headers: &HeaderMap) -> Option<String> {
         })
 }
 
-/// Validate the proxy token (from cookie) and check cluster scoping.
-/// Returns the tunnel's control_tx on success.
+/// Validate the proxy token (from Bearer header or cookie) and check cluster scoping.
 async fn authenticate_proxy(
     headers: &HeaderMap,
     state: &ProxyState,
     instance_id: &str,
 ) -> Result<(), axum::response::Response> {
-    let token = extract_cookie_token(headers)
+    let token = extract_token(headers)
         .ok_or_else(|| {
-            (StatusCode::UNAUTHORIZED, "Missing proxy_token cookie. Visit /proxy?proxy_token=TOKEN first.").into_response()
+            (StatusCode::UNAUTHORIZED, "Missing proxy_token. Use Authorization: Bearer <token> or visit /proxy?proxy_token=TOKEN first.").into_response()
         })?;
 
     let self_info = validate_token_cached(&state.server_api_url, &token)
@@ -468,4 +517,299 @@ async fn proxy_request(
         Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
+}
+
+// ── File tunnel endpoints ──────────────────────────────────────────────
+//
+// Served on the proxy subdomain (both {instance}.relay and {instance}-{tunnel}.relay).
+// The instance is extracted from the subdomain; the file tunnel name from the path.
+// Auth: Bearer token or proxy_token cookie.
+
+#[derive(Debug, Deserialize)]
+struct FileQuery {
+    path: Option<String>,
+}
+
+/// List files in a file tunnel.
+async fn file_list(
+    headers: HeaderMap,
+    Path(tunnel_name): Path<String>,
+    Query(query): Query<FileQuery>,
+    State(state): State<ProxyState>,
+) -> axum::response::Response {
+    let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+        return resp;
+    }
+    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let request_id = Uuid::new_v4().to_string();
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    if control_tx
+        .send(ControlMsg::FileListRequest {
+            request_id,
+            tunnel_name,
+            path: query.path,
+            response_tx,
+        })
+        .await
+        .is_err()
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+    match tokio::time::timeout(Duration::from_secs(30), response_rx).await {
+        Ok(Ok(resp)) => axum::response::Response::builder()
+            .status(resp.status)
+            .header("content-type", "application/json")
+            .body(Body::from(resp.body.to_string()))
+            .unwrap()
+            .into_response(),
+        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
+}
+
+/// Read a file via a dedicated data WebSocket session.
+async fn file_read(
+    headers: HeaderMap,
+    Path(tunnel_name): Path<String>,
+    Query(query): Query<FileQuery>,
+    State(state): State<ProxyState>,
+) -> axum::response::Response {
+    use futures_util::StreamExt;
+
+    let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+        return resp;
+    }
+    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let session_id = Uuid::new_v4().to_string();
+    let session_secret = Uuid::new_v4().to_string();
+
+    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel();
+    if !bridge::register_pending_proxy_session_with_callback(
+        session_id.clone(),
+        session_secret.clone(),
+        ws_tx,
+    ) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+
+    if control_tx
+        .send(ControlMsg::FileSessionRequest {
+            session_id: session_id.clone(),
+            session_secret,
+            tunnel_name,
+            mode: "read".to_string(),
+            path: query.path,
+            expected_mtime: None,
+        })
+        .await
+        .is_err()
+    {
+        bridge::remove_pending_proxy_session(&session_id);
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
+        Ok(Ok(ws)) => ws,
+        _ => {
+            bridge::remove_pending_proxy_session(&session_id);
+            return StatusCode::GATEWAY_TIMEOUT.into_response();
+        }
+    };
+
+    let (mut daemon_sink, mut daemon_stream) = daemon_ws.split();
+    let header_msg = match tokio::time::timeout(Duration::from_secs(30), daemon_stream.next()).await
+    {
+        Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
+        _ => {
+            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+    };
+
+    let header: serde_json::Value = match serde_json::from_str(&header_msg) {
+        Ok(v) => v,
+        Err(_) => {
+            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+    };
+
+    let status = header["status"].as_u64().unwrap_or(500) as u16;
+    if status != 200 {
+        let error = header["error"].as_str().unwrap_or("unknown error");
+        let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+        return axum::response::Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::json!({ "error": error }).to_string()))
+            .unwrap()
+            .into_response();
+    }
+
+    let size = header["size"].as_u64().unwrap_or(0);
+    let mtime = header["mtime"].as_i64().unwrap_or(0);
+
+    let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
+        match stream.next().await {
+            Some(Ok(axum::extract::ws::Message::Binary(data))) => {
+                Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())), stream))
+            }
+            _ => None,
+        }
+    });
+
+    axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "application/octet-stream")
+        .header("x-file-mtime", mtime.to_string())
+        .header("x-file-size", size.to_string())
+        .header("access-control-expose-headers", "x-file-mtime, x-file-size")
+        .body(Body::from_stream(body_stream))
+        .unwrap()
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct FileWriteQuery {
+    path: Option<String>,
+    expected_mtime: Option<i64>,
+}
+
+/// Write a file via a dedicated data WebSocket session.
+async fn file_write(
+    headers: HeaderMap,
+    Path(tunnel_name): Path<String>,
+    Query(query): Query<FileWriteQuery>,
+    State(state): State<ProxyState>,
+    body: Body,
+) -> axum::response::Response {
+    use futures_util::{SinkExt, StreamExt};
+
+    let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+        return resp;
+    }
+    let Some(control_tx) = state.registry.get_control_tx(&instance_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let session_id = Uuid::new_v4().to_string();
+    let session_secret = Uuid::new_v4().to_string();
+
+    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel();
+    if !bridge::register_pending_proxy_session_with_callback(
+        session_id.clone(),
+        session_secret.clone(),
+        ws_tx,
+    ) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+
+    if control_tx
+        .send(ControlMsg::FileSessionRequest {
+            session_id: session_id.clone(),
+            session_secret,
+            tunnel_name,
+            mode: "write".to_string(),
+            path: query.path,
+            expected_mtime: query.expected_mtime,
+        })
+        .await
+        .is_err()
+    {
+        bridge::remove_pending_proxy_session(&session_id);
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
+        Ok(Ok(ws)) => ws,
+        _ => {
+            bridge::remove_pending_proxy_session(&session_id);
+            return StatusCode::GATEWAY_TIMEOUT.into_response();
+        }
+    };
+
+    let (mut daemon_sink, mut daemon_stream) = daemon_ws.split();
+
+    // Wait for "ready" or error from daemon
+    let ready_msg = match tokio::time::timeout(Duration::from_secs(30), daemon_stream.next()).await
+    {
+        Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
+        _ => {
+            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+    };
+
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ready_msg) {
+        if v.get("status").is_some() && v.get("ready").is_none() {
+            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            let status = v["status"].as_u64().unwrap_or(500) as u16;
+            return axum::response::Response::builder()
+                .status(status)
+                .header("content-type", "application/json")
+                .body(Body::from(v.to_string()))
+                .unwrap()
+                .into_response();
+        }
+    }
+
+    // Stream request body to daemon
+    use http_body_util::BodyExt;
+    let mut body_stream = body.into_data_stream();
+    while let Some(chunk) = body_stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                if daemon_sink
+                    .send(axum::extract::ws::Message::Binary(bytes.to_vec().into()))
+                    .await
+                    .is_err()
+                {
+                    return StatusCode::BAD_GATEWAY.into_response();
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    if daemon_sink
+        .send(axum::extract::ws::Message::Text("end_request".into()))
+        .await
+        .is_err()
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    // Read result
+    let result_msg = match tokio::time::timeout(Duration::from_secs(60), daemon_stream.next()).await
+    {
+        Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
+        _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+    };
+
+    let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+
+    let result: serde_json::Value = serde_json::from_str(&result_msg).unwrap_or_default();
+    let status = result["status"].as_u64().unwrap_or(500) as u16;
+
+    axum::response::Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(Body::from(result.to_string()))
+        .unwrap()
+        .into_response()
 }

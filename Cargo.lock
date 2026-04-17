@@ -3839,7 +3839,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "urlencoding",
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
