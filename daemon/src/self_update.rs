@@ -68,7 +68,22 @@ fn write_last_store_path(store_path: &str) {
     }
 }
 
+/// Resolve the nix store path prefix of the currently running binary.
+/// Returns `None` when the binary doesn't live in `/nix/store/` (e.g.
+/// dev builds from `cargo run`).
+fn current_binary_store_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    crate::nix::store_path_prefix(exe.to_str()?)
+}
+
 /// Check if the server has assigned a target and apply it.
+///
+/// Compares both the semver version AND the nix store path of the
+/// running binary against the server's target. A store-path mismatch
+/// triggers an update even when the version string is identical — this
+/// catches re-uploads of the same version with a different build (e.g.
+/// a patched derivation, a different nixpkgs pin, or a dirty-tree
+/// rebuild).
 pub fn check_and_apply() {
     let t = target();
     let Some(version) = t.version else {
@@ -95,24 +110,41 @@ pub fn check_and_apply() {
         return;
     };
 
-    // If we are already on the target version *and* the store path
-    // matches what we last applied, nothing to do. If the store path
-    // changed (re-upload of the same version), fall through and apply.
-    if version == CURRENT_VERSION {
-        match read_last_store_path() {
-            Some(last) if last == store_path => {
-                tracing::info!("already at target version {CURRENT_VERSION} ({store_path})");
-                return;
-            }
-            Some(last) => {
-                tracing::info!(
-                    "version {version} unchanged but store path changed: {last} -> {store_path}, reapplying"
-                );
-            }
-            None => {
-                tracing::info!(
-                    "version {version} unchanged, no applied marker found, applying {store_path}"
-                );
+    // Primary check: compare the running binary's actual store path
+    // against the server's target. This is more reliable than the
+    // version string alone because two builds of the same version can
+    // live at different store paths.
+    if let Some(current) = current_binary_store_path() {
+        if current == store_path {
+            tracing::debug!(
+                "binary already at target store path {store_path} (v{CURRENT_VERSION})"
+            );
+            return;
+        }
+        tracing::info!(
+            "store path mismatch: running={current} target={store_path} (v{version})"
+        );
+    } else {
+        // Binary isn't in the nix store (dev build, manual install, etc).
+        // Fall back to the on-disk marker so we don't re-apply every tick.
+        if version == CURRENT_VERSION {
+            match read_last_store_path() {
+                Some(last) if last == store_path => {
+                    tracing::info!(
+                        "already at target version {CURRENT_VERSION} ({store_path})"
+                    );
+                    return;
+                }
+                Some(last) => {
+                    tracing::info!(
+                        "version {version} unchanged but store path changed: {last} -> {store_path}, reapplying"
+                    );
+                }
+                None => {
+                    tracing::info!(
+                        "version {version} unchanged, no applied marker, applying {store_path}"
+                    );
+                }
             }
         }
     }
@@ -144,9 +176,13 @@ fn version_cmp(ver: &str) -> i32 {
     a.cmp(&b) as i32
 }
 
-/// Realise `store_path` via `nix-store --realise` (which substitutes from
-/// configured binary caches such as xzar.plan.ai) and self-replace from
-/// `{store_path}/bin/mac-mgmt`.
+/// Realise `store_path` via `nix-store --realise` and replace the
+/// current executable with a symlink to `{store_path}/bin/mac-mgmt`.
+///
+/// Using a symlink instead of a byte-copy means `current_exe() →
+/// canonicalize()` on the next run resolves to the store path directly,
+/// so the store-path comparison in `check_and_apply` works without a
+/// separate marker file.
 fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     tracing::info!("realising {store_path}");
     let output = Command::new("nix-store")
@@ -158,34 +194,44 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
         anyhow::bail!("nix-store --realise failed: {stderr}");
     }
 
-    let realised: &Path = Path::new(store_path);
-    let new_bin = realised.join("bin").join("mac-mgmt");
+    let new_bin = Path::new(store_path).join("bin").join("mac-mgmt");
     if !new_bin.exists() {
         anyhow::bail!("binary not found at {}", new_bin.display());
     }
 
-    if let Err(e) = self_replace::self_replace(&new_bin) {
-        tracing::warn!("self_replace failed ({e}), falling back to rename-over");
-        let current_exe = std::env::current_exe().context("failed to get current exe path")?;
-        let parent = current_exe.parent().context("current exe has no parent dir")?;
-        let tmp_target = parent.join(".mac-mgmt.update");
-        std::fs::copy(&new_bin, &tmp_target)
-            .context("failed to copy new binary to temp location")?;
+    let current_exe = std::env::current_exe().context("failed to get current exe path")?;
+    let parent = current_exe.parent().context("current exe has no parent dir")?;
+    let tmp_link = parent.join(".mac-mgmt.update");
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_target, std::fs::Permissions::from_mode(0o755))
-                .context("failed to set permissions on new binary")?;
-        }
+    // Remove any leftover temp from a prior interrupted update.
+    let _ = std::fs::remove_file(&tmp_link);
 
-        std::fs::rename(&tmp_target, &current_exe)
-            .context("failed to rename new binary over current")?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&new_bin, &tmp_link).with_context(|| {
+            format!(
+                "symlink {} -> {}",
+                tmp_link.display(),
+                new_bin.display()
+            )
+        })?;
     }
+    #[cfg(not(unix))]
+    {
+        // Non-unix: fall back to copy (symlinks may not be available).
+        std::fs::copy(&new_bin, &tmp_link)
+            .context("failed to copy new binary to temp location")?;
+    }
+
+    // Atomic rename over the current exe. The running process keeps its
+    // open fd to the old inode; on restart (systemd, launchd) the new
+    // symlink is followed.
+    std::fs::rename(&tmp_link, &current_exe)
+        .context("failed to rename new binary link over current")?;
 
     write_last_store_path(store_path);
 
-    tracing::info!("binary updated to {version}");
+    tracing::info!("binary updated to {version} (symlink → {store_path})");
     sentry_ext::breadcrumb("self-update", "binary updated", &[
         ("from", CURRENT_VERSION),
         ("to", version),
