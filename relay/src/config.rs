@@ -46,7 +46,7 @@ pub struct RelayConfig {
 }
 
 fn default_cors_origins() -> Vec<String> {
-    vec!["http://localhost".to_string()]
+    vec!["http://localhost:8080".to_string()]
 }
 
 fn default_data_dir() -> String {
