@@ -611,7 +611,6 @@ impl ServiceManager {
         let mut file_tunnels: Vec<FileTunnelDef> = self
             .services
             .iter()
-            .filter(|s| s.phase.is_healthy())
             .flat_map(|s| {
                 let mut fts = s.service.expose_files();
                 for ft in &mut fts {
@@ -620,7 +619,6 @@ impl ServiceManager {
                 fts
             })
             .collect();
-        // Install-only services can also expose files.
         for svc in &self.install_only {
             let mut fts = svc.expose_files();
             for ft in &mut fts {
@@ -628,8 +626,9 @@ impl ServiceManager {
             }
             file_tunnels.extend(fts);
         }
-        // The daemon's own config directory is always available.
         file_tunnels.extend(daemon_config_file_tunnels());
+        // Only announce tunnels whose path exists on disk.
+        file_tunnels.retain(|ft| std::path::Path::new(&ft.path).exists());
         file_tunnels
     }
 
