@@ -536,25 +536,109 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
 
 /// Resolve the absolute path to the nix binary.
 /// Must be called before any operation that might remove nix from the profile.
+/// Falls back to scanning `/nix/store/*/bin/nix` when nix isn't on PATH
+/// (e.g. after a botched profile remove left the profile link broken).
 fn resolve_nix_binary() -> Result<PathBuf> {
     let output = Command::new("which")
         .arg("nix")
         .output()
         .context("failed to run which nix")?;
 
-    if !output.status.success() {
-        anyhow::bail!("nix binary not found in PATH");
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let canonical = std::fs::canonicalize(&path)
+            .with_context(|| format!("failed to canonicalize nix path: {path}"))?;
+        tracing::info!("resolved nix binary: {}", canonical.display());
+        return Ok(canonical);
     }
 
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let resolved = PathBuf::from(&path);
+    tracing::warn!("nix not found in PATH, scanning /nix/store for a usable binary");
+    find_nix_in_store()
+}
 
-    // Resolve symlinks to get the actual store path binary
-    let canonical = std::fs::canonicalize(&resolved)
-        .with_context(|| format!("failed to canonicalize nix path: {path}"))?;
+/// Walk `/nix/store/*/bin/nix` and return the first executable that
+/// responds to `--version`. This is a last-resort recovery path —
+/// the returned binary may be any version, but it's enough to
+/// bootstrap a fresh `nix profile install`.
+fn find_nix_in_store() -> Result<PathBuf> {
+    let store = std::path::Path::new("/nix/store");
+    if !store.is_dir() {
+        anyhow::bail!("/nix/store does not exist");
+    }
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(store)
+        .context("reading /nix/store")?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path().join("bin/nix"))
+        .filter(|p| p.is_file())
+        .collect();
+    // Sort descending by mtime so we prefer the newest store path.
+    candidates.sort_by(|a, b| {
+        let ma = a.metadata().and_then(|m| m.modified()).ok();
+        let mb = b.metadata().and_then(|m| m.modified()).ok();
+        mb.cmp(&ma)
+    });
+    for candidate in &candidates {
+        let ok = Command::new(candidate)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            tracing::info!(
+                "found working nix binary in store: {}",
+                candidate.display()
+            );
+            return Ok(candidate.clone());
+        }
+    }
+    anyhow::bail!(
+        "no working nix binary found in /nix/store (scanned {} candidates)",
+        candidates.len()
+    )
+}
 
-    tracing::info!("resolved nix binary: {}", canonical.display());
-    Ok(canonical)
+/// Call at daemon startup: if `nix` isn't on PATH, find any working
+/// binary in `/nix/store` and use it to reinstall nix into the profile
+/// so subsequent operations work normally.
+pub fn ensure_nix_on_path() {
+    let has_nix = Command::new("which")
+        .arg("nix")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if has_nix {
+        return;
+    }
+    tracing::warn!("nix not on PATH at startup — attempting store-based recovery");
+    let nix_bin = match find_nix_in_store() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("cannot recover nix: {e}");
+            return;
+        }
+    };
+    let nix_str = match nix_bin.to_str() {
+        Some(s) => s,
+        None => {
+            tracing::error!("nix store path is not valid UTF-8");
+            return;
+        }
+    };
+    let desired = match desired_flake_ref("nix") {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("cannot resolve desired nix flake ref: {e}");
+            return;
+        }
+    };
+    tracing::info!("reinstalling nix into profile using {}", nix_bin.display());
+    if let Err(e) = run_profile_cmd(nix_str, "add", "nix", &["add", &desired]) {
+        tracing::error!("failed to reinstall nix: {e}");
+    }
 }
 
 /// Upgrade nix itself using a three-stage fallback:

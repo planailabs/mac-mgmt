@@ -476,6 +476,10 @@ pub async fn run(
 
     dispatcher.dispatch(&DaemonEvent::DaemonStarted);
 
+    // If nix fell off the profile (botched upgrade, manual removal, etc),
+    // try to recover from a store binary before anything else runs.
+    crate::nix::ensure_nix_on_path();
+
     // Fetch the cluster's nixpkgs pin before ServiceManager::init runs.
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         fetch_nixpkgs_pin(url, token).await;
