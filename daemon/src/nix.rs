@@ -59,6 +59,38 @@ pub fn desired_flake_ref(pkg: &str) -> Result<String> {
     Ok(format!("{}#{pkg}", desired_flake_base()?))
 }
 
+/// Flake ref for unmanaged installs: uses the standard nixpkgs channel
+/// instead of the git.plan.ai custom tarball. This makes unmanaged
+/// services follow the host's nixpkgs pin rather than the cluster's.
+pub fn nixpkgs_flake_ref(pkg: &str) -> String {
+    format!("nixpkgs#{pkg}")
+}
+
+/// Check whether a package is installed from the git.plan.ai custom
+/// flake and reinstall it from standard nixpkgs if so. Returns true
+/// if a migration was performed.
+pub fn migrate_to_nixpkgs(pkg: &str) -> Result<bool> {
+    let urls = profile_original_urls()?;
+    let Some(current_url) = urls.get(pkg) else {
+        return Ok(false);
+    };
+    if !current_url.contains("git.plan.ai") && !current_url.contains("nixpkgs.tar") {
+        return Ok(false);
+    }
+    tracing::info!(
+        "migrating {pkg} from custom flake ({current_url}) to nixpkgs#"
+    );
+    let desired = nixpkgs_flake_ref(pkg);
+    if has_replace_support() {
+        run_profile_cmd("nix", "replace", pkg, &["replace", pkg, &desired])?;
+    } else {
+        pre_build_package("nix", pkg, &desired)?;
+        run_profile_cmd("nix", "remove", pkg, &["remove", pkg])?;
+        run_profile_cmd("nix", "add", pkg, &["add", &desired])?;
+    }
+    Ok(true)
+}
+
 pub fn current_system() -> Result<&'static str> {
     nix_current_system()
 }

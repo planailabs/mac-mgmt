@@ -15,10 +15,12 @@ pub fn ensure_service(
 ) -> Result<()> {
     let name = svc.name().to_string();
 
-    // Step 1: nix package
+    // Step 1: nix package — delegate to the service's own ensure_installed
+    // (handles service-specific logic like ollama flavour cleanup), then
+    // migrate the flake ref from git.plan.ai to nixpkgs# if needed.
     if !manifest.get_or_create(&name).package_installed {
         tracing::info!("{name}: installing package");
-        match svc.svc.ensure_installed() {
+        match install_and_ensure_nixpkgs(svc) {
             Ok(()) => {
                 let s = manifest.get_or_create(&name);
                 s.package_installed = true;
@@ -32,6 +34,8 @@ pub fn ensure_service(
                 return Err(e).with_context(|| format!("{name}: ensure_installed"));
             }
         }
+    } else if let Err(e) = crate::nix::migrate_to_nixpkgs(svc.svc.name()) {
+        tracing::warn!("{name}: flake migration: {e:#}");
     }
 
     // Step 2: config / first-run setup
@@ -131,6 +135,11 @@ pub fn import_service(
     }
 
     let name = svc.name().to_string();
+
+    if let Err(e) = crate::nix::migrate_to_nixpkgs(svc.svc.name()) {
+        tracing::warn!("{name}: flake migration during import: {e:#}");
+    }
+
     let state = manifest.get_or_create(&name);
     state.package_installed = true;
 
@@ -150,6 +159,15 @@ pub fn import_service(
     state.last_error = None;
     manifest.save(manifest_path)?;
     Ok(true)
+}
+
+/// Call the service's own ensure_installed (handles service-specific logic
+/// like ollama flavour cleanup), then migrate to nixpkgs# if the package
+/// was installed from the git.plan.ai custom flake.
+fn install_and_ensure_nixpkgs(svc: &UnmanagedService) -> Result<()> {
+    svc.svc.ensure_installed()?;
+    let _ = crate::nix::migrate_to_nixpkgs(svc.svc.name());
+    Ok(())
 }
 
 fn create_service(svc: &UnmanagedService) -> Result<()> {
