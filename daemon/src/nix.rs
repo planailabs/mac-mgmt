@@ -197,6 +197,9 @@ pub fn is_installed(pkg: &str) -> Result<bool> {
     let json = profile_list_json(None)?;
 
     if let Some(elements) = json.get("elements").and_then(|e| e.as_object()) {
+        if elements.contains_key(pkg) {
+            return Ok(true);
+        }
         for (_key, element) in elements {
             if let Some(paths) = element.get("storePaths").and_then(|p| p.as_array()) {
                 for path in paths {
