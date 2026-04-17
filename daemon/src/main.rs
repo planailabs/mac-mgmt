@@ -41,6 +41,8 @@ mod status;
 mod ws_reconnect;
 #[cfg(feature = "services")]
 mod services;
+#[cfg(feature = "services")]
+mod unmanaged;
 
 /// Git commit this binary was built from. Captured at build time by
 /// build.rs (GIT_SHA env or `git rev-parse HEAD`); "unknown" when
@@ -126,6 +128,18 @@ enum Commands {
         #[arg(short, long)]
         follow: bool,
     },
+    /// Install services as standalone system daemons (unmanaged mode —
+    /// services are run by systemd/launchd, not the mac-mgmt supervisor).
+    /// Reads config.toml to determine which services to install.
+    #[cfg(feature = "services")]
+    InstallServices,
+    /// Uninstall services previously installed via `install-services`.
+    #[cfg(feature = "services")]
+    UninstallServices,
+    /// Detect existing service installations and adopt them into the
+    /// unmanaged manifest without modifying anything on disk.
+    #[cfg(feature = "services")]
+    ImportServices,
 }
 
 fn write_ssh_fifo(command: &str) -> Result<()> {
@@ -263,6 +277,108 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
             println!("config OK");
+        }
+        #[cfg(feature = "services")]
+        Commands::InstallServices => {
+            let mut cfg = config::load().await?;
+            let manifest_path = unmanaged::manifest::InstallManifest::path();
+            let mut manifest = unmanaged::manifest::InstallManifest::load(&manifest_path)?;
+            let services = unmanaged::build_unmanaged(&mut cfg);
+
+            // Write .unmanaged marker so the daemon knows not to manage
+            // these services itself.
+            let marker = config::config_dir().join(".unmanaged");
+            std::fs::create_dir_all(config::config_dir())?;
+            std::fs::write(&marker, "")?;
+
+            let mut failed = false;
+            for svc in &services {
+                if let Err(e) = unmanaged::installer::ensure_service(svc, &mut manifest, &manifest_path) {
+                    tracing::error!("{}: {e:#}", svc.name());
+                    failed = true;
+                }
+            }
+
+            // Run connectors after all services are installed.
+            if !failed {
+                let cfg = config::load().await?;
+                let connectors = connectors::build_connectors(
+                    &cfg.global,
+                    &cfg.ollama,
+                    &cfg.lms,
+                    &cfg.cloud,
+                );
+                let configs = std::collections::HashMap::new();
+                for c in &connectors {
+                    if let Err(e) = c.connect(&configs) {
+                        tracing::warn!("connector {}: {e:#}", c.name());
+                    }
+                }
+                manifest.connectors_applied = true;
+                manifest.save(&manifest_path)?;
+            }
+
+            if failed {
+                anyhow::bail!("some services failed to install (re-run to retry)");
+            }
+            println!("all services installed");
+        }
+        #[cfg(feature = "services")]
+        Commands::UninstallServices => {
+            let manifest_path = unmanaged::manifest::InstallManifest::path();
+            let mut manifest = unmanaged::manifest::InstallManifest::load(&manifest_path)?;
+            let mut cfg = config::load().await?;
+            let services = unmanaged::build_unmanaged(&mut cfg);
+
+            for svc in services.iter().rev() {
+                if let Err(e) = unmanaged::installer::remove_service(svc, &mut manifest, &manifest_path) {
+                    tracing::warn!("{}: {e:#}", svc.name());
+                }
+            }
+
+            // Remove .unmanaged marker.
+            let marker = config::config_dir().join(".unmanaged");
+            let _ = std::fs::remove_file(marker);
+
+            // Clean up manifest.
+            manifest.connectors_applied = false;
+            manifest.save(&manifest_path)?;
+
+            println!("all services uninstalled");
+        }
+        #[cfg(feature = "services")]
+        Commands::ImportServices => {
+            let manifest_path = unmanaged::manifest::InstallManifest::path();
+            let mut manifest = unmanaged::manifest::InstallManifest::load(&manifest_path)?;
+            let mut cfg = config::load().await?;
+            let services = unmanaged::build_unmanaged(&mut cfg);
+
+            let mut found = 0;
+            for svc in &services {
+                match unmanaged::installer::import_service(svc, &mut manifest, &manifest_path) {
+                    Ok(true) => {
+                        let s = manifest.services.get(svc.name());
+                        let pkg = s.map(|s| s.package_installed).unwrap_or(false);
+                        let cfg_ok = s.map(|s| s.configured).unwrap_or(false);
+                        let active = s.map(|s| s.service_active).unwrap_or(false);
+                        println!(
+                            "  ✔ {:<15} package={} config={} service={}",
+                            svc.name(),
+                            if pkg { "found" } else { "missing" },
+                            if cfg_ok { "found" } else { "missing" },
+                            if active { "active" } else { "inactive" },
+                        );
+                        found += 1;
+                    }
+                    Ok(false) => {
+                        println!("  · {:<15} not found", svc.name());
+                    }
+                    Err(e) => {
+                        tracing::warn!("{}: import failed: {e:#}", svc.name());
+                    }
+                }
+            }
+            println!("{found} service(s) imported");
         }
     }
 

@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
-mod launchd;
+pub(crate) mod launchd;
 #[cfg(not(target_os = "macos"))]
-mod systemd;
+pub(crate) mod systemd;
 
 use anyhow::Result;
 
@@ -73,7 +73,7 @@ pub fn uninstall_services_manager() -> Result<()> {
 /// Look up a user's home directory from /etc/passwd via `getent passwd`.
 /// Falls back to `/home/{username}` if getent is unavailable.
 #[cfg(not(target_os = "macos"))]
-fn home_dir_for_user(username: &str) -> std::path::PathBuf {
+pub(crate) fn home_dir_for_user(username: &str) -> std::path::PathBuf {
     if let Ok(output) = std::process::Command::new("getent")
         .args(["passwd", username])
         .output()

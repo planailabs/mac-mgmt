@@ -485,6 +485,24 @@ pub async fn run(
         fetch_nixpkgs_pin(url, token).await;
     }
 
+    // When the unmanaged marker exists, services are run by
+    // systemd/launchd (installed via `mac-mgmt install-services`).
+    // Neuter the daemon's service manager by clearing the providers so
+    // it builds zero services — heartbeat, relay, self-update etc.
+    // still run normally.
+    #[cfg(feature = "services")]
+    {
+        let unmanaged_marker = crate::config::config_dir().join(".unmanaged");
+        if unmanaged_marker.exists() {
+            tracing::info!(
+                "unmanaged mode active — services managed externally; \
+                 daemon will not spawn or monitor them"
+            );
+            cfg.global.llm_provider = mac_mgmt_common::LlmProvider::None;
+            cfg.global.agent_provider = mac_mgmt_common::AgentProvider::None;
+        }
+    }
+
     #[cfg(feature = "services")]
     let mut svc_mgr =
         crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher), log_buf.clone())?;

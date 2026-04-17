@@ -31,7 +31,7 @@ fn unit_path() -> PathBuf {
     PathBuf::from("/etc/systemd/system").join(SYSTEMD_UNIT)
 }
 
-fn service_user() -> String {
+pub(crate) fn service_user() -> String {
     std::env::var("SUDO_USER")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_else(|_| "root".to_string())
