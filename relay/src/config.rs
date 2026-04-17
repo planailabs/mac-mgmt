@@ -29,7 +29,7 @@ pub struct RelayConfig {
     /// Full external URL of the relay API (e.g. "https://relay.plan.ai" or
     /// "http://localhost:8080"). Sent to daemons and included in heartbeats
     /// so the server can call the relay's file-tunnel endpoints without extra
-    /// config. Defaults to `https://{proxy_hostname}` if not set.
+    /// config. Required for file tunnel support.
     pub proxy_url: Option<String>,
 
     /// Origins allowed to make cross-origin requests to the proxy (e.g. the

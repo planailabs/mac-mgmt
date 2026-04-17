@@ -262,9 +262,6 @@ async fn handle_daemon_ws(
     }
     if let Some(ref pu) = state.proxy_url {
         reg_msg["proxy_url"] = serde_json::Value::String(pu.clone());
-    } else if let Some(ref ph) = state.proxy_hostname {
-        // Default: derive from proxy_hostname
-        reg_msg["proxy_url"] = serde_json::Value::String(format!("https://{ph}"));
     }
     let reg_msg = reg_msg;
     if let Err(e) = ws_sink

@@ -14,7 +14,7 @@ proxy_hostname = "localhost"
 
 # Full external URL of the relay API. Sent to daemons and included in
 # heartbeats so the server can reach the relay without extra config.
-# Defaults to https://{proxy_hostname} if not set.
+# Required for file tunnel support.
 proxy_url = "http://localhost:7379"
 
 # Origins allowed to make cross-origin requests to the proxy

@@ -84,7 +84,8 @@ async fn relay_file_list(
     path: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let mut url = format!(
-        "https://{instance_prefix}.{relay_host}/api/files/{tunnel_name}",
+        "{scheme}{instance_prefix}.{relay_host}/api/files/{tunnel_name}",
+        scheme = if relay_url.starts_with("https://") { "https://" } else { "http://" },
         relay_host = relay_url.trim_start_matches("https://").trim_start_matches("http://"),
     );
     if let Some(p) = path {
