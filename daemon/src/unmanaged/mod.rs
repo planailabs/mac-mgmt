@@ -28,6 +28,14 @@ pub struct ServicePath {
     pub path: PathBuf,
 }
 
+/// Callback for pulling/loading models after the service is running.
+/// Each variant captures the config needed by the extracted pub fn.
+pub enum ModelPullFn {
+    Ollama(mac_mgmt_common::OllamaConfig),
+    Lms(mac_mgmt_common::LmsConfig),
+    None,
+}
+
 /// A service managed outside the daemon's supervisor — installed via CLI,
 /// daemonized via systemd/launchd (or the software's own installer), and
 /// tracked in an on-disk manifest.
@@ -35,11 +43,20 @@ pub struct UnmanagedService {
     pub svc: Box<dyn ManagedService>,
     pub strategy: ServiceStrategy,
     pub paths: Vec<ServicePath>,
+    pub model_pull: ModelPullFn,
 }
 
 impl UnmanagedService {
     pub fn name(&self) -> &str {
         self.svc.name()
+    }
+
+    pub fn pull_models(&self) -> anyhow::Result<()> {
+        match &self.model_pull {
+            ModelPullFn::Ollama(cfg) => crate::services::ollama::pull_configured_models(cfg),
+            ModelPullFn::Lms(cfg) => crate::services::lms::load_configured_models(cfg),
+            ModelPullFn::None => Ok(()),
+        }
     }
 }
 
@@ -50,6 +67,8 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
     use crate::connectors::build_services;
 
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
+    let ollama_cfg = cfg.ollama.clone();
+    let lms_cfg = cfg.lms.clone();
     let services = build_services(
         &cfg.global,
         std::mem::take(&mut cfg.openclaw),
@@ -60,7 +79,7 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
     services
         .into_iter()
         .map(|svc| {
-            let (strategy, paths) = match svc.name() {
+            let (strategy, paths, model_pull) = match svc.name() {
                 "openclaw" => (
                     ServiceStrategy::BuiltInDaemon {
                         install_cmd: vec!["openclaw".into(), "install".into()],
@@ -76,6 +95,7 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
                             path: home.join(".openclaw"),
                         },
                     ],
+                    ModelPullFn::None,
                 ),
                 "ollama" => (
                     ServiceStrategy::GeneratedUnit,
@@ -89,6 +109,7 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
                             path: home.join(".ollama/models"),
                         },
                     ],
+                    ModelPullFn::Ollama(ollama_cfg.clone()),
                 ),
                 "lms" => (
                     ServiceStrategy::GeneratedUnit,
@@ -96,13 +117,15 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
                         name: "cache",
                         path: home.join(".cache/lm-studio"),
                     }],
+                    ModelPullFn::Lms(lms_cfg.clone()),
                 ),
-                _ => (ServiceStrategy::InstallOnly, vec![]),
+                _ => (ServiceStrategy::InstallOnly, vec![], ModelPullFn::None),
             };
             UnmanagedService {
                 svc,
                 strategy,
                 paths,
+                model_pull,
             }
         })
         .collect()

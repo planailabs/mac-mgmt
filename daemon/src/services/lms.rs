@@ -104,29 +104,7 @@ impl ManagedService for Lms {
     }
 
     fn post_start(&self) -> Result<()> {
-        for model in &self.config.models {
-            tracing::info!("loading lms model: {model}");
-            sentry_ext::breadcrumb("post_start", &format!("loading model {model}"), &[
-                ("service", "lms"),
-                ("model", model),
-            ]);
-            let output = Command::new("lms")
-                .args(["load", model, "-y"])
-                .output()
-                .with_context(|| format!("failed to run `lms load {model}`"))?;
-            if output.status.success() {
-                tracing::info!("lms model {model} loaded");
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                tracing::warn!("`lms load {model}` exited with {}", output.status);
-                sentry_ext::capture_cmd_failure(
-                    &format!("lms load {model}"),
-                    output.status.code(),
-                    stderr.trim(),
-                );
-            }
-        }
-        Ok(())
+        load_configured_models(&self.config)
     }
 
     fn check_and_upgrade(&self) -> Result<bool> {
@@ -170,4 +148,34 @@ impl ManagedService for Lms {
             tcp_port: self.effective_port(),
         }]
     }
+}
+
+/// Load every model in `config.models` via `lms load -y`.
+/// Idempotent — already-loaded models are a fast no-op. Shared by
+/// the managed post_start path and the unmanaged installer.
+pub fn load_configured_models(config: &mac_mgmt_common::LmsConfig) -> anyhow::Result<()> {
+    use std::process::Command;
+    for model in &config.models {
+        tracing::info!("loading lms model: {model}");
+        crate::sentry_ext::breadcrumb("post_start", &format!("loading model {model}"), &[
+            ("service", "lms"),
+            ("model", model),
+        ]);
+        let output = Command::new("lms")
+            .args(["load", model, "-y"])
+            .output()
+            .with_context(|| format!("failed to run `lms load {model}`"))?;
+        if output.status.success() {
+            tracing::info!("lms model {model} loaded");
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("`lms load {model}` exited with {}", output.status);
+            crate::sentry_ext::capture_cmd_failure(
+                &format!("lms load {model}"),
+                output.status.code(),
+                stderr.trim(),
+            );
+        }
+    }
+    Ok(())
 }

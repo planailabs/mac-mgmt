@@ -4,8 +4,20 @@ use std::process::Command;
 
 use mac_mgmt_services::SpawnSpec;
 
+/// Return the generated unit contents as a string (for hashing).
+pub fn generate_unit_contents(name: &str, spec: &SpawnSpec) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        launchd_plist(name, spec).unwrap_or_default()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        systemd_unit(name, spec)
+    }
+}
+
 /// Generate, write, and enable a systemd unit or launchd plist for a
-/// service based on its `SpawnSpec`. Returns the path to the created file.
+/// service based on its `SpawnSpec`.
 pub fn create_and_enable(name: &str, spec: &SpawnSpec) -> Result<()> {
     #[cfg(target_os = "macos")]
     create_launchd(name, spec)?;

@@ -174,31 +174,7 @@ impl ManagedService for Ollama {
     }
 
     fn post_start(&self) -> Result<()> {
-        for model in &self.config.models {
-            tracing::info!("pulling ollama model: {model}");
-            sentry_ext::breadcrumb("post_start", &format!("pulling model {model}"), &[
-                ("service", "ollama"),
-                ("model", model),
-            ]);
-            let output = Command::new("ollama")
-                .args(["pull", model])
-                .output()
-                .with_context(|| format!("failed to run ollama pull {model}"))?;
-
-            if output.status.success() {
-                tracing::info!("ollama model {model} pulled successfully");
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                tracing::warn!("ollama pull {model} exited with {}", output.status);
-                sentry_ext::capture_cmd_failure(
-                    &format!("ollama pull {model}"),
-                    output.status.code(),
-                    stderr.trim(),
-                );
-            }
-        }
-
-        Ok(())
+        pull_configured_models(&self.config)
     }
 
     fn check_and_upgrade(&self) -> Result<bool> {
@@ -251,4 +227,34 @@ impl ManagedService for Ollama {
             tcp_port: self.effective_port(),
         }]
     }
+}
+
+/// Pull every model listed in `config.models` via `ollama pull`.
+/// Idempotent — already-pulled models are a fast no-op. Shared by
+/// the managed post_start path and the unmanaged installer.
+pub fn pull_configured_models(config: &mac_mgmt_common::OllamaConfig) -> anyhow::Result<()> {
+    use std::process::Command;
+    for model in &config.models {
+        tracing::info!("pulling ollama model: {model}");
+        crate::sentry_ext::breadcrumb("post_start", &format!("pulling model {model}"), &[
+            ("service", "ollama"),
+            ("model", model),
+        ]);
+        let output = Command::new("ollama")
+            .args(["pull", model])
+            .output()
+            .with_context(|| format!("failed to run ollama pull {model}"))?;
+        if output.status.success() {
+            tracing::info!("ollama model {model} pulled successfully");
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("ollama pull {model} exited with {}", output.status);
+            crate::sentry_ext::capture_cmd_failure(
+                &format!("ollama pull {model}"),
+                output.status.code(),
+                stderr.trim(),
+            );
+        }
+    }
+    Ok(())
 }

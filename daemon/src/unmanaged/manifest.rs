@@ -17,7 +17,13 @@ pub struct InstallManifest {
 pub struct ServiceState {
     pub package_installed: bool,
     pub configured: bool,
+    pub models_pulled: bool,
     pub service_active: bool,
+    /// SHA-256 of the last-written unit file contents. Used to detect
+    /// when spawn_spec() output changed so the unit can be rewritten
+    /// and the service restarted.
+    #[serde(default)]
+    pub unit_hash: Option<String>,
     #[serde(default)]
     pub last_error: Option<String>,
     pub installed_at: DateTime<Utc>,
@@ -28,7 +34,9 @@ impl ServiceState {
         Self {
             package_installed: false,
             configured: false,
+            models_pulled: false,
             service_active: false,
+            unit_hash: None,
             last_error: None,
             installed_at: Utc::now(),
         }
