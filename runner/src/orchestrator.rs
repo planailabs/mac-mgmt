@@ -348,6 +348,7 @@ impl Orchestrator {
                 InstanceSpec {
                     instance_name: name.clone(),
                     instance_id: hk.instance_id,
+                    stopped_at: None,
                 },
                 resp.cloud_init,
             ));
@@ -1023,10 +1024,21 @@ impl Orchestrator {
     /// re-verify the cell is still in the Running stage right before
     /// firing so a cell that slipped into Launching via another loop
     /// isn't caught mid-boot.
+    /// Maximum time an instance may stay stopped by chaos before it gets
+    /// auto-started. Prevents prolonged outages from accumulating.
+    const CHAOS_STOP_MAX: chrono::Duration = chrono::Duration::hours(2);
+
     pub async fn chaos_vm_tick(&self) -> Result<Option<String>> {
         if self.is_paused().await {
             return Ok(None);
         }
+
+        // Phase 1: auto-start any instance that chaos stopped > 2h ago.
+        if let Some(msg) = self.restart_overdue_stops().await? {
+            return Ok(Some(msg));
+        }
+
+        // Phase 2: normal chaos roll.
         let candidates: Vec<(String, Vec<String>)> = {
             let s = self.state.lock().await;
             s.cells
@@ -1049,9 +1061,6 @@ impl Orchestrator {
             return Ok(None);
         };
 
-        // 9/10 toggle, 1/10 reprovision — toggles are cheap, reprovisions
-        // are expensive (minutes) and disruptive to the whole cell so
-        // we want them rare.
         let reprovision = rand::thread_rng().gen_range(0..10) == 0;
         if reprovision {
             tracing::info!("chaos-vm: reprovision {key}");
@@ -1086,7 +1095,74 @@ impl Orchestrator {
             .set_instance_state(&name, action)
             .await
             .with_context(|| format!("{action} {name}"))?;
+
+        // Track stopped_at in state.
+        {
+            let mut s = self.state.lock().await;
+            if let Some(cell) = s.cells.iter_mut().find(|c| c.key == key) {
+                for inst in cell.stage.instances_mut() {
+                    if inst.instance_name == name {
+                        inst.stopped_at = if action == "stop" {
+                            Some(Utc::now())
+                        } else {
+                            None
+                        };
+                    }
+                }
+            }
+        }
+        self.save_state().await?;
+
         Ok(Some(format!("{key}: toggle {name} {action}")))
+    }
+
+    /// Find the first instance that has been stopped by chaos for longer
+    /// than `CHAOS_STOP_MAX` and start it. Returns a description if one
+    /// was restarted, `None` otherwise.
+    async fn restart_overdue_stops(&self) -> Result<Option<String>> {
+        let now = Utc::now();
+        let overdue: Option<(String, String)> = {
+            let s = self.state.lock().await;
+            s.cells
+                .iter()
+                .filter(|c| c.stage.is_running())
+                .find_map(|c| {
+                    c.stage.instances().iter().find_map(|inst| {
+                        let stopped = inst.stopped_at?;
+                        if (now - stopped) > Self::CHAOS_STOP_MAX {
+                            Some((c.key.clone(), inst.instance_name.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                })
+        };
+        let Some((key, name)) = overdue else {
+            return Ok(None);
+        };
+        if !self.cell_still_running(&key).await {
+            return Ok(None);
+        }
+        tracing::info!(
+            "chaos-vm: auto-starting {name} (stopped >{}h, cell={key})",
+            Self::CHAOS_STOP_MAX.num_hours()
+        );
+        self.incus
+            .set_instance_state(&name, "start")
+            .await
+            .with_context(|| format!("auto-starting {name}"))?;
+        {
+            let mut s = self.state.lock().await;
+            if let Some(cell) = s.cells.iter_mut().find(|c| c.key == key) {
+                for inst in cell.stage.instances_mut() {
+                    if inst.instance_name == name {
+                        inst.stopped_at = None;
+                    }
+                }
+            }
+        }
+        self.save_state().await?;
+        Ok(Some(format!("{key}: auto-start {name} (overdue)")))
     }
 
     /// Defensive re-check: between the candidate scan and the actual
@@ -1196,6 +1272,7 @@ impl Orchestrator {
                         .map(|i| CellInstance {
                             instance_name: i.instance_name.clone(),
                             instance_id: i.instance_id.clone(),
+                            stopped_at: i.stopped_at,
                         })
                         .collect::<Vec<_>>()
                 })
@@ -1396,6 +1473,8 @@ pub struct CellStatus {
 pub struct CellInstance {
     pub instance_name: String,
     pub instance_id: String,
+    #[serde(default)]
+    pub stopped_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[cfg(test)]

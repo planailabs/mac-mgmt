@@ -48,6 +48,11 @@ pub struct InstanceSpec {
     /// Predicted daemon fingerprint; the cell transitions to `Running`
     /// when every instance's id shows up in heartbeats.
     pub instance_id: String,
+    /// When chaos stopped this instance. `None` means it's running (or
+    /// we haven't tracked a stop). Used by the chaos toggle to auto-start
+    /// instances that have been stopped for too long.
+    #[serde(default)]
+    pub stopped_at: Option<DateTime<Utc>>,
 }
 
 /// Cell lifecycle. Each variant encodes precisely which external
@@ -104,6 +109,15 @@ impl CellStage {
                 instances
             }
             _ => &[],
+        }
+    }
+
+    pub fn instances_mut(&mut self) -> &mut [InstanceSpec] {
+        match self {
+            CellStage::Launching { instances, .. } | CellStage::Running { instances, .. } => {
+                instances
+            }
+            _ => &mut [],
         }
     }
 
@@ -185,10 +199,12 @@ mod tests {
             InstanceSpec {
                 instance_name: "mmr-foo-1".into(),
                 instance_id: "abc123".into(),
+                stopped_at: None,
             },
             InstanceSpec {
                 instance_name: "mmr-foo-2".into(),
                 instance_id: "def456".into(),
+                stopped_at: Some(now),
             },
         ];
         let stages = vec![

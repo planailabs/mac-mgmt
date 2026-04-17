@@ -60,6 +60,8 @@ struct InstanceView {
     instance_name: String,
     instance_id: String,
     instance_id_short: String,
+    stopped: bool,
+    stopped_since: Option<String>,
 }
 
 pub fn render_index(snap: &StatusSnapshot) -> String {
@@ -100,6 +102,8 @@ fn to_cell_view(c: &CellStatus) -> CellView {
                 instance_name: i.instance_name.clone(),
                 instance_id: i.instance_id.clone(),
                 instance_id_short: short,
+                stopped: i.stopped_at.is_some(),
+                stopped_since: i.stopped_at.as_ref().map(format_utc),
             }
         })
         .collect();
@@ -171,6 +175,7 @@ mod tests {
                     instances: vec![CellInstance {
                         instance_name: "mmr-openclaw-ollama".into(),
                         instance_id: "abc123def456".into(),
+                        stopped_at: None,
                     }],
                     launching_since: None,
                     deploy_failures: 0,
@@ -186,10 +191,12 @@ mod tests {
                         CellInstance {
                             instance_name: "mmr-none-lms-n2-1".into(),
                             instance_id: "deadbeef0001".into(),
+                            stopped_at: None,
                         },
                         CellInstance {
                             instance_name: "mmr-none-lms-n2-2".into(),
                             instance_id: "deadbeef0002".into(),
+                            stopped_at: Some(Utc::now()),
                         },
                     ],
                     launching_since: Some(Utc::now()),

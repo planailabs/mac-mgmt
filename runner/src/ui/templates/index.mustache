@@ -65,8 +65,9 @@
             <ul class="instances">
               {{#instances}}
               <li>
-                <div class="iname mono">{{instance_name}}</div>
+                <div class="iname mono{{#stopped}} stopped{{/stopped}}">{{instance_name}}</div>
                 <div class="iid mono" title="{{instance_id}}">{{instance_id_short}}</div>
+                {{#stopped}}<div class="stopped-badge">stopped since {{stopped_since}}</div>{{/stopped}}
               </li>
               {{/instances}}
             </ul>

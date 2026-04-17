@@ -262,6 +262,13 @@ ul.instances .iid {
 
 .empty-dash { color: var(--text-dim); opacity: 0.5; }
 
+.iname.stopped { text-decoration: line-through; opacity: 0.6; }
+.stopped-badge {
+  font-size: 0.66rem;
+  color: var(--unhealthy);
+  letter-spacing: 0.04em;
+}
+
 .axes {
   display: flex;
   gap: 1.25rem;
