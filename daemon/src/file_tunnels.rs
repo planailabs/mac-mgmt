@@ -236,22 +236,18 @@ pub async fn handle_read_session(
 ) {
     let (mut sink, _stream) = ws.split();
 
-    let send_error = |sink: &mut futures_util::stream::SplitSink<_, _>, status: u16, error: &str| {
-        let msg = serde_json::json!({ "status": status, "error": error });
-        Box::pin(async move {
-            let _ = sink
-                .send(tungstenite::Message::Text(msg.to_string().into()))
-                .await;
+    macro_rules! send_error {
+        ($status:expr, $error:expr) => {{
+            let msg = serde_json::json!({ "status": $status, "error": $error });
+            let _ = sink.send(tungstenite::Message::Text(msg.to_string().into())).await;
             let _ = sink.send(tungstenite::Message::Close(None)).await;
-        })
-    };
+            return;
+        }};
+    }
 
     let path = match resolve_path(tunnel, rel_path) {
         Ok(p) => p,
-        Err(e) => {
-            send_error(&mut sink, 400, &e).await;
-            return;
-        }
+        Err(e) => send_error!(400, e),
     };
 
     // For directory tunnels, verify the file passes the include filter
@@ -261,22 +257,17 @@ pub async fn handle_read_session(
             .and_then(|n| n.to_str())
             .unwrap_or("");
         if !matches_include(tunnel, filename) {
-            send_error(&mut sink, 403, "file not included in tunnel filter").await;
-            return;
+            send_error!(403, "file not included in tunnel filter");
         }
     }
 
     let meta = match std::fs::metadata(&path) {
         Ok(m) => m,
-        Err(e) => {
-            send_error(&mut sink, 404, &format!("file not found: {e}")).await;
-            return;
-        }
+        Err(e) => send_error!(404, format!("file not found: {e}")),
     };
 
     if !meta.is_file() {
-        send_error(&mut sink, 400, "path is not a file").await;
-        return;
+        send_error!(400, "path is not a file");
     }
 
     let size = meta.len();
@@ -346,35 +337,22 @@ pub async fn handle_write_session(
 ) {
     let (mut sink, mut stream) = ws.split();
 
-    let send_result = |sink: &mut futures_util::stream::SplitSink<_, _>, result: serde_json::Value| {
-        Box::pin(async move {
-            let _ = sink
-                .send(tungstenite::Message::Text(result.to_string().into()))
-                .await;
+    macro_rules! send_result {
+        ($result:expr) => {{
+            let _ = sink.send(tungstenite::Message::Text($result.to_string().into())).await;
             let _ = sink.send(tungstenite::Message::Close(None)).await;
-        })
-    };
+            return;
+        }};
+    }
 
     // Pre-flight checks
     if !tunnel.writable {
-        send_result(
-            &mut sink,
-            serde_json::json!({ "status": 403, "error": "tunnel is read-only" }),
-        )
-        .await;
-        return;
+        send_result!(serde_json::json!({ "status": 403, "error": "tunnel is read-only" }));
     }
 
     let path = match resolve_path(tunnel, rel_path) {
         Ok(p) => p,
-        Err(e) => {
-            send_result(
-                &mut sink,
-                serde_json::json!({ "status": 400, "error": e }),
-            )
-            .await;
-            return;
-        }
+        Err(e) => send_result!(serde_json::json!({ "status": 400, "error": e })),
     };
 
     // For directory tunnels, verify the file passes the include filter
@@ -384,12 +362,7 @@ pub async fn handle_write_session(
             .and_then(|n| n.to_str())
             .unwrap_or("");
         if !matches_include(tunnel, filename) {
-            send_result(
-                &mut sink,
-                serde_json::json!({ "status": 403, "error": "file not included in tunnel filter" }),
-            )
-            .await;
-            return;
+            send_result!(serde_json::json!({ "status": 403, "error": "file not included in tunnel filter" }));
         }
     }
 
@@ -397,16 +370,11 @@ pub async fn handle_write_session(
     if let Some(expected) = expected_mtime {
         if let Some(actual) = mtime_secs(&path) {
             if actual != expected {
-                send_result(
-                    &mut sink,
-                    serde_json::json!({
-                        "status": 409,
-                        "error": "file modified since last read",
-                        "conflict_mtime": actual,
-                    }),
-                )
-                .await;
-                return;
+                send_result!(serde_json::json!({
+                    "status": 409,
+                    "error": "file modified since last read",
+                    "conflict_mtime": actual,
+                }));
             }
         }
     }
@@ -429,12 +397,7 @@ pub async fn handle_write_session(
         let mut tmp_file = match std::fs::File::create(&tmp_path) {
             Ok(f) => f,
             Err(e) => {
-                send_result(
-                    &mut sink,
-                    serde_json::json!({ "status": 500, "error": format!("failed to create temp file: {e}") }),
-                )
-                .await;
-                return;
+                send_result!(serde_json::json!({ "status": 500, "error": format!("failed to create temp file: {e}") }));
             }
         };
 
@@ -444,24 +407,14 @@ pub async fn handle_write_session(
                     total_bytes += data.len() as u64;
                     if total_bytes > MAX_FILE_SIZE {
                         let _ = std::fs::remove_file(&tmp_path);
-                        send_result(
-                            &mut sink,
-                            serde_json::json!({ "status": 413, "error": "file too large" }),
-                        )
-                        .await;
-                        return;
+                        send_result!(serde_json::json!({ "status": 413, "error": "file too large" }));
                     }
                     if let Err(e) = tmp_file.write_all(&data) {
                         let _ = std::fs::remove_file(&tmp_path);
-                        send_result(
-                            &mut sink,
-                            serde_json::json!({ "status": 500, "error": format!("write failed: {e}") }),
-                        )
-                        .await;
-                        return;
+                        send_result!(serde_json::json!({ "status": 500, "error": format!("write failed: {e}") }));
                     }
                 }
-                Ok(tungstenite::Message::Text(t)) if t.as_ref() == "end_request" => break,
+                Ok(tungstenite::Message::Text(t)) if &*t == "end_request" => break,
                 Ok(tungstenite::Message::Close(_)) | Err(_) => {
                     let _ = std::fs::remove_file(&tmp_path);
                     return;
@@ -472,12 +425,7 @@ pub async fn handle_write_session(
 
         if let Err(e) = tmp_file.flush() {
             let _ = std::fs::remove_file(&tmp_path);
-            send_result(
-                &mut sink,
-                serde_json::json!({ "status": 500, "error": format!("flush failed: {e}") }),
-            )
-            .await;
-            return;
+            send_result!(serde_json::json!({ "status": 500, "error": format!("flush failed: {e}") }));
         }
     }
 
@@ -487,24 +435,14 @@ pub async fn handle_write_session(
     if had_original {
         if let Err(e) = std::fs::copy(&path, &backup_path) {
             let _ = std::fs::remove_file(&tmp_path);
-            send_result(
-                &mut sink,
-                serde_json::json!({ "status": 500, "error": format!("backup failed: {e}") }),
-            )
-            .await;
-            return;
+            send_result!(serde_json::json!({ "status": 500, "error": format!("backup failed: {e}") }));
         }
     }
 
     // Atomic rename temp → target
     if let Err(e) = std::fs::rename(&tmp_path, &path) {
         let _ = std::fs::remove_file(&tmp_path);
-        send_result(
-            &mut sink,
-            serde_json::json!({ "status": 500, "error": format!("rename failed: {e}") }),
-        )
-        .await;
-        return;
+        send_result!(serde_json::json!({ "status": 500, "error": format!("rename failed: {e}") }));
     }
 
     // Run validator if one matches
@@ -517,44 +455,22 @@ pub async fn handle_write_session(
                 .output();
             match result {
                 Ok(output) if !output.status.success() => {
-                    // Validation failed — restore backup
-                    let stderr =
-                        String::from_utf8_lossy(&output.stderr).to_string();
-                    tracing::warn!(
-                        "file write validation failed for {}: {stderr}",
-                        path.display()
-                    );
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    tracing::warn!("file write validation failed for {}: {stderr}", path.display());
                     if had_original {
                         let _ = std::fs::rename(&backup_path, &path);
                     } else {
                         let _ = std::fs::remove_file(&path);
                     }
-                    send_result(
-                        &mut sink,
-                        serde_json::json!({
-                            "status": 422,
-                            "error": format!("validation failed: {stderr}"),
-                        }),
-                    )
-                    .await;
-                    return;
+                    send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") }));
                 }
                 Err(e) => {
-                    // Validator couldn't run — restore backup
                     if had_original {
                         let _ = std::fs::rename(&backup_path, &path);
                     } else {
                         let _ = std::fs::remove_file(&path);
                     }
-                    send_result(
-                        &mut sink,
-                        serde_json::json!({
-                            "status": 500,
-                            "error": format!("validation command failed to run: {e}"),
-                        }),
-                    )
-                    .await;
-                    return;
+                    send_result!(serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") }));
                 }
                 Ok(_) => {
                     tracing::debug!("file write validation passed for {}", path.display());
@@ -567,13 +483,10 @@ pub async fn handle_write_session(
     let _ = std::fs::remove_file(&backup_path);
 
     let new_mtime = mtime_secs(&path).unwrap_or(0);
-    tracing::info!(
-        "file write completed: {} ({total_bytes} bytes)",
-        path.display()
-    );
-    send_result(
-        &mut sink,
-        serde_json::json!({ "status": 200, "mtime": new_mtime }),
-    )
-    .await;
+    tracing::info!("file write completed: {} ({total_bytes} bytes)", path.display());
+    // Success — send result and close (don't use send_result! macro since we don't want to return early)
+    let _ = sink.send(tungstenite::Message::Text(
+        serde_json::json!({ "status": 200, "mtime": new_mtime }).to_string().into(),
+    )).await;
+    let _ = sink.send(tungstenite::Message::Close(None)).await;
 }

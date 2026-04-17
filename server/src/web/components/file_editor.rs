@@ -281,30 +281,7 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
     let mut editor_is_binary = use_signal(|| false);
     let mut save_status = use_signal(|| Option::<String>::None);
 
-    let instance_id_load = instance_id.clone();
-    let instance_id_save = instance_id.clone();
-
-    // Load file content when selection changes
-    let load_file = move |tunnel_name: String, path: Option<String>| {
-        let iid = instance_id_load.clone();
-        spawn(async move {
-            editor_loading.set(true);
-            editor_error.set(None);
-            save_status.set(None);
-            match file_tunnel_read(iid, tunnel_name, path).await {
-                Ok(result) => {
-                    editor_content.set(result.content);
-                    editor_mtime.set(result.mtime);
-                    editor_is_binary.set(result.is_binary);
-                    editor_dirty.set(false);
-                }
-                Err(e) => {
-                    editor_error.set(Some(e.to_string()));
-                }
-            }
-            editor_loading.set(false);
-        });
-    };
+    let instance_id_sig = use_signal(|| instance_id.clone());
 
     // Save file content
     let save_file = move |_| {
@@ -313,7 +290,7 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
         let content = editor_content.read().clone();
         let mtime = *editor_mtime.read();
         let is_binary = *editor_is_binary.read();
-        let iid = instance_id_save.clone();
+        let iid = instance_id_sig.read().clone();
 
         if let Some(tunnel_name) = tunnel_name {
             spawn(async move {
@@ -369,18 +346,35 @@ pub fn FileEditorPanel(instance_id: String, file_tunnels: Vec<serde_json::Value>
                             };
 
                             let name_click = name.clone();
+                            let kind_click = kind.clone();
                             rsx! {
                                 button {
                                     class: "w-full text-left p-2 rounded border mb-1 {bg}",
                                     onclick: move |_| {
                                         let n = name_click.clone();
                                         selected_tunnel.set(Some(n.clone()));
-                                        // For file tunnels, load directly; for directories, load the first included file
-                                        if kind == "file" {
+                                        if kind_click == "file" {
                                             selected_path.set(None);
-                                            load_file(n, None);
+                                            let iid = instance_id_sig.read().clone();
+                                            let tn = n;
+                                            spawn(async move {
+                                                editor_loading.set(true);
+                                                editor_error.set(None);
+                                                save_status.set(None);
+                                                match file_tunnel_read(iid, tn, None).await {
+                                                    Ok(result) => {
+                                                        editor_content.set(result.content);
+                                                        editor_mtime.set(result.mtime);
+                                                        editor_is_binary.set(result.is_binary);
+                                                        editor_dirty.set(false);
+                                                    }
+                                                    Err(e) => {
+                                                        editor_error.set(Some(e.to_string()));
+                                                    }
+                                                }
+                                                editor_loading.set(false);
+                                            });
                                         } else {
-                                            // For directories we'll need the list; for now just select
                                             selected_path.set(None);
                                             editor_content.set(String::new());
                                             editor_error.set(Some("Select a file from the directory listing".into()));
