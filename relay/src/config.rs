@@ -32,10 +32,11 @@ pub struct RelayConfig {
     /// config. Defaults to `https://{proxy_hostname}` if not set.
     pub proxy_url: Option<String>,
 
-    /// Origins allowed to make cross-origin requests to the proxy file API
-    /// (e.g. the management server's web UI). Defaults to `["localhost"]`.
-    /// Each entry is matched as a suffix against the request Origin header,
-    /// so `"localhost"` allows `http://localhost:7377`, `https://localhost`, etc.
+    /// Origins allowed to make cross-origin requests to the proxy (e.g. the
+    /// management server's web UI). Defaults to `["localhost"]`.
+    /// Each entry is matched as a suffix against the Origin's host:port
+    /// (scheme stripped), so `"localhost"` matches any port on localhost,
+    /// while `"localhost:7377"` matches only that port.
     #[serde(default = "default_cors_origins")]
     pub cors_origins: Vec<String>,
 

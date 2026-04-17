@@ -17,10 +17,12 @@ proxy_hostname = "localhost"
 # Defaults to https://{proxy_hostname} if not set.
 proxy_url = "http://localhost:7379"
 
-# Origins allowed to make cross-origin requests to the proxy file API
-# (e.g. the management server's web UI domain). Matched as host suffix.
+# Origins allowed to make cross-origin requests to the proxy
+# (e.g. the management server's web UI). Matched as suffix against
+# the Origin's host:port (scheme stripped). "localhost" matches any
+# port; "localhost:7377" matches only that port.
 # Default: ["localhost"]
-cors_origins = ["localhost"]
+cors_origins = ["localhost:8080"]
 
 # Directory for persistent data (port reservations).
 data_dir = "/tmp/mac-mgmt-relay"
