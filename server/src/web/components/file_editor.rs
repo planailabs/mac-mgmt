@@ -43,7 +43,7 @@ pub async fn get_file_editor_context(
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("instance not found"))?;
 
-    user.require_cluster_read(&pool, hb.cluster_id).await?;
+    user.require_cluster_write(&pool, hb.cluster_id).await?;
 
     let relay_url = hb
         .relay_proxy_url

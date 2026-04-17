@@ -47,46 +47,7 @@ struct FleetDetailData {
     viewer_is_admin: bool,
 }
 
-/// Same shape as the fleet-dashboard proxy-token flow. Local to this
-/// module so the detail page doesn't reach into fleet_dashboard's
-/// module-private server fn. Scoped to whatever cluster the user has
-/// access to (admin = unscoped, org-scoped = first accessible).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DetailProxyTokenResult {
-    proxy_token: String,
-}
-
-#[server]
-async fn create_detail_proxy_token() -> Result<DetailProxyTokenResult, ServerFnError> {
-    use rand::Rng;
-    use sha2::{Digest, Sha256};
-
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-
-    let accessible = user
-        .accessible_cluster_ids(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
-    let cluster_id: Option<uuid::Uuid> = accessible.as_ref().and_then(|ids| ids.first().copied());
-
-    sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
-         VALUES ($1, $2, 'proxy', 'proxy', $3)",
-    )
-    .bind(cluster_id)
-    .bind(&hash)
-    .bind(expires_at)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(DetailProxyTokenResult { proxy_token: raw_token })
-}
+use super::fleet_dashboard::create_proxy_token;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProbeEntry {
@@ -395,7 +356,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                             let ph = ph.clone();
                                             let iid = iid.clone();
                                             async move {
-                                                match create_detail_proxy_token().await {
+                                                match create_proxy_token().await {
                                                     Ok(res) => {
                                                         let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
                                                         let url = format!(

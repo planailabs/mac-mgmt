@@ -174,8 +174,8 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProxyTokenResult {
-    proxy_token: String,
+pub struct ProxyTokenResult {
+    pub proxy_token: String,
 }
 
 /// Stale-instance delete. Server-side gate is the source of truth — the
@@ -231,16 +231,16 @@ async fn delete_stale_instance(instance_id: String) -> Result<(), ServerFnError>
 }
 
 #[server]
-async fn create_fleet_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
+pub async fn create_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
     let user = current_user().await?;
     let pool = crate::server_pool()?;
 
-    // Get user's accessible clusters for scoping
-    let accessible = user
-        .accessible_cluster_ids(&pool)
+    // Require org write access to mint proxy tokens.
+    let writable = user
+        .writable_cluster_ids(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
@@ -248,9 +248,14 @@ async fn create_fleet_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
     let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
 
-    // For admin users (accessible == None), create an admin-scoped proxy token.
-    // For regular users, scope to their first accessible cluster (simplification).
-    let cluster_id: Option<uuid::Uuid> = accessible.as_ref().and_then(|ids| ids.first().copied());
+    // For admin users (writable == None), create an admin-scoped proxy token.
+    // For org-scoped users, scope to their first writable cluster.
+    let cluster_id: Option<uuid::Uuid> = writable.as_ref().and_then(|ids| ids.first().copied());
+    if let Some(ref ids) = writable {
+        if ids.is_empty() {
+            return Err(ServerFnError::new("write access required to create proxy tokens"));
+        }
+    }
 
     sqlx::query(
         "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
@@ -683,7 +688,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                                             let pu = pu.clone();
                                                                                             let ph = ph.clone();
                                                                                             async move {
-                                                                                                match create_fleet_proxy_token().await {
+                                                                                                match create_proxy_token().await {
                                                                                                     Ok(result) => {
                                                                                                         let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
                                                                                                         let url = format!(
