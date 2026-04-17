@@ -280,13 +280,12 @@ async fn main() -> Result<()> {
         }
         #[cfg(feature = "services")]
         Commands::InstallServices => {
+            let _lock = unmanaged::installer::acquire_lock()?;
             let mut cfg = config::load().await?;
             let manifest_path = unmanaged::manifest::InstallManifest::path();
             let mut manifest = unmanaged::manifest::InstallManifest::load(&manifest_path)?;
             let services = unmanaged::build_unmanaged(&mut cfg);
 
-            // Write .unmanaged marker so the daemon knows not to manage
-            // these services itself.
             let marker = config::config_dir().join(".unmanaged");
             std::fs::create_dir_all(config::config_dir())?;
             std::fs::write(&marker, "")?;
@@ -325,6 +324,7 @@ async fn main() -> Result<()> {
         }
         #[cfg(feature = "services")]
         Commands::UninstallServices => {
+            let _lock = unmanaged::installer::acquire_lock()?;
             let manifest_path = unmanaged::manifest::InstallManifest::path();
             let mut manifest = unmanaged::manifest::InstallManifest::load(&manifest_path)?;
             let mut cfg = config::load().await?;
@@ -348,6 +348,7 @@ async fn main() -> Result<()> {
         }
         #[cfg(feature = "services")]
         Commands::ImportServices => {
+            let _lock = unmanaged::installer::acquire_lock()?;
             let manifest_path = unmanaged::manifest::InstallManifest::path();
             let mut manifest = unmanaged::manifest::InstallManifest::load(&manifest_path)?;
             let mut cfg = config::load().await?;

@@ -16,13 +16,36 @@ pub fn generate_unit_contents(name: &str, spec: &SpawnSpec) -> String {
     }
 }
 
-/// Generate, write, and enable a systemd unit or launchd plist for a
-/// service based on its `SpawnSpec`.
-pub fn create_and_enable(name: &str, spec: &SpawnSpec) -> Result<()> {
+/// Write the unit file to disk without starting/enabling the service.
+pub fn write_unit(name: &str, spec: &SpawnSpec) -> Result<()> {
     #[cfg(target_os = "macos")]
-    create_launchd(name, spec)?;
+    write_launchd(name, spec)?;
     #[cfg(not(target_os = "macos"))]
-    create_systemd(name, spec)?;
+    write_systemd(name, spec)?;
+    Ok(())
+}
+
+/// Enable + start a service that is not yet running.
+pub fn enable_and_start(name: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    bootstrap_launchd(name)?;
+    #[cfg(not(target_os = "macos"))]
+    enable_start_systemd(name)?;
+    Ok(())
+}
+
+/// Write unit + enable + start in one shot (first install).
+pub fn create_and_enable(name: &str, spec: &SpawnSpec) -> Result<()> {
+    write_unit(name, spec)?;
+    enable_and_start(name)
+}
+
+/// Restart a service whose unit file has changed.
+pub fn restart(name: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    restart_launchd(name)?;
+    #[cfg(not(target_os = "macos"))]
+    restart_systemd(name)?;
     Ok(())
 }
 
@@ -90,7 +113,7 @@ WantedBy=multi-user.target
 }
 
 #[cfg(not(target_os = "macos"))]
-fn create_systemd(name: &str, spec: &SpawnSpec) -> Result<()> {
+fn write_systemd(name: &str, spec: &SpawnSpec) -> Result<()> {
     let path = unit_path(name);
     let contents = systemd_unit(name, spec);
     std::fs::write(&path, &contents)
@@ -99,10 +122,29 @@ fn create_systemd(name: &str, spec: &SpawnSpec) -> Result<()> {
         .args(["daemon-reload"])
         .status()
         .context("systemctl daemon-reload")?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enable_start_systemd(name: &str) -> Result<()> {
+    // enable is idempotent; start is a no-op if already running.
     Command::new("systemctl")
-        .args(["enable", "--now", &format!("{name}.service")])
+        .args(["enable", &format!("{name}.service")])
         .status()
-        .context("systemctl enable --now")?;
+        .context("systemctl enable")?;
+    Command::new("systemctl")
+        .args(["start", &format!("{name}.service")])
+        .status()
+        .context("systemctl start")?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restart_systemd(name: &str) -> Result<()> {
+    Command::new("systemctl")
+        .args(["restart", &format!("{name}.service")])
+        .status()
+        .context("systemctl restart")?;
     Ok(())
 }
 
@@ -203,12 +245,29 @@ fn launchd_plist(name: &str, spec: &SpawnSpec) -> Result<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn create_launchd(name: &str, spec: &SpawnSpec) -> Result<()> {
+fn write_launchd(name: &str, spec: &SpawnSpec) -> Result<()> {
     let path = plist_path(name);
-    let label = plist_label(name);
     let contents = launchd_plist(name, spec)?;
     std::fs::write(&path, &contents)
         .with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn bootstrap_launchd(name: &str) -> Result<()> {
+    let label = plist_label(name);
+    let path = plist_path(name);
+    Command::new("launchctl")
+        .args(["bootstrap", "system", path.to_str().unwrap_or("")])
+        .status()
+        .with_context(|| format!("launchctl bootstrap system/{label}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn restart_launchd(name: &str) -> Result<()> {
+    let label = plist_label(name);
+    let path = plist_path(name);
     let _ = Command::new("launchctl")
         .args(["bootout", "system", &format!("system/{label}")])
         .status();

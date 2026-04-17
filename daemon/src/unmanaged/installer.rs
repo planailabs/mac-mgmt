@@ -6,10 +6,31 @@ use super::manifest::InstallManifest;
 use super::unit_generator;
 use super::{ServiceStrategy, UnmanagedService};
 
+/// Acquire the daemon.lock so install/uninstall can't race with a
+/// running daemon or another install process. Returns a guard that
+/// releases the lock on drop.
+pub fn acquire_lock() -> Result<std::fs::File> {
+    let lock_path = crate::config::config_dir().join("daemon.lock");
+    std::fs::create_dir_all(lock_path.parent().unwrap()).ok();
+    let lock_file =
+        std::fs::File::create(&lock_path).context("failed to create lockfile")?;
+    match lock_file.try_lock() {
+        Ok(()) => Ok(lock_file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            anyhow::bail!(
+                "another daemon or install process is running (lockfile: {})",
+                lock_path.display()
+            );
+        }
+        Err(std::fs::TryLockError::Error(e)) => {
+            Err(e).context("failed to lock lockfile")
+        }
+    }
+}
+
 /// Drive one service to its desired state. Every idempotent step runs on
-/// every invocation so config changes propagate; only the nix-install
-/// step is skipped when already done (the package is in the profile).
-/// Saves after every state change for crash safety.
+/// every invocation so config changes propagate. Saves after every state
+/// change for crash safety.
 pub fn ensure_service(
     svc: &UnmanagedService,
     manifest: &mut InstallManifest,
@@ -17,8 +38,14 @@ pub fn ensure_service(
 ) -> Result<()> {
     let name = svc.name().to_string();
 
-    // 1. Package: always run — handles flavour swap, upgrades, etc.
-    //    ensure_installed() is already idempotent.
+    // 1. Package: always run. Verify the package is actually in the
+    //    profile before trusting the manifest flag — a prior failed
+    //    migration (remove succeeded, add failed) can leave the flag
+    //    stale while the package is missing.
+    let actually_installed = crate::nix::is_installed(svc.svc.name()).unwrap_or(false);
+    if !actually_installed {
+        manifest.get_or_create(&name).package_installed = false;
+    }
     tracing::info!("{name}: ensuring package");
     match install_and_ensure_nixpkgs(svc) {
         Ok(()) => {
@@ -35,8 +62,7 @@ pub fn ensure_service(
         }
     }
 
-    // 2. Config: always run — ensure_setup() is idempotent, re-applies
-    //    config patches so changes to config.toml propagate.
+    // 2. Config: always run (idempotent).
     tracing::info!("{name}: ensuring config");
     match svc.svc.ensure_setup() {
         Ok(()) => {
@@ -53,34 +79,49 @@ pub fn ensure_service(
         }
     }
 
-    // 3. Service unit: create or update. For GeneratedUnit, compare
-    //    the hash of the desired unit to what we last wrote — rewrite
-    //    + restart only when spawn_spec() output changed (env vars,
-    //    command, etc). BuiltInDaemon installers are re-run on every
-    //    invocation (they're idempotent).
+    // 3. Service unit: create or update.
     match &svc.strategy {
         ServiceStrategy::GeneratedUnit => {
             let spec = svc.svc.spawn_spec();
             let desired = unit_generator::generate_unit_contents(svc.name(), &spec);
             let hash = hex::encode(Sha256::digest(desired.as_bytes()));
             let state = manifest.get_or_create(&name);
-            if state.unit_hash.as_deref() != Some(&hash) {
+            let hash_changed = state.unit_hash.as_deref() != Some(&hash);
+            let was_active = state.service_active;
+
+            if hash_changed {
+                // Unit contents changed (or first install) — write the file.
                 tracing::info!("{name}: writing unit (hash changed)");
-                unit_generator::create_and_enable(svc.name(), &spec)?;
+                unit_generator::write_unit(svc.name(), &spec)?;
                 let s = manifest.get_or_create(&name);
                 s.unit_hash = Some(hash);
+
+                if was_active {
+                    // Already running with old config → restart.
+                    tracing::info!("{name}: restarting (config changed)");
+                    unit_generator::restart(svc.name())?;
+                } else {
+                    // First install → enable + start.
+                    unit_generator::enable_and_start(svc.name())?;
+                }
+                let s = manifest.get_or_create(&name);
                 s.service_active = true;
                 s.last_error = None;
                 manifest.save(manifest_path)?;
-            } else if !state.service_active {
+            } else if !was_active {
+                // Hash matches but service not active (e.g. interrupted
+                // after write but before enable). Just enable + start.
                 tracing::info!("{name}: enabling unit");
-                unit_generator::create_and_enable(svc.name(), &spec)?;
+                unit_generator::enable_and_start(svc.name())?;
                 let s = manifest.get_or_create(&name);
                 s.service_active = true;
                 manifest.save(manifest_path)?;
             }
+            // Hash matches + already active → no-op.
         }
         ServiceStrategy::BuiltInDaemon { install_cmd, .. } => {
+            // Built-in installers are idempotent — always re-run so
+            // config changes (e.g. openclaw gateway port) propagate.
             tracing::info!("{name}: running built-in installer");
             let status = Command::new(&install_cmd[0])
                 .args(&install_cmd[1..])
@@ -97,17 +138,17 @@ pub fn ensure_service(
         ServiceStrategy::InstallOnly => {}
     }
 
-    // 4. Post-start (model pulling, etc): run after the service is up.
-    //    Idempotent — already-pulled models are a fast no-op.
-    if manifest.get_or_create(&name).service_active {
-        if !manifest.get_or_create(&name).models_pulled {
-            tracing::info!("{name}: running post_start");
-            if let Err(e) = svc.post_start() {
-                tracing::warn!("{name}: post_start failed: {e:#}");
-            }
-            manifest.get_or_create(&name).models_pulled = true;
-            manifest.save(manifest_path)?;
+    // 4. Post-start (model pulling, etc). Idempotent — already-pulled
+    //    models are a fast no-op from the service's perspective.
+    if manifest.get_or_create(&name).service_active
+        && !manifest.get_or_create(&name).models_pulled
+    {
+        tracing::info!("{name}: running post_start");
+        if let Err(e) = svc.post_start() {
+            tracing::warn!("{name}: post_start failed: {e:#}");
         }
+        manifest.get_or_create(&name).models_pulled = true;
+        manifest.save(manifest_path)?;
     }
 
     tracing::info!("{name}: ready");
@@ -124,14 +165,23 @@ pub fn remove_service(
 
     if manifest.get_or_create(&name).service_active {
         tracing::info!("{name}: stopping service");
-        if let Err(e) = destroy_service(svc) {
-            tracing::warn!("{name}: destroy_service: {e:#}");
+        match destroy_service(svc) {
+            Ok(()) => {
+                let s = manifest.get_or_create(&name);
+                s.service_active = false;
+                s.unit_hash = None;
+                s.models_pulled = false;
+                manifest.save(manifest_path)?;
+            }
+            Err(e) => {
+                // Leave service_active = true so next run retries.
+                tracing::warn!("{name}: destroy_service failed (will retry): {e:#}");
+                manifest.get_or_create(&name).last_error =
+                    Some(format!("destroy_service: {e}"));
+                manifest.save(manifest_path)?;
+                return Err(e).with_context(|| format!("{name}: destroy_service"));
+            }
         }
-        let s = manifest.get_or_create(&name);
-        s.service_active = false;
-        s.unit_hash = None;
-        s.models_pulled = false;
-        manifest.save(manifest_path)?;
     }
 
     if manifest.get_or_create(&name).configured {
@@ -207,9 +257,13 @@ fn install_and_ensure_nixpkgs(svc: &UnmanagedService) -> Result<()> {
 fn destroy_service(svc: &UnmanagedService) -> Result<()> {
     match &svc.strategy {
         ServiceStrategy::BuiltInDaemon { uninstall_cmd, .. } => {
-            let _ = Command::new(&uninstall_cmd[0])
+            let status = Command::new(&uninstall_cmd[0])
                 .args(&uninstall_cmd[1..])
-                .status();
+                .status()
+                .with_context(|| format!("running {:?}", uninstall_cmd))?;
+            if !status.success() {
+                anyhow::bail!("{:?} exited with {status}", uninstall_cmd);
+            }
             Ok(())
         }
         ServiceStrategy::GeneratedUnit => unit_generator::stop_and_remove(svc.name()),
