@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use mac_mgmt_ws::tungstenite;
 use russh::keys::PublicKey;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -9,9 +10,8 @@ use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 
 use super::ssh_server::{self, SshSession};
-use super::ws_stream::WsStream;
 use crate::file_tunnels::FileTunnelRegistry;
-use crate::ws_reconnect::{self, WsClientConfig};
+use mac_mgmt_ws::{WsClientConfig, WsConnect, WsStream};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -194,7 +194,7 @@ pub async fn run(
         ..Default::default()
     };
 
-    let _ws_handle = ws_reconnect::spawn_reconnecting(ws_config, incoming_tx, outgoing_rx);
+    let _ws_handle = mac_mgmt_ws::spawn_reconnecting(ws_config, incoming_tx, outgoing_rx);
 
     while let Some(text) = incoming_rx.recv().await {
         let control: ControlMessage = match serde_json::from_str(&text) {
@@ -348,22 +348,10 @@ async fn handle_session(
         "{relay_url}/api/daemon/session/{session_id}?session_secret={}",
         urlencoding::encode(session_secret),
     );
-    let host = ws_reconnect::extract_host(relay_url)?;
 
-    let request = tokio_tungstenite::tungstenite::http::Request::builder()
-        .uri(ws_url.parse::<tokio_tungstenite::tungstenite::http::Uri>()?)
-        .header("Authorization", format!("Bearer {token}"))
-        .header(
-            "Sec-WebSocket-Key",
-            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
-        )
-        .header("Sec-WebSocket-Version", "13")
-        .header("Connection", "Upgrade")
-        .header("Upgrade", "websocket")
-        .header("Host", &host)
-        .body(())?;
-
-    let (ws, _) = tokio_tungstenite::connect_async(request)
+    let ws = WsConnect::new(&ws_url)
+        .bearer_auth(token)
+        .connect()
         .await
         .context("session WS connect failed")?;
     tracing::debug!("session {session_id} data WS connected");
@@ -600,8 +588,6 @@ async fn handle_proxy_session(
     mode: &str,
     path: &str,
 ) -> anyhow::Result<()> {
-    use tokio_tungstenite::tungstenite;
-
     let Some(target) = target else {
         anyhow::bail!("tunnel not found");
     };
@@ -611,18 +597,10 @@ async fn handle_proxy_session(
         "{relay_url}/api/daemon/session/{session_id}?session_secret={}",
         urlencoding::encode(session_secret),
     );
-    let host = crate::ws_reconnect::extract_host(relay_url)?;
-    let request = tungstenite::http::Request::builder()
-        .uri(ws_url.parse::<tungstenite::http::Uri>()?)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Sec-WebSocket-Key", tungstenite::handshake::client::generate_key())
-        .header("Sec-WebSocket-Version", "13")
-        .header("Connection", "Upgrade")
-        .header("Upgrade", "websocket")
-        .header("Host", &host)
-        .body(())?;
 
-    let (data_ws, _) = tokio_tungstenite::connect_async(request)
+    let data_ws = WsConnect::new(&ws_url)
+        .bearer_auth(token)
+        .connect()
         .await
         .context("proxy session data WS connect failed")?;
 
@@ -637,55 +615,18 @@ async fn handle_proxy_session(
 
 /// Bridge relay data WS ↔ local service WS.
 async fn proxy_session_websocket(
-    data_ws: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    data_ws: mac_mgmt_ws::ClientWs,
     target: &TunnelTarget,
     path: &str,
 ) -> anyhow::Result<()> {
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite;
-
     let local_url = format!("ws://{}:{}{path}", target.host, target.port);
-    let (local_ws, _) = tokio_tungstenite::connect_async(&local_url)
+    let local_ws = WsConnect::new(&local_url)
+        .connect()
         .await
         .context("local WS connect failed")?;
 
     tracing::info!("proxy WS session bridging to {local_url}");
-
-    let (mut data_sink, mut data_stream) = data_ws.split();
-    let (mut local_sink, mut local_stream) = local_ws.split();
-
-    // Forward: relay data WS → local service WS
-    let data_to_local = async {
-        while let Some(Ok(msg)) = data_stream.next().await {
-            if matches!(msg, tungstenite::Message::Close(_)) {
-                let _ = local_sink.send(msg).await;
-                break;
-            }
-            if local_sink.send(msg).await.is_err() { break; }
-        }
-    };
-
-    // Forward: local service WS → relay data WS
-    let local_to_data = async {
-        while let Some(Ok(msg)) = local_stream.next().await {
-            if matches!(msg, tungstenite::Message::Close(_)) {
-                let _ = data_sink.send(msg).await;
-                break;
-            }
-            if data_sink.send(msg).await.is_err() { break; }
-        }
-    };
-
-    tokio::select! {
-        _ = data_to_local => {
-            let _ = data_sink.send(tungstenite::Message::Close(None)).await;
-            let _ = local_sink.send(tungstenite::Message::Close(None)).await;
-        }
-        _ = local_to_data => {
-            let _ = local_sink.send(tungstenite::Message::Close(None)).await;
-            let _ = data_sink.send(tungstenite::Message::Close(None)).await;
-        }
-    }
+    mac_mgmt_ws::bridge::client_ws(data_ws, local_ws).await;
     tracing::info!("proxy WS session ended");
     Ok(())
 }
@@ -700,12 +641,11 @@ async fn proxy_session_websocket(
 /// 5. Daemon sends binary messages: response body chunks (≤ STREAM_CHUNK_SIZE)
 /// 6. Daemon closes the WS
 async fn proxy_session_stream(
-    data_ws: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    data_ws: mac_mgmt_ws::ClientWs,
     target: &TunnelTarget,
     path: &str,
 ) -> anyhow::Result<()> {
     use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite;
 
     let (mut sink, mut stream) = data_ws.split();
 
@@ -795,7 +735,6 @@ async fn proxy_session_stream(
 
 /// Handle a file session: connect data WS to relay, then dispatch to
 /// the appropriate file tunnel handler (read or write).
-#[cfg(feature = "services")]
 async fn handle_file_session(
     relay_url: &str,
     token: &str,
@@ -806,8 +745,6 @@ async fn handle_file_session(
     path: Option<&str>,
     expected_mtime: Option<i64>,
 ) -> anyhow::Result<()> {
-    use tokio_tungstenite::tungstenite;
-
     let Some(tunnel) = tunnel else {
         anyhow::bail!("file tunnel not found");
     };
@@ -817,18 +754,10 @@ async fn handle_file_session(
         "{relay_url}/api/daemon/session/{session_id}?session_secret={}",
         urlencoding::encode(session_secret),
     );
-    let host = crate::ws_reconnect::extract_host(relay_url)?;
-    let request = tungstenite::http::Request::builder()
-        .uri(ws_url.parse::<tungstenite::http::Uri>()?)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Sec-WebSocket-Key", tungstenite::handshake::client::generate_key())
-        .header("Sec-WebSocket-Version", "13")
-        .header("Connection", "Upgrade")
-        .header("Upgrade", "websocket")
-        .header("Host", &host)
-        .body(())?;
 
-    let (data_ws, _) = tokio_tungstenite::connect_async(request)
+    let data_ws = WsConnect::new(&ws_url)
+        .bearer_auth(token)
+        .connect()
         .await
         .context("file session data WS connect failed")?;
 

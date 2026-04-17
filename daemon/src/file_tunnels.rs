@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use tokio_tungstenite::tungstenite;
+use mac_mgmt_ws::tungstenite;
 use futures_util::{SinkExt, StreamExt};
 
 #[cfg(feature = "services")]
@@ -254,9 +254,7 @@ pub fn handle_list(
 pub async fn handle_read_session(
     tunnel: &FileTunnel,
     rel_path: Option<&str>,
-    ws: tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    ws: mac_mgmt_ws::ClientWs,
 ) {
     let (mut sink, _stream) = ws.split();
 
@@ -355,9 +353,7 @@ pub async fn handle_write_session(
     tunnel: &FileTunnel,
     rel_path: Option<&str>,
     expected_mtime: Option<i64>,
-    ws: tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    ws: mac_mgmt_ws::ClientWs,
 ) {
     let (mut sink, mut stream) = ws.split();
 

@@ -4,8 +4,6 @@ pub mod pty;
 pub mod relay_client;
 pub mod ssh_keys;
 pub mod ssh_server;
-pub mod ws_stream;
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

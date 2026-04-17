@@ -40,7 +40,6 @@ mod skills;
 mod service;
 mod server_push;
 mod status;
-mod ws_reconnect;
 #[cfg(feature = "services")]
 mod services;
 #[cfg(feature = "services")]

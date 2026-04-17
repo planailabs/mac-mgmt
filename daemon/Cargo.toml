@@ -34,7 +34,7 @@ prometheus = "0.14"
 reqwest = { workspace = true, features = ["blocking", "stream"] }
 russh = { version = "0.59", default-features = false, features = ["ring", "flate2"] }
 rand = "0.8"
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+mac-mgmt-ws = { path = "../mac-mgmt-ws", features = ["client"] }
 futures-util = "0.3"
 urlencoding = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4"] }

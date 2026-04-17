@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Context;
 use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio_tungstenite::tungstenite::http::Uri;
 use tokio_tungstenite::tungstenite::Message;
+
+use crate::WsConnect;
 
 pub struct WsClientConfig {
     pub url: String,
@@ -62,25 +63,11 @@ async fn connect_and_run(
     config: &WsClientConfig,
     incoming_tx: &mpsc::Sender<String>,
     outgoing_rx: &mut mpsc::Receiver<String>,
-) -> Result<()> {
-    let host = extract_host(&config.url)?;
-
-    let request = tokio_tungstenite::tungstenite::http::Request::builder()
-        .uri(config.url.parse::<Uri>()?)
-        .header("Authorization", format!("Bearer {}", config.auth_token))
-        .header(
-            "Sec-WebSocket-Key",
-            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
-        )
-        .header("Sec-WebSocket-Version", "13")
-        .header("Connection", "Upgrade")
-        .header("Upgrade", "websocket")
-        .header("Host", &host)
-        .body(())?;
-
-    let (ws, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .context("WebSocket connect failed")?;
+) -> anyhow::Result<()> {
+    let ws = WsConnect::new(&config.url)
+        .bearer_auth(&config.auth_token)
+        .connect()
+        .await?;
 
     tracing::info!("ws_reconnect: connected");
 
@@ -117,15 +104,6 @@ async fn connect_and_run(
     }
 }
 
-pub fn extract_host(url: &str) -> Result<String> {
-    let url = url
-        .strip_prefix("wss://")
-        .or_else(|| url.strip_prefix("ws://"))
-        .unwrap_or(url);
-    let host = url.split('/').next().unwrap_or(url);
-    Ok(host.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,7 +121,6 @@ mod tests {
         let max = Duration::from_secs(60);
         let mut backoff = min;
 
-        // Verify doubling
         backoff = (backoff * 2).min(max);
         assert_eq!(backoff, Duration::from_secs(2));
 
@@ -153,25 +130,11 @@ mod tests {
         backoff = (backoff * 2).min(max);
         assert_eq!(backoff, Duration::from_secs(8));
 
-        // Jump to near max
         backoff = Duration::from_secs(32);
         backoff = (backoff * 2).min(max);
-        assert_eq!(backoff, Duration::from_secs(60)); // capped
+        assert_eq!(backoff, Duration::from_secs(60));
 
-        // Already at max stays at max
         backoff = (backoff * 2).min(max);
         assert_eq!(backoff, Duration::from_secs(60));
-    }
-
-    #[test]
-    fn extract_host_variants() {
-        assert_eq!(
-            extract_host("wss://relay.example.com/path").unwrap(),
-            "relay.example.com"
-        );
-        assert_eq!(
-            extract_host("ws://localhost:8080/ws").unwrap(),
-            "localhost:8080"
-        );
     }
 }

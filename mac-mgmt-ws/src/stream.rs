@@ -3,8 +3,13 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-/// Adapts a WebSocketStream into AsyncRead + AsyncWrite for use with russh.
-/// Uses channels internally to bridge sync poll-based I/O with the async WS API.
+use crate::ClientWs;
+
+/// Adapts a [`ClientWs`] into `AsyncRead + AsyncWrite`.
+///
+/// Spawns two background tasks that bridge between the poll-based
+/// I/O world and the async WebSocket stream/sink API. Binary frames
+/// become reads; writes become binary frames.
 pub struct WsStream {
     read_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     write_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
@@ -14,11 +19,7 @@ pub struct WsStream {
 }
 
 impl WsStream {
-    pub fn new(
-        ws: tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    ) -> Self {
+    pub fn new(ws: ClientWs) -> Self {
         use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message;
 
@@ -129,17 +130,11 @@ impl AsyncWrite for WsStream {
         }
     }
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }

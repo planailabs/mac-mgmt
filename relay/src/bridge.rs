@@ -1,11 +1,9 @@
-use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::WebSocket;
 
 const SESSION_TTL: Duration = Duration::from_secs(60);
 const MAX_PENDING_PROXY_SESSIONS: usize = 1000;
@@ -124,56 +122,7 @@ pub async fn complete_proxy_session(session_id: &str, secret: &str, daemon_ws: W
 
 /// Bridge two WebSockets bidirectionally, forwarding close frames.
 pub async fn bridge_ws_ws(ws_a: WebSocket, ws_b: WebSocket) {
-    let (mut a_sink, mut a_stream) = ws_a.split();
-    let (mut b_sink, mut b_stream) = ws_b.split();
-
-    let a_to_b = async {
-        while let Some(msg) = a_stream.next().await {
-            match msg {
-                Ok(msg @ (Message::Binary(_) | Message::Text(_) | Message::Ping(_) | Message::Pong(_))) => {
-                    if b_sink.send(msg).await.is_err() { break; }
-                }
-                Ok(Message::Close(frame)) => {
-                    let _ = b_sink.send(Message::Close(frame)).await;
-                    break;
-                }
-                Err(_) => {
-                    let _ = b_sink.send(Message::Close(None)).await;
-                    break;
-                }
-            }
-        }
-    };
-
-    let b_to_a = async {
-        while let Some(msg) = b_stream.next().await {
-            match msg {
-                Ok(msg @ (Message::Binary(_) | Message::Text(_) | Message::Ping(_) | Message::Pong(_))) => {
-                    if a_sink.send(msg).await.is_err() { break; }
-                }
-                Ok(Message::Close(frame)) => {
-                    let _ = a_sink.send(Message::Close(frame)).await;
-                    break;
-                }
-                Err(_) => {
-                    let _ = a_sink.send(Message::Close(None)).await;
-                    break;
-                }
-            }
-        }
-    };
-
-    tokio::select! {
-        _ = a_to_b => {
-            // a->b finished; send close to a if not already closed
-            let _ = a_sink.send(Message::Close(None)).await;
-        }
-        _ = b_to_a => {
-            // b->a finished; send close to b if not already closed
-            let _ = b_sink.send(Message::Close(None)).await;
-        }
-    }
-    tracing::debug!("ws-ws bridge closed");
+    mac_mgmt_ws::bridge::axum_ws(ws_a, ws_b).await;
 }
 
 pub fn register_pending_session(session_id: String, secret: String, stream: TcpStream) {
@@ -249,71 +198,6 @@ pub fn spawn_cleanup_task() {
 }
 
 /// Bridge bidirectional data between a TCP stream and a WebSocket.
-pub async fn bridge_tcp_ws(mut tcp: TcpStream, ws: WebSocket) {
-    let (mut ws_sink, mut ws_stream) = ws.split();
-    let (mut tcp_read, mut tcp_write) = tcp.split();
-    let mut ws_to_tcp_bytes: u64 = 0;
-    let mut tcp_to_ws_bytes: u64 = 0;
-
-    let ws_to_tcp = async {
-        let mut bytes: u64 = 0;
-        while let Some(msg) = ws_stream.next().await {
-            match msg {
-                Ok(Message::Binary(data)) => {
-                    if let Err(e) = tcp_write.write_all(&data).await {
-                        tracing::debug!("ws->tcp write failed: {e}");
-                        break;
-                    }
-                    bytes += data.len() as u64;
-                }
-                Ok(Message::Close(_)) => {
-                    tracing::debug!("ws closed by peer");
-                    break;
-                }
-                Err(e) => {
-                    tracing::debug!("ws read error: {e}");
-                    break;
-                }
-                _ => {}
-            }
-        }
-        bytes
-    };
-
-    let tcp_to_ws = async {
-        let mut buf = [0u8; 8192];
-        let mut bytes: u64 = 0;
-        loop {
-            match tcp_read.read(&mut buf).await {
-                Ok(0) => {
-                    tracing::debug!("tcp closed by peer");
-                    break;
-                }
-                Ok(n) => {
-                    if let Err(e) = ws_sink
-                        .send(Message::Binary(buf[..n].to_vec().into()))
-                        .await
-                    {
-                        tracing::debug!("tcp->ws send failed: {e}");
-                        break;
-                    }
-                    bytes += n as u64;
-                }
-                Err(e) => {
-                    tracing::debug!("tcp read error: {e}");
-                    break;
-                }
-            }
-        }
-        bytes
-    };
-
-    tokio::select! {
-        n = ws_to_tcp => { ws_to_tcp_bytes = n; }
-        n = tcp_to_ws => { tcp_to_ws_bytes = n; }
-    }
-
-    tracing::info!(
-        "bridge closed (ws->tcp: {ws_to_tcp_bytes}B, tcp->ws: {tcp_to_ws_bytes}B)"
-    );
+pub async fn bridge_tcp_ws(tcp: TcpStream, ws: WebSocket) {
+    mac_mgmt_ws::bridge::tcp_ws(tcp, ws).await;
 }

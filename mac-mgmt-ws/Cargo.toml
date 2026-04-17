@@ -1,0 +1,18 @@
+[package]
+name = "mac-mgmt-ws"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "rt", "time", "io-util", "net", "macros"] }
+futures-util = "0.3"
+tracing = "0.1"
+anyhow = "1"
+
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"], optional = true }
+axum = { version = "0.8", features = ["ws"], optional = true }
+
+[features]
+default = ["client"]
+client = ["dep:tokio-tungstenite"]
+axum = ["dep:axum"]

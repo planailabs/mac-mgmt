@@ -3717,6 +3717,7 @@ dependencies = [
  "libc",
  "mac-mgmt-common",
  "mac-mgmt-services",
+ "mac-mgmt-ws",
  "notify",
  "prometheus",
  "rand 0.8.5",
@@ -3734,7 +3735,6 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tokio",
- "tokio-tungstenite 0.26.2",
  "toml",
  "tracing",
  "tracing-subscriber",
@@ -3766,6 +3766,7 @@ dependencies = [
  "clap",
  "futures-util",
  "http-body-util",
+ "mac-mgmt-ws",
  "prometheus",
  "prometheus-parse",
  "protobuf",
@@ -3854,6 +3855,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mac-mgmt-ws"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
  "tracing",
 ]
 
