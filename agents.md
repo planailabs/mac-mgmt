@@ -47,3 +47,7 @@ Steps:
 5. When renaming fields, also add `#[serde(alias = "old_name")]` to the struct field so local TOML configs with the old name continue to parse via serde.
 
 The daemon applies `config_migrate::migrate()` to remote JSON configs before deserializing. If deserialization still fails after migration, the daemon falls back to local config. The server applies migrations when reading configs from the database (GET /api/config, web UI) and before validating incoming configs (PUT, PATCH).
+
+## Chaos testing: run `/chaos-test` after significant daemon changes
+
+After making non-trivial changes to the daemon (event loop, heartbeat logic, SSE handling, config reload, service management, relay integration), run `/chaos-test` to check for regressions under fault injection. The chaos test suite exercises the daemon with randomized endpoint failures, rapid SSE pushes, multi-daemon coordination, and supervisor lifecycle — catching race conditions and error handling bugs that unit tests miss. A quick run (`/chaos-test 5`) takes under two minutes; a thorough sweep (`/chaos-test 30`) takes about ten.
