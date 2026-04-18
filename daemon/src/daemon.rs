@@ -107,7 +107,7 @@ impl Daemon {
         &mut self,
         update_tick: &mut time::Interval,
         health_tick: &mut time::Interval,
-        set_log_level: &dyn Fn(&str),
+        set_log_level: &(dyn Fn(&str) + Send + Sync),
     ) {
         tracing::info!("config file changed, reloading");
         match tokio::time::timeout(
@@ -439,7 +439,7 @@ impl Daemon {
 
 pub async fn run(
     log_buf: crate::log_buffer::LogBuffer,
-    set_log_level: Box<dyn Fn(&str) + Send>,
+    set_log_level: Box<dyn Fn(&str) + Send + Sync>,
 ) -> Result<()> {
     // Acquire lockfile to ensure only one daemon instance runs at a time.
     let lock_path = config::config_dir().join("daemon.lock");
@@ -982,4 +982,140 @@ fn upgrade_nix() {
         tracing::warn!("nix upgrade failed: {e}");
         sentry_ext::capture_error(&format!("nix upgrade failed: {e}"), &[]);
     }
+}
+
+// ── Simulation entrypoint ───────────────────────────────────────────
+
+/// Minimal entrypoint for deterministic simulation testing (turmoil).
+///
+/// Accepts a pre-built config and host key, skipping lockfile, sentry,
+/// signal handlers, metrics server, config watcher, and filesystem I/O.
+/// Runs the same core event loop as production `run()`.
+#[cfg(feature = "sim")]
+pub async fn run_sim(
+    cfg: config::Config,
+    host_key: Arc<russh::keys::PrivateKey>,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Result<()> {
+    let current_cfg = cfg.clone();
+
+    let update_interval =
+        humantime::parse_duration(&cfg.daemon.update_interval).context("invalid update_interval")?;
+    let health_interval =
+        humantime::parse_duration(&cfg.daemon.health_interval).context("invalid health_interval")?;
+
+    let upgrade_window = cfg.daemon.upgrade_window.as_ref().map(|w| {
+        mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
+    });
+
+    let server_url = cfg.server.url.clone();
+    let server_token = cfg.server.token.clone();
+    let skills_dir = std::path::PathBuf::from("/tmp/sim-skills");
+
+    let dispatcher = Arc::new(Dispatcher::new(Vec::new(), None));
+
+    let metrics = Arc::new(Metrics::new());
+
+    let (_sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
+
+    let mut update_tick = time::interval(update_interval);
+    let mut health_tick = time::interval(health_interval);
+    let mut heartbeat_tick = time::interval(health_interval);
+    let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
+    let mut assessment_probe_tick =
+        time::interval(assessment::jittered(assessment::DEFAULT_PROBE_INTERVAL, 120));
+
+    let instance_id = crate::host_keys::fingerprint_hex(&host_key);
+    tracing::info!("sim daemon started, instance ID: {instance_id}");
+
+    // Start server push SSE if server is configured.
+    let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
+        let (_handle, rx) = crate::server_push::start(url, token);
+        Some(rx)
+    } else {
+        None
+    };
+
+    let assessor = Arc::new(Assessor::new());
+    assessor.update_config(current_cfg.clone()).await;
+    assessor.attach_metrics(Arc::clone(&metrics)).await;
+
+    let mut daemon = Daemon {
+        server_url,
+        server_token,
+        skills_dir,
+        dispatcher,
+        metrics,
+        upgrade_window,
+        current_cfg,
+        instance_id,
+        host_key,
+        assessor,
+        initial_assessment_pending: Arc::new(AtomicBool::new(true)),
+        #[cfg(feature = "services")]
+        svc_mgr: unreachable!("sim mode should not enable services feature"),
+    };
+
+    // Run startup sync in background.
+    if let (Some(url), Some(token)) = (&daemon.server_url, &daemon.server_token) {
+        let u = url.clone();
+        let t = token.clone();
+        tokio::spawn(async move {
+            fetch_target_version(&u, &t).await;
+        });
+    }
+
+    daemon.spawn_sync_skills_and_mcp();
+
+    // ── Main event loop (sim) ───────────────────────────────────────
+    loop {
+        tokio::select! {
+            _ = &mut shutdown_rx => {
+                tracing::info!("sim shutdown signal received");
+                break;
+            }
+
+            _ = update_tick.tick() => {
+                daemon.handle_update().await;
+            }
+
+            _ = health_tick.tick() => {
+                daemon.handle_health_tick().await;
+                daemon.refresh_assessment_sample().await;
+                daemon.send_heartbeat(None, None);
+            }
+
+            _ = heartbeat_tick.tick() => {
+                daemon.refresh_assessment_sample().await;
+                daemon.send_heartbeat(None, None);
+            }
+
+            _ = assessment_inventory_tick.tick() => {
+                daemon.send_assessment_inventory();
+            }
+
+            _ = assessment_probe_tick.tick() => {
+                daemon.run_assessment_probes();
+            }
+
+            Some(cmd) = async {
+                if let Some(rx) = &mut push_rx { rx.recv().await } else { std::future::pending().await }
+            } => {
+                if matches!(cmd, crate::server_push::PushCommand::SyncConfig) {
+                    tracing::info!("server push: sync config");
+                    // In sim mode, config reload fetches from the mock server.
+                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &|_| {}).await;
+                } else {
+                    let _needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
+                }
+            }
+
+            Some(()) = sync_rx.recv() => {
+                daemon.handle_local_sync();
+            }
+        }
+    }
+
+    tracing::info!("sim daemon shutdown complete");
+    Ok(())
 }

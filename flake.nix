@@ -97,6 +97,19 @@
           };
           sse-push = pkgs.callPackage ./tests/sse-push.nix { };
           sse-daemon = pkgs.callPackage ./tests/sse-daemon.nix { };
+
+          # Deterministic simulation tests — mock server + real daemon code.
+          # Fast (seconds) compared to VM-based tests above (minutes).
+          sim-tests = pkgs.rustPlatform.buildRustPackage {
+            pname = "mac-mgmt-sim-tests";
+            version = "0.1.0";
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            cargoBuildFlags = [ "-p" "sim-tests" ];
+            doCheck = true;
+            cargoTestFlags = [ "-p" "sim-tests" ];
+            env.GIT_SHA = gitSha;
+          };
         };
       } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''

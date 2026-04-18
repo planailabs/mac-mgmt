@@ -1,0 +1,23 @@
+[package]
+name = "sim-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+axum = { version = "0.8", features = ["json"] }
+chrono = { version = "0.4", features = ["serde"] }
+mac-mgmt-common = { path = "../common" }
+rand = "0.8"
+russh = { version = "0.59", default-features = false, features = ["ring"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full", "test-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The daemon library, built without services/relay/self-update, with sim feature
+[dev-dependencies]
+mac-mgmt-daemon = { path = "../daemon", package = "mac-mgmt", default-features = false, features = ["sim"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

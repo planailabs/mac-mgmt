@@ -3,11 +3,20 @@ name = "mac-mgmt"
 version = "0.1.5"
 edition = "2024"
 
+[lib]
+name = "mac_mgmt_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mac-mgmt"
+path = "src/main.rs"
+
 [features]
 default = ["services", "relay"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:urlencoding"]
+sim = []
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

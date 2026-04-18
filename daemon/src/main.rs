@@ -3,52 +3,13 @@ use anyhow::Result;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 
-mod assessment;
-mod cmd;
-mod config;
-mod config_watch;
+use mac_mgmt_daemon::{
+    config, crash, daemon, log_buffer, log_layer, logs, os_mgmt, scripts, service, status,
+};
 #[cfg(feature = "services")]
-mod connectors;
-mod crash;
-mod daemon;
-mod host_keys;
-mod log_buffer;
-mod log_layer;
-mod events;
-mod logs;
-#[cfg(feature = "services")]
-mod config_providers;
-#[cfg(feature = "services")]
-mod managed_service;
-mod mcp_servers;
-mod metrics;
-mod metrics_server;
-mod notify;
-mod sentry_ext;
-mod nix;
-mod os_mgmt;
-#[cfg(feature = "relay")]
-mod file_tunnels;
-#[cfg(feature = "relay")]
-mod remote_ssh;
-mod scripts;
+use mac_mgmt_daemon::{connectors, unmanaged};
 #[cfg(feature = "self-update")]
-mod self_update;
-#[cfg(feature = "services")]
-mod service_mgmt;
-mod skills;
-mod service;
-mod server_push;
-mod status;
-#[cfg(feature = "services")]
-mod services;
-#[cfg(feature = "services")]
-mod unmanaged;
-
-/// Git commit this binary was built from. Captured at build time by
-/// build.rs (GIT_SHA env or `git rev-parse HEAD`); "unknown" when
-/// neither is available.
-pub const GIT_SHA: &str = env!("GIT_SHA");
+use mac_mgmt_daemon::{nix, self_update};
 
 #[derive(Parser)]
 #[command(name = "mac-mgmt", version, about = "Mac management daemon")]
