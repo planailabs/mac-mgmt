@@ -10,7 +10,7 @@ use serde::Deserialize;
 use swiftide::chat_completion::{errors::ToolError, Tool, ToolCall, ToolOutput, ToolSpec};
 use swiftide::traits::AgentContext;
 
-use crate::mcp::relay_client::RelayClient;
+use crate::relay_client::RelayClient;
 
 /// Shared context for all healer tools.
 #[derive(Clone)]

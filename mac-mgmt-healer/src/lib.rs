@@ -1,6 +1,6 @@
 pub mod agent;
 pub mod connector;
-pub mod mcp;
+pub mod relay_client;
 pub mod session;
 pub mod tools;
 
@@ -450,7 +450,7 @@ async fn run_agent_session(
         .context("failed to resolve LLM")?;
 
     // 2. Build relay client
-    let relay_client = Arc::new(mcp::relay_client::RelayClient::new(
+    let relay_client = Arc::new(relay_client::RelayClient::new(
         req.relay_url.clone(),
         proxy_token,
     ));

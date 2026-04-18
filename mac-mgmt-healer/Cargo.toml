@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-swiftide = { version = "0.32", features = ["ollama", "anthropic", "mcp"] }
-# Must match swiftide-agents 0.32's rmcp version for McpToolbox compatibility.
-rmcp = { version = "0.5", features = ["server", "macros", "transport-async-rw", "client"] }
+swiftide = { version = "0.32", features = ["ollama", "anthropic", "swiftide-agents"] }
 schemars = { version = "1.2", features = ["derive"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
 reqwest = { workspace = true }
@@ -24,7 +22,6 @@ sha2 = "0.10"
 hex = "0.4"
 rand = "0.9"
 dashmap = "6"
-tokio-stream = "0.1"
 urlencoding = "2"
 # Force async-openai to a version compatible with swiftide 0.32.
 # v0.31+ removed/restructured types that swiftide expects.

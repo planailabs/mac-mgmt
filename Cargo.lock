@@ -1587,7 +1587,6 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
- "strsim 0.11.1",
  "syn 2.0.117",
 ]
 
@@ -4578,13 +4577,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-openai 0.30.0",
+ "async-trait",
  "chrono",
  "dashmap",
  "hex",
  "mac-mgmt-common",
  "rand 0.9.4",
  "reqwest 0.12.28",
- "rmcp",
  "schemars",
  "serde",
  "serde_json",
@@ -4592,7 +4591,6 @@ dependencies = [
  "sqlx",
  "swiftide",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
  "urlencoding",
@@ -6786,41 +6784,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rmcp"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2faf35b7d3c4b7f8c21c45bb014011b32a0ce6444bf6094da04daab01a8c3c34"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "futures",
- "paste",
- "pin-project-lite",
- "rmcp-macros",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "rmcp-macros"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad9720d9d2a943779f1dc3d47fa9072c7eeffaff4e1a82f67eb9f7ea52696091"
-dependencies = [
- "darling 0.21.3",
- "proc-macro2",
- "quote",
- "serde_json",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "rocket"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7264,7 +7227,6 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
- "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive",
@@ -8372,7 +8334,6 @@ dependencies = [
  "fs-err",
  "futures-util",
  "indoc",
- "rmcp",
  "schemars",
  "serde",
  "serde_json",
