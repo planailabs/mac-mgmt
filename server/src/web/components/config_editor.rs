@@ -232,7 +232,17 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                     .unwrap_or("")
                     .to_string();
 
+                let section_type = resolved
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("object");
+
                 let section_name_clone = section_name.clone();
+
+                // Top-level array sections (e.g. cloud: Vec<CloudConfig>)
+                // need the array-of-objects UI, not render_section_fields.
+                let is_array_section = section_type == "array";
+
                 rsx! {
                     details { class: "border border-gray-300 dark:border-gray-600 rounded shadow-sm",
                         key: "{section_name}",
@@ -244,15 +254,27 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                             p { class: "px-3 pt-1 text-xs text-gray-500 dark:text-gray-400", "{description}" }
                         }
                         div { class: "px-3 py-2 space-y-2",
-                            {render_section_fields(
-                                &resolved,
-                                &defs,
-                                vec![section_name.clone()],
-                                form_values,
-                                json_text,
-                                extra_config_open,
-                                sync_to_json,
-                            )}
+                            if is_array_section {
+                                {render_top_level_array(
+                                    &resolved,
+                                    &defs,
+                                    section_name.clone(),
+                                    form_values,
+                                    json_text,
+                                    extra_config_open,
+                                    sync_to_json,
+                                )}
+                            } else {
+                                {render_section_fields(
+                                    &resolved,
+                                    &defs,
+                                    vec![section_name.clone()],
+                                    form_values,
+                                    json_text,
+                                    extra_config_open,
+                                    sync_to_json,
+                                )}
+                            }
                         }
                     }
                 }
@@ -288,6 +310,106 @@ fn resolve_ref(
         }
     }
     schema.clone()
+}
+
+/// Render a top-level array section (e.g. `cloud: Vec<CloudConfig>`).
+///
+/// Shows each array entry as a numbered card with all its fields and a
+/// "Remove" button, plus an "+ Add entry" button at the bottom.
+fn render_top_level_array(
+    section_schema: &serde_json::Value,
+    defs: &serde_json::Value,
+    section_name: String,
+    mut form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+    extra_config_open: Signal<bool>,
+    sync_to_json: impl Fn() + Clone + 'static,
+) -> Element {
+    let items_schema = section_schema
+        .get("items")
+        .map(|s| resolve_ref(s, defs))
+        .unwrap_or_default();
+
+    let path = vec![section_name.clone()];
+    let entries: Vec<serde_json::Value> = get_at_path(&form_values.read(), &path)
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+
+    let items_schema_add = items_schema.clone();
+    let defs_add = defs.clone();
+    let path_add = path.clone();
+    let sync_add = sync_to_json.clone();
+
+    rsx! {
+        div { class: "space-y-2",
+            for (idx, _entry) in entries.iter().enumerate() {
+                {
+                    let items_c = items_schema.clone();
+                    let defs_c = defs.clone();
+                    let path_r = path.clone();
+                    let sync_r = sync_to_json.clone();
+                    let mut entry_path = path.clone();
+                    entry_path.push(format!("{idx}"));
+
+                    // Build a label from the entry's provider field (if any)
+                    let label = get_at_path(&form_values.read(), &entry_path)
+                        .and_then(|v| v.get("provider").and_then(|p| p.as_str().map(String::from)))
+                        .unwrap_or_else(|| format!("#{idx}"));
+
+                    rsx! {
+                        div { class: "border border-gray-300 dark:border-gray-600 rounded p-2",
+                            key: "{idx}",
+                            div { class: "flex justify-between items-center mb-2",
+                                span { class: "text-xs font-semibold text-gray-600 dark:text-gray-300",
+                                    "{label}"
+                                }
+                                button {
+                                    class: "text-red-500 hover:text-red-700 text-xs px-2 py-0.5 border border-red-300 rounded",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        let mut arr = get_at_path(&form_values.read(), &path_r)
+                                            .and_then(|v| v.as_array().cloned())
+                                            .unwrap_or_default();
+                                        if idx < arr.len() {
+                                            arr.remove(idx);
+                                        }
+                                        set_at_path(&mut form_values, &path_r,
+                                            serde_json::Value::Array(arr));
+                                        sync_r();
+                                    },
+                                    "Remove"
+                                }
+                            }
+                            {render_object_array_entry(
+                                &items_c,
+                                &defs_c,
+                                entry_path,
+                                form_values,
+                                json_text,
+                                extra_config_open,
+                                sync_to_json.clone(),
+                            )}
+                        }
+                    }
+                }
+            }
+            button {
+                r#type: "button",
+                class: "bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700",
+                onclick: move |_| {
+                    let mut arr = get_at_path(&form_values.read(), &path_add)
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default();
+                    let new_obj = build_default_object(&items_schema_add, &defs_add);
+                    arr.push(new_obj);
+                    set_at_path(&mut form_values, &path_add,
+                        serde_json::Value::Array(arr));
+                    sync_add();
+                },
+                "+ Add entry"
+            }
+        }
+    }
 }
 
 /// Render fields for one config section, including nested subsections.
