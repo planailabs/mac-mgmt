@@ -23,13 +23,13 @@
 # upgrade_window = "02:00-05:00"
 
 # ── Global ───────────────────────────────────────────────────────────
-# Controls which service providers are active. These two fields drive
-# which [ollama]/[openclaw] sections are actually used.
+# Controls which provider the agent uses by default.
+# Individual providers are toggled via their own `enabled` flag.
 [global]
-# LLM inference backend: "ollama", "lms", "cloud", or "none"
-llm_provider = "ollama"
-# Agent provider: "openclaw" or "none"
-agent_provider = "openclaw"
+# Default LLM backend: "ollama", "lms", "cloud", or "none"
+default_llm = "ollama"
+# Default agent provider: "openclaw" or "none"
+default_agent = "openclaw"
 
 # ── Metrics ──────────────────────────────────────────────────────────
 # Prometheus metrics endpoint. Scraped by monitoring systems.
@@ -40,8 +40,9 @@ port = 9396
 
 # ── OpenClaw ─────────────────────────────────────────────────────────
 # OpenClaw AI gateway configuration.
-# Only used when global.agent_provider = "openclaw".
+# Toggle with enabled = true/false. Active when global.default_agent = "openclaw".
 # [openclaw]
+# enabled = true
 # Gateway settings merged into ~/.openclaw/openclaw.json.
 # These are typed, validated fields for common settings.
 # [openclaw.gateway]
@@ -64,8 +65,9 @@ port = 9396
 # extra_config = { "some" = { "deep" = { "key" = "value" } } }
 
 # ── Ollama ───────────────────────────────────────────────────────────
-# Ollama LLM inference engine. Only used when global.llm_provider = "ollama".
+# Ollama LLM inference engine. Toggle with enabled = true/false.
 [ollama]
+# enabled = true
 host = "127.0.0.1"
 port = 11434
 # Models to pull on startup. At least one required.

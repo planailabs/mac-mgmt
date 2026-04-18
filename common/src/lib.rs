@@ -569,6 +569,9 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
+    #[schemars(description = "Whether this provider is installed and started")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[schemars(description = "Ollama listen address")]
     #[serde(default = "default_host")]
     pub host: String,
@@ -589,6 +592,7 @@ pub struct OllamaConfig {
 impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             host: default_host(),
             port: default_port(),
             models: default_models(),
@@ -617,6 +621,9 @@ fn default_lms_model() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LmsConfig {
+    #[schemars(description = "Whether this provider is installed and started")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[schemars(description = "LM Studio listen address")]
     #[serde(default = "default_host")]
     pub host: String,
@@ -634,6 +641,7 @@ pub struct LmsConfig {
 impl Default for LmsConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             host: default_host(),
             port: default_lms_port(),
             models: default_lms_models(),
@@ -677,6 +685,9 @@ fn default_cloud_model() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloudConfig {
+    #[schemars(description = "Whether this cloud provider entry is active")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[schemars(description = "Cloud LLM provider")]
     #[serde(default)]
     pub provider: CloudProvider,
@@ -748,6 +759,9 @@ pub struct OpenClawTelegramConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
+    #[schemars(description = "Whether the OpenClaw agent is installed and started")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[schemars(description = "Gateway settings merged into ~/.openclaw/openclaw.json")]
     #[serde(default)]
     pub gateway: Option<OpenClawGatewayConfig>,
@@ -765,6 +779,7 @@ pub struct OpenClawConfig {
 impl Default for OpenClawConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             gateway: None,
             skills: None,
             telegram: None,
@@ -808,12 +823,12 @@ pub struct DaemonServerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
-    #[schemars(description = "LLM backend")]
-    #[serde(default)]
-    pub llm_provider: LlmProvider,
-    #[schemars(description = "Agent provider")]
-    #[serde(default)]
-    pub agent_provider: AgentProvider,
+    #[schemars(description = "Default LLM backend (ollama, lms, cloud, or none)")]
+    #[serde(default, alias = "llm_provider")]
+    pub default_llm: LlmProvider,
+    #[schemars(description = "Default agent provider (openclaw or none)")]
+    #[serde(default, alias = "agent_provider")]
+    pub default_agent: AgentProvider,
     #[schemars(description = "Display name for this agent")]
     #[serde(default)]
     pub agent_name: Option<String>,
@@ -826,6 +841,52 @@ impl GlobalConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
         Ok(())
     }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+/// Deserializes either a single `T` or a `Vec<T>`, enabling backwards-compat
+/// for fields that changed from a single object to a list (e.g. `[cloud]` → `[[cloud]]`).
+fn deserialize_one_or_many<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    use serde::de;
+
+    struct OneOrManyVisitor<T>(std::marker::PhantomData<T>);
+
+    impl<'de, T: serde::Deserialize<'de>> de::Visitor<'de> for OneOrManyVisitor<T> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a single object or an array of objects")
+        }
+
+        fn visit_seq<A>(self, seq: A) -> Result<Vec<T>, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            Vec::deserialize(de::value::SeqAccessDeserializer::new(seq))
+        }
+
+        fn visit_map<M>(self, map: M) -> Result<Vec<T>, M::Error>
+        where
+            M: de::MapAccess<'de>,
+        {
+            T::deserialize(de::value::MapAccessDeserializer::new(map)).map(|v| vec![v])
+        }
+    }
+
+    deserializer.deserialize_any(OneOrManyVisitor(std::marker::PhantomData))
+}
+
+/// Concrete wrapper for `CloudConfig` lists (serde `deserialize_with` can't use turbofish).
+fn deserialize_cloud_list<'de, D>(deserializer: D) -> Result<Vec<CloudConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_one_or_many(deserializer)
 }
 
 // ── Cluster Config (what the server manages per-cluster) ──────────────
@@ -845,8 +906,9 @@ pub struct ClusterConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub lms: LmsConfig,
-    #[serde(default)]
-    pub cloud: CloudConfig,
+    #[schemars(description = "Cloud LLM provider entries (list of providers)")]
+    #[serde(default, deserialize_with = "deserialize_cloud_list")]
+    pub cloud: Vec<CloudConfig>,
     #[serde(default)]
     pub metrics: MetricsConfig,
     #[serde(default)]
@@ -887,10 +949,23 @@ impl ClusterConfig {
     pub fn validate(&self) -> Result<(), String> {
         self.daemon.validate().map_err(|e| e.to_string())?;
         self.global.validate().map_err(|e| e.to_string())?;
-        self.ollama.validate().map_err(|e| e.to_string())?;
-        self.lms.validate().map_err(|e| e.to_string())?;
-        self.cloud.validate().map_err(|e| e.to_string())?;
+        if self.ollama.enabled {
+            self.ollama.validate().map_err(|e| e.to_string())?;
+        }
+        if self.lms.enabled {
+            self.lms.validate().map_err(|e| e.to_string())?;
+        }
+        for (i, c) in self.cloud.iter().enumerate() {
+            if c.enabled {
+                c.validate().map_err(|e| format!("cloud[{i}]: {e}"))?;
+            }
+        }
         Ok(())
+    }
+
+    /// Return the first enabled cloud entry, if any.
+    pub fn default_cloud(&self) -> Option<&CloudConfig> {
+        self.cloud.iter().find(|c| c.enabled)
     }
 }
 
@@ -934,8 +1009,8 @@ pub struct DaemonConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub lms: LmsConfig,
-    #[serde(default)]
-    pub cloud: CloudConfig,
+    #[serde(default, deserialize_with = "deserialize_cloud_list")]
+    pub cloud: Vec<CloudConfig>,
     #[serde(default)]
     pub metrics: MetricsConfig,
     #[serde(default)]
@@ -1020,15 +1095,19 @@ mod tests {
     fn valid_minimal_config() {
         let config = ClusterConfig::from_toml("").unwrap();
         assert_eq!(config.ollama.flavour, "cpu");
-        assert_eq!(config.global.llm_provider, LlmProvider::Ollama);
-        assert_eq!(config.global.agent_provider, AgentProvider::Openclaw);
+        assert_eq!(config.global.default_llm, LlmProvider::Ollama);
+        assert_eq!(config.global.default_agent, AgentProvider::Openclaw);
+        assert!(config.ollama.enabled);
+        assert!(config.lms.enabled);
+        assert!(config.openclaw.enabled);
+        assert!(config.cloud.is_empty());
     }
 
     #[test]
     fn valid_full_config() {
         let toml = r#"
 [global]
-llm_provider = "ollama"
+default_llm = "ollama"
 
 [ollama]
 host = "10.0.0.1"
@@ -1091,7 +1170,7 @@ models = []
     fn rejects_invalid_llm_provider() {
         let toml = r#"
 [global]
-llm_provider = "chatgpt"
+default_llm = "chatgpt"
 "#;
         let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("unknown variant"), "got: {err}");
@@ -1101,7 +1180,7 @@ llm_provider = "chatgpt"
     fn rejects_invalid_agent_provider() {
         let toml = r#"
 [global]
-agent_provider = "chatgpt"
+default_agent = "chatgpt"
 "#;
         let err = ClusterConfig::from_toml(toml).unwrap_err();
         assert!(err.contains("unknown variant"), "got: {err}");
@@ -1111,10 +1190,22 @@ agent_provider = "chatgpt"
     fn accepts_none_providers() {
         let toml = r#"
 [global]
-llm_provider = "none"
-agent_provider = "none"
+default_llm = "none"
+default_agent = "none"
 "#;
         ClusterConfig::from_toml(toml).unwrap();
+    }
+
+    #[test]
+    fn accepts_legacy_provider_aliases() {
+        let toml = r#"
+[global]
+llm_provider = "ollama"
+agent_provider = "openclaw"
+"#;
+        let config = ClusterConfig::from_toml(toml).unwrap();
+        assert_eq!(config.global.default_llm, LlmProvider::Ollama);
+        assert_eq!(config.global.default_agent, AgentProvider::Openclaw);
     }
 
     #[test]
@@ -1184,20 +1275,82 @@ log_level = "verbose"
     #[test]
     fn providers_default_to_ollama_and_openclaw() {
         let config = ClusterConfig::from_toml("").unwrap();
-        assert_eq!(config.global.llm_provider, LlmProvider::Ollama);
-        assert_eq!(config.global.agent_provider, AgentProvider::Openclaw);
+        assert_eq!(config.global.default_llm, LlmProvider::Ollama);
+        assert_eq!(config.global.default_agent, AgentProvider::Openclaw);
     }
 
     #[test]
     fn providers_can_be_set_to_none() {
         let toml = r#"
 [global]
-llm_provider = "none"
-agent_provider = "none"
+default_llm = "none"
+default_agent = "none"
 "#;
         let config = ClusterConfig::from_toml(toml).unwrap();
-        assert_eq!(config.global.llm_provider, LlmProvider::None);
-        assert_eq!(config.global.agent_provider, AgentProvider::None);
+        assert_eq!(config.global.default_llm, LlmProvider::None);
+        assert_eq!(config.global.default_agent, AgentProvider::None);
+    }
+
+    #[test]
+    fn enabled_flags_default_to_true() {
+        let config = ClusterConfig::from_toml("").unwrap();
+        assert!(config.ollama.enabled);
+        assert!(config.lms.enabled);
+        assert!(config.openclaw.enabled);
+    }
+
+    #[test]
+    fn enabled_flags_can_be_disabled() {
+        let toml = r#"
+[ollama]
+enabled = false
+models = []
+
+[lms]
+enabled = false
+
+[openclaw]
+enabled = false
+"#;
+        let config = ClusterConfig::from_toml(toml).unwrap();
+        assert!(!config.ollama.enabled);
+        assert!(!config.lms.enabled);
+        assert!(!config.openclaw.enabled);
+    }
+
+    #[test]
+    fn cloud_as_list() {
+        let toml = r#"
+[[cloud]]
+provider = "anthropic"
+api_key = "sk-ant-test"
+
+[[cloud]]
+provider = "openai"
+api_key = "sk-test"
+enabled = false
+"#;
+        let config = ClusterConfig::from_toml(toml).unwrap();
+        assert_eq!(config.cloud.len(), 2);
+        assert!(config.cloud[0].enabled);
+        assert!(!config.cloud[1].enabled);
+        assert_eq!(config.cloud[0].provider, CloudProvider::Anthropic);
+        assert_eq!(config.cloud[1].provider, CloudProvider::Openai);
+        // default_cloud returns first enabled
+        let dc = config.default_cloud().unwrap();
+        assert_eq!(dc.provider, CloudProvider::Anthropic);
+    }
+
+    #[test]
+    fn cloud_single_object_compat() {
+        let toml = r#"
+[cloud]
+provider = "anthropic"
+api_key = "sk-ant-test"
+"#;
+        let config = ClusterConfig::from_toml(toml).unwrap();
+        assert_eq!(config.cloud.len(), 1);
+        assert_eq!(config.cloud[0].provider, CloudProvider::Anthropic);
     }
 
     // ── Notifications config tests ─────────────────────────────────────
@@ -1389,6 +1542,6 @@ upgrade_window = "bogus"
         // Spot-check that descriptions made it into the schema
         assert!(json.contains("Package flavour"), "schema missing flavour description");
         assert!(json.contains("Models to pull"), "schema missing models description");
-        assert!(json.contains("LLM backend"), "schema missing llm_provider description");
+        assert!(json.contains("Default LLM backend"), "schema missing default_llm description");
     }
 }

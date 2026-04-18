@@ -337,6 +337,7 @@ async fn main() -> Result<()> {
                     &cfg.lms,
                     &cfg.cloud,
                 );
+
                 let configs = std::collections::HashMap::new();
                 for c in &connectors {
                     if let Err(e) = c.connect(&configs) {

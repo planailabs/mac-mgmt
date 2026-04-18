@@ -1,10 +1,15 @@
 [metrics]
 port = 9396
 
+[global]
+default_llm = "ollama"
+default_agent = "openclaw"
+
 [openclaw]
-provider = "ollama"
+enabled = true
 
 [ollama]
+enabled = true
 flavour = "cpu"
 models = []
 default_model = ""

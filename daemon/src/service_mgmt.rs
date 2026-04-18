@@ -100,7 +100,7 @@ impl ServiceManager {
         let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
         let lms_cfg = std::mem::take(&mut cfg.lms);
-        let cloud_cfg = std::mem::take(&mut cfg.cloud);
+        let cloud_cfgs = std::mem::take(&mut cfg.cloud);
 
         let cache_dir = crate::config::config_dir().join("config_providers.json");
         let mut config_store = ConfigStore::new(Some(cache_dir));
@@ -114,12 +114,12 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&openclaw_cfg) {
             config_store.set("openclaw", v);
         }
-        if let Ok(v) = serde_json::to_value(&cloud_cfg) {
+        if let Ok(v) = serde_json::to_value(&cloud_cfgs) {
             config_store.set("cloud", v);
         }
 
         let connectors = connectors::build_connectors(
-            &global_cfg, &ollama_cfg, &lms_cfg, &cloud_cfg,
+            &global_cfg, &ollama_cfg, &lms_cfg, &cloud_cfgs,
         );
 
         let all_services = connectors::build_services(

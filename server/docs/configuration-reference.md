@@ -19,12 +19,12 @@ Controls the daemon's own operational behavior.
 
 ## `global`
 
-Top-level settings that control which providers and features are active.
+Top-level settings that control which default providers are active. Individual providers are toggled via their own `enabled` flag.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `llm_provider` | `"ollama"` | LLM backend: `ollama`, `lms`, `cloud`, or `none` |
-| `agent_provider` | `"openclaw"` | Agent provider: `openclaw` or `none` |
+| `default_llm` | `"ollama"` | Default LLM backend: `ollama`, `lms`, `cloud`, or `none` |
+| `default_agent` | `"openclaw"` | Default agent provider: `openclaw` or `none` |
 | `agent_name` | *none* | Display name for this agent |
 | `user_name` | *none* | Display name for the user |
 
@@ -39,10 +39,11 @@ Configure where the daemon sends event notifications using [Apprise](https://git
 
 ## `ollama`
 
-Settings for the Ollama local LLM server. Only applies when `global.llm_provider` is `"ollama"`.
+Settings for the Ollama local LLM server. Installed and started when `enabled` is `true`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
+| `enabled` | `true` | Whether Ollama is installed and started |
 | `host` | `"127.0.0.1"` | Listen address |
 | `port` | `11434` | Listen port |
 | `models` | `["phi4-mini", "qwen3.5", "Flux_AI/Flux_AI"]` | Models to pull on startup; at least one required |
@@ -51,10 +52,11 @@ Settings for the Ollama local LLM server. Only applies when `global.llm_provider
 
 ## `lms`
 
-Settings for LM Studio. Only applies when `global.llm_provider` is `"lms"`.
+Settings for LM Studio. Installed and started when `enabled` is `true`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
+| `enabled` | `true` | Whether LM Studio is installed and started |
 | `host` | `"127.0.0.1"` | Listen address |
 | `port` | `1234` | Listen port |
 | `models` | `[]` | Model identifiers to load on startup via `lms load` |
@@ -62,10 +64,13 @@ Settings for LM Studio. Only applies when `global.llm_provider` is `"lms"`.
 
 ## `cloud`
 
-Settings for cloud LLM providers. Only applies when `global.llm_provider` is `"cloud"`.
+A list of cloud LLM provider entries. When `global.default_llm` is `"cloud"`, the first enabled entry is used. Multiple entries allow configuring several cloud providers at once.
+
+Each entry has these fields:
 
 | Field | Default | Description |
 |-------|---------|-------------|
+| `enabled` | `true` | Whether this cloud provider entry is active |
 | `provider` | `"anthropic"` | Cloud provider (see supported providers below) |
 | `api_key` | *none* | API key for the provider |
 | `default_model` | `"anthropic/claude-sonnet-4-6"` | Model identifier in `provider/model` format |
@@ -90,7 +95,11 @@ Settings for cloud LLM providers. Only applies when `global.llm_provider` is `"c
 
 ## `openclaw`
 
-Settings for the OpenClaw agent. Only applies when `global.agent_provider` is `"openclaw"`.
+Settings for the OpenClaw agent. Installed and started when `enabled` is `true`.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Whether OpenClaw is installed and started |
 
 ### `openclaw.gateway`
 
@@ -142,14 +151,26 @@ Settings for the relay server used for remote SSH access.
     "upgrade_window": "02:00-05:00"
   },
   "global": {
-    "llm_provider": "ollama",
-    "agent_provider": "openclaw"
+    "default_llm": "ollama",
+    "default_agent": "openclaw"
   },
   "ollama": {
+    "enabled": true,
     "models": ["phi4-mini", "qwen3.5"],
     "default_model": "phi4-mini",
     "flavour": "cpu"
   },
+  "openclaw": {
+    "enabled": true
+  },
+  "cloud": [
+    {
+      "enabled": true,
+      "provider": "anthropic",
+      "api_key": "sk-ant-...",
+      "default_model": "anthropic/claude-sonnet-4-6"
+    }
+  ],
   "notifications": {
     "urls": ["ntfy://ntfy.example.com/alerts"]
   },

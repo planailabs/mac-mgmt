@@ -420,71 +420,177 @@ fn render_section_fields(
                                 }
                             }
                             "array" => {
-                                let items: Vec<String> = current_value
-                                    .as_ref()
-                                    .and_then(|v| v.as_array())
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .map(|v| match v {
-                                                serde_json::Value::String(s) => s.clone(),
-                                                other => other.to_string(),
-                                            })
-                                            .collect()
-                                    })
+                                // Resolve items schema to distinguish string arrays from object arrays.
+                                let items_schema = resolved.get("items")
+                                    .map(|s| resolve_ref(s, defs))
                                     .unwrap_or_default();
-                                let fp_add = fp.clone();
-                                let fp_remove = fp.clone();
-                                let sync_add = sync.clone();
-                                let sync_remove = sync.clone();
-                                rsx! {
-                                    div { class: "space-y-1",
-                                        for (idx, item) in items.iter().enumerate() {
-                                            div {
-                                                key: "{idx}",
-                                                class: "flex items-center gap-1",
-                                                span { class: "flex-1 text-sm font-mono bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-2 py-0.5 truncate",
-                                                    "{item}"
-                                                }
-                                                button {
-                                                    class: "text-red-500 hover:text-red-700 text-xs px-1",
-                                                    r#type: "button",
-                                                    onclick: {
-                                                        let fp = fp_remove.clone();
-                                                        let sync_c = sync_remove.clone();
-                                                        move |_| {
-                                                            let mut arr = get_at_path(&form_values.read(), &fp)
-                                                                .and_then(|v| v.as_array().cloned())
-                                                                .unwrap_or_default();
-                                                            if idx < arr.len() {
-                                                                arr.remove(idx);
+                                let is_object_array = items_schema.get("properties").is_some();
+
+                                if is_object_array {
+                                    // ── Array of objects (e.g. cloud providers list) ──
+                                    let entries: Vec<serde_json::Value> = current_value
+                                        .as_ref()
+                                        .and_then(|v| v.as_array())
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let fp_remove = fp.clone();
+                                    let fp_add = fp.clone();
+                                    let sync_remove = sync.clone();
+                                    let sync_add = sync.clone();
+                                    let items_schema_add = items_schema.clone();
+                                    let defs_add = defs.clone();
+                                    rsx! {
+                                        div { class: "space-y-2",
+                                            for (idx, _entry) in entries.iter().enumerate() {
+                                                {
+                                                    let defs_c = defs.clone();
+                                                    let items_c = items_schema.clone();
+                                                    let fp_r = fp_remove.clone();
+                                                    let sync_r = sync_remove.clone();
+                                                    let mut entry_path = fp_remove.clone();
+                                                    entry_path.push(format!("{idx}"));
+                                                    rsx! {
+                                                        div { class: "border border-gray-300 dark:border-gray-600 rounded p-2 relative",
+                                                            key: "{idx}",
+                                                            div { class: "flex justify-between items-center mb-1",
+                                                                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400", "#{idx}" }
+                                                                button {
+                                                                    class: "text-red-500 hover:text-red-700 text-xs px-1",
+                                                                    r#type: "button",
+                                                                    onclick: move |_| {
+                                                                        let mut arr = get_at_path(&form_values.read(), &fp_r)
+                                                                            .and_then(|v| v.as_array().cloned())
+                                                                            .unwrap_or_default();
+                                                                        if idx < arr.len() {
+                                                                            arr.remove(idx);
+                                                                        }
+                                                                        set_at_path(&mut form_values, &fp_r,
+                                                                            serde_json::Value::Array(arr));
+                                                                        sync_r();
+                                                                    },
+                                                                    "Remove"
+                                                                }
                                                             }
-                                                            set_at_path(&mut form_values, &fp,
-                                                                serde_json::Value::Array(arr));
-                                                            sync_c();
+                                                            {render_object_array_entry(
+                                                                &items_c,
+                                                                &defs_c,
+                                                                entry_path,
+                                                                form_values,
+                                                                json_text,
+                                                                extra_config_open,
+                                                                sync_remove.clone(),
+                                                            )}
                                                         }
-                                                    },
-                                                    "x"
+                                                    }
                                                 }
                                             }
+                                            button {
+                                                r#type: "button",
+                                                class: "bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700",
+                                                onclick: move |_| {
+                                                    let mut arr = get_at_path(&form_values.read(), &fp_add)
+                                                        .and_then(|v| v.as_array().cloned())
+                                                        .unwrap_or_default();
+                                                    // Add an empty object; defaults come from schema.
+                                                    let new_obj = build_default_object(&items_schema_add, &defs_add);
+                                                    arr.push(new_obj);
+                                                    set_at_path(&mut form_values, &fp_add,
+                                                        serde_json::Value::Array(arr));
+                                                    sync_add();
+                                                },
+                                                "+ Add entry"
+                                            }
                                         }
-                                        // Add new item
-                                        {
-                                            let fp = fp_add.clone();
-                                            let sync_c = sync_add.clone();
-                                            let mut new_val = use_signal(String::new);
-                                            rsx! {
-                                                div { class: "flex gap-1",
-                                                    input {
-                                                        r#type: "text",
-                                                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white",
-                                                        placeholder: "Add item...",
-                                                        value: "{new_val}",
-                                                        oninput: move |e| new_val.set(e.value()),
-                                                        onkeypress: {
-                                                            let fp = fp.clone();
-                                                            let sync_c = sync_c.clone();
-                                                            move |e: KeyboardEvent| {
-                                                                if e.key() == Key::Enter {
+                                    }
+                                } else {
+                                    // ── Array of primitives (strings, numbers) ──
+                                    let items: Vec<String> = current_value
+                                        .as_ref()
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .map(|v| match v {
+                                                    serde_json::Value::String(s) => s.clone(),
+                                                    other => other.to_string(),
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    let fp_add = fp.clone();
+                                    let fp_remove = fp.clone();
+                                    let sync_add = sync.clone();
+                                    let sync_remove = sync.clone();
+                                    rsx! {
+                                        div { class: "space-y-1",
+                                            for (idx, item) in items.iter().enumerate() {
+                                                div {
+                                                    key: "{idx}",
+                                                    class: "flex items-center gap-1",
+                                                    span { class: "flex-1 text-sm font-mono bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-2 py-0.5 truncate",
+                                                        "{item}"
+                                                    }
+                                                    button {
+                                                        class: "text-red-500 hover:text-red-700 text-xs px-1",
+                                                        r#type: "button",
+                                                        onclick: {
+                                                            let fp = fp_remove.clone();
+                                                            let sync_c = sync_remove.clone();
+                                                            move |_| {
+                                                                let mut arr = get_at_path(&form_values.read(), &fp)
+                                                                    .and_then(|v| v.as_array().cloned())
+                                                                    .unwrap_or_default();
+                                                                if idx < arr.len() {
+                                                                    arr.remove(idx);
+                                                                }
+                                                                set_at_path(&mut form_values, &fp,
+                                                                    serde_json::Value::Array(arr));
+                                                                sync_c();
+                                                            }
+                                                        },
+                                                        "x"
+                                                    }
+                                                }
+                                            }
+                                            // Add new item
+                                            {
+                                                let fp = fp_add.clone();
+                                                let sync_c = sync_add.clone();
+                                                let mut new_val = use_signal(String::new);
+                                                rsx! {
+                                                    div { class: "flex gap-1",
+                                                        input {
+                                                            r#type: "text",
+                                                            class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white",
+                                                            placeholder: "Add item...",
+                                                            value: "{new_val}",
+                                                            oninput: move |e| new_val.set(e.value()),
+                                                            onkeypress: {
+                                                                let fp = fp.clone();
+                                                                let sync_c = sync_c.clone();
+                                                                move |e: KeyboardEvent| {
+                                                                    if e.key() == Key::Enter {
+                                                                        let val = new_val.read().clone();
+                                                                        if !val.trim().is_empty() {
+                                                                            let mut arr = get_at_path(&form_values.read(), &fp)
+                                                                                .and_then(|v| v.as_array().cloned())
+                                                                                .unwrap_or_default();
+                                                                            arr.push(serde_json::Value::String(val.trim().to_string()));
+                                                                            set_at_path(&mut form_values, &fp,
+                                                                                serde_json::Value::Array(arr));
+                                                                            sync_c();
+                                                                            new_val.set(String::new());
+                                                                        }
+                                                                    }
+                                                                }
+                                                            },
+                                                        }
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "bg-blue-600 text-white px-2 py-0.5 rounded text-xs hover:bg-blue-700",
+                                                            onclick: {
+                                                                let fp = fp.clone();
+                                                                let sync_c = sync_c.clone();
+                                                                move |_| {
                                                                     let val = new_val.read().clone();
                                                                     if !val.trim().is_empty() {
                                                                         let mut arr = get_at_path(&form_values.read(), &fp)
@@ -497,30 +603,9 @@ fn render_section_fields(
                                                                         new_val.set(String::new());
                                                                     }
                                                                 }
-                                                            }
-                                                        },
-                                                    }
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "bg-blue-600 text-white px-2 py-0.5 rounded text-xs hover:bg-blue-700",
-                                                        onclick: {
-                                                            let fp = fp.clone();
-                                                            let sync_c = sync_c.clone();
-                                                            move |_| {
-                                                                let val = new_val.read().clone();
-                                                                if !val.trim().is_empty() {
-                                                                    let mut arr = get_at_path(&form_values.read(), &fp)
-                                                                        .and_then(|v| v.as_array().cloned())
-                                                                        .unwrap_or_default();
-                                                                    arr.push(serde_json::Value::String(val.trim().to_string()));
-                                                                    set_at_path(&mut form_values, &fp,
-                                                                        serde_json::Value::Array(arr));
-                                                                    sync_c();
-                                                                    new_val.set(String::new());
-                                                                }
-                                                            }
-                                                        },
-                                                        "+"
+                                                            },
+                                                            "+"
+                                                        }
                                                     }
                                                 }
                                             }
@@ -586,16 +671,21 @@ fn render_section_fields(
     }
 }
 
-/// Get a value at a nested JSON path.
+/// Get a value at a nested JSON path. Numeric segments index into arrays.
 pub(super) fn get_at_path(root: &serde_json::Value, path: &[String]) -> Option<serde_json::Value> {
     let mut current = root;
     for key in path {
-        current = current.get(key)?;
+        if let Ok(idx) = key.parse::<usize>() {
+            current = current.as_array()?.get(idx)?;
+        } else {
+            current = current.get(key)?;
+        }
     }
     Some(current.clone())
 }
 
 /// Set a value at a nested JSON path, creating intermediate objects as needed.
+/// Numeric path segments index into arrays.
 pub(super) fn set_at_path(
     form_values: &mut Signal<serde_json::Value>,
     path: &[String],
@@ -604,6 +694,15 @@ pub(super) fn set_at_path(
     let mut val = form_values.write();
     let mut current = &mut *val;
     for key in &path[..path.len() - 1] {
+        if let Ok(idx) = key.parse::<usize>() {
+            if let serde_json::Value::Array(arr) = current {
+                while arr.len() <= idx {
+                    arr.push(serde_json::Value::Object(serde_json::Map::new()));
+                }
+                current = &mut arr[idx];
+                continue;
+            }
+        }
         current = current
             .as_object_mut()
             .unwrap()
@@ -611,7 +710,14 @@ pub(super) fn set_at_path(
             .or_insert(serde_json::Value::Object(serde_json::Map::new()));
     }
     if let Some(last) = path.last() {
-        if let serde_json::Value::Object(obj) = current {
+        if let Ok(idx) = last.parse::<usize>() {
+            if let serde_json::Value::Array(arr) = current {
+                while arr.len() <= idx {
+                    arr.push(serde_json::Value::Null);
+                }
+                arr[idx] = value;
+            }
+        } else if let serde_json::Value::Object(obj) = current {
             obj.insert(last.clone(), value);
         }
     }
@@ -632,4 +738,54 @@ pub(super) fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: 
             obj.remove(last);
         }
     }
+}
+
+/// Render a single entry inside an object array (e.g. one cloud provider entry).
+/// Re-uses the same field-rendering logic as `render_section_fields` but rooted
+/// at the array-element path (e.g. `["cloud", "0"]`).
+fn render_object_array_entry(
+    items_schema: &serde_json::Value,
+    defs: &serde_json::Value,
+    entry_path: Vec<String>,
+    form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+    extra_config_open: Signal<bool>,
+    sync_to_json: impl Fn() + Clone + 'static,
+) -> Element {
+    render_section_fields(
+        items_schema,
+        defs,
+        entry_path,
+        form_values,
+        json_text,
+        extra_config_open,
+        sync_to_json,
+    )
+}
+
+/// Build a default JSON object from a schema (one level deep, for "add entry").
+fn build_default_object(
+    schema: &serde_json::Value,
+    defs: &serde_json::Value,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+        for (key, prop_schema) in props {
+            let resolved = resolve_ref(prop_schema, defs);
+            if let Some(default) = resolved.get("default") {
+                obj.insert(key.clone(), default.clone());
+            } else {
+                let field_type = resolved
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("string");
+                match field_type {
+                    "boolean" => { obj.insert(key.clone(), serde_json::Value::Bool(true)); }
+                    "string" => {}
+                    _ => {}
+                }
+            }
+        }
+    }
+    serde_json::Value::Object(obj)
 }

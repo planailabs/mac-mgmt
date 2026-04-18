@@ -80,28 +80,28 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO cluster_configs (cluster_id, config_json) VALUES
   ('c0000000-0000-0000-0000-000000000001', '{
-    "global": { "llm_provider": "ollama", "agent_provider": "openclaw" },
-    "ollama": { "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini"], "default_model": "phi4-mini", "flavour": "cpu" },
-    "openclaw": { "gateway": { "port": 18789 } }
+    "global": { "default_llm": "ollama", "default_agent": "openclaw" },
+    "ollama": { "enabled": true, "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini"], "default_model": "phi4-mini", "flavour": "cpu" },
+    "openclaw": { "enabled": true, "gateway": { "port": 18789 } }
   }'),
   ('c0000000-0000-0000-0000-000000000002', '{
-    "global": { "llm_provider": "ollama", "agent_provider": "openclaw" },
-    "ollama": { "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini", "qwen3.5"], "default_model": "qwen3.5", "flavour": "cpu" },
-    "openclaw": { "gateway": { "port": 18789 } }
+    "global": { "default_llm": "ollama", "default_agent": "openclaw" },
+    "ollama": { "enabled": true, "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini", "qwen3.5"], "default_model": "qwen3.5", "flavour": "cpu" },
+    "openclaw": { "enabled": true, "gateway": { "port": 18789 } }
   }'),
   ('c0000000-0000-0000-0000-000000000003', '{
-    "global": { "llm_provider": "ollama", "agent_provider": "openclaw" },
-    "ollama": { "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini", "qwen3.5", "Flux_AI/Flux_AI"], "default_model": "qwen3.5", "flavour": "cuda" },
-    "openclaw": { "gateway": { "port": 18789 } }
+    "global": { "default_llm": "ollama", "default_agent": "openclaw" },
+    "ollama": { "enabled": true, "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini", "qwen3.5", "Flux_AI/Flux_AI"], "default_model": "qwen3.5", "flavour": "cuda" },
+    "openclaw": { "enabled": true, "gateway": { "port": 18789 } }
   }'),
   ('c0000000-0000-0000-0000-000000000004', '{
-    "global": { "llm_provider": "ollama", "agent_provider": "openclaw" },
-    "ollama": { "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini", "qwen3.5"], "default_model": "qwen3.5", "flavour": "cuda" },
-    "openclaw": { "gateway": { "port": 18789 } }
+    "global": { "default_llm": "ollama", "default_agent": "openclaw" },
+    "ollama": { "enabled": true, "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini", "qwen3.5"], "default_model": "qwen3.5", "flavour": "cuda" },
+    "openclaw": { "enabled": true, "gateway": { "port": 18789 } }
   }'),
   ('c0000000-0000-0000-0000-000000000005', '{
-    "global": { "llm_provider": "ollama", "agent_provider": "none" },
-    "ollama": { "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini"], "default_model": "phi4-mini", "flavour": "cpu" }
+    "global": { "default_llm": "ollama", "default_agent": "none" },
+    "ollama": { "enabled": true, "host": "127.0.0.1", "port": 11434, "models": ["phi4-mini"], "default_model": "phi4-mini", "flavour": "cpu" }
   }');
 
 -- ════════════════════════════════════════════════════════════════════════

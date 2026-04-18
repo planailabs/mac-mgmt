@@ -27,35 +27,37 @@ pub trait Connector: Send {
     fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()>;
 }
 
-/// Build the list of managed services based on global provider settings.
+/// Build the list of managed services based on per-provider `enabled` flags.
 pub fn build_services(
-    global: &GlobalConfig,
+    _global: &GlobalConfig,
     openclaw_cfg: OpenClawConfig,
     ollama_cfg: OllamaConfig,
     lms_cfg: LmsConfig,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
-    match global.agent_provider {
-        AgentProvider::Openclaw => {
-            tracing::info!("agent_provider=openclaw");
-            services.push(Box::new(OpenClaw::new(openclaw_cfg)));
-        }
-        AgentProvider::None => tracing::info!("agent_provider=none, skipping agent services"),
+    if openclaw_cfg.enabled {
+        tracing::info!("openclaw enabled");
+        services.push(Box::new(OpenClaw::new(openclaw_cfg)));
+    } else {
+        tracing::info!("openclaw disabled, skipping agent services");
     }
 
-    match global.llm_provider {
-        LlmProvider::Ollama => {
-            tracing::info!("llm_provider=ollama");
-            services.push(Box::new(Ollama::new(ollama_cfg)));
-        }
-        LlmProvider::Lms => {
-            tracing::info!("llm_provider=lms");
-            services.push(Box::new(Lms::new(lms_cfg)));
-        }
-        LlmProvider::Cloud => tracing::info!("llm_provider=cloud, no local LLM service"),
-        LlmProvider::None => tracing::info!("llm_provider=none, skipping LLM services"),
+    if ollama_cfg.enabled {
+        tracing::info!("ollama enabled");
+        services.push(Box::new(Ollama::new(ollama_cfg)));
+    } else {
+        tracing::info!("ollama disabled");
     }
+
+    if lms_cfg.enabled {
+        tracing::info!("lms enabled");
+        services.push(Box::new(Lms::new(lms_cfg)));
+    } else {
+        tracing::info!("lms disabled");
+    }
+
+    // Cloud providers don't need a local service.
 
     services.push(Box::new(McPorter));
     services.push(Box::new(Apprise));
@@ -68,29 +70,31 @@ pub fn build_services(
 
 /// Build connectors that wire services together.
 /// Connectors are run after all managed services have had their post_start.
+/// Uses `default_llm` / `default_agent` to decide which LLM↔agent wiring
+/// to apply, and the first enabled cloud entry when the default is `Cloud`.
 pub fn build_connectors(
     global: &GlobalConfig,
     ollama_cfg: &OllamaConfig,
     lms_cfg: &LmsConfig,
-    cloud_cfg: &CloudConfig,
+    cloud_cfgs: &[CloudConfig],
 ) -> Vec<Box<dyn Connector>> {
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
     // Relay→ollama connector: sets OLLAMA_ORIGINS for the tunnel proxy.
-    if global.llm_provider == LlmProvider::Ollama {
+    if global.default_llm == LlmProvider::Ollama && ollama_cfg.enabled {
         connectors.push(Box::new(relay_ollama::RelayOllama));
     }
 
-    if global.agent_provider == AgentProvider::Openclaw {
+    if global.default_agent == AgentProvider::Openclaw {
         connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
 
-        match global.llm_provider {
-            LlmProvider::Ollama => {
+        match global.default_llm {
+            LlmProvider::Ollama if ollama_cfg.enabled => {
                 connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
                     default_model: ollama_cfg.default_model.clone(),
                 }));
             }
-            LlmProvider::Lms => {
+            LlmProvider::Lms if lms_cfg.enabled => {
                 connectors.push(Box::new(lms_openclaw::LmsOpenClaw {
                     host: lms_cfg.host.clone(),
                     port: lms_cfg.port,
@@ -98,11 +102,13 @@ pub fn build_connectors(
                 }));
             }
             LlmProvider::Cloud => {
-                connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
-                    config: cloud_cfg.clone(),
-                }));
+                if let Some(cloud_cfg) = cloud_cfgs.iter().find(|c| c.enabled) {
+                    connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
+                        config: cloud_cfg.clone(),
+                    }));
+                }
             }
-            LlmProvider::None => {}
+            _ => {}
         }
     }
 

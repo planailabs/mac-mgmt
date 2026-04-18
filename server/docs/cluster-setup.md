@@ -7,18 +7,18 @@ audience: user
 ## Setting up OpenClaw standalone (not managed by the daemon)
 
 - Install OpenClaw as provided on the OpenClaw website
-- Set `global.agent_provider` to `none`
+- Set `openclaw.enabled` to `false` or `global.default_agent` to `none`
 
 ## Setting up OpenClaw via the daemon
 
-- Set `global.agent_provider` to `openclaw` (default)
-- Set `global.llm_provider` to a provider of your choice (default `ollama`)
-  - You can use the cloud provider and configure the settings under the section `cloud` to use external cloud services for OpenClaw
+- Set `openclaw.enabled` to `true` (default) and `global.default_agent` to `openclaw` (default)
+- Set `global.default_llm` to a provider of your choice (default `ollama`)
+  - You can add cloud provider entries under the `cloud` list to use external cloud services for OpenClaw
 
 ## Setting up just the model provider
 
-- Set `global.agent_provider` to `none`
-- Set `global.llm_provider` to a provider of your choice (default `ollama`)
+- Set `openclaw.enabled` to `false` or `global.default_agent` to `none`
+- Set `global.default_llm` to a provider of your choice (default `ollama`)
 - Note: without an agent, `default_model` has no effect, it will only download and manage models and start the Ollama server
 
 ## Production-readying a cluster

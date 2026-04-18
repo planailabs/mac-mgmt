@@ -155,8 +155,8 @@ impl Daemon {
                 );
 
                 // Schedule service restart for changes that require it.
-                let needs_restart = new_cfg.global.llm_provider != self.current_cfg.global.llm_provider
-                    || new_cfg.global.agent_provider != self.current_cfg.global.agent_provider
+                let needs_restart = new_cfg.global.default_llm != self.current_cfg.global.default_llm
+                    || new_cfg.global.default_agent != self.current_cfg.global.default_agent
                     || format!("{:?}", new_cfg.ollama) != format!("{:?}", self.current_cfg.ollama)
                     || format!("{:?}", new_cfg.openclaw) != format!("{:?}", self.current_cfg.openclaw);
 
@@ -531,8 +531,8 @@ pub async fn run(
                 "unmanaged mode active — services managed externally; \
                  daemon will not spawn or monitor them"
             );
-            cfg.global.llm_provider = mac_mgmt_common::LlmProvider::None;
-            cfg.global.agent_provider = mac_mgmt_common::AgentProvider::None;
+            cfg.global.default_llm = mac_mgmt_common::LlmProvider::None;
+            cfg.global.default_agent = mac_mgmt_common::AgentProvider::None;
         }
     }
 

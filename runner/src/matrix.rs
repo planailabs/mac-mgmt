@@ -125,8 +125,8 @@ fn cloud_default_model(provider: &str) -> &'static str {
 
 fn global(agent: &str, llm: &str) -> Value {
     json!({
-        "llm_provider": llm,
-        "agent_provider": agent,
+        "default_llm": llm,
+        "default_agent": agent,
     })
 }
 
@@ -141,11 +141,12 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> Ma
     let key = with_size(format!("{agent}-cloud-{provider}"), size);
     let config = json!({
         "global": global(agent, "cloud"),
-        "cloud": {
+        "cloud": [{
+            "enabled": true,
             "provider": provider,
             "api_key": api_key,
             "default_model": cloud_default_model(provider),
-        },
+        }],
         "relay": relay(),
     });
     MatrixCell { key, config, node_count: size }
@@ -156,6 +157,7 @@ fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
     let config = json!({
         "global": global(agent, "ollama"),
         "ollama": {
+            "enabled": true,
             "models": [model],
             "default_model": model,
         },
@@ -169,6 +171,7 @@ fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
     let config = json!({
         "global": global(agent, "lms"),
         "lms": {
+            "enabled": true,
             "models": [model],
             "default_model": model,
         },

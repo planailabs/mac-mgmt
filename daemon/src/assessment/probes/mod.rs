@@ -151,25 +151,17 @@ pub fn snippet(s: &str) -> String {
 /// Build the full probe registry from the current daemon config. Called each
 /// probe tick so config reloads take effect on the next run.
 pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
-    use mac_mgmt_common::{AgentProvider, LlmProvider};
-
     let mut probes: Vec<Box<dyn Probe>> = Vec::new();
 
-    match cfg.global.llm_provider {
-        LlmProvider::Ollama => {
-            probes.push(Box::new(ollama::OllamaProbe::from_config(&cfg.ollama)));
-        }
-        LlmProvider::Lms => {
-            probes.push(Box::new(lms::LmsProbe::from_config(&cfg.lms)));
-        }
-        LlmProvider::Cloud | LlmProvider::None => {}
+    if cfg.ollama.enabled {
+        probes.push(Box::new(ollama::OllamaProbe::from_config(&cfg.ollama)));
+    }
+    if cfg.lms.enabled {
+        probes.push(Box::new(lms::LmsProbe::from_config(&cfg.lms)));
     }
 
-    match cfg.global.agent_provider {
-        AgentProvider::Openclaw => {
-            probes.push(Box::new(openclaw::OpenClawProbe::from_config(&cfg.openclaw)));
-        }
-        AgentProvider::None => {}
+    if cfg.openclaw.enabled {
+        probes.push(Box::new(openclaw::OpenClawProbe::from_config(&cfg.openclaw)));
     }
 
     // Always probe apprise + mcporter if configured (cheap liveness checks).
