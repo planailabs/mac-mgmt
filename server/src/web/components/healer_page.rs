@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus::fullstack::JsonStream;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -8,21 +9,24 @@ use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealerContext {
-    pub api_base: String,
-    pub api_token: String,
-    pub cluster_id: String,
     pub instance_id: String,
     pub hostname: String,
     pub services_extended: Vec<serde_json::Value>,
 }
 
+/// Event streamed from server to client during a healer session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealerSessionInfo {
-    pub id: String,
-    pub state: String,
-    pub created_at: String,
-    pub instance_id: String,
-    pub error_message: Option<String>,
+pub struct HealerStreamEvent {
+    /// "session_created", "message", "state", "done", "error"
+    pub kind: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 // ── Server functions ───────────────────────────────────────────────────
@@ -50,39 +54,208 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
 
     user.require_cluster_write(&pool, hb.cluster_id).await?;
 
-    // Mint a setting-equivalent token for the healer API
-    use rand::Rng;
-    use sha2::{Digest, Sha256};
-    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
-    sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
-         VALUES ($1, $2, 'healer-web', 'setting', $3)",
-    )
-    .bind(hb.cluster_id)
-    .bind(&hash)
-    .bind(expires_at)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let cfg = crate::config::config();
-    let api_base = cfg.api.external_url.clone();
-
     let services_extended: Vec<serde_json::Value> = hb
         .services_extended
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
     Ok(HealerContext {
-        api_base,
-        api_token: raw_token,
-        cluster_id: hb.cluster_id.to_string(),
         instance_id,
         hostname: hb.hostname.unwrap_or_default(),
         services_extended,
     })
+}
+
+/// Start a healer session and stream events back as they arrive.
+#[server(output = JsonStream<HealerStreamEvent>)]
+pub async fn start_healer_stream(
+    instance_id: String,
+    user_message: Option<String>,
+) -> Result<JsonStream<HealerStreamEvent>, ServerFnError> {
+    use mac_mgmt_healer::{HealerEvent, SpawnRequest};
+    use mac_mgmt_healer::agent::InstanceInfo;
+
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+
+    // Look up instance
+    #[derive(sqlx::FromRow)]
+    struct HbInfo {
+        cluster_id: uuid::Uuid,
+        relay_proxy_url: Option<String>,
+        services_extended: Option<serde_json::Value>,
+        file_tunnels: Option<serde_json::Value>,
+        shell_tunnels: Option<serde_json::Value>,
+        sample: Option<serde_json::Value>,
+        hostname: Option<String>,
+    }
+    let hb: HbInfo = sqlx::query_as(
+        "SELECT cluster_id, relay_proxy_url, services_extended, \
+                file_tunnels, shell_tunnels, sample, hostname \
+         FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+    )
+    .bind(&instance_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("instance not found"))?;
+
+    user.require_cluster_write(&pool, hb.cluster_id).await?;
+
+    let relay_url = hb
+        .relay_proxy_url
+        .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL"))?;
+
+    let cluster_name: String =
+        sqlx::query_scalar("SELECT name FROM clusters WHERE id = $1")
+            .bind(hb.cluster_id)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| hb.cluster_id.to_string());
+
+    // Other instances in the cluster
+    #[derive(sqlx::FromRow)]
+    struct InstanceRow {
+        instance_id: String,
+        hostname: Option<String>,
+    }
+    let cluster_instances: Vec<InstanceInfo> = sqlx::query_as::<_, InstanceRow>(
+        "SELECT instance_id, hostname FROM daemon_heartbeats \
+         WHERE cluster_id = $1 AND instance_id != $2 \
+         AND reported_at > now() - interval '5 minutes'",
+    )
+    .bind(hb.cluster_id)
+    .bind(&instance_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| InstanceInfo {
+        instance_prefix: r.instance_id.chars().take(12).collect(),
+        hostname: r.hostname.unwrap_or_default(),
+        healthy: true,
+    })
+    .collect();
+
+    let services_extended: Vec<mac_mgmt_common::ServiceExtState> = hb
+        .services_extended
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+
+    let req = SpawnRequest {
+        cluster_id: hb.cluster_id,
+        instance_id: instance_id.clone(),
+        created_by: format!("web:{}", user.email),
+        user_message,
+        relay_url,
+        services_extended,
+        sample: hb.sample,
+        file_tunnels: hb.file_tunnels.unwrap_or_default(),
+        shell_tunnels: hb.shell_tunnels.unwrap_or_default(),
+        cluster_instances,
+        cluster_name,
+        hostname: hb.hostname.unwrap_or_default(),
+    };
+
+    let session_id = healer
+        .spawn_session(req)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Stream events via JsonStream using Streaming::spawn
+    Ok(JsonStream::spawn(move |tx| async move {
+        // Send session_created event
+        let _ = tx.unbounded_send(HealerStreamEvent {
+            kind: "session_created".to_string(),
+            session_id: Some(session_id.to_string()),
+            role: None,
+            content: None,
+            state: None,
+        });
+
+        // Subscribe to live events
+        let Some(mut rx) = healer.subscribe(session_id) else {
+            let _ = tx.unbounded_send(HealerStreamEvent {
+                kind: "error".to_string(),
+                session_id: None,
+                role: None,
+                content: Some("failed to subscribe to session events".to_string()),
+                state: None,
+            });
+            return;
+        };
+
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let stream_event = match &event {
+                        HealerEvent::Message { role, content, .. } => HealerStreamEvent {
+                            kind: "message".to_string(),
+                            session_id: None,
+                            role: Some(role.clone()),
+                            content: Some(content.clone()),
+                            state: None,
+                        },
+                        HealerEvent::State { state, .. } => HealerStreamEvent {
+                            kind: "state".to_string(),
+                            session_id: None,
+                            role: None,
+                            content: None,
+                            state: Some(state.clone()),
+                        },
+                        HealerEvent::Done { state } => HealerStreamEvent {
+                            kind: "done".to_string(),
+                            session_id: None,
+                            role: None,
+                            content: None,
+                            state: Some(state.clone()),
+                        },
+                    };
+                    let is_done = matches!(&event, HealerEvent::Done { .. });
+                    let _ = tx.unbounded_send(stream_event);
+                    if is_done {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    }))
+}
+
+/// Cancel a running healer session.
+#[server]
+pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnError> {
+    let _user = current_user().await?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid session id"))?;
+    healer
+        .cancel_session(uuid)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Resume a paused healer session.
+#[server]
+pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnError> {
+    let _user = current_user().await?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid session id"))?;
+    healer
+        .resume_session(uuid)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -113,7 +286,6 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut user_input = use_signal(String::new);
     let mut running = use_signal(|| false);
 
-    // Unhealthy services
     let unhealthy: Vec<String> = ctx
         .services_extended
         .iter()
@@ -121,10 +293,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
         .filter_map(|s| s.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
 
-    let api_base = ctx.api_base.clone();
-    let api_token = ctx.api_token.clone();
     let instance_id = ctx.instance_id.clone();
-    let cluster_id = ctx.cluster_id.clone();
 
     rsx! {
         h2 { class: "text-2xl font-bold mb-4", "Healer Agent" }
@@ -132,7 +301,6 @@ fn render_healer(ctx: &HealerContext) -> Element {
             "Instance: {ctx.instance_id} ({ctx.hostname})"
         }
 
-        // Unhealthy services banner
         if !unhealthy.is_empty() {
             div { class: "mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded",
                 p { class: "text-sm font-medium text-red-800 dark:text-red-300",
@@ -147,25 +315,61 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 button {
                     class: "px-4 py-2 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700",
                     onclick: {
-                        let api_base = api_base.clone();
-                        let api_token = api_token.clone();
                         let instance_id = instance_id.clone();
-                        let cluster_id = cluster_id.clone();
                         move |_| {
-                            let api_base = api_base.clone();
-                            let api_token = api_token.clone();
                             let instance_id = instance_id.clone();
-                            let cluster_id = cluster_id.clone();
                             let msg = user_input.read().clone();
+                            let user_msg = if msg.is_empty() { None } else { Some(msg) };
                             running.set(true);
                             messages.set(Vec::new());
                             state.set("starting".to_string());
                             async move {
-                                start_and_stream(
-                                    &api_base, &api_token, &cluster_id, &instance_id,
-                                    if msg.is_empty() { None } else { Some(msg) },
-                                    &mut session_id, &mut messages, &mut state, &mut running,
-                                ).await;
+                                match start_healer_stream(instance_id, user_msg).await {
+                                    Ok(mut stream) => {
+                                        while let Some(Ok(evt)) = stream.next().await {
+                                            match evt.kind.as_str() {
+                                                "session_created" => {
+                                                    session_id.set(evt.session_id);
+                                                }
+                                                "message" => {
+                                                    if let (Some(role), Some(content)) = (evt.role, evt.content) {
+                                                        if !content.is_empty() {
+                                                            messages.push(ChatMsg { role, content });
+                                                        }
+                                                    }
+                                                }
+                                                "state" => {
+                                                    if let Some(s) = evt.state {
+                                                        state.set(s);
+                                                    }
+                                                }
+                                                "done" => {
+                                                    if let Some(s) = evt.state {
+                                                        state.set(s);
+                                                    }
+                                                    break;
+                                                }
+                                                "error" => {
+                                                    messages.push(ChatMsg {
+                                                        role: "system".to_string(),
+                                                        content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
+                                                    });
+                                                    state.set("failed".to_string());
+                                                    break;
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        messages.push(ChatMsg {
+                                            role: "system".to_string(),
+                                            content: format!("Error: {e}"),
+                                        });
+                                        state.set("failed".to_string());
+                                    }
+                                }
+                                running.set(false);
                             }
                         }
                     },
@@ -177,17 +381,11 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 button {
                     class: "px-4 py-2 text-sm font-medium bg-red-600 text-white rounded hover:bg-red-700",
                     onclick: {
-                        let api_base = api_base.clone();
-                        let api_token = api_token.clone();
-                        let cluster_id = cluster_id.clone();
                         move |_| {
-                            let api_base = api_base.clone();
-                            let api_token = api_token.clone();
-                            let cluster_id = cluster_id.clone();
                             let sid = session_id.read().clone();
                             async move {
                                 if let Some(sid) = sid {
-                                    cancel_session(&api_base, &api_token, &cluster_id, &sid).await;
+                                    let _ = cancel_healer_session(sid).await;
                                 }
                             }
                         }
@@ -199,21 +397,15 @@ fn render_healer(ctx: &HealerContext) -> Element {
             {
                 let st = state.read().clone();
                 if st == "paused" {
-                    let api_base = api_base.clone();
-                    let api_token = api_token.clone();
-                    let cluster_id = cluster_id.clone();
                     rsx! {
                         button {
                             class: "px-4 py-2 text-sm font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
                             onclick: {
                                 move |_| {
-                                    let api_base = api_base.clone();
-                                    let api_token = api_token.clone();
-                                    let cluster_id = cluster_id.clone();
                                     let sid = session_id.read().clone();
                                     async move {
                                         if let Some(sid) = sid {
-                                            resume_session(&api_base, &api_token, &cluster_id, &sid).await;
+                                            let _ = resume_healer_session(sid).await;
                                         }
                                     }
                                 }
@@ -247,18 +439,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
         {
             let st = state.read().clone();
             if st != "idle" {
-                let (badge_class, label) = match st.as_str() {
-                    "starting" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Starting..."),
-                    "diagnosing" => ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Diagnosing"),
-                    "remediating" => ("bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300", "Remediating"),
-                    "verifying" => ("bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300", "Verifying"),
-                    "completed" => ("bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300", "Completed"),
-                    "failed" => ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Failed"),
-                    "cancelled" => ("bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300", "Cancelled"),
-                    "paused" => ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Paused (token budget)"),
-                    "awaiting_retry" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Awaiting retry"),
-                    _ => ("bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300", "Unknown"),
-                };
+                let (badge_class, label) = state_badge(&st);
                 rsx! {
                     span { class: "inline-block px-2 py-1 text-xs font-medium rounded mb-4 {badge_class}",
                         "{label}"
@@ -278,7 +459,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
     }
 }
 
-// ── Chat message rendering ─────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ChatMsg {
@@ -286,32 +467,29 @@ struct ChatMsg {
     content: String,
 }
 
+fn state_badge(st: &str) -> (&'static str, &'static str) {
+    match st {
+        "starting" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Starting..."),
+        "diagnosing" => ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Diagnosing"),
+        "remediating" => ("bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300", "Remediating"),
+        "verifying" => ("bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300", "Verifying"),
+        "completed" => ("bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300", "Completed"),
+        "failed" => ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Failed"),
+        "cancelled" => ("bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300", "Cancelled"),
+        "paused" => ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Paused (token budget)"),
+        "awaiting_retry" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Awaiting retry"),
+        _ => ("bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300", "Unknown"),
+    }
+}
+
 fn render_message(msg: &ChatMsg) -> Element {
     let (bg, label) = match msg.role.as_str() {
-        "system" => (
-            "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400",
-            "System",
-        ),
-        "assistant" => (
-            "bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400",
-            "Agent",
-        ),
-        "user" => (
-            "bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400",
-            "User",
-        ),
-        "tool_result" => (
-            "bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400",
-            "Tool",
-        ),
-        "summary" => (
-            "bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400",
-            "Summary",
-        ),
-        _ => (
-            "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300",
-            msg.role.as_str(),
-        ),
+        "system" => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400", "System"),
+        "assistant" => ("bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400", "Agent"),
+        "user" => ("bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400", "User"),
+        "tool_result" => ("bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400", "Tool"),
+        "summary" => ("bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400", "Summary"),
+        _ => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300", "Other"),
     };
 
     rsx! {
@@ -324,168 +502,4 @@ fn render_message(msg: &ChatMsg) -> Element {
             }
         }
     }
-}
-
-// ── Client-side JS helpers ─────────────────────────────────────────────
-
-async fn start_and_stream(
-    api_base: &str,
-    api_token: &str,
-    cluster_id: &str,
-    instance_id: &str,
-    user_message: Option<String>,
-    session_id: &mut Signal<Option<String>>,
-    messages: &mut Signal<Vec<ChatMsg>>,
-    state: &mut Signal<String>,
-    running: &mut Signal<bool>,
-) {
-    let msg_json = match &user_message {
-        Some(m) => format!(r#","user_message":"{}""#, m.replace('\\', "\\\\").replace('"', "\\\"")),
-        None => String::new(),
-    };
-
-    let js = format!(
-        r#"
-        try {{
-            // 1. Create session
-            const createResp = await fetch("{api_base}/api/healer/sessions", {{
-                method: "POST",
-                headers: {{
-                    "Authorization": "Bearer {api_token}",
-                    "Content-Type": "application/json",
-                    "X-Cluster-Id": "{cluster_id}",
-                }},
-                body: JSON.stringify({{ instance_id: "{instance_id}"{msg_json} }}),
-            }});
-            if (!createResp.ok) {{
-                return JSON.stringify({{ error: "Failed to create session: " + createResp.status }});
-            }}
-            const created = await createResp.json();
-            const sessionId = created.session_id;
-
-            // 2. Stream SSE events
-            const streamResp = await fetch("{api_base}/api/healer/sessions/" + sessionId + "/stream", {{
-                headers: {{
-                    "Authorization": "Bearer {api_token}",
-                    "X-Cluster-Id": "{cluster_id}",
-                }},
-            }});
-            const reader = streamResp.body.getReader();
-            const decoder = new TextDecoder();
-            let events = [];
-            let finalState = "running";
-
-            while (true) {{
-                const {{done, value}} = await reader.read();
-                if (done) break;
-                const text = decoder.decode(value, {{stream: true}});
-                for (const line of text.split("\\n")) {{
-                    if (line.startsWith("data: ")) {{
-                        try {{
-                            const evt = JSON.parse(line.slice(6));
-                            events.push(evt);
-                            if (evt.type === "done") {{
-                                finalState = evt.state || "completed";
-                            }} else if (evt.type === "state") {{
-                                finalState = evt.state || finalState;
-                            }}
-                        }} catch(e) {{}}
-                    }}
-                }}
-            }}
-            return JSON.stringify({{ session_id: sessionId, events: events, state: finalState }});
-        }} catch(e) {{
-            return JSON.stringify({{ error: e.message }});
-        }}
-        "#,
-    );
-
-    match document::eval(&js).await {
-        Ok(result) => {
-            let text = result.as_str().unwrap_or("{}");
-            if let Ok(resp) = serde_json::from_str::<serde_json::Value>(text) {
-                if let Some(err) = resp.get("error").and_then(|v| v.as_str()) {
-                    messages.push(ChatMsg {
-                        role: "system".to_string(),
-                        content: format!("Error: {err}"),
-                    });
-                    state.set("failed".to_string());
-                } else {
-                    if let Some(sid) = resp.get("session_id").and_then(|v| v.as_str()) {
-                        session_id.set(Some(sid.to_string()));
-                    }
-                    if let Some(events) = resp.get("events").and_then(|v| v.as_array()) {
-                        let mut msgs: Vec<ChatMsg> = Vec::new();
-                        for evt in events {
-                            let evt_type = evt.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                            match evt_type {
-                                "message" => {
-                                    let role = evt.get("role").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                                    let content = evt.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                    if !content.is_empty() {
-                                        msgs.push(ChatMsg { role, content });
-                                    }
-                                }
-                                "state" => {
-                                    if let Some(s) = evt.get("state").and_then(|v| v.as_str()) {
-                                        state.set(s.to_string());
-                                    }
-                                }
-                                "done" => {
-                                    if let Some(s) = evt.get("state").and_then(|v| v.as_str()) {
-                                        state.set(s.to_string());
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        messages.set(msgs);
-                    }
-                    if let Some(s) = resp.get("state").and_then(|v| v.as_str()) {
-                        state.set(s.to_string());
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            messages.push(ChatMsg {
-                role: "system".to_string(),
-                content: format!("Error: {e}"),
-            });
-            state.set("failed".to_string());
-        }
-    }
-    running.set(false);
-}
-
-async fn cancel_session(api_base: &str, api_token: &str, cluster_id: &str, session_id: &str) {
-    let js = format!(
-        r#"
-        await fetch("{api_base}/api/healer/sessions/{session_id}/cancel", {{
-            method: "POST",
-            headers: {{
-                "Authorization": "Bearer {api_token}",
-                "X-Cluster-Id": "{cluster_id}",
-            }},
-        }});
-        return "ok";
-        "#,
-    );
-    let _ = document::eval(&js).await;
-}
-
-async fn resume_session(api_base: &str, api_token: &str, cluster_id: &str, session_id: &str) {
-    let js = format!(
-        r#"
-        await fetch("{api_base}/api/healer/sessions/{session_id}/resume", {{
-            method: "POST",
-            headers: {{
-                "Authorization": "Bearer {api_token}",
-                "X-Cluster-Id": "{cluster_id}",
-            }},
-        }});
-        return "ok";
-        "#,
-    );
-    let _ = document::eval(&js).await;
 }
