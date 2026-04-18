@@ -11,10 +11,20 @@ use crate::web::user::current_user;
 pub struct HealerContext {
     pub instance_id: String,
     pub hostname: String,
+    pub cluster_id: String,
     pub services_extended: Vec<serde_json::Value>,
+    pub sessions: Vec<SessionSummary>,
 }
 
-/// Event streamed from server to client during a healer session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub state: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealerStreamEvent {
     /// "session_created", "message", "state", "done", "error"
@@ -59,11 +69,144 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
+    // Load existing sessions for this instance
+    #[derive(sqlx::FromRow)]
+    struct SessRow {
+        id: uuid::Uuid,
+        state: String,
+        created_by: String,
+        created_at: chrono::DateTime<chrono::Utc>,
+        error_message: Option<String>,
+    }
+    let rows = sqlx::query_as::<_, SessRow>(
+        "SELECT id, state, created_by, created_at, error_message \
+         FROM healer_sessions \
+         WHERE cluster_id = $1 AND instance_id = $2 \
+         ORDER BY created_at DESC LIMIT 20",
+    )
+    .bind(hb.cluster_id)
+    .bind(&instance_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let sessions = rows
+        .into_iter()
+        .map(|r| SessionSummary {
+            id: r.id.to_string(),
+            state: r.state,
+            created_by: r.created_by,
+            created_at: r.created_at.format("%Y-%m-%d %H:%M").to_string(),
+            error_message: r.error_message,
+        })
+        .collect();
+
     Ok(HealerContext {
         instance_id,
         hostname: hb.hostname.unwrap_or_default(),
+        cluster_id: hb.cluster_id.to_string(),
         services_extended,
+        sessions,
     })
+}
+
+/// Load an existing session's messages and stream live events if still running.
+#[server(output = JsonStream<HealerStreamEvent>)]
+pub async fn view_healer_session(
+    session_id: String,
+) -> Result<JsonStream<HealerStreamEvent>, ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid session id"))?;
+
+    // Load session to get its state
+    let (session, existing_messages) = healer
+        .get_session(uuid)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new("session not found"))?;
+
+    let is_active = session.state.is_active();
+    let current_state = session.state.as_str().to_string();
+
+    Ok(JsonStream::spawn(move |tx| async move {
+        // Replay existing messages
+        for msg in existing_messages {
+            let _ = tx.unbounded_send(HealerStreamEvent {
+                kind: "message".to_string(),
+                session_id: None,
+                role: Some(msg.role),
+                content: Some(msg.content),
+                state: None,
+            });
+        }
+
+        // Send current state
+        let _ = tx.unbounded_send(HealerStreamEvent {
+            kind: "state".to_string(),
+            session_id: None,
+            role: None,
+            content: None,
+            state: Some(current_state.clone()),
+        });
+
+        // If session is still running, stream live events
+        if is_active {
+            if let Some(mut rx) = healer.subscribe(uuid) {
+                loop {
+                    match rx.recv().await {
+                        Ok(event) => {
+                            use mac_mgmt_healer::HealerEvent;
+                            let stream_event = match &event {
+                                HealerEvent::Message { role, content, .. } => HealerStreamEvent {
+                                    kind: "message".to_string(),
+                                    session_id: None,
+                                    role: Some(role.clone()),
+                                    content: Some(content.clone()),
+                                    state: None,
+                                },
+                                HealerEvent::State { state, .. } => HealerStreamEvent {
+                                    kind: "state".to_string(),
+                                    session_id: None,
+                                    role: None,
+                                    content: None,
+                                    state: Some(state.clone()),
+                                },
+                                HealerEvent::Done { state } => HealerStreamEvent {
+                                    kind: "done".to_string(),
+                                    session_id: None,
+                                    role: None,
+                                    content: None,
+                                    state: Some(state.clone()),
+                                },
+                            };
+                            let is_done = matches!(&event, HealerEvent::Done { .. });
+                            let _ = tx.unbounded_send(stream_event);
+                            if is_done {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            }
+        }
+
+        // Send done if not already sent
+        let _ = tx.unbounded_send(HealerStreamEvent {
+            kind: "done".to_string(),
+            session_id: None,
+            role: None,
+            content: None,
+            state: Some(current_state),
+        });
+    }))
 }
 
 /// Start a healer session and stream events back as they arrive.
@@ -80,7 +223,6 @@ pub async fn start_healer_stream(
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
 
-    // Look up instance
     #[derive(sqlx::FromRow)]
     struct HbInfo {
         cluster_id: uuid::Uuid,
@@ -117,7 +259,6 @@ pub async fn start_healer_stream(
             .flatten()
             .unwrap_or_else(|| hb.cluster_id.to_string());
 
-    // Other instances in the cluster
     #[derive(sqlx::FromRow)]
     struct InstanceRow {
         instance_id: String,
@@ -166,9 +307,7 @@ pub async fn start_healer_stream(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Stream events via JsonStream using Streaming::spawn
     Ok(JsonStream::spawn(move |tx| async move {
-        // Send session_created event
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "session_created".to_string(),
             session_id: Some(session_id.to_string()),
@@ -177,7 +316,6 @@ pub async fn start_healer_stream(
             state: None,
         });
 
-        // Subscribe to live events
         let Some(mut rx) = healer.subscribe(session_id) else {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "error".to_string(),
@@ -228,7 +366,6 @@ pub async fn start_healer_stream(
     }))
 }
 
-/// Cancel a running healer session.
 #[server]
 pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnError> {
     let _user = current_user().await?;
@@ -243,7 +380,6 @@ pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnErr
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
-/// Resume a paused healer session.
 #[server]
 pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnError> {
     let _user = current_user().await?;
@@ -294,6 +430,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
         .collect();
 
     let instance_id = ctx.instance_id.clone();
+    let sessions = ctx.sessions.clone();
 
     rsx! {
         h2 { class: "text-2xl font-bold mb-4", "Healer Agent" }
@@ -309,9 +446,19 @@ fn render_healer(ctx: &HealerContext) -> Element {
             }
         }
 
-        // Controls
-        div { class: "mb-4 flex flex-wrap gap-2",
-            if !*running.read() && session_id.read().is_none() {
+        // ── New session controls ───────────────────────────────────────
+        if !*running.read() && session_id.read().is_none() {
+            div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                h3 { class: "text-lg font-semibold mb-3", "New Session" }
+                div { class: "mb-3",
+                    textarea {
+                        class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                        rows: "2",
+                        placeholder: "Optional instructions (leave empty for auto-diagnosis)...",
+                        value: "{user_input}",
+                        oninput: move |e| user_input.set(e.value()),
+                    }
+                }
                 button {
                     class: "px-4 py-2 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700",
                     onclick: {
@@ -324,51 +471,10 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             messages.set(Vec::new());
                             state.set("starting".to_string());
                             async move {
-                                match start_healer_stream(instance_id, user_msg).await {
-                                    Ok(mut stream) => {
-                                        while let Some(Ok(evt)) = stream.next().await {
-                                            match evt.kind.as_str() {
-                                                "session_created" => {
-                                                    session_id.set(evt.session_id);
-                                                }
-                                                "message" => {
-                                                    if let (Some(role), Some(content)) = (evt.role, evt.content) {
-                                                        if !content.is_empty() {
-                                                            messages.push(ChatMsg { role, content });
-                                                        }
-                                                    }
-                                                }
-                                                "state" => {
-                                                    if let Some(s) = evt.state {
-                                                        state.set(s);
-                                                    }
-                                                }
-                                                "done" => {
-                                                    if let Some(s) = evt.state {
-                                                        state.set(s);
-                                                    }
-                                                    break;
-                                                }
-                                                "error" => {
-                                                    messages.push(ChatMsg {
-                                                        role: "system".to_string(),
-                                                        content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
-                                                    });
-                                                    state.set("failed".to_string());
-                                                    break;
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        messages.push(ChatMsg {
-                                            role: "system".to_string(),
-                                            content: format!("Error: {e}"),
-                                        });
-                                        state.set("failed".to_string());
-                                    }
-                                }
+                                consume_stream(
+                                    start_healer_stream(instance_id, user_msg).await,
+                                    &mut session_id, &mut messages, &mut state,
+                                ).await;
                                 running.set(false);
                             }
                         }
@@ -376,85 +482,202 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     "Start Healing"
                 }
             }
+        }
 
-            if *running.read() {
-                button {
-                    class: "px-4 py-2 text-sm font-medium bg-red-600 text-white rounded hover:bg-red-700",
-                    onclick: {
-                        move |_| {
-                            let sid = session_id.read().clone();
-                            async move {
-                                if let Some(sid) = sid {
-                                    let _ = cancel_healer_session(sid).await;
-                                }
+        // ── Active session view ────────────────────────────────────────
+        if session_id.read().is_some() || *running.read() {
+            div { class: "mb-6",
+                // Controls bar
+                div { class: "mb-3 flex items-center gap-3",
+                    {
+                        let st = state.read().clone();
+                        let (badge_class, label) = state_badge(&st);
+                        rsx! {
+                            span { class: "inline-block px-2 py-1 text-xs font-medium rounded {badge_class}",
+                                "{label}"
                             }
                         }
-                    },
-                    "Cancel"
-                }
-            }
+                    }
 
-            {
-                let st = state.read().clone();
-                if st == "paused" {
-                    rsx! {
+                    if *running.read() {
                         button {
-                            class: "px-4 py-2 text-sm font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
-                            onclick: {
-                                move |_| {
-                                    let sid = session_id.read().clone();
-                                    async move {
-                                        if let Some(sid) = sid {
-                                            let _ = resume_healer_session(sid).await;
-                                        }
+                            class: "px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700",
+                            onclick: move |_| {
+                                let sid = session_id.read().clone();
+                                async move {
+                                    if let Some(sid) = sid {
+                                        let _ = cancel_healer_session(sid).await;
                                     }
                                 }
                             },
-                            "Resume (budget exceeded)"
+                            "Cancel"
                         }
                     }
-                } else {
-                    rsx! {}
-                }
-            }
-        }
 
-        // Optional initial message input
-        if session_id.read().is_none() && !*running.read() {
-            div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1",
-                    "Optional instructions (leave empty for auto-diagnosis)"
-                }
-                textarea {
-                    class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
-                    rows: "2",
-                    placeholder: "e.g. Focus on the ollama service timeout...",
-                    value: "{user_input}",
-                    oninput: move |e| user_input.set(e.value()),
-                }
-            }
-        }
+                    {
+                        let st = state.read().clone();
+                        if st == "paused" {
+                            rsx! {
+                                button {
+                                    class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                                    onclick: move |_| {
+                                        let sid = session_id.read().clone();
+                                        async move {
+                                            if let Some(sid) = sid {
+                                                let _ = resume_healer_session(sid).await;
+                                            }
+                                        }
+                                    },
+                                    "Resume"
+                                }
+                            }
+                        } else {
+                            rsx! {}
+                        }
+                    }
 
-        // State badge
-        {
-            let st = state.read().clone();
-            if st != "idle" {
-                let (badge_class, label) = state_badge(&st);
-                rsx! {
-                    span { class: "inline-block px-2 py-1 text-xs font-medium rounded mb-4 {badge_class}",
-                        "{label}"
+                    // Back to session list
+                    if !*running.read() {
+                        button {
+                            class: "px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600",
+                            onclick: move |_| {
+                                session_id.set(None);
+                                messages.set(Vec::new());
+                                state.set("idle".to_string());
+                            },
+                            "Back to sessions"
+                        }
                     }
                 }
-            } else {
-                rsx! {}
+
+                // Chat messages
+                div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
+                    for msg in messages.read().iter() {
+                        {render_message(msg)}
+                    }
+                    if *running.read() {
+                        div { class: "p-3 text-sm text-gray-400 dark:text-gray-500 animate-pulse",
+                            "Agent is working..."
+                        }
+                    }
+                }
             }
         }
 
-        // Chat messages
-        div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
-            for msg in messages.read().iter() {
-                {render_message(msg)}
+        // ── Previous sessions list ─────────────────────────────────────
+        if session_id.read().is_none() && !*running.read() && !sessions.is_empty() {
+            div { class: "mt-6",
+                h3 { class: "text-lg font-semibold mb-3", "Previous Sessions" }
+                div { class: "space-y-2",
+                    for sess in sessions.iter() {
+                        {
+                            let sid = sess.id.clone();
+                            let sess_state = sess.state.clone();
+                            let created_at = sess.created_at.clone();
+                            let created_by = sess.created_by.clone();
+                            let error_msg = sess.error_message.clone();
+                            let (badge_class, badge_label) = state_badge(&sess_state);
+
+                            rsx! {
+                                div {
+                                    class: "flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer",
+                                    onclick: {
+                                        let sid = sid.clone();
+                                        move |_| {
+                                            let sid = sid.clone();
+                                            session_id.set(Some(sid.clone()));
+                                            messages.set(Vec::new());
+                                            state.set("loading".to_string());
+                                            running.set(true);
+                                            async move {
+                                                consume_stream(
+                                                    view_healer_session(sid).await,
+                                                    &mut session_id, &mut messages, &mut state,
+                                                ).await;
+                                                running.set(false);
+                                            }
+                                        }
+                                    },
+                                    div { class: "flex items-center gap-3",
+                                        span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}",
+                                            "{badge_label}"
+                                        }
+                                        span { class: "text-sm text-gray-700 dark:text-gray-300",
+                                            "{created_at}"
+                                        }
+                                        span { class: "text-xs text-gray-500 dark:text-gray-400",
+                                            "{created_by}"
+                                        }
+                                    }
+                                    div { class: "flex items-center gap-2",
+                                        if let Some(err) = &error_msg {
+                                            span { class: "text-xs text-red-500 dark:text-red-400 max-w-xs truncate",
+                                                "{err}"
+                                            }
+                                        }
+                                        span { class: "text-xs text-gray-400", "View" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+// ── Stream consumer (shared between start and view) ────────────────────
+
+async fn consume_stream(
+    result: Result<JsonStream<HealerStreamEvent>, ServerFnError>,
+    session_id: &mut Signal<Option<String>>,
+    messages: &mut Signal<Vec<ChatMsg>>,
+    state: &mut Signal<String>,
+) {
+    match result {
+        Ok(mut stream) => {
+            while let Some(Ok(evt)) = stream.next().await {
+                match evt.kind.as_str() {
+                    "session_created" => {
+                        session_id.set(evt.session_id);
+                    }
+                    "message" => {
+                        if let (Some(role), Some(content)) = (evt.role, evt.content) {
+                            if !content.is_empty() {
+                                messages.push(ChatMsg { role, content });
+                            }
+                        }
+                    }
+                    "state" => {
+                        if let Some(s) = evt.state {
+                            state.set(s);
+                        }
+                    }
+                    "done" => {
+                        if let Some(s) = evt.state {
+                            state.set(s);
+                        }
+                        break;
+                    }
+                    "error" => {
+                        messages.push(ChatMsg {
+                            role: "system".to_string(),
+                            content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
+                        });
+                        state.set("failed".to_string());
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => {
+            messages.push(ChatMsg {
+                role: "system".to_string(),
+                content: format!("Error: {e}"),
+            });
+            state.set("failed".to_string());
         }
     }
 }
@@ -469,7 +692,8 @@ struct ChatMsg {
 
 fn state_badge(st: &str) -> (&'static str, &'static str) {
     match st {
-        "starting" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Starting..."),
+        "starting" | "loading" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Starting..."),
+        "created" | "initializing" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Initializing"),
         "diagnosing" => ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Diagnosing"),
         "remediating" => ("bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300", "Remediating"),
         "verifying" => ("bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300", "Verifying"),
