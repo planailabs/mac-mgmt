@@ -20,11 +20,13 @@ mod xzar;
 #[cfg(all(feature = "server", feature = "webui"))]
 mod server_state {
     use crate::api::push::PushChannels;
+    use mac_mgmt_healer::HealerState;
     use sqlx::PgPool;
     use std::sync::OnceLock;
 
     static POOL: OnceLock<PgPool> = OnceLock::new();
     static PUSH: OnceLock<PushChannels> = OnceLock::new();
+    static HEALER: OnceLock<HealerState> = OnceLock::new();
 
     pub fn set_pool(pool: PgPool) {
         POOL.set(pool).expect("pool already initialized");
@@ -32,6 +34,10 @@ mod server_state {
 
     pub fn set_push_channels(channels: PushChannels) {
         PUSH.set(channels).expect("push channels already initialized");
+    }
+
+    pub fn set_healer_state(state: HealerState) {
+        let _ = HEALER.set(state);
     }
 
     pub fn server_pool() -> Result<PgPool, dioxus::prelude::ServerFnError> {
@@ -44,6 +50,10 @@ mod server_state {
         PUSH.get()
             .cloned()
             .ok_or_else(|| dioxus::prelude::ServerFnError::new("push channels not initialized"))
+    }
+
+    pub fn healer_state() -> Option<HealerState> {
+        HEALER.get().cloned()
     }
 }
 
@@ -58,7 +68,7 @@ pub fn push_channels() -> Result<crate::api::push::PushChannels, dioxus::prelude
 }
 
 #[cfg(any(feature = "server", feature = "server-api-only"))]
-async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
+async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>, mac_mgmt_healer::HealerState) {
     let cfg = config::load();
     let pool = db::connect(&cfg.database.url).await;
 
@@ -70,10 +80,9 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
     let push_channels = api::push::new_push_channels();
 
     #[cfg(feature = "webui")]
-    {
-        server_state::set_pool(pool.clone());
-        server_state::set_push_channels(push_channels.clone());
-    }
+    server_state::set_pool(pool.clone());
+    #[cfg(feature = "webui")]
+    server_state::set_push_channels(push_channels.clone());
 
     // Background task: delete daemon heartbeats offline for 30+ days
     {
@@ -108,12 +117,36 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>) {
         ));
     }
 
-    let api_rocket = api::build_rocket(pool.clone(), cfg.api.port, push_channels)
+    // Initialize healer state
+    let healer_connector = mac_mgmt_healer::ConnectorConfig {
+        ollama_url: None,
+        ollama_model: None,
+        anthropic_api_key: cfg.anthropic.as_ref().map(|a| a.api_key.clone()),
+        anthropic_model: None,
+        token_budget: 200_000,
+    };
+    let healer_state = mac_mgmt_healer::HealerState::new(pool.clone(), healer_connector);
+    #[cfg(feature = "webui")]
+    server_state::set_healer_state(healer_state.clone());
+
+    // Resume healer sessions interrupted by a previous shutdown
+    {
+        let healer = healer_state.clone();
+        tokio::spawn(async move {
+            match healer.resume_interrupted().await {
+                Ok(n) if n > 0 => tracing::info!("resumed {n} interrupted healer sessions"),
+                Ok(_) => {}
+                Err(e) => tracing::error!("failed to resume healer sessions: {e}"),
+            }
+        });
+    }
+
+    let api_rocket = api::build_rocket(pool.clone(), cfg.api.port, push_channels, healer_state.clone())
         .ignite()
         .await
         .expect("failed to ignite API rocket");
 
-    (pool, api_rocket)
+    (pool, api_rocket, healer_state)
 }
 
 /// Install a tracing subscriber that mirrors events to stdout and, when
@@ -190,6 +223,13 @@ fn main() {
                         .recv()
                         .await;
                     tracing::info!("received SIGTERM, shutting down");
+                    // Drain healer sessions before stopping
+                    if let Some(healer) = crate::server_state::healer_state() {
+                        let drained = healer.graceful_shutdown(std::time::Duration::from_secs(30)).await;
+                        if drained > 0 {
+                            tracing::info!("drained {drained} healer sessions");
+                        }
+                    }
                     if let Some(handle) = ROCKET_SHUTDOWN.get() {
                         handle.clone().notify();
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -203,7 +243,7 @@ fn main() {
             let auth_layer = if let Some(layer) = INIT.get() {
                 layer.clone()
             } else {
-                let (_pool, api_rocket) = init_server().await;
+                let (_pool, api_rocket, _healer_state) = init_server().await;
                 let cfg = config::load();
 
                 let auth_layer = if dev_no_auth {
@@ -263,7 +303,7 @@ fn main() {
         init_tracing();
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         rt.block_on(async {
-            let (_pool, api_rocket) = init_server().await;
+            let (_pool, api_rocket, healer_state) = init_server().await;
 
             let shutdown = api_rocket.shutdown();
             tokio::spawn(async move {
@@ -271,7 +311,11 @@ fn main() {
                     .expect("failed to register SIGTERM handler")
                     .recv()
                     .await;
-                tracing::info!("received SIGTERM, shutting down");
+                tracing::info!("received SIGTERM, draining healer sessions...");
+                let drained = healer_state.graceful_shutdown(std::time::Duration::from_secs(30)).await;
+                if drained > 0 {
+                    tracing::info!("drained {drained} healer sessions");
+                }
                 shutdown.notify();
             });
 

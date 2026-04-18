@@ -1,4 +1,5 @@
 mod auth;
+pub(crate) mod healer_routes;
 pub mod push;
 pub(crate) mod routes;
 
@@ -166,7 +167,7 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
-pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) -> rocket::Rocket<rocket::Build> {
+pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels, healer_state: mac_mgmt_healer::HealerState) -> rocket::Rocket<rocket::Build> {
     let config = Config {
         port,
         address: std::net::Ipv4Addr::UNSPECIFIED.into(),
@@ -182,6 +183,7 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
     rocket::custom(config)
         .manage(pool)
         .manage(push_channels)
+        .manage(healer_state)
         .mount(
             "/api",
             rocket::routes![
@@ -277,6 +279,13 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels) 
                 routes::download_daemon,
                 // SSE push
                 push::sse_events,
+                // Healer sessions
+                healer_routes::create_session,
+                healer_routes::list_sessions,
+                healer_routes::get_session,
+                healer_routes::cancel_session,
+                healer_routes::resume_session,
+                healer_routes::stream_session,
             ],
         )
         .mount(
