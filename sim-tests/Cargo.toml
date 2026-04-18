@@ -17,8 +17,8 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# The daemon library, built without services/relay/self-update, with sim feature
-mac-mgmt-daemon = { path = "../daemon", package = "mac-mgmt", default-features = false, features = ["sim"] }
+# The daemon library with sim + services + relay features (no self-update — that needs real binaries)
+mac-mgmt-daemon = { path = "../daemon", package = "mac-mgmt", default-features = false, features = ["sim", "services", "relay"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

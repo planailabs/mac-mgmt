@@ -90,6 +90,7 @@ impl Daemon {
                 #[cfg(feature = "services")]
                 self.svc_mgr.send_update_self().await;
             }
+            #[cfg(not(feature = "sim"))]
             tokio::task::spawn_blocking(upgrade_nix);
         } else {
             tracing::info!("outside upgrade window, skipping upgrades");
@@ -98,7 +99,7 @@ impl Daemon {
         self.spawn_sync_skills_and_mcp();
 
         if self.in_upgrade_window() {
-            #[cfg(feature = "services")]
+            #[cfg(all(feature = "services", not(feature = "sim")))]
             self.svc_mgr.check_upgrades();
         }
     }
@@ -976,6 +977,7 @@ async fn do_send_heartbeat(
     }
 }
 
+#[cfg(not(feature = "sim"))]
 fn upgrade_nix() {
     tracing::info!("checking for nix upgrade");
     if let Err(e) = crate::nix::upgrade_nix() {
@@ -986,11 +988,16 @@ fn upgrade_nix() {
 
 // ── Simulation entrypoint ───────────────────────────────────────────
 
-/// Minimal entrypoint for deterministic simulation testing (turmoil).
+/// Entrypoint for simulation testing.
 ///
 /// Accepts a pre-built config and host key, skipping lockfile, sentry,
-/// signal handlers, metrics server, config watcher, and filesystem I/O.
+/// signal handlers, metrics server, config watcher, and real filesystem I/O.
 /// Runs the same core event loop as production `run()`.
+///
+/// When the `services` feature is enabled, creates a minimal ServiceManager
+/// with zero services (no nix calls, no supervisor connection).
+/// When the `relay` feature is enabled, spawns the relay manager if a
+/// relay URL is configured in the config.
 #[cfg(feature = "sim")]
 pub async fn run_sim(
     cfg: config::Config,
@@ -1008,13 +1015,24 @@ pub async fn run_sim(
         mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
     });
 
+    let metrics_port = cfg.metrics.port;
     let server_url = cfg.server.url.clone();
     let server_token = cfg.server.token.clone();
     let skills_dir = std::path::PathBuf::from("/tmp/sim-skills");
 
     let dispatcher = Arc::new(Dispatcher::new(Vec::new(), None));
 
+    // Services: create a minimal ServiceManager with zero services.
+    #[cfg(feature = "services")]
+    let mut svc_mgr = crate::service_mgmt::ServiceManager::sim_init(
+        Arc::clone(&dispatcher),
+        crate::log_buffer::LogBuffer::new(),
+    );
+
     let metrics = Arc::new(Metrics::new());
+
+    #[cfg(feature = "services")]
+    svc_mgr.register_metrics(&metrics);
 
     let (_sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
 
@@ -1027,6 +1045,18 @@ pub async fn run_sim(
 
     let instance_id = crate::host_keys::fingerprint_hex(&host_key);
     tracing::info!("sim daemon started, instance ID: {instance_id}");
+
+    // Relay: spawn relay manager if relay URL is configured.
+    #[cfg(feature = "relay")]
+    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::Manager::new(
+        cfg.relay.url.clone(),
+        server_url.clone(),
+        server_token.clone(),
+        instance_id.clone(),
+        Arc::clone(&host_key),
+        metrics_port,
+        cfg.relay.remote_ssh_enabled,
+    );
 
     // Start server push SSE if server is configured.
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -1053,7 +1083,7 @@ pub async fn run_sim(
         assessor,
         initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         #[cfg(feature = "services")]
-        svc_mgr: unreachable!("sim mode should not enable services feature"),
+        svc_mgr,
     };
 
     // Run startup sync in background.
@@ -1067,6 +1097,27 @@ pub async fn run_sim(
 
     daemon.spawn_sync_skills_and_mcp();
 
+    #[cfg(feature = "relay")]
+    relay_mgr.sync_ssh_keys();
+
+    // Re-use the relay macros from the production event loop.
+    macro_rules! relay_proxy_hostname {
+        () => {{
+            #[cfg(feature = "relay")]
+            { relay_mgr.relay_proxy_hostname() }
+            #[cfg(not(feature = "relay"))]
+            { None::<String> }
+        }};
+    }
+    macro_rules! relay_proxy_url {
+        () => {{
+            #[cfg(feature = "relay")]
+            { relay_mgr.relay_proxy_url() }
+            #[cfg(not(feature = "relay"))]
+            { None::<String> }
+        }};
+    }
+
     // ── Main event loop (sim) ───────────────────────────────────────
     loop {
         tokio::select! {
@@ -1077,17 +1128,29 @@ pub async fn run_sim(
 
             _ = update_tick.tick() => {
                 daemon.handle_update().await;
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys();
             }
 
             _ = health_tick.tick() => {
                 daemon.handle_health_tick().await;
+                #[cfg(all(feature = "services", feature = "relay"))]
+                daemon.update_relay_tunnel_defs(&relay_mgr);
+                #[cfg(all(feature = "services", feature = "relay"))]
+                daemon.update_relay_file_tunnel_defs(&relay_mgr);
+                #[cfg(feature = "services")]
+                daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(None, None);
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                // In sim mode, call connectors directly (block_in_place panics
+                // on current_thread runtime used by #[tokio::test]).
+                #[cfg(feature = "services")]
+                daemon.svc_mgr.run_connectors_tick();
             }
 
             _ = heartbeat_tick.tick() => {
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(None, None);
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
             }
 
             _ = assessment_inventory_tick.tick() => {
@@ -1103,18 +1166,46 @@ pub async fn run_sim(
             } => {
                 if matches!(cmd, crate::server_push::PushCommand::SyncConfig) {
                     tracing::info!("server push: sync config");
-                    // In sim mode, config reload fetches from the mock server.
                     daemon.handle_config_reload(&mut update_tick, &mut health_tick, &|_| {}).await;
                 } else {
-                    let _needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
+                    let needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
+                    #[cfg(feature = "relay")]
+                    if needs_ssh_sync { relay_mgr.sync_ssh_keys(); }
+                    #[cfg(not(feature = "relay"))]
+                    let _ = needs_ssh_sync;
                 }
             }
 
             Some(()) = sync_rx.recv() => {
                 daemon.handle_local_sync();
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys();
+            }
+
+            Some(cmd) = async {
+                #[cfg(feature = "relay")]
+                { relay_mgr.recv_cmd().await }
+                #[cfg(not(feature = "relay"))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                #[cfg(feature = "relay")]
+                relay_mgr.handle_cmd(cmd);
+            }
+
+            Some(()) = async {
+                #[cfg(feature = "relay")]
+                { relay_heartbeat_rx.recv().await }
+                #[cfg(not(feature = "relay"))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                tracing::debug!("relay signalled heartbeat");
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
             }
         }
     }
+
+    #[cfg(feature = "services")]
+    daemon.shutdown().await;
 
     tracing::info!("sim daemon shutdown complete");
     Ok(())

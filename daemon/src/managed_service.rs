@@ -128,7 +128,7 @@ pub enum ServiceMode {
 }
 
 /// A service that the daemon manages: installs, spawns, monitors, and upgrades.
-pub trait ManagedService {
+pub trait ManagedService: Send + Sync {
     /// Human-readable name for logging.
     fn name(&self) -> &str;
 
@@ -168,7 +168,7 @@ pub trait ManagedService {
     /// Non-blocking health check. Defaults to running `check_health()` via
     /// `block_in_place` so it doesn't stall the tokio runtime.
     /// Override for truly async checks (e.g. reqwest HTTP).
-    fn check_health_async(&self) -> Pin<Box<dyn Future<Output = Result<bool>> + '_>> {
+    fn check_health_async(&self) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         Box::pin(std::future::ready(
             tokio::task::block_in_place(|| self.check_health()),
         ))

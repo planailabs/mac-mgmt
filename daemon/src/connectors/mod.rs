@@ -22,7 +22,7 @@ use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, Lms
 /// Dependencies are either managed service names (must have post_start done)
 /// or config provider names (must be set in the ConfigStore). When any
 /// dependency changes, the connector is re-run.
-pub trait Connector: Send {
+pub trait Connector: Send + Sync {
     fn name(&self) -> &str;
     /// Names of services and/or config providers this connector depends on.
     fn depends_on(&self) -> &[&str];

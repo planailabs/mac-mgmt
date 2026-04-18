@@ -64,11 +64,14 @@ impl Manager {
         let file_tunnel_registry = Arc::new(RwLock::new(FileTunnelRegistry::new()));
 
         let (ssh_cmd_tx, ssh_cmd_rx) = tokio::sync::mpsc::channel(4);
+        #[cfg(not(feature = "sim"))]
         tokio::spawn(async move {
             if let Err(e) = fifo_watcher::watch(ssh_cmd_tx).await {
                 tracing::error!("FIFO watcher failed: {e:#}");
             }
         });
+        #[cfg(feature = "sim")]
+        drop(ssh_cmd_tx);
 
         // Always spawn relay client if relay URL and token are configured
         if let (Some(url), Some(token)) = (&relay_url, &server_token) {

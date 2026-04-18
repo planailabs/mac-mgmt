@@ -1,4 +1,4 @@
-//! Axum-based mock management server for simulation testing.
+ //! Axum-based mock management server for simulation testing.
 //!
 //! Implements the daemon-facing API surface with fully observable and
 //! injectable state. Tests can pre-populate responses, inspect daemon

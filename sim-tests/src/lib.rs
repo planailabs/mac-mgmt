@@ -37,6 +37,17 @@ pub fn daemon_config_with_intervals(
     cfg
 }
 
+/// Build a daemon config with relay support.
+pub fn daemon_config_with_relay(
+    server_addr: SocketAddr,
+    relay_url: &str,
+) -> mac_mgmt_common::DaemonConfig {
+    let mut cfg = daemon_config_for(server_addr);
+    cfg.relay.url = Some(relay_url.to_string());
+    cfg.relay.remote_ssh_enabled = true;
+    cfg
+}
+
 /// Generate a random ed25519 host key for simulation.
 pub fn generate_host_key() -> russh::keys::PrivateKey {
     let mut rng = rand::rngs::OsRng;

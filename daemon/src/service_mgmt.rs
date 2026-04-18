@@ -80,6 +80,22 @@ pub struct ServiceManager {
 }
 
 impl ServiceManager {
+    /// Create a minimal ServiceManager for simulation testing.
+    /// No services, no supervisor connection, no nix calls.
+    #[cfg(feature = "sim")]
+    pub fn sim_init(dispatcher: Arc<Dispatcher>, log_buf: LogBuffer) -> Self {
+        Self {
+            services: Vec::new(),
+            install_only: Vec::new(),
+            connectors: Vec::new(),
+            client: None,
+            dispatcher,
+            log_buf,
+            config_store: ConfigStore::new(None),
+            inprocess: false,
+        }
+    }
+
     pub fn init(
         cfg: &mut crate::config::Config,
         dispatcher: Arc<Dispatcher>,
@@ -472,7 +488,7 @@ impl ServiceManager {
         use std::pin::Pin;
         use std::future::Future;
         let check_results: Vec<(usize, ServicePhase, Result<bool>)> = {
-            let mut futs: Vec<Pin<Box<dyn Future<Output = (usize, ServicePhase, Result<bool>)> + '_>>> =
+            let mut futs: Vec<Pin<Box<dyn Future<Output = (usize, ServicePhase, Result<bool>)> + Send + '_>>> =
                 Vec::new();
             for (i, state) in self.services.iter().enumerate() {
                 if matches!(state.phase, ServicePhase::Healthy | ServicePhase::Unhealthy) {
