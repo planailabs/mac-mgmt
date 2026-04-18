@@ -11,4 +11,5 @@ build:
     - nix flake check -L
     - bash xzar-install.sh
     - nix develop -c bash xzar.sh
-
+  environment: production
+  resource_group: production
