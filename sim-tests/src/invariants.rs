@@ -45,6 +45,7 @@ pub fn check_all(
         check_no_duplicate_instance_ids(state),
         check_heartbeat_version_present(state),
         check_no_empty_instance_ids(state),
+        check_heartbeat_temporal_order(state),
     ];
 
     let mut violations = 0;
@@ -131,6 +132,34 @@ fn check_no_duplicate_instance_ids(state: &Arc<MockServerState>) -> InvariantRes
         }
     }
     InvariantResult::pass("no_duplicate_instance_ids")
+}
+
+/// Heartbeat timestamps should be monotonically increasing per instance.
+fn check_heartbeat_temporal_order(state: &Arc<MockServerState>) -> InvariantResult {
+    let hbs = state.get_heartbeats();
+    let mut by_instance: std::collections::HashMap<&str, Vec<i64>> = std::collections::HashMap::new();
+    for hb in &hbs {
+        by_instance
+            .entry(&hb.body.instance_id)
+            .or_default()
+            .push(hb.body.signed_at);
+    }
+    for (iid, timestamps) in &by_instance {
+        for window in timestamps.windows(2) {
+            if window[1] < window[0] {
+                return InvariantResult::fail(
+                    "heartbeat_temporal_order",
+                    format!(
+                        "daemon {} sent heartbeat with signed_at {} after {}",
+                        &iid[..12],
+                        window[1],
+                        window[0]
+                    ),
+                );
+            }
+        }
+    }
+    InvariantResult::pass("heartbeat_temporal_order")
 }
 
 /// Heartbeat bodies should be well-formed JSON (services, tunnels are arrays).

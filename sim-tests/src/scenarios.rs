@@ -218,3 +218,123 @@ pub fn random_seed() -> u64 {
         .unwrap()
         .as_nanos() as u64
 }
+
+// ── Targeted scenario generators ────────────────────────────────────
+
+/// Generate a config-churn scenario: rapidly change server config while pushing
+/// SyncConfig events. Tests that the daemon doesn't enter an inconsistent state.
+pub fn generate_config_churn(seed: u64, num_pushes: usize) -> FaultSchedule {
+    let mut rng = Rng::new(seed);
+    let health_interval = Duration::from_millis(rng.range(500, 1500));
+    let mut events = Vec::new();
+    let mut time_cursor = Duration::from_secs(0);
+
+    for _ in 0..num_pushes {
+        time_cursor += Duration::from_millis(rng.range(50, 300));
+        events.push((time_cursor, FaultEvent::Push(PushEvent::SyncConfig)));
+
+        // Occasionally also fail the config endpoint briefly
+        if rng.bool(20) {
+            events.push((time_cursor, FaultEvent::FailEndpoint {
+                endpoint: "/api/config",
+                status: 503,
+            }));
+            time_cursor += Duration::from_millis(rng.range(50, 200));
+            events.push((time_cursor, FaultEvent::RecoverEndpoint {
+                endpoint: "/api/config",
+            }));
+        }
+    }
+
+    events.push((time_cursor + Duration::from_millis(100), FaultEvent::ClearAllFaults));
+    let settle_time = Duration::from_millis(health_interval.as_millis() as u64 * 3);
+
+    FaultSchedule {
+        seed,
+        events,
+        num_daemons: 1,
+        health_interval,
+        settle_time,
+    }
+}
+
+/// Generate an endpoint cycling scenario: rapidly toggle faults on different
+/// endpoints. Tests that partial endpoint availability doesn't corrupt state.
+pub fn generate_endpoint_cycling(seed: u64, num_cycles: usize) -> FaultSchedule {
+    let mut rng = Rng::new(seed);
+    let health_interval = Duration::from_millis(rng.range(500, 1500));
+    let mut events = Vec::new();
+    let mut time_cursor = Duration::from_secs(0);
+
+    for _ in 0..num_cycles {
+        // Pick a random endpoint and toggle it
+        let endpoint = rng.pick(ENDPOINTS);
+        let status = *rng.pick(ERROR_STATUSES);
+        time_cursor += Duration::from_millis(rng.range(100, 500));
+        events.push((time_cursor, FaultEvent::FailEndpoint { endpoint, status }));
+
+        // Keep it failed for a short time then recover
+        time_cursor += Duration::from_millis(rng.range(200, 1000));
+        events.push((time_cursor, FaultEvent::RecoverEndpoint { endpoint }));
+
+        // Sometimes push during the window
+        if rng.bool(40) {
+            let push = rng.pick(PUSH_EVENTS).clone();
+            events.push((time_cursor, FaultEvent::Push(push)));
+        }
+    }
+
+    events.push((time_cursor + Duration::from_millis(100), FaultEvent::ClearAllFaults));
+    let settle_time = Duration::from_millis(health_interval.as_millis() as u64 * 3);
+
+    FaultSchedule {
+        seed,
+        events,
+        num_daemons: 2,
+        health_interval,
+        settle_time,
+    }
+}
+
+/// Generate a cascading failure: fail all endpoints simultaneously, then
+/// recover them one by one. Tests recovery ordering.
+pub fn generate_cascading_failure(seed: u64) -> FaultSchedule {
+    let mut rng = Rng::new(seed);
+    let health_interval = Duration::from_millis(rng.range(500, 1500));
+    let mut events = Vec::new();
+    let mut time_cursor = Duration::from_millis(500);
+
+    // Fail all endpoints at once
+    for &endpoint in ENDPOINTS {
+        events.push((time_cursor, FaultEvent::FailEndpoint {
+            endpoint,
+            status: 503,
+        }));
+    }
+
+    // Wait for a while with everything broken
+    time_cursor += Duration::from_millis(rng.range(2000, 5000));
+
+    // Recover endpoints one by one in random order
+    let mut endpoints: Vec<&str> = ENDPOINTS.to_vec();
+    // Fisher-Yates shuffle with our PRNG
+    for i in (1..endpoints.len()).rev() {
+        let j = rng.range(0, i as u64) as usize;
+        endpoints.swap(i, j);
+    }
+
+    for &endpoint in &endpoints {
+        time_cursor += Duration::from_millis(rng.range(200, 800));
+        events.push((time_cursor, FaultEvent::RecoverEndpoint { endpoint }));
+    }
+
+    let settle_time = Duration::from_millis(health_interval.as_millis() as u64 * 5);
+
+    FaultSchedule {
+        seed,
+        events,
+        num_daemons: 2,
+        health_interval,
+        settle_time,
+    }
+}
