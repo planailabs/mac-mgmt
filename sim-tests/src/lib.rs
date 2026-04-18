@@ -1,20 +1,16 @@
 //! Simulation testing harness for mac-mgmt.
 //!
-//! Provides a mock management server and helper utilities for testing
-//! daemon protocol behaviour under controlled conditions.
+//! Provides a mock management server, invariant checkers, fault schedule
+//! generation, and timeline recording for Antithesis-style deterministic
+//! testing of daemon protocol behaviour.
 
+pub mod invariants;
 pub mod mock_server;
+pub mod scenarios;
+pub mod timeline;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-
-/// Configuration for a simulated daemon instance.
-pub struct SimDaemonConfig {
-    /// Mock server address (e.g. "127.0.0.1:12345").
-    pub server_addr: SocketAddr,
-    /// Bearer token the daemon uses.
-    pub token: String,
-}
 
 /// Start a mock server and return its address + state handle.
 pub async fn start_mock_server() -> (SocketAddr, Arc<mock_server::MockServerState>) {
@@ -23,12 +19,20 @@ pub async fn start_mock_server() -> (SocketAddr, Arc<mock_server::MockServerStat
 
 /// Build a daemon config pointing at the given mock server.
 pub fn daemon_config_for(addr: SocketAddr) -> mac_mgmt_common::DaemonConfig {
+    daemon_config_with_intervals(addr, "1s", "5s")
+}
+
+/// Build a daemon config with custom intervals.
+pub fn daemon_config_with_intervals(
+    addr: SocketAddr,
+    health_interval: &str,
+    update_interval: &str,
+) -> mac_mgmt_common::DaemonConfig {
     let mut cfg = mac_mgmt_common::DaemonConfig::default();
     cfg.server.url = Some(format!("http://{addr}"));
     cfg.server.token = Some("test-token".to_string());
-    // Use short intervals for faster tests
-    cfg.daemon.health_interval = "1s".to_string();
-    cfg.daemon.update_interval = "5s".to_string();
+    cfg.daemon.health_interval = health_interval.to_string();
+    cfg.daemon.update_interval = update_interval.to_string();
     cfg
 }
 
@@ -36,4 +40,48 @@ pub fn daemon_config_for(addr: SocketAddr) -> mac_mgmt_common::DaemonConfig {
 pub fn generate_host_key() -> russh::keys::PrivateKey {
     let mut rng = rand::rngs::OsRng;
     russh::keys::PrivateKey::random(&mut rng, russh::keys::Algorithm::Ed25519).unwrap()
+}
+
+/// Start a daemon, returning (shutdown_sender, instance_id).
+pub async fn start_sim_daemon(
+    server_addr: SocketAddr,
+) -> (tokio::sync::oneshot::Sender<()>, String) {
+    start_sim_daemon_with_config(daemon_config_for(server_addr)).await
+}
+
+/// Start a daemon with a custom config.
+pub async fn start_sim_daemon_with_config(
+    cfg: mac_mgmt_common::DaemonConfig,
+) -> (tokio::sync::oneshot::Sender<()>, String) {
+    let host_key = generate_host_key();
+    let instance_id = mac_mgmt_daemon::host_keys::fingerprint_hex(&host_key);
+    let host_key = std::sync::Arc::new(host_key);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let iid = instance_id.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = mac_mgmt_daemon::daemon::run_sim(cfg, host_key, shutdown_rx).await {
+            tracing::warn!("daemon {iid} exited: {e}");
+        }
+    });
+
+    (shutdown_tx, instance_id)
+}
+
+/// Wait until a condition is true or timeout expires.
+pub async fn wait_until(
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+    condition: impl Fn() -> bool,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if condition() {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(interval).await;
+    }
 }

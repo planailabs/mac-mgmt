@@ -18,6 +18,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # The daemon library, built without services/relay/self-update, with sim feature
-[dev-dependencies]
 mac-mgmt-daemon = { path = "../daemon", package = "mac-mgmt", default-features = false, features = ["sim"] }
+
+[dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
