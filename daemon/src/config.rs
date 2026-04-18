@@ -105,14 +105,28 @@ pub async fn load() -> Result<Config> {
             .context("failed to fetch remote config")?;
 
         if let Some(mut remote_json) = remote {
+            // Apply config migrations to the remote JSON before merging
+            mac_mgmt_common::config_migrate::migrate(&mut remote_json);
+
             // Convert local TOML to JSON for merging
             let local_json: serde_json::Value = serde_json::to_value(
                 toml::from_str::<toml::Value>(&contents)?
             ).context("failed to convert local config to JSON")?;
             merge_json(&mut remote_json, &local_json);
-            let config: Config = serde_json::from_value(remote_json)
-                .context("failed to deserialize merged config")?;
-            return Ok(config);
+
+            // Apply migrations again after merge in case local overlay
+            // reintroduced old-format fields
+            mac_mgmt_common::config_migrate::migrate(&mut remote_json);
+
+            match serde_json::from_value::<Config>(remote_json.clone()) {
+                Ok(config) => return Ok(config),
+                Err(e) => {
+                    tracing::warn!(
+                        "failed to deserialize remote config after migration: {e}; \
+                         falling back to local config"
+                    );
+                }
+            }
         }
     }
 

@@ -24,7 +24,10 @@ async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>,
     .fetch_optional(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(config)
+    Ok(config.map(|mut c| {
+        mac_mgmt_common::config_migrate::migrate(&mut c.config_json);
+        c
+    }))
 }
 
 #[server]

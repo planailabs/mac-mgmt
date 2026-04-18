@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod config_migrate;
+
 // ── Wire-format types (daemon ↔ server protocol) ─────────────────────
 
 /// Push notification sent from server to daemon via SSE.

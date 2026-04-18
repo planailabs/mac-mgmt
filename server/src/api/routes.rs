@@ -222,7 +222,10 @@ pub async fn get_config(
     .map_err(|_| Status::InternalServerError)?;
 
     match config {
-        Some(json) => Ok(Json(json)),
+        Some(mut json) => {
+            mac_mgmt_common::config_migrate::migrate(&mut json);
+            Ok(Json(json))
+        }
         None => Err(Status::NotFound),
     }
 }
@@ -581,20 +584,24 @@ pub async fn setting_set_config(
     channels: &State<PushChannels>,
     body: Json<SetConfigBody>,
 ) -> Result<Status, Status> {
+    // Apply config migrations before validation
+    let mut config = body.config.clone();
+    mac_mgmt_common::config_migrate::migrate(&mut config);
+
     // Validate by deserializing into ClusterConfig
-    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(body.config.clone())
+    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(config.clone())
         .map_err(|e| {
             tracing::error!(
                 "setting_set_config: rejecting cluster={} config: {e}; body={}",
                 auth.cluster_id,
-                serde_json::to_string(&body.config).unwrap_or_default()
+                serde_json::to_string(&config).unwrap_or_default()
             );
             Status::UnprocessableEntity
         })?;
 
     sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
         .bind(auth.cluster_id)
-        .bind(&body.config)
+        .bind(&config)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
@@ -648,6 +655,9 @@ pub async fn setting_patch_config(
     .unwrap_or(serde_json::json!({}));
 
     let mut config = current;
+
+    // Apply config migrations to the base before merging
+    mac_mgmt_common::config_migrate::migrate(&mut config);
 
     // Merge: config[section][key] = value
     let section_obj = config

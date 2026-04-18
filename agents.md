@@ -33,3 +33,17 @@ Run `cargo check -p mac-mgmt` with each combination to catch gating issues early
 ## Server: database migrations are append-only
 
 Never modify an existing migration file in `server/migrations/`. Migrations that have already been applied to a database cannot be re-run, so editing them has no effect on deployed instances and causes checksum mismatches. Always create a new migration with the next sequence number instead (e.g. if `033_*.sql` exists, create `034_*.sql`).
+
+## Config migrations: always add one when modifying config properties
+
+When changing config struct fields in `common/src/lib.rs` (renames, type changes, structural changes like turning a single field into a list), you **must** add a corresponding config migration in `common/src/config_migrate.rs`. This ensures existing JSON configs stored in the database and served to daemons are transformed automatically.
+
+Steps:
+
+1. Write an idempotent migration function `fn migrate_NNN_description(config: &mut Value)` in `common/src/config_migrate.rs`. It must detect whether the old format is present and transform it — **never** assume the input needs migration.
+2. Append a call to the new function at the end of the `migrate()` function.
+3. Add tests covering both "needs migration" and "already migrated" (idempotent) cases, plus a test that the migrated JSON parses as `ClusterConfig`.
+4. Add a SQL migration in `server/migrations/` to transform existing `cluster_configs` rows in the database.
+5. When renaming fields, also add `#[serde(alias = "old_name")]` to the struct field so local TOML configs with the old name continue to parse via serde.
+
+The daemon applies `config_migrate::migrate()` to remote JSON configs before deserializing. If deserialization still fails after migration, the daemon falls back to local config. The server applies migrations when reading configs from the database (GET /api/config, web UI) and before validating incoming configs (PUT, PATCH).
