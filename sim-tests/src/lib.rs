@@ -6,6 +6,7 @@
 
 pub mod invariants;
 pub mod mock_server;
+pub mod sampler;
 pub mod scenarios;
 pub mod timeline;
 
