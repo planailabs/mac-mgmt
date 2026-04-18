@@ -1061,7 +1061,7 @@ impl Orchestrator {
             return Ok(None);
         };
 
-        let reprovision = rand::thread_rng().gen_range(0..10) == 0;
+        let reprovision = rand::thread_rng().gen_range(0..20) == 0;
         if reprovision {
             tracing::info!("chaos-vm: reprovision {key}");
             self.reprovision_cell_inner(&key).await?;
