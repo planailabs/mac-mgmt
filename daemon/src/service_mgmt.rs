@@ -412,6 +412,10 @@ impl ServiceManager {
     const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
     pub async fn health_tick(&mut self, metrics: &Arc<Metrics>, in_upgrade_window: bool) {
+        // No services → nothing to health-check or connect to.
+        if self.services.is_empty() {
+            return;
+        }
         if !self.ensure_client().await {
             for s in &mut self.services {
                 Self::update_metrics(metrics, &s.name, false, s.upgrade_pending, false);

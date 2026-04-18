@@ -9,13 +9,17 @@ allowed-tools: Bash(cargo:*) Bash(git:*) Read Edit Write Grep Glob
 
 You are running the mac-mgmt simulation test suite to find and fix bugs in the daemon. The sim-tests crate (`sim-tests/`) contains an Antithesis-style chaos testing framework with a mock management server, fault injection, invariant checking, and seed-based reproduction.
 
+The daemon runs with `services` and `relay` features enabled (but zero actual services and no real relay connection). This exercises the full code paths including ServiceManager, relay Manager, SSH key sync, and connectors.
+
 ## Step 1: Run the chaos + sampling tests
 
-Run the full chaos and sampling suite. Use the argument as the round count if provided, otherwise default to 20 chaos rounds and 30 sampling rounds.
+Run the full suite. Use the argument as the round count if provided, otherwise default to 20 chaos rounds and 30 sampling rounds.
 
 ```
-CHAOS_ROUNDS=${0:-20} SAMPLE_ROUNDS=${0:-30} SAMPLE_EVENTS=12 RUST_LOG=warn cargo test -p sim-tests --test chaos --test sampling --test targeted -- --nocapture 2>&1
+CHAOS_ROUNDS=${0:-20} SAMPLE_ROUNDS=${0:-30} SAMPLE_EVENTS=12 RUST_LOG=warn cargo test -p sim-tests -- --nocapture 2>&1
 ```
+
+This runs ALL test files: chaos (random faults, SSE stress, sustained faults), sampling (failure search with minimization), targeted (config churn, endpoint cycling, cascading failure), heartbeat, SSE reconnect, and relay integration.
 
 Capture the full output. Look for:
 - **FAILED** tests — these are bugs
@@ -46,12 +50,14 @@ Identify the root cause by tracing the sequence of events leading to the violati
 
 Read the relevant daemon source code. The key files are:
 
-- `daemon/src/daemon.rs` — main event loop, heartbeat sending, push handling
+- `daemon/src/daemon.rs` — main event loop, heartbeat sending, push handling, `run_sim()` entrypoint
 - `daemon/src/server_push.rs` — SSE client with exponential backoff
 - `daemon/src/config.rs` — config fetch and merge
 - `daemon/src/skills.rs` — skills sync
 - `daemon/src/mcp_servers.rs` — MCP server sync
 - `daemon/src/assessment/mod.rs` — assessment/probe reporting
+- `daemon/src/service_mgmt.rs` — ServiceManager (sim_init creates empty manager)
+- `daemon/src/remote_ssh/mod.rs` — relay Manager (FIFO watcher skipped in sim)
 
 Common bug patterns to look for:
 - **Race conditions** in `tokio::spawn` fire-and-forget tasks
@@ -59,6 +65,7 @@ Common bug patterns to look for:
 - **State corruption** when multiple push events arrive simultaneously
 - **Timeout cascades** where one timeout causes downstream failures
 - **Backoff bugs** where reconnection doesn't properly reset
+- **Blocking calls** that stall the event loop (nix commands, supervisor RPC)
 
 ## Step 4: Fix the bug
 
@@ -78,7 +85,7 @@ CHAOS_SEED=<seed> cargo test -p sim-tests --test chaos -- <test_name> --nocaptur
 Then run a broader sweep to check for regressions:
 
 ```
-CHAOS_ROUNDS=30 SAMPLE_ROUNDS=50 cargo test -p sim-tests --test chaos --test sampling --test targeted 2>&1
+CHAOS_ROUNDS=30 SAMPLE_ROUNDS=50 cargo test -p sim-tests 2>&1
 ```
 
 ## Step 6: Update tests if needed
@@ -88,6 +95,18 @@ If the bug revealed a gap in the invariant checkers or fault patterns:
 - Add new invariants to `sim-tests/src/invariants.rs`
 - Add new fault patterns to `sim-tests/src/scenarios.rs`
 - Add targeted test cases to `sim-tests/tests/targeted.rs`
+- Add relay-specific tests to `sim-tests/tests/relay.rs`
+
+## Test files overview
+
+| File | Tests | What it covers |
+|------|-------|----------------|
+| `tests/heartbeat.rs` | 3 | Basic heartbeat sending, fault recovery, multi-daemon |
+| `tests/sse_reconnect.rs` | 3 | SSE push → skills/MCP/config sync |
+| `tests/chaos.rs` | 3 | Random faults, SSE stress, sustained heartbeat fault |
+| `tests/sampling.rs` | 1 | Failure sampling with automatic minimization |
+| `tests/targeted.rs` | 3 | Config churn, endpoint cycling, cascading failure |
+| `tests/relay.rs` | 4 | Unreachable relay, empty services, relay crash, SSH key push |
 
 ## Environment variables reference
 

@@ -159,7 +159,7 @@ async fn run_chaos_round(seed: u64) -> Option<String> {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chaos_random_faults() {
     init_tracing();
 
@@ -199,7 +199,7 @@ async fn chaos_random_faults() {
 }
 
 /// Targeted SSE stress: rapid push events while faults toggle.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chaos_sse_stress() {
     init_tracing();
 
@@ -262,7 +262,7 @@ async fn chaos_sse_stress() {
 }
 
 /// Heartbeat under sustained fault: server returns 500 for extended period.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chaos_sustained_heartbeat_fault() {
     init_tracing();
 

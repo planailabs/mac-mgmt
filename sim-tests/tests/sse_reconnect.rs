@@ -11,7 +11,7 @@ fn init_tracing() {
         .try_init();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_push_triggers_skills_sync() {
     init_tracing();
     let (addr, state) = sim_tests::start_mock_server().await;
@@ -38,7 +38,7 @@ async fn sse_push_triggers_skills_sync() {
     let _ = shutdown_tx.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_push_triggers_mcp_sync() {
     init_tracing();
     let (addr, state) = sim_tests::start_mock_server().await;
@@ -62,7 +62,7 @@ async fn sse_push_triggers_mcp_sync() {
     let _ = shutdown_tx.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sse_push_triggers_config_reload() {
     init_tracing();
     let (addr, state) = sim_tests::start_mock_server().await;

@@ -13,7 +13,7 @@ fn init_tracing() {
         .try_init();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_sends_heartbeats() {
     init_tracing();
     let (addr, state) = sim_tests::start_mock_server().await;
@@ -35,7 +35,7 @@ async fn daemon_sends_heartbeats() {
     let _ = shutdown_tx.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn heartbeat_resumes_after_server_fault() {
     init_tracing();
     let (addr, state) = sim_tests::start_mock_server().await;
@@ -75,7 +75,7 @@ async fn heartbeat_resumes_after_server_fault() {
     let _ = shutdown_tx.send(());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multiple_daemons_send_heartbeats() {
     init_tracing();
     let (addr, state) = sim_tests::start_mock_server().await;

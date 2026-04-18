@@ -88,7 +88,7 @@ async fn run_targeted(
 }
 
 /// Config churn: rapid SyncConfig pushes with intermittent /api/config failures.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn targeted_config_churn() {
     init_tracing();
     let seed = get_seed();
@@ -105,7 +105,7 @@ async fn targeted_config_churn() {
 }
 
 /// Endpoint cycling: rapidly toggle individual endpoint faults.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn targeted_endpoint_cycling() {
     init_tracing();
     let seed = get_seed();
@@ -122,7 +122,7 @@ async fn targeted_endpoint_cycling() {
 }
 
 /// Cascading failure: all endpoints down simultaneously, then gradual recovery.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn targeted_cascading_failure() {
     init_tracing();
     let seed = get_seed();

@@ -18,7 +18,7 @@ fn init_tracing() {
 /// Daemon with relay configured but pointing at a non-existent URL.
 /// The daemon should still function normally (heartbeats, SSE, etc.)
 /// even when the relay is unreachable.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn relay_unreachable_daemon_still_works() {
     init_tracing();
 
@@ -59,7 +59,7 @@ async fn relay_unreachable_daemon_still_works() {
 }
 
 /// Services feature with zero services should not interfere with heartbeats.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn services_feature_empty_heartbeats() {
     init_tracing();
 
@@ -88,7 +88,7 @@ async fn services_feature_empty_heartbeats() {
 
 /// Daemon with relay configured but relay crashes mid-session.
 /// Verify that heartbeats continue flowing.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn relay_crash_heartbeats_continue() {
     init_tracing();
 
@@ -128,7 +128,7 @@ async fn relay_crash_heartbeats_continue() {
 }
 
 /// Push SyncSshKeys should trigger SSH key fetch even with relay configured.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn push_ssh_keys_sync_with_relay() {
     init_tracing();
 
