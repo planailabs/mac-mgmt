@@ -2147,7 +2147,7 @@ pub async fn admin_list_cluster_machines(
 
 #[derive(Deserialize, ToSchema, Default)]
 pub struct CloudInitBody {
-    /// Nix system identifier (default: x86_64-linux-musl).
+    /// Nix system identifier (default: x86_64-linux).
     #[serde(default)]
     pub system: Option<String>,
     /// Public URL the daemon should dial; defaults to the server's configured api.external_url.

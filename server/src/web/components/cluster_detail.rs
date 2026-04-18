@@ -250,7 +250,7 @@ async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
         &server_url,
         &raw_token,
         &version,
-        "x86_64-linux-musl",
+        "x86_64-linux",
         None,
     ))
 }
