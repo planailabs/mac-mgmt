@@ -28,8 +28,11 @@ token = "xzar-api-token-here"
 # [anthropic]
 # api_key = "sk-ant-xxx"
 
-# Healer agent configuration (set via environment or code defaults):
-# - The healer tries local Ollama first (http://localhost:11434), then
-#   falls back to the Anthropic key above.
-# - Token budget per session (cloud only): 200k tokens before auto-pause.
-# - Sessions auto-resume on server restart.
+# Healer agent: self-healing AI agent for diagnosing and fixing customer servers.
+# Tries local Ollama first, falls back to Anthropic (requires [anthropic] key).
+# Sessions auto-resume on server restart.
+# [healer]
+# ollama_url = "http://localhost:11434"         # default
+# ollama_model = "qwen3"                        # default; must support tool use
+# anthropic_model = "claude-sonnet-4-6"         # default; used when Ollama is unavailable
+# token_budget = 200000                          # max tokens per cloud session before auto-pause (0 = unlimited)

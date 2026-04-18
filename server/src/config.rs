@@ -14,6 +14,8 @@ pub struct ServerConfig {
     pub xzar: Option<XzarConfig>,
     pub anthropic: Option<AnthropicConfig>,
     #[serde(default)]
+    pub healer: HealerConfig,
+    #[serde(default)]
     pub sentry: SentryConfig,
 }
 
@@ -107,6 +109,27 @@ pub struct OidcConfig {
     /// Emails that are automatically granted admin on first login.
     #[serde(default)]
     pub admin_emails: Vec<String>,
+}
+
+fn default_token_budget() -> u64 {
+    200_000
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct HealerConfig {
+    /// Ollama base URL. Defaults to http://localhost:11434.
+    #[serde(default)]
+    pub ollama_url: Option<String>,
+    /// Ollama model for the healer agent. Defaults to a tool-use-capable model.
+    #[serde(default)]
+    pub ollama_model: Option<String>,
+    /// Anthropic model override (default: claude-sonnet-4-6).
+    /// The API key comes from the [anthropic] section.
+    #[serde(default)]
+    pub anthropic_model: Option<String>,
+    /// Max input+output tokens per cloud session before auto-pause. 0 = unlimited.
+    #[serde(default = "default_token_budget")]
+    pub token_budget: u64,
 }
 
 pub fn load() -> &'static ServerConfig {

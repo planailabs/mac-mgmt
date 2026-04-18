@@ -119,11 +119,11 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>, mac_mgm
 
     // Initialize healer state
     let healer_connector = mac_mgmt_healer::ConnectorConfig {
-        ollama_url: None,
-        ollama_model: None,
+        ollama_url: cfg.healer.ollama_url.clone(),
+        ollama_model: cfg.healer.ollama_model.clone(),
         anthropic_api_key: cfg.anthropic.as_ref().map(|a| a.api_key.clone()),
-        anthropic_model: None,
-        token_budget: 200_000,
+        anthropic_model: cfg.healer.anthropic_model.clone(),
+        token_budget: cfg.healer.token_budget,
     };
     let healer_state = mac_mgmt_healer::HealerState::new(pool.clone(), healer_connector);
     #[cfg(feature = "webui")]
