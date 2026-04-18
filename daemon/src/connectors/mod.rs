@@ -1,17 +1,21 @@
 pub mod cloud_openclaw;
+pub mod cloud_opencode;
 pub mod lms_openclaw;
+pub mod lms_opencode;
 pub mod ollama_openclaw;
+pub mod ollama_opencode;
 pub mod relay_ollama;
 pub mod relay_openclaw;
+pub mod relay_opencode;
 
 use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 use crate::services::{
     apprise::Apprise, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
-    openclaw::OpenClaw, rocm_smi::RocmSmi,
+    openclaw::OpenClaw, opencode::Opencode, rocm_smi::RocmSmi,
 };
-use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig};
+use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig, OpencodeConfig};
 
 /// A connector wires two services together after they are both healthy.
 ///
@@ -31,6 +35,7 @@ pub trait Connector: Send {
 pub fn build_services(
     _global: &GlobalConfig,
     openclaw_cfg: OpenClawConfig,
+    opencode_cfg: OpencodeConfig,
     ollama_cfg: OllamaConfig,
     lms_cfg: LmsConfig,
 ) -> Vec<Box<dyn ManagedService>> {
@@ -40,7 +45,14 @@ pub fn build_services(
         tracing::info!("openclaw enabled");
         services.push(Box::new(OpenClaw::new(openclaw_cfg)));
     } else {
-        tracing::info!("openclaw disabled, skipping agent services");
+        tracing::info!("openclaw disabled");
+    }
+
+    if opencode_cfg.enabled {
+        tracing::info!("opencode enabled");
+        services.push(Box::new(Opencode::new(opencode_cfg)));
+    } else {
+        tracing::info!("opencode disabled");
     }
 
     if ollama_cfg.enabled {
@@ -85,31 +97,60 @@ pub fn build_connectors(
         connectors.push(Box::new(relay_ollama::RelayOllama));
     }
 
-    if global.default_agent == AgentProvider::Openclaw {
-        connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
+    match global.default_agent {
+        AgentProvider::Openclaw => {
+            connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
 
-        match global.default_llm {
-            LlmProvider::Ollama if ollama_cfg.enabled => {
-                connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
-                    default_model: ollama_cfg.default_model.clone(),
-                }));
-            }
-            LlmProvider::Lms if lms_cfg.enabled => {
-                connectors.push(Box::new(lms_openclaw::LmsOpenClaw {
-                    host: lms_cfg.host.clone(),
-                    port: lms_cfg.port,
-                    default_model: lms_cfg.default_model.clone(),
-                }));
-            }
-            LlmProvider::Cloud => {
-                if let Some(cloud_cfg) = cloud_cfgs.iter().find(|c| c.enabled) {
-                    connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
-                        config: cloud_cfg.clone(),
+            match global.default_llm {
+                LlmProvider::Ollama if ollama_cfg.enabled => {
+                    connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
+                        default_model: ollama_cfg.default_model.clone(),
                     }));
                 }
+                LlmProvider::Lms if lms_cfg.enabled => {
+                    connectors.push(Box::new(lms_openclaw::LmsOpenClaw {
+                        host: lms_cfg.host.clone(),
+                        port: lms_cfg.port,
+                        default_model: lms_cfg.default_model.clone(),
+                    }));
+                }
+                LlmProvider::Cloud => {
+                    if let Some(cloud_cfg) = cloud_cfgs.iter().find(|c| c.enabled) {
+                        connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
+                            config: cloud_cfg.clone(),
+                        }));
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
+        AgentProvider::Opencode => {
+            connectors.push(Box::new(relay_opencode::RelayOpencode));
+
+            match global.default_llm {
+                LlmProvider::Ollama if ollama_cfg.enabled => {
+                    connectors.push(Box::new(ollama_opencode::OllamaOpencode {
+                        default_model: ollama_cfg.default_model.clone(),
+                    }));
+                }
+                LlmProvider::Lms if lms_cfg.enabled => {
+                    connectors.push(Box::new(lms_opencode::LmsOpencode {
+                        host: lms_cfg.host.clone(),
+                        port: lms_cfg.port,
+                        default_model: lms_cfg.default_model.clone(),
+                    }));
+                }
+                LlmProvider::Cloud => {
+                    if let Some(cloud_cfg) = cloud_cfgs.iter().find(|c| c.enabled) {
+                        connectors.push(Box::new(cloud_opencode::CloudOpencode {
+                            config: cloud_cfg.clone(),
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+        AgentProvider::None => {}
     }
 
     connectors

@@ -64,6 +64,16 @@ port = 9396
 # AFTER the typed fields above. Use for niche settings not covered above.
 # extra_config = { "some" = { "deep" = { "key" = "value" } } }
 
+# ── OpenCode ─────────────────────────────────────────────────────────
+# OpenCode AI agent configuration.
+# Toggle with enabled = true/false. Active when global.default_agent = "opencode".
+# [opencode]
+# enabled = false
+# port = 18790
+# host = "127.0.0.1"
+# Arbitrary key-value pairs merged into the opencode config.
+# extra_config = { "model" = "anthropic/claude-sonnet-4-6" }
+
 # ── Ollama ───────────────────────────────────────────────────────────
 # Ollama LLM inference engine. Toggle with enabled = true/false.
 [ollama]

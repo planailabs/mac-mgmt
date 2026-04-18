@@ -378,6 +378,7 @@ impl std::fmt::Display for LlmProvider {
 #[serde(rename_all = "lowercase")]
 pub enum AgentProvider {
     Openclaw,
+    Opencode,
     None,
 }
 
@@ -391,6 +392,7 @@ impl AgentProvider {
     pub fn as_str(&self) -> &str {
         match self {
             Self::Openclaw => "openclaw",
+            Self::Opencode => "opencode",
             Self::None => "none",
         }
     }
@@ -790,6 +792,40 @@ impl Default for OpenClawConfig {
     }
 }
 
+// ── OpenCode ───────────────────────────────────────────────────────────
+
+fn default_opencode_port() -> u16 {
+    18790
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpencodeConfig {
+    #[schemars(description = "Whether the OpenCode agent is installed and started")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[schemars(description = "OpenCode server listen port")]
+    #[serde(default = "default_opencode_port")]
+    pub port: u16,
+    #[schemars(description = "OpenCode server listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(description = "Arbitrary key-value pairs merged into the opencode config after typed fields")]
+    #[serde(default)]
+    pub extra_config: Option<serde_json::Value>,
+}
+
+impl Default for OpencodeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_opencode_port(),
+            host: default_host(),
+            extra_config: None,
+        }
+    }
+}
+
 // ── Metrics ─────────────────────────────────────────────────────────────
 
 fn default_metrics_port() -> u16 {
@@ -905,6 +941,8 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub openclaw: OpenClawConfig,
     #[serde(default)]
+    pub opencode: OpencodeConfig,
+    #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub lms: LmsConfig,
@@ -1007,6 +1045,8 @@ pub struct DaemonConfig {
     pub global: GlobalConfig,
     #[serde(default)]
     pub openclaw: OpenClawConfig,
+    #[serde(default)]
+    pub opencode: OpencodeConfig,
     #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]

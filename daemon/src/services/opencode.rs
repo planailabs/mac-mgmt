@@ -1,0 +1,189 @@
+use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
+
+use crate::connectors::merge_json;
+use crate::managed_service::{FileTunnelDef, ManagedService, TunnelDef};
+use crate::sentry_ext;
+pub use mac_mgmt_common::OpencodeConfig;
+
+/// Returns the path to ~/.config/opencode/config.json
+pub fn config_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .context("HOME not set")?
+        .join(".config/opencode/config.json"))
+}
+
+/// Atomically merge a JSON patch into the opencode config.
+pub fn merge_and_write(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
+    let existing_text = if config_path.exists() {
+        std::fs::read_to_string(config_path)
+            .with_context(|| format!("failed to read {}", config_path.display()))?
+    } else {
+        // Ensure parent dir exists
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        "{}".to_string()
+    };
+
+    let mut existing: serde_json::Value =
+        serde_json::from_str(&existing_text).context("failed to parse opencode config")?;
+
+    merge_json(&mut existing, patch);
+
+    let merged = serde_json::to_string_pretty(&existing)
+        .context("failed to serialize merged config")?;
+    std::fs::write(config_path, &merged)
+        .with_context(|| format!("failed to write {}", config_path.display()))?;
+
+    Ok(())
+}
+
+pub struct Opencode {
+    config: OpencodeConfig,
+}
+
+impl Opencode {
+    pub fn new(config: OpencodeConfig) -> Self {
+        Self { config }
+    }
+
+    /// Build and apply a config patch from the managed OpencodeConfig.
+    fn apply_config_patch(&self) -> Result<()> {
+        let path = config_path()?;
+
+        let mut patch = serde_json::json!({});
+
+        // Server configuration
+        patch["server"] = serde_json::json!({
+            "port": self.config.port,
+            "hostname": self.config.host,
+        });
+
+        if let Some(extra) = &self.config.extra_config {
+            merge_json(&mut patch, extra);
+        }
+
+        if patch.as_object().is_some_and(|o| !o.is_empty()) {
+            match merge_and_write(&path, &patch) {
+                Ok(()) => tracing::info!("opencode config updated"),
+                Err(e) => tracing::warn!("opencode config merge failed: {e}"),
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl ManagedService for Opencode {
+    fn name(&self) -> &str {
+        "opencode"
+    }
+
+    fn ensure_installed(&self) -> Result<()> {
+        if crate::nix::is_installed("opencode")? {
+            tracing::info!("opencode is already installed");
+            return Ok(());
+        }
+
+        tracing::info!("opencode not found, installing via nix");
+        sentry_ext::breadcrumb("install", "installing opencode via nix", &[("service", "opencode")]);
+        crate::nix::profile_install("opencode", false)?;
+        Ok(())
+    }
+
+    fn ensure_setup(&self) -> Result<()> {
+        let path = config_path()?;
+
+        if !path.exists() {
+            tracing::info!("opencode config not found, creating default");
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, "{}")?;
+        }
+
+        self.apply_config_patch()?;
+        Ok(())
+    }
+
+    fn configure(&self) -> Result<()> {
+        tracing::info!("opencode: re-applying config (hot reload)");
+        self.apply_config_patch()?;
+        Ok(())
+    }
+
+    fn supports_hot_reload(&self) -> bool {
+        true
+    }
+
+    fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
+        crate::managed_service::SpawnSpec {
+            program: "opencode".into(),
+            args: vec![
+                "serve".into(),
+                "--port".into(),
+                self.config.port.to_string(),
+                "--hostname".into(),
+                self.config.host.clone(),
+            ],
+            env: Default::default(),
+        }
+    }
+
+    fn check_health(&self) -> Result<bool> {
+        // Simple HTTP check against the opencode server
+        let url = format!("http://{}:{}/", self.config.host, self.config.port);
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()?;
+        match client.get(&url).send() {
+            Ok(resp) => Ok(resp.status().is_success() || resp.status().as_u16() == 404),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn repair(&self) -> Result<()> {
+        tracing::info!("opencode repair: re-applying config");
+        sentry_ext::breadcrumb("repair", "re-applying opencode config", &[("service", "opencode")]);
+        self.apply_config_patch()?;
+        Ok(())
+    }
+
+    fn check_and_upgrade(&self) -> Result<bool> {
+        let upgradable = crate::nix::packages_with_upgrades(&["opencode"])?;
+
+        if !upgradable.iter().any(|name| name == "opencode") {
+            return Ok(false);
+        }
+
+        tracing::info!("upgrading opencode via nix");
+        sentry_ext::breadcrumb("upgrade", "upgrading opencode via nix", &[("service", "opencode")]);
+        crate::nix::profile_install("opencode", true)?;
+        tracing::info!("opencode upgraded, restart pending until idle");
+        Ok(true)
+    }
+
+    fn expose_tunnels(&self) -> Vec<TunnelDef> {
+        let host = if self.config.host.is_empty() { "127.0.0.1".to_string() } else { self.config.host.clone() };
+        let port = if self.config.port == 0 { 18790 } else { self.config.port };
+        vec![TunnelDef {
+            name: "opencode".into(),
+            host,
+            tcp_port: port,
+        }]
+    }
+
+    fn expose_files(&self) -> Vec<FileTunnelDef> {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
+        vec![FileTunnelDef::Folder {
+            name: "opencode-config".into(),
+            path: home.join(".config/opencode").to_string_lossy().into(),
+            writable: true,
+            allow_write: Vec::new(),
+            include: Some(vec!["config.json".into()]),
+            validators: Vec::new(),
+            description: "OpenCode configuration".into(),
+        }]
+    }
+}

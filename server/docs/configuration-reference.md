@@ -24,7 +24,7 @@ Top-level settings that control which default providers are active. Individual p
 | Field | Default | Description |
 |-------|---------|-------------|
 | `default_llm` | `"ollama"` | Default LLM backend: `ollama`, `lms`, `cloud`, or `none` |
-| `default_agent` | `"openclaw"` | Default agent provider: `openclaw` or `none` |
+| `default_agent` | `"openclaw"` | Default agent provider: `openclaw`, `opencode`, or `none` |
 | `agent_name` | *none* | Display name for this agent |
 | `user_name` | *none* | Display name for the user |
 
@@ -125,6 +125,20 @@ Settings for the OpenClaw agent. Installed and started when `enabled` is `true`.
 ### `openclaw.extra_config`
 
 Arbitrary key-value pairs merged into `~/.openclaw/openclaw.json` after the typed fields. Use this for OpenClaw settings not yet covered by the typed schema.
+
+## `opencode`
+
+Settings for the OpenCode agent. Installed and started when `enabled` is `true`.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Whether OpenCode is installed and started |
+| `port` | `18790` | Server listen port |
+| `host` | `"127.0.0.1"` | Server listen address |
+
+### `opencode.extra_config`
+
+Arbitrary key-value pairs merged into the OpenCode config after typed fields. Use this for OpenCode settings not covered by the typed schema (e.g. `model`, `provider`).
 
 ## `metrics`
 

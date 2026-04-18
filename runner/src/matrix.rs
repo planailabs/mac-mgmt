@@ -24,7 +24,7 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
     let agents = matrix
         .agents
         .clone()
-        .unwrap_or_else(|| vec!["openclaw".into(), "none".into()]);
+        .unwrap_or_else(|| vec!["openclaw".into(), "opencode".into(), "none".into()]);
     let llms = matrix
         .llms
         .clone()

@@ -62,6 +62,7 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
     let services = build_services(
         &cfg.global,
         std::mem::take(&mut cfg.openclaw),
+        std::mem::take(&mut cfg.opencode),
         std::mem::take(&mut cfg.ollama),
         std::mem::take(&mut cfg.lms),
     );
@@ -105,6 +106,19 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
                         name: "cache",
                         path: home.join(".cache/lm-studio"),
                     }],
+                ),
+                "opencode" => (
+                    ServiceStrategy::GeneratedUnit,
+                    vec![
+                        ServicePath {
+                            name: "config",
+                            path: home.join(".config/opencode/config.json"),
+                        },
+                        ServicePath {
+                            name: "data",
+                            path: home.join(".local/share/opencode"),
+                        },
+                    ],
                 ),
                 _ => (ServiceStrategy::InstallOnly, vec![]),
             };

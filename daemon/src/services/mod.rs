@@ -5,6 +5,7 @@ pub mod mcporter;
 pub mod nvidia_smi;
 pub mod ollama;
 pub mod openclaw;
+pub mod opencode;
 pub mod rocm_smi;
 
 use anyhow::Result;

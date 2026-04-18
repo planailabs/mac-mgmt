@@ -158,7 +158,8 @@ impl Daemon {
                 let needs_restart = new_cfg.global.default_llm != self.current_cfg.global.default_llm
                     || new_cfg.global.default_agent != self.current_cfg.global.default_agent
                     || format!("{:?}", new_cfg.ollama) != format!("{:?}", self.current_cfg.ollama)
-                    || format!("{:?}", new_cfg.openclaw) != format!("{:?}", self.current_cfg.openclaw);
+                    || format!("{:?}", new_cfg.openclaw) != format!("{:?}", self.current_cfg.openclaw)
+                    || format!("{:?}", new_cfg.opencode) != format!("{:?}", self.current_cfg.opencode);
 
                 if needs_restart {
                     tracing::info!("service config changed, scheduling restart");
