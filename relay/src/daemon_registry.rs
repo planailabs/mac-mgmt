@@ -62,6 +62,13 @@ pub enum ControlMsg {
         path: Option<String>,
         expected_mtime: Option<i64>,
     },
+    /// Start a data session for shell command execution.
+    ShellSessionRequest {
+        session_id: String,
+        session_secret: String,
+        command_name: String,
+        user_arg: Option<String>,
+    },
 }
 
 /// Events streamed back from daemon for a proxy stream request.

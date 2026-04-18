@@ -91,6 +91,17 @@ impl ManagedService for RocmSmi {
         Ok(())
     }
 
+    fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {
+        use crate::managed_service::ShellCommandDef;
+        vec![ShellCommandDef {
+            name: "rocm-smi".into(),
+            command: "rocm-smi".into(),
+            args: vec![],
+            description: "AMD GPU status".into(),
+            arg_template: None,
+        }]
+    }
+
     fn check_and_upgrade(&self) -> Result<bool> {
         if !crate::nix::is_installed(PKG_LEAF)? {
             return Ok(false);

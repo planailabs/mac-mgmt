@@ -96,6 +96,29 @@ impl ManagedService for NvidiaSmi {
         Ok(())
     }
 
+    fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {
+        use crate::managed_service::ShellCommandDef;
+        vec![
+            ShellCommandDef {
+                name: "nvidia-smi".into(),
+                command: "nvidia-smi".into(),
+                args: vec![],
+                description: "NVIDIA GPU status".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "nvidia-smi-query".into(),
+                command: "nvidia-smi".into(),
+                args: vec![
+                    "--query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total".into(),
+                    "--format=csv".into(),
+                ],
+                description: "GPU metrics (CSV)".into(),
+                arg_template: None,
+            },
+        ]
+    }
+
     fn check_and_upgrade(&self) -> Result<bool> {
         // Skip upgrade checks on hosts where we never installed.
         if !crate::nix::is_installed("cudatoolkit")? {

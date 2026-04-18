@@ -227,6 +227,52 @@ impl ManagedService for Ollama {
         }]
     }
 
+    fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {
+        use crate::managed_service::{ShellArgTemplate, ShellCommandDef};
+        let model_arg = || Some(ShellArgTemplate {
+            label: "Model name".into(),
+            placeholder: "llama3.2".into(),
+            validation: Some(r"^[a-zA-Z0-9._:/-]+$".into()),
+        });
+        vec![
+            ShellCommandDef {
+                name: "ollama-list".into(),
+                command: "ollama".into(),
+                args: vec!["list".into()],
+                description: "List installed models".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "ollama-ps".into(),
+                command: "ollama".into(),
+                args: vec!["ps".into()],
+                description: "Show running models".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "ollama-pull".into(),
+                command: "ollama".into(),
+                args: vec!["pull".into()],
+                description: "Pull a model".into(),
+                arg_template: model_arg(),
+            },
+            ShellCommandDef {
+                name: "ollama-show".into(),
+                command: "ollama".into(),
+                args: vec!["show".into()],
+                description: "Show model details".into(),
+                arg_template: model_arg(),
+            },
+            ShellCommandDef {
+                name: "ollama-rm".into(),
+                command: "ollama".into(),
+                args: vec!["rm".into()],
+                description: "Remove a model".into(),
+                arg_template: model_arg(),
+            },
+        ]
+    }
+
     fn expose_files(&self) -> Vec<FileTunnelDef> {
         let env_path = crate::config::config_dir().join("ollama-env");
         vec![FileTunnelDef::File {

@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 
 use super::ssh_server::{self, SshSession};
 use crate::file_tunnels::FileTunnelRegistry;
+use crate::shell_tunnels::ShellTunnelRegistry;
 use mac_mgmt_ws::{WsClientConfig, WsConnect, WsStream};
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +68,13 @@ enum ControlMessage {
         mode: String,
         path: Option<String>,
         expected_mtime: Option<i64>,
+    },
+    /// Start a data session for shell command execution.
+    ShellSessionRequest {
+        session_id: String,
+        session_secret: String,
+        command_name: String,
+        user_arg: Option<String>,
     },
 }
 
@@ -158,6 +166,7 @@ pub async fn run(
     relay_proxy_url: Arc<RwLock<Option<String>>>,
     ws_outgoing_tx: Arc<RwLock<Option<mpsc::Sender<String>>>>,
     file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
+    shell_tunnel_registry: Arc<RwLock<ShellTunnelRegistry>>,
 ) -> Result<()> {
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
@@ -350,6 +359,29 @@ pub async fn run(
                 #[cfg(not(feature = "services"))]
                 {
                     let _ = (&session_id, &session_secret, &tunnel_name, &mode, &path, &expected_mtime);
+                }
+            }
+            ControlMessage::ShellSessionRequest { session_id, session_secret, command_name, user_arg } => {
+                #[cfg(feature = "services")]
+                {
+                    tracing::info!("shell session {session_id}: {command_name}");
+                    let registry = shell_tunnel_registry.read().await;
+                    let tunnel = registry.get(&command_name).cloned();
+                    drop(registry);
+                    let relay = relay_url.to_string();
+                    let tok = token.to_string();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_shell_session(
+                            &relay, &tok, &session_id, &session_secret,
+                            tunnel, user_arg.as_deref(),
+                        ).await {
+                            tracing::error!("shell session {session_id} failed: {e:#}");
+                        }
+                    });
+                }
+                #[cfg(not(feature = "services"))]
+                {
+                    let _ = (&session_id, &session_secret, &command_name, &user_arg);
                 }
             }
         }
@@ -797,6 +829,39 @@ async fn handle_file_session(
         }
         _ => anyhow::bail!("unknown file session mode: {mode}"),
     }
+
+    Ok(())
+}
+
+/// Handle a shell command session: connect data WS to relay, then dispatch to
+/// the shell tunnel handler for command execution.
+#[cfg(feature = "services")]
+async fn handle_shell_session(
+    relay_url: &str,
+    token: &str,
+    session_id: &str,
+    session_secret: &str,
+    tunnel: Option<crate::managed_service::ShellTunnel>,
+    user_arg: Option<&str>,
+) -> anyhow::Result<()> {
+    let Some(tunnel) = tunnel else {
+        anyhow::bail!("shell command not found");
+    };
+
+    let ws_url = format!(
+        "{relay_url}/api/daemon/session/{session_id}?session_secret={}",
+        urlencoding::encode(session_secret),
+    );
+
+    let data_ws = WsConnect::new(&ws_url)
+        .bearer_auth(token)
+        .connect()
+        .await
+        .context("shell session data WS connect failed")?;
+
+    tracing::debug!("shell session {session_id} data WS connected");
+
+    crate::shell_tunnels::handle_exec_session(&tunnel, user_arg, data_ws).await;
 
     Ok(())
 }

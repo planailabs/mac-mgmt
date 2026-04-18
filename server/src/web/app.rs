@@ -9,6 +9,8 @@ use super::components::cluster_list::ClusterList;
 use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
 use super::components::fleet_detail::FleetDetail;
+use super::components::log_viewer::FleetLogs;
+use super::components::shell_commands::FleetShell;
 use super::components::layout::Layout;
 use super::components::mcp_bundle_detail::McpBundleDetail;
 use super::components::mcp_bundle_form::McpBundleForm;
@@ -81,6 +83,10 @@ pub enum Route {
     FleetDetail { instance_id: String },
     #[route("/fleet/:instance_id/files")]
     FleetFiles { instance_id: String },
+    #[route("/fleet/:instance_id/shell")]
+    FleetShell { instance_id: String },
+    #[route("/fleet/:instance_id/logs")]
+    FleetLogs { instance_id: String },
     #[route("/rollout-groups")]
     RolloutGroupList {},
     #[route("/rollout-groups/:id")]

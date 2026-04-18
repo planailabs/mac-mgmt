@@ -18,7 +18,7 @@ use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
 use crate::config_providers::{ConfigStore, ConnectorSnapshot};
-use crate::managed_service::{FileTunnel, FileTunnelDef, ManagedService, ServiceMode, TunnelDef};
+use crate::managed_service::{FileTunnel, FileTunnelDef, ManagedService, ServiceMode, ShellTunnel, TunnelDef};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
 use crate::sentry_ext;
@@ -641,6 +641,35 @@ impl ServiceManager {
             .collect()
     }
 
+    pub fn collect_shell_tunnels(&self) -> Vec<ShellTunnel> {
+        let mut shell_tunnels: Vec<ShellTunnel> = self
+            .services
+            .iter()
+            .flat_map(|s| {
+                s.service
+                    .expose_shell_commands()
+                    .into_iter()
+                    .map(|def| ShellTunnel {
+                        def,
+                        service: s.name.clone(),
+                    })
+            })
+            .collect();
+        for svc in &self.install_only {
+            let svc_name = svc.name().to_string();
+            shell_tunnels.extend(
+                svc.expose_shell_commands()
+                    .into_iter()
+                    .map(|def| ShellTunnel {
+                        def,
+                        service: svc_name.clone(),
+                    }),
+            );
+        }
+        shell_tunnels.extend(daemon_system_shell_tunnels());
+        shell_tunnels
+    }
+
     pub fn collect_file_tunnels(&self) -> Vec<FileTunnel> {
         let mut file_tunnels: Vec<FileTunnel> = self
             .services
@@ -718,6 +747,49 @@ fn daemon_config_file_tunnels() -> Vec<FileTunnel> {
         },
         service: "daemon".into(),
     }]
+}
+
+/// System-level shell commands (not tied to a ManagedService).
+fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
+    use crate::managed_service::ShellCommandDef;
+    vec![
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "nix-profile-list".into(),
+                command: "nix".into(),
+                args: vec!["profile".into(), "list".into()],
+                description: "List installed nix packages".into(),
+                arg_template: None,
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "daemon-status".into(),
+                command: "systemctl".into(),
+                args: vec!["status".into(), "mac-mgmt".into()],
+                description: "Daemon systemd status".into(),
+                arg_template: None,
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "daemon-journal".into(),
+                command: "journalctl".into(),
+                args: vec![
+                    "-u".into(),
+                    "mac-mgmt".into(),
+                    "-n".into(),
+                    "100".into(),
+                    "--no-pager".into(),
+                ],
+                description: "Daemon journal (last 100 lines)".into(),
+                arg_template: None,
+            },
+            service: "daemon".into(),
+        },
+    ]
 }
 
 /// Launch the services supervisor as a tokio task inside the current process.

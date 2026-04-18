@@ -32,6 +32,8 @@ pub mod skill_list;
 pub mod file_editor;
 pub mod fleet_dashboard;
 pub mod fleet_detail;
+pub mod log_viewer;
+pub mod shell_commands;
 pub mod rollout_detail;
 pub mod rollout_form;
 pub mod rollout_group_detail;

@@ -16,7 +16,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 
 use crate::bridge;
-use crate::daemon_registry::{ControlMsg, DaemonRegistry, FileResponse, ProxyResponse, ProxyStreamEvent};
+use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse, ProxyStreamEvent};
 use crate::ws_handler::{SelfInfo, validate_token};
 
 /// Cache validated proxy tokens for 5 minutes to avoid hitting the server API
@@ -77,6 +77,10 @@ pub fn router(state: ProxyState) -> Router {
         .route("/api/files/{tunnel_name}", get(file_list))
         .route("/api/files/{tunnel_name}/read", get(file_read))
         .route("/api/files/{tunnel_name}/write", post(file_write))
+        // Shell tunnel API
+        .route("/api/shell/{command_name}/exec", post(shell_exec))
+        // Log tunnel API
+        .route("/api/logs", get(log_proxy))
         // Catch-all: reverse proxy for HTTP and WS upgrades
         .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
@@ -871,4 +875,161 @@ async fn file_write(
         .body(Body::from(result.to_string()))
         .unwrap()
         .into_response()
+}
+
+// ── Shell tunnel endpoint ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ShellExecBody {
+    #[serde(default)]
+    user_arg: Option<String>,
+}
+
+/// Execute a predefined shell command via a data WebSocket session.
+/// Streams output back as SSE (text/event-stream).
+async fn shell_exec(
+    headers: HeaderMap,
+    Path(command_name): Path<String>,
+    State(state): State<ProxyState>,
+    Json(body): Json<ShellExecBody>,
+) -> axum::response::Response {
+    let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+        return resp;
+    }
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let session_id = Uuid::new_v4().to_string();
+    let session_secret = Uuid::new_v4().to_string();
+
+    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel();
+    if !bridge::register_pending_proxy_session_with_callback(
+        session_id.clone(),
+        session_secret.clone(),
+        ws_tx,
+    ) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+
+    if control_tx
+        .send(ControlMsg::ShellSessionRequest {
+            session_id: session_id.clone(),
+            session_secret,
+            command_name,
+            user_arg: body.user_arg,
+        })
+        .await
+        .is_err()
+    {
+        bridge::remove_pending_proxy_session(&session_id);
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
+        Ok(Ok(ws)) => ws,
+        _ => {
+            bridge::remove_pending_proxy_session(&session_id);
+            return StatusCode::GATEWAY_TIMEOUT.into_response();
+        }
+    };
+
+    let (_daemon_sink, daemon_stream) = daemon_ws.split();
+
+    // Stream daemon WS text messages as SSE events
+    let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
+        loop {
+            match stream.next().await {
+                Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                    let data = format!("data: {text}\n\n");
+                    return Some((
+                        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data)),
+                        stream,
+                    ));
+                }
+                Some(Ok(axum::extract::ws::Message::Close(_))) | None => return None,
+                _ => continue,
+            }
+        }
+    });
+
+    axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .body(Body::from_stream(body_stream))
+        .unwrap()
+        .into_response()
+}
+
+// ── Log tunnel endpoint ───────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct LogQuery {
+    n: Option<usize>,
+    service: Option<String>,
+    after: Option<usize>,
+}
+
+/// Proxy the daemon's /logs endpoint via MetricsRequest.
+async fn log_proxy(
+    headers: HeaderMap,
+    Query(query): Query<LogQuery>,
+    State(state): State<ProxyState>,
+) -> axum::response::Response {
+    let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+        return resp;
+    }
+    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    // Build the daemon-local /logs query string
+    let mut params = Vec::new();
+    if let Some(n) = query.n {
+        params.push(format!("n={n}"));
+    }
+    if let Some(ref svc) = query.service {
+        params.push(format!("service={svc}"));
+    }
+    if let Some(after) = query.after {
+        params.push(format!("after={after}"));
+    }
+    let path = if params.is_empty() {
+        "/logs".to_string()
+    } else {
+        format!("/logs?{}", params.join("&"))
+    };
+
+    let request_id = Uuid::new_v4().to_string();
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+    if control_tx
+        .send(ControlMsg::MetricsRequest {
+            request_id,
+            path,
+            response_tx,
+        })
+        .await
+        .is_err()
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+
+    match tokio::time::timeout(Duration::from_secs(30), response_rx).await {
+        Ok(Ok(resp)) => axum::response::Response::builder()
+            .status(resp.status)
+            .header("content-type", resp.content_type)
+            .body(Body::from(resp.body))
+            .unwrap()
+            .into_response(),
+        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
 }

@@ -40,6 +40,9 @@ struct FleetDetailData {
     /// Exposed file tunnels for remote config editing.
     #[serde(default)]
     file_tunnels: Option<serde_json::Value>,
+    /// Exposed shell commands for remote execution.
+    #[serde(default)]
+    shell_tunnels: Option<serde_json::Value>,
     inventory: Option<serde_json::Value>,
     inventory_collected_at: Option<DateTime<Utc>>,
     security: Option<serde_json::Value>,
@@ -88,11 +91,13 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         relay_proxy_hostname: Option<String>,
         relay_proxy_url: Option<String>,
         file_tunnels: serde_json::Value,
+        shell_tunnels: serde_json::Value,
     }
     let hb: HbRow = sqlx::query_as(
         "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.hostname, dh.environment, \
                 dh.version, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
-                dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.file_tunnels \
+                dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.file_tunnels, \
+                dh.shell_tunnels \
          FROM daemon_heartbeats dh JOIN clusters c ON c.id = dh.cluster_id \
          WHERE dh.instance_id = $1 \
          ORDER BY dh.reported_at DESC LIMIT 1",
@@ -186,6 +191,7 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         relay_proxy_hostname: hb.relay_proxy_hostname,
         relay_proxy_url: hb.relay_proxy_url,
         file_tunnels: Some(hb.file_tunnels),
+        shell_tunnels: Some(hb.shell_tunnels),
         inventory: ass.as_ref().map(|a| a.inventory.clone()),
         inventory_collected_at: ass.as_ref().map(|a| a.collected_at),
         security: ass.as_ref().map(|a| a.security.clone()),
@@ -393,20 +399,40 @@ fn render_detail(d: &FleetDetailData) -> Element {
             }
         }
 
-        // ── Configuration Files link ──
+        // ── Tunnel links ──
         {
             let has_files = d.file_tunnels
                 .as_ref()
                 .and_then(|v| v.as_array())
                 .is_some_and(|a| !a.is_empty());
-            if has_files {
+            let has_shell = d.shell_tunnels
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| !a.is_empty());
+            if has_files || has_shell {
                 let files_url = format!("/fleet/{}/files", d.instance_id);
+                let shell_url = format!("/fleet/{}/shell", d.instance_id);
+                let logs_url = format!("/fleet/{}/logs", d.instance_id);
                 rsx! {
-                    div { class: "mb-6",
+                    div { class: "mb-6 flex flex-wrap gap-2",
+                        if has_files {
+                            Link {
+                                to: files_url,
+                                class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
+                                "Configuration Files"
+                            }
+                        }
+                        if has_shell {
+                            Link {
+                                to: shell_url,
+                                class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
+                                "Shell Commands"
+                            }
+                        }
                         Link {
-                            to: files_url,
+                            to: logs_url,
                             class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
-                            "Configuration Files"
+                            "Logs"
                         }
                     }
                 }

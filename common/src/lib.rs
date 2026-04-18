@@ -71,6 +71,10 @@ pub struct HeartbeatBody {
     /// Optional for back-compat with older daemons.
     #[serde(default)]
     pub file_tunnels: serde_json::Value,
+    /// Predefined shell commands exposed by services for remote execution.
+    /// Optional for back-compat with older daemons.
+    #[serde(default)]
+    pub shell_tunnels: serde_json::Value,
 }
 
 /// Small dynamic sample sent with each heartbeat. GDPR allowlist: no user data,

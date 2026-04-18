@@ -117,6 +117,49 @@ pub struct FileValidator {
     pub command: Vec<String>,
 }
 
+// ── Shell tunnels ──────────────────────────────────────────────────────
+
+/// A predefined shell command that a managed service exposes for remote
+/// execution through the relay. Only registered commands can be run —
+/// no arbitrary shell access.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellCommandDef {
+    /// Short, URL-safe identifier (e.g. "ollama-list", "nvidia-smi-query").
+    pub name: String,
+    /// The program to execute (e.g. "ollama", "nvidia-smi").
+    pub command: String,
+    /// Fixed arguments always passed to the command (e.g. `["list"]`).
+    pub args: Vec<String>,
+    /// Human-readable description for the UI.
+    pub description: String,
+    /// If set, the command accepts one user-provided argument appended
+    /// after `args`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arg_template: Option<ShellArgTemplate>,
+}
+
+/// Template for a user-provided argument on a shell command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellArgTemplate {
+    /// Label shown in the UI (e.g. "Model name").
+    pub label: String,
+    /// Placeholder text for the input field.
+    pub placeholder: String,
+    /// Optional regex the argument must match (validated daemon-side).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<String>,
+}
+
+/// A shell command definition with its owning service name.
+/// This is what the daemon uses internally and advertises to the relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellTunnel {
+    #[serde(flatten)]
+    pub def: ShellCommandDef,
+    /// The owning service name.
+    pub service: String,
+}
+
 /// Whether the daemon should spawn and manage a long-running process,
 /// or only install the package (no child process).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,6 +278,12 @@ pub trait ManagedService: Send + Sync {
     /// Return the files/directories this service exposes for remote editing
     /// through the relay. Override to advertise config files.
     fn expose_files(&self) -> Vec<FileTunnelDef> {
+        Vec::new()
+    }
+
+    /// Return predefined shell commands this service exposes for remote
+    /// execution through the relay. Override to advertise commands.
+    fn expose_shell_commands(&self) -> Vec<ShellCommandDef> {
         Vec::new()
     }
 }

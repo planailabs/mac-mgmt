@@ -9,6 +9,8 @@ pub mod daemon;
 pub mod events;
 #[cfg(feature = "relay")]
 pub mod file_tunnels;
+#[cfg(feature = "relay")]
+pub mod shell_tunnels;
 pub mod host_keys;
 pub mod log_buffer;
 pub mod log_layer;

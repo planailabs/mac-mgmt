@@ -141,6 +141,51 @@ impl ManagedService for Lms {
         Ok(busy)
     }
 
+    fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {
+        use crate::managed_service::{ShellArgTemplate, ShellCommandDef};
+        vec![
+            ShellCommandDef {
+                name: "lms-status".into(),
+                command: "lms".into(),
+                args: vec!["server".into(), "status".into(), "--json".into()],
+                description: "Show server status".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "lms-ps".into(),
+                command: "lms".into(),
+                args: vec!["ps".into(), "--json".into()],
+                description: "List loaded models".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "lms-ls".into(),
+                command: "lms".into(),
+                args: vec!["ls".into()],
+                description: "List available models".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "lms-load".into(),
+                command: "lms".into(),
+                args: vec!["load".into()],
+                description: "Load a model".into(),
+                arg_template: Some(ShellArgTemplate {
+                    label: "Model".into(),
+                    placeholder: "model-id".into(),
+                    validation: None,
+                }),
+            },
+            ShellCommandDef {
+                name: "lms-unload-all".into(),
+                command: "lms".into(),
+                args: vec!["unload".into(), "--all".into()],
+                description: "Unload all models".into(),
+                arg_template: None,
+            },
+        ]
+    }
+
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
         vec![TunnelDef {
             name: "lms".into(),

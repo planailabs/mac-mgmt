@@ -386,6 +386,33 @@ impl ManagedService for OpenClaw {
         }]
     }
 
+    fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {
+        use crate::managed_service::ShellCommandDef;
+        vec![
+            ShellCommandDef {
+                name: "openclaw-health".into(),
+                command: "openclaw".into(),
+                args: vec!["health".into(), "--json".into()],
+                description: "Check gateway health".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "openclaw-config-validate".into(),
+                command: "openclaw".into(),
+                args: vec!["config".into(), "validate".into()],
+                description: "Validate configuration".into(),
+                arg_template: None,
+            },
+            ShellCommandDef {
+                name: "openclaw-doctor".into(),
+                command: "openclaw".into(),
+                args: vec!["doctor".into(), "--fix".into()],
+                description: "Run diagnostics and auto-fix".into(),
+                arg_template: None,
+            },
+        ]
+    }
+
     fn expose_files(&self) -> Vec<FileTunnelDef> {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
         let mut files = vec![FileTunnelDef::Folder {
