@@ -162,36 +162,34 @@ fn render_logs(ctx: &LogsContext) -> Element {
                             let svc_param = if svc.is_empty() { String::new() } else { format!("&service={svc}") };
                             let js = format!(
                                 r#"
-                                (async () => {{
-                                    let after = 0;
-                                    let result = "";
+                                let after = 0;
+                                let result = "";
+                                try {{
+                                    const resp = await fetch("{logs_url}?n=200{svc_param}", {{
+                                        headers: {{ "Authorization": "Bearer {token}" }},
+                                    }});
+                                    const data = await resp.json();
+                                    if (data.lines) {{
+                                        result = data.lines.join("\n");
+                                        after = data.index || 0;
+                                    }}
+                                }} catch(e) {{
+                                    return "fetch error: " + e.message;
+                                }}
+                                for (let i = 0; i < 150; i++) {{
+                                    await new Promise(r => setTimeout(r, 2000));
                                     try {{
-                                        const resp = await fetch("{logs_url}?n=200{svc_param}", {{
+                                        const resp = await fetch("{logs_url}?after=" + after + "{svc_param}", {{
                                             headers: {{ "Authorization": "Bearer {token}" }},
                                         }});
                                         const data = await resp.json();
-                                        if (data.lines) {{
-                                            result = data.lines.join("\n");
-                                            after = data.index || 0;
+                                        if (data.lines && data.lines.length > 0) {{
+                                            result += "\n" + data.lines.join("\n");
                                         }}
-                                    }} catch(e) {{
-                                        return "fetch error: " + e.message;
-                                    }}
-                                    for (let i = 0; i < 150; i++) {{
-                                        await new Promise(r => setTimeout(r, 2000));
-                                        try {{
-                                            const resp = await fetch("{logs_url}?after=" + after + "{svc_param}", {{
-                                                headers: {{ "Authorization": "Bearer {token}" }},
-                                            }});
-                                            const data = await resp.json();
-                                            if (data.lines && data.lines.length > 0) {{
-                                                result += "\n" + data.lines.join("\n");
-                                            }}
-                                            if (data.index) after = data.index;
-                                        }} catch(e) {{ break; }}
-                                    }}
-                                    return result;
-                                }})()
+                                        if (data.index) after = data.index;
+                                    }} catch(e) {{ break; }}
+                                }}
+                                return result;
                                 "#,
                             );
                             match document::eval(&js).await {
@@ -233,17 +231,15 @@ fn render_logs(ctx: &LogsContext) -> Element {
                             let svc_param = if svc.is_empty() { String::new() } else { format!("&service={svc}") };
                             let js = format!(
                                 r#"
-                                (async () => {{
-                                    try {{
-                                        const resp = await fetch("{logs_url}?n=500{svc_param}", {{
-                                            headers: {{ "Authorization": "Bearer {token}" }},
-                                        }});
-                                        const data = await resp.json();
-                                        return (data.lines || []).join("\n");
-                                    }} catch(e) {{
-                                        return "fetch error: " + e.message;
-                                    }}
-                                }})()
+                                try {{
+                                    const resp = await fetch("{logs_url}?n=500{svc_param}", {{
+                                        headers: {{ "Authorization": "Bearer {token}" }},
+                                    }});
+                                    const data = await resp.json();
+                                    return (data.lines || []).join("\n");
+                                }} catch(e) {{
+                                    return "fetch error: " + e.message;
+                                }}
                                 "#,
                             );
                             match document::eval(&js).await {

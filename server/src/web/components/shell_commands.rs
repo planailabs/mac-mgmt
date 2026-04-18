@@ -206,44 +206,42 @@ fn ShellCommandCard(
                                 let body = format!("{{\"user_arg\":{user_arg}}}");
                                 let js = format!(
                                     r#"
-                                    (async () => {{
-                                        try {{
-                                            const resp = await fetch("{exec_url}", {{
-                                                method: "POST",
-                                                headers: {{
-                                                    "Authorization": "Bearer {token}",
-                                                    "Content-Type": "application/json",
-                                                }},
-                                                body: '{body}',
-                                            }});
-                                            const reader = resp.body.getReader();
-                                            const decoder = new TextDecoder();
-                                            let result = "";
-                                            while (true) {{
-                                                const {{done, value}} = await reader.read();
-                                                if (done) break;
-                                                const text = decoder.decode(value, {{stream: true}});
-                                                const lines = text.split("\n");
-                                                for (const line of lines) {{
-                                                    if (line.startsWith("data: ")) {{
-                                                        try {{
-                                                            const obj = JSON.parse(line.slice(6));
-                                                            if (obj.data !== undefined) {{
-                                                                result += obj.data + "\n";
-                                                            }} else if (obj.exit_code !== undefined) {{
-                                                                result += "\n[exit code: " + obj.exit_code + "]\n";
-                                                            }} else if (obj.error !== undefined) {{
-                                                                result += "\n[error: " + obj.error + "]\n";
-                                                            }}
-                                                        }} catch(e) {{}}
-                                                    }}
+                                    try {{
+                                        const resp = await fetch("{exec_url}", {{
+                                            method: "POST",
+                                            headers: {{
+                                                "Authorization": "Bearer {token}",
+                                                "Content-Type": "application/json",
+                                            }},
+                                            body: '{body}',
+                                        }});
+                                        const reader = resp.body.getReader();
+                                        const decoder = new TextDecoder();
+                                        let result = "";
+                                        while (true) {{
+                                            const {{done, value}} = await reader.read();
+                                            if (done) break;
+                                            const text = decoder.decode(value, {{stream: true}});
+                                            const lines = text.split("\n");
+                                            for (const line of lines) {{
+                                                if (line.startsWith("data: ")) {{
+                                                    try {{
+                                                        const obj = JSON.parse(line.slice(6));
+                                                        if (obj.data !== undefined) {{
+                                                            result += obj.data + "\n";
+                                                        }} else if (obj.exit_code !== undefined) {{
+                                                            result += "\n[exit code: " + obj.exit_code + "]\n";
+                                                        }} else if (obj.error !== undefined) {{
+                                                            result += "\n[error: " + obj.error + "]\n";
+                                                        }}
+                                                    }} catch(e) {{}}
                                                 }}
                                             }}
-                                            return result;
-                                        }} catch(e) {{
-                                            return "fetch error: " + e.message;
                                         }}
-                                    }})()
+                                        return result;
+                                    }} catch(e) {{
+                                        return "fetch error: " + e.message;
+                                    }}
                                     "#,
                                 );
                                 match document::eval(&js).await {
