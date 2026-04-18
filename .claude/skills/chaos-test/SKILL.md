@@ -107,6 +107,8 @@ If the bug revealed a gap in the invariant checkers or fault patterns:
 | `tests/sampling.rs` | 1 | Failure sampling with automatic minimization |
 | `tests/targeted.rs` | 3 | Config churn, endpoint cycling, cascading failure |
 | `tests/relay.rs` | 4 | Unreachable relay, empty services, relay crash, SSH key push |
+| `tests/supervisor.rs` | 2 | In-process supervisor with mock services, multi-service registration |
+| `tests/hammering.rs` | 4 | 10 daemons, push storm, rapid fault cycling, simultaneous start |
 
 ## Environment variables reference
 

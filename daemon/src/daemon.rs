@@ -1242,3 +1242,210 @@ pub async fn run_sim(
     tracing::info!("sim daemon shutdown complete");
     Ok(())
 }
+
+/// Simulation entrypoint with mock services and an in-process supervisor.
+///
+/// Like `run_sim()` but creates a ServiceManager backed by a real supervisor
+/// (running as a tokio task) and registers the provided mock services with it.
+/// Used for testing the supervisor lifecycle, health checking, and tunnel
+/// advertisement under fault injection.
+#[cfg(all(feature = "sim", feature = "services"))]
+pub async fn run_sim_with_services(
+    cfg: config::Config,
+    host_key: Arc<russh::keys::PrivateKey>,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    mock_services: Vec<Box<dyn crate::managed_service::ManagedService>>,
+) -> Result<()> {
+    let current_cfg = cfg.clone();
+
+    let update_interval =
+        humantime::parse_duration(&cfg.daemon.update_interval).context("invalid update_interval")?;
+    let health_interval =
+        humantime::parse_duration(&cfg.daemon.health_interval).context("invalid health_interval")?;
+
+    let upgrade_window = cfg.daemon.upgrade_window.as_ref().map(|w| {
+        mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
+    });
+
+    let metrics_port = cfg.metrics.port;
+    let server_url = cfg.server.url.clone();
+    let server_token = cfg.server.token.clone();
+    let skills_dir = std::path::PathBuf::from("/tmp/sim-skills");
+
+    let dispatcher = Arc::new(Dispatcher::new(Vec::new(), None));
+    let log_buf = crate::log_buffer::LogBuffer::new();
+
+    let mut svc_mgr = crate::service_mgmt::ServiceManager::sim_init_with_supervisor(
+        Arc::clone(&dispatcher),
+        log_buf.clone(),
+        mock_services,
+    );
+
+    // Let the in-process supervisor bind its socket.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let metrics = Arc::new(Metrics::new());
+    svc_mgr.register_metrics(&metrics);
+
+    let (_sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
+
+    let mut update_tick = time::interval(update_interval);
+    let mut health_tick = time::interval(health_interval);
+    let mut heartbeat_tick = time::interval(health_interval);
+    let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
+    let mut assessment_probe_tick =
+        time::interval(assessment::jittered(assessment::DEFAULT_PROBE_INTERVAL, 120));
+
+    let instance_id = crate::host_keys::fingerprint_hex(&host_key);
+    tracing::info!("sim daemon (with supervisor) started, instance ID: {instance_id}");
+
+    #[cfg(feature = "relay")]
+    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::Manager::new(
+        cfg.relay.url.clone(),
+        server_url.clone(),
+        server_token.clone(),
+        instance_id.clone(),
+        Arc::clone(&host_key),
+        metrics_port,
+        cfg.relay.remote_ssh_enabled,
+    );
+
+    let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
+        let (_handle, rx) = crate::server_push::start(url, token);
+        Some(rx)
+    } else {
+        None
+    };
+
+    let assessor = Arc::new(Assessor::new());
+    assessor.update_config(current_cfg.clone()).await;
+    assessor.attach_metrics(Arc::clone(&metrics)).await;
+
+    // Connect to supervisor and register services.
+    svc_mgr.connect_all().await;
+
+    macro_rules! relay_proxy_hostname {
+        () => {{
+            #[cfg(feature = "relay")]
+            { relay_mgr.relay_proxy_hostname() }
+            #[cfg(not(feature = "relay"))]
+            { None::<String> }
+        }};
+    }
+    macro_rules! relay_proxy_url {
+        () => {{
+            #[cfg(feature = "relay")]
+            { relay_mgr.relay_proxy_url() }
+            #[cfg(not(feature = "relay"))]
+            { None::<String> }
+        }};
+    }
+
+    let mut daemon = Daemon {
+        server_url,
+        server_token,
+        skills_dir,
+        dispatcher,
+        metrics,
+        upgrade_window,
+        current_cfg,
+        instance_id,
+        host_key,
+        assessor,
+        initial_assessment_pending: Arc::new(AtomicBool::new(true)),
+        svc_mgr,
+    };
+
+    daemon.spawn_sync_skills_and_mcp();
+
+    #[cfg(feature = "relay")]
+    relay_mgr.sync_ssh_keys();
+
+    // ── Main event loop (sim with supervisor) ───────────────────────
+    loop {
+        tokio::select! {
+            _ = &mut shutdown_rx => {
+                tracing::info!("sim shutdown signal received");
+                break;
+            }
+
+            _ = update_tick.tick() => {
+                daemon.handle_update().await;
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys();
+            }
+
+            _ = health_tick.tick() => {
+                daemon.handle_health_tick().await;
+                #[cfg(feature = "relay")]
+                daemon.update_relay_tunnel_defs(&relay_mgr);
+                #[cfg(feature = "relay")]
+                daemon.update_relay_file_tunnel_defs(&relay_mgr);
+                #[cfg(feature = "relay")]
+                daemon.update_relay_shell_tunnel_defs(&relay_mgr);
+                daemon.update_relay_config(relay_proxy_hostname!());
+                daemon.refresh_assessment_sample().await;
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.svc_mgr.run_connectors_tick();
+            }
+
+            _ = heartbeat_tick.tick() => {
+                daemon.refresh_assessment_sample().await;
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+            }
+
+            _ = assessment_inventory_tick.tick() => {
+                daemon.send_assessment_inventory();
+            }
+
+            _ = assessment_probe_tick.tick() => {
+                daemon.run_assessment_probes();
+            }
+
+            Some(cmd) = async {
+                if let Some(rx) = &mut push_rx { rx.recv().await } else { std::future::pending().await }
+            } => {
+                if matches!(cmd, crate::server_push::PushCommand::SyncConfig) {
+                    tracing::info!("server push: sync config");
+                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &|_| {}).await;
+                } else {
+                    let needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
+                    #[cfg(feature = "relay")]
+                    if needs_ssh_sync { relay_mgr.sync_ssh_keys(); }
+                    #[cfg(not(feature = "relay"))]
+                    let _ = needs_ssh_sync;
+                }
+            }
+
+            Some(()) = sync_rx.recv() => {
+                daemon.handle_local_sync();
+                #[cfg(feature = "relay")]
+                relay_mgr.sync_ssh_keys();
+            }
+
+            Some(cmd) = async {
+                #[cfg(feature = "relay")]
+                { relay_mgr.recv_cmd().await }
+                #[cfg(not(feature = "relay"))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                #[cfg(feature = "relay")]
+                relay_mgr.handle_cmd(cmd);
+            }
+
+            Some(()) = async {
+                #[cfg(feature = "relay")]
+                { relay_heartbeat_rx.recv().await }
+                #[cfg(not(feature = "relay"))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                tracing::debug!("relay signalled heartbeat");
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+            }
+        }
+    }
+
+    daemon.shutdown().await;
+    tracing::info!("sim daemon (with supervisor) shutdown complete");
+    Ok(())
+}

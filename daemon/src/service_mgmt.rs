@@ -96,6 +96,47 @@ impl ServiceManager {
         }
     }
 
+    /// Create a ServiceManager with mock services and an in-process supervisor.
+    /// The supervisor runs as a tokio task; services are registered but use
+    /// no-op install/setup (they don't call real nix commands).
+    #[cfg(feature = "sim")]
+    pub fn sim_init_with_supervisor(
+        dispatcher: Arc<Dispatcher>,
+        log_buf: LogBuffer,
+        mock_services: Vec<Box<dyn ManagedService>>,
+    ) -> Self {
+        spawn_inprocess_supervisor();
+
+        let services: Vec<ServiceState> = mock_services
+            .into_iter()
+            .map(|svc| {
+                let name = svc.name().to_string();
+                ServiceState {
+                    name,
+                    service: svc,
+                    phase: ServicePhase::Stopped,
+                    upgrade_pending: false,
+                    restart_pending: false,
+                    post_start_done: false,
+                    consecutive_crashes: 0,
+                    running_store_path: None,
+                    registered: false,
+                }
+            })
+            .collect();
+
+        Self {
+            services,
+            install_only: Vec::new(),
+            connectors: Vec::new(),
+            client: None,
+            dispatcher,
+            log_buf,
+            config_store: ConfigStore::new(None),
+            inprocess: true,
+        }
+    }
+
     pub fn init(
         cfg: &mut crate::config::Config,
         dispatcher: Arc<Dispatcher>,
