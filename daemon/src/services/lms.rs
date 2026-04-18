@@ -63,10 +63,9 @@ impl ManagedService for Lms {
         // starts the server and then blocks on sleep — the supervisor treats
         // the sleep as the supervised process.
         crate::managed_service::SpawnSpec {
-            program: "sh".into(),
+            program: "lms".into(),
             args: vec![
-                "-c".into(),
-                "lms server start && exec sleep infinity".into(),
+                "server".into(), "start".into(), "--foreground".into(),
             ],
             env: Default::default(),
         }
