@@ -2,6 +2,7 @@ pub mod agent;
 pub mod connector;
 pub mod mcp;
 pub mod session;
+pub mod tools;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -481,34 +482,15 @@ async fn run_agent_session(
         .map(|i| i.instance_prefix.clone())
         .collect();
 
-    // 4. Start MCP server in-process via duplex
-    let (agent_stream, server_stream) = tokio::io::duplex(65536);
-
-    let mcp_server = mcp::HealerMcpServer::new(
-        relay_client,
-        req.instance_id.chars().take(12).collect(),
-        cluster_instance_prefixes,
-        file_tunnel_names.clone(),
-        shell_command_names.clone(),
-    );
-
-    // Spawn MCP server task
-    tokio::spawn(async move {
-        use rmcp::ServiceExt;
-        match mcp_server.serve(server_stream).await {
-            Ok(service) => {
-                if let Err(e) = service.waiting().await {
-                    tracing::debug!(err = %e, "MCP server ended");
-                }
-            }
-            Err(e) => tracing::error!(err = %e, "failed to start MCP server"),
-        }
-    });
-
-    // 5. Connect swiftide McpToolbox to client side via transport
-    let mcp_toolbox = swiftide::agents::tools::mcp::McpToolbox::try_from_transport(agent_stream)
-        .await
-        .context("failed to connect MCP toolbox")?;
+    // 4. Create native swiftide tools (no MCP transport needed)
+    let tool_ctx = tools::ToolContext {
+        relay: relay_client,
+        target_instance: req.instance_id.chars().take(12).collect(),
+        cluster_instances: cluster_instance_prefixes,
+        file_tunnels: file_tunnel_names.clone(),
+        shell_commands: shell_command_names.clone(),
+    };
+    let healer_tools = tools::all_tools(tool_ctx);
 
     // 6. Build system prompt
     let sample_summary = req
@@ -600,9 +582,12 @@ async fn run_agent_session(
             }
         }
 
+        for tool in healer_tools {
+            builder.add_tool(tool);
+        }
+
         let state_ref = state.clone();
         builder
-            .add_toolbox(mcp_toolbox)
             .system_prompt(system_prompt)
             .on_new_message(move |_agent, msg| {
                 let pool = pool_msg.clone();
