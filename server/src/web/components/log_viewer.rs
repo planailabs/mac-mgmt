@@ -164,8 +164,9 @@ fn render_logs(ctx: &LogsContext) -> Element {
                                 r#"
                                 let after = 0;
                                 let result = "";
+                                // Fetch latest first (500 lines)
                                 try {{
-                                    const resp = await fetch("{logs_url}?n=200{svc_param}", {{
+                                    const resp = await fetch("{logs_url}?n=500{svc_param}", {{
                                         headers: {{ "Authorization": "Bearer {token}" }},
                                     }});
                                     const data = await resp.json();
@@ -176,6 +177,12 @@ fn render_logs(ctx: &LogsContext) -> Element {
                                 }} catch(e) {{
                                     return "fetch error: " + e.message;
                                 }}
+                                // Auto-scroll helper
+                                const scrollToBottom = () => {{
+                                    const el = document.querySelector('pre.log-output');
+                                    if (el) el.scrollTop = el.scrollHeight;
+                                }};
+                                scrollToBottom();
                                 for (let i = 0; i < 150; i++) {{
                                     await new Promise(r => setTimeout(r, 2000));
                                     try {{
@@ -185,6 +192,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                                         const data = await resp.json();
                                         if (data.lines && data.lines.length > 0) {{
                                             result += "\n" + data.lines.join("\n");
+                                            scrollToBottom();
                                         }}
                                         if (data.index) after = data.index;
                                     }} catch(e) {{ break; }}
@@ -259,7 +267,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
         }
 
         // Log output
-        pre { class: "p-3 bg-gray-900 text-green-400 text-xs font-mono rounded overflow-x-auto max-h-[600px] overflow-y-auto whitespace-pre-wrap min-h-[200px]",
+        pre { class: "log-output p-3 bg-gray-900 text-green-400 text-xs font-mono rounded overflow-x-auto max-h-[600px] overflow-y-auto whitespace-pre-wrap min-h-[200px]",
             if log_output.read().is_empty() {
                 span { class: "text-gray-500", "Click 'Fetch Latest' or 'Start Tailing' to view logs." }
             } else {

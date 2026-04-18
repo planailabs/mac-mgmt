@@ -41,10 +41,15 @@ async fn add_ssh_key(cluster_id: String, public_key: String) -> Result<(), Serve
     let user = current_user().await?;
     let pool = crate::server_pool()?;
     let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
-        if !ids.contains(&cid) {
-            return Err(ServerFnError::new("access denied"));
-        }
+    let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
+    )
+    .bind(cid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if org_ids.is_empty() || !org_ids.iter().any(|oid| user.is_org_admin(oid)) {
+        return Err(ServerFnError::new("organization admin access required"));
     }
 
     let trimmed = public_key.trim();
@@ -94,10 +99,15 @@ async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
-            if !ids.contains(&owner_cid) {
-                return Err(ServerFnError::new("access denied"));
-            }
+        let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
+        )
+        .bind(owner_cid)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if org_ids.is_empty() || !org_ids.iter().any(|oid| user.is_org_admin(oid)) {
+            return Err(ServerFnError::new("organization admin access required"));
         }
     }
     let cid = sqlx::query_scalar::<_, uuid::Uuid>(

@@ -40,6 +40,26 @@ async fn is_global_admin() -> Result<bool, ServerFnError> {
 }
 
 #[server]
+async fn can_admin_cluster(cluster_id: String) -> Result<bool, ServerFnError> {
+    let user = current_user().await?;
+    if user.is_admin {
+        return Ok(true);
+    }
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(org_ids.iter().any(|oid| user.is_org_admin(oid)))
+}
+
+#[server]
 async fn get_cluster(id: String) -> Result<Cluster, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -305,10 +325,16 @@ pub fn ClusterDetail(id: String) -> Element {
         let cid = cid_for_write.clone();
         async move { can_write_cluster(cid).await }
     })?;
+    let cid_for_admin = id.clone();
+    let cluster_admin_check = use_server_future(move || {
+        let cid = cid_for_admin.clone();
+        async move { can_admin_cluster(cid).await }
+    })?;
     let admin_check = use_server_future(is_global_admin)?;
 
     let can_write = matches!(&*write_check.read(), Some(Ok(true)));
     let is_admin = matches!(&*admin_check.read(), Some(Ok(true)));
+    let can_admin = matches!(&*cluster_admin_check.read(), Some(Ok(true)));
     let read_only = !can_write;
 
     let mut editing = use_signal(|| false);
@@ -453,7 +479,7 @@ pub fn ClusterDetail(id: String) -> Element {
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "SSH Keys" }
-                        ClusterSshKeys { cluster_id: cid2.clone(), read_only }
+                        ClusterSshKeys { cluster_id: cid2.clone(), read_only: !can_admin }
                     }
                 }
             }
