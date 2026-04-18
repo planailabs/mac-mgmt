@@ -32,6 +32,7 @@ pub mod skill_list;
 pub mod file_editor;
 pub mod fleet_dashboard;
 pub mod fleet_detail;
+pub mod healer_page;
 pub mod log_viewer;
 pub mod shell_commands;
 pub mod rollout_detail;

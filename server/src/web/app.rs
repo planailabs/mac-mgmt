@@ -9,6 +9,7 @@ use super::components::cluster_list::ClusterList;
 use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
 use super::components::fleet_detail::FleetDetail;
+use super::components::healer_page::FleetHealer;
 use super::components::log_viewer::FleetLogs;
 use super::components::shell_commands::FleetShell;
 use super::components::layout::Layout;
@@ -87,6 +88,8 @@ pub enum Route {
     FleetShell { instance_id: String },
     #[route("/fleet/:instance_id/logs")]
     FleetLogs { instance_id: String },
+    #[route("/fleet/:instance_id/healer")]
+    FleetHealer { instance_id: String },
     #[route("/rollout-groups")]
     RolloutGroupList {},
     #[route("/rollout-groups/:id")]

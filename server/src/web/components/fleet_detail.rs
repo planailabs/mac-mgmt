@@ -413,6 +413,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                 let files_url = format!("/fleet/{}/files", d.instance_id);
                 let shell_url = format!("/fleet/{}/shell", d.instance_id);
                 let logs_url = format!("/fleet/{}/logs", d.instance_id);
+                let healer_url = format!("/fleet/{}/healer", d.instance_id);
                 rsx! {
                     div { class: "mb-6 flex flex-wrap gap-2",
                         if has_files {
@@ -433,6 +434,11 @@ fn render_detail(d: &FleetDetailData) -> Element {
                             to: logs_url,
                             class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
                             "Logs"
+                        }
+                        Link {
+                            to: healer_url,
+                            class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700",
+                            "Healer Agent"
                         }
                     }
                 }
