@@ -23,5 +23,13 @@ url = "https://xzar.example.com"
 token = "xzar-api-token-here"
 
 # Optional: enables "Generate with AI" buttons in the admin UI
+# and provides the cloud fallback for the healer agent (when local
+# Ollama is not available on the server).
 # [anthropic]
 # api_key = "sk-ant-xxx"
+
+# Healer agent configuration (set via environment or code defaults):
+# - The healer tries local Ollama first (http://localhost:11434), then
+#   falls back to the Anthropic key above.
+# - Token budget per session (cloud only): 200k tokens before auto-pause.
+# - Sessions auto-resume on server restart.
