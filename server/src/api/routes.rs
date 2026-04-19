@@ -1911,14 +1911,24 @@ pub async fn admin_create_token(
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
-    sqlx::query("INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, $4)")
-        .bind(cid)
-        .bind(&hash)
-        .bind(label)
-        .bind(&body.kind)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+    // Setting tokens expire after 6 hours; sync tokens don't expire.
+    let expires_at = if body.kind == "setting" {
+        Some(chrono::Utc::now() + chrono::Duration::hours(6))
+    } else {
+        None
+    };
+
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(cid)
+    .bind(&hash)
+    .bind(label)
+    .bind(&body.kind)
+    .bind(expires_at)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
 
     Ok((Status::Created, Json(CreatedToken { token: raw_token })))
 }
@@ -1977,11 +1987,13 @@ pub async fn admin_create_org_token(
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
 
-    sqlx::query("INSERT INTO tokens (organization_id, token_hash, label, kind) VALUES ($1, $2, $3, 'setting')")
+    sqlx::query("INSERT INTO tokens (organization_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, 'setting', $4)")
         .bind(oid)
         .bind(&hash)
         .bind(label)
+        .bind(expires_at)
         .execute(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;

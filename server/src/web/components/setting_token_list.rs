@@ -58,13 +58,15 @@ async fn create_setting_token(cluster_id: String, label: String) -> Result<Strin
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
 
     sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'setting')",
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) VALUES ($1, $2, $3, 'setting', $4)",
     )
     .bind(uuid)
     .bind(&hash)
     .bind(&label)
+    .bind(expires_at)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -169,14 +171,29 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                             } else {
                                 token.label.clone()
                             };
-                            let created = token.created_at.format("%Y-%m-%d").to_string();
+                            let created = token.created_at.format("%Y-%m-%d %H:%M").to_string();
                             let revoked = token.revoked;
+                            let expired = token.expires_at.is_some_and(|e| e < chrono::Utc::now());
+                            let expires_label = token.expires_at.map(|e| {
+                                if expired {
+                                    format!("expired {}", e.format("%Y-%m-%d %H:%M"))
+                                } else {
+                                    format!("expires {}", e.format("%Y-%m-%d %H:%M"))
+                                }
+                            });
                             let tid = token.id.to_string();
                             rsx! {
                                 li { class: "py-2 flex justify-between items-center",
                                     div {
                                         span { class: "text-sm font-medium", "{display_label}" }
                                         span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{created}" }
+                                        if let Some(exp) = &expires_label {
+                                            if expired {
+                                                span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "{exp}" }
+                                            } else {
+                                                span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{exp}" }
+                                            }
+                                        }
                                         if revoked {
                                             span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
                                         }

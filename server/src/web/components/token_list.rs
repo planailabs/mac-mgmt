@@ -169,14 +169,29 @@ pub fn SyncTokenList(cluster_id: String, read_only: bool) -> Element {
                             } else {
                                 token.label.clone()
                             };
-                            let created = token.created_at.format("%Y-%m-%d").to_string();
+                            let created = token.created_at.format("%Y-%m-%d %H:%M").to_string();
                             let revoked = token.revoked;
+                            let expired = token.expires_at.is_some_and(|e| e < chrono::Utc::now());
+                            let expires_label = token.expires_at.map(|e| {
+                                if expired {
+                                    format!("expired {}", e.format("%Y-%m-%d %H:%M"))
+                                } else {
+                                    format!("expires {}", e.format("%Y-%m-%d %H:%M"))
+                                }
+                            });
                             let tid = token.id.to_string();
                             rsx! {
                                 li { class: "py-2 flex justify-between items-center",
                                     div {
                                         span { class: "text-sm font-medium", "{display_label}" }
                                         span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{created}" }
+                                        if let Some(exp) = &expires_label {
+                                            if expired {
+                                                span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "{exp}" }
+                                            } else {
+                                                span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{exp}" }
+                                            }
+                                        }
                                         if revoked {
                                             span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
                                         }

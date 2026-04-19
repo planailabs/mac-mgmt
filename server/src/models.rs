@@ -23,6 +23,7 @@ pub struct Token {
     pub kind: String,
     pub revoked: bool,
     pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
