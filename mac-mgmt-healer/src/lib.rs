@@ -603,7 +603,6 @@ async fn run_agent_session(
             builder.add_tool(tool);
         }
 
-        let pool_before_tool = pool.clone();
         let events_tx_before_tool = events_tx.clone();
         let pool_after_tool = pool.clone();
         let events_tx_after_tool = events_tx.clone();
@@ -644,12 +643,12 @@ async fn run_agent_session(
                 })
             })
             .before_tool(move |_agent, tool_call| {
-                let pool = pool_before_tool.clone();
                 let events_tx = events_tx_before_tool.clone();
                 let name = tool_call.name().to_string();
                 let args = tool_call.args().map(String::from);
                 Box::pin(async move {
-                    // Persist the tool call start so it's visible immediately
+                    // Broadcast only (not persisted) — ephemeral "running" indicator.
+                    // The after_tool hook persists the final result.
                     let args_preview = args.as_deref().unwrap_or("{}");
                     let content = format!("Calling `{name}`...");
                     let metadata = serde_json::json!({
@@ -657,9 +656,6 @@ async fn run_agent_session(
                         "tool_args": args_preview,
                         "status": "running",
                     });
-                    session::store::append_message(
-                        &pool, session_id, "tool_call", &content, Some(&metadata),
-                    ).await.ok();
                     let _ = events_tx.send(HealerEvent::Message {
                         role: "tool_call".to_string(),
                         content,

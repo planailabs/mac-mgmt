@@ -702,9 +702,28 @@ async fn consume_stream(
                     "session_created" => { session_id.set(evt.session_id); }
                     "message" => {
                         if let (Some(role), Some(content)) = (evt.role, evt.content) {
-                            if !content.is_empty() {
-                                messages.push(ChatMsg { role, content, metadata: evt.metadata });
+                            if content.is_empty() {
+                                continue;
                             }
+                            if role == "tool_result" {
+                                // Replace the matching tool_call "running" indicator
+                                let tool_name = evt.metadata.as_ref()
+                                    .and_then(|m| m.get("tool_name"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                messages.with_mut(|msgs| {
+                                    // Remove the last tool_call for this tool name
+                                    if let Some(pos) = msgs.iter().rposition(|m| {
+                                        m.role == "tool_call" && m.metadata.as_ref()
+                                            .and_then(|m| m.get("tool_name"))
+                                            .and_then(|v| v.as_str())
+                                            == Some(tool_name)
+                                    }) {
+                                        msgs.remove(pos);
+                                    }
+                                });
+                            }
+                            messages.push(ChatMsg { role, content, metadata: evt.metadata });
                         }
                     }
                     "state" => { if let Some(s) = evt.state { state.set(s); } }
