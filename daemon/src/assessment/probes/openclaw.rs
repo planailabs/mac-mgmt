@@ -121,6 +121,7 @@ fn first_unhealthy(v: &serde_json::Value) -> Option<String> {
 
 pub struct OpenClawProbe {
     gateway_url: String,
+    auth_token: Option<String>,
 }
 
 impl OpenClawProbe {
@@ -134,8 +135,20 @@ impl OpenClawProbe {
         };
         Self {
             gateway_url: format!("http://{host}:{port}"),
+            auth_token: read_gateway_token(),
         }
     }
+}
+
+/// Read the gateway auth token from ~/.openclaw/openclaw.json
+/// (gateway.auth.token). Returns None if not configured or unreadable.
+fn read_gateway_token() -> Option<String> {
+    let path = dirs::home_dir()?.join(".openclaw/openclaw.json");
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    json.pointer("/gateway/auth/token")
+        .and_then(|v| v.as_str())
+        .map(String::from)
 }
 
 #[async_trait]
@@ -149,11 +162,11 @@ impl Probe for OpenClawProbe {
     }
 
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult {
-        timed(|| run_gateway(&self.gateway_url, ctx)).await
+        timed(|| run_gateway(&self.gateway_url, self.auth_token.as_deref(), ctx)).await
     }
 }
 
-async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
+async fn run_gateway(base_url: &str, auth_token: Option<&str>, ctx: &ProbeCtx) -> Result<ProbeResult> {
     let client = Client::builder().timeout(ctx.timeout).build()?;
     let body = ChatBody {
         model: "openclaw/default".into(),
@@ -167,9 +180,13 @@ async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
     };
 
     let started = Instant::now();
-    let resp: ChatResponse = client
+    let mut req = client
         .post(format!("{base_url}/v1/chat/completions"))
-        .json(&body)
+        .json(&body);
+    if let Some(token) = auth_token {
+        req = req.bearer_auth(token);
+    }
+    let resp: ChatResponse = req
         .send()
         .await
         .context("openclaw gateway chat completions failed")?

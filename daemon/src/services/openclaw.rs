@@ -144,9 +144,6 @@ impl OpenClaw {
                     "chatCompletions": { "enabled": true }
                 }
             });
-            // Disable gateway auth on loopback — the daemon manages the machine
-            // and needs unauthenticated access for health probes.
-            patch["gateway"]["auth"] = serde_json::json!({ "mode": "none" });
         }
 
         if let Some(skills) = &self.config.skills {
