@@ -271,6 +271,13 @@ impl HealerState {
             .as_str()
             .unwrap_or_default()
             .to_string();
+        if relay_url.is_empty() {
+            anyhow::bail!(
+                "session {} has no relay_url in state_data — \
+                 cannot resume without relay connectivity",
+                session_id
+            );
+        }
         let instance_id = sess.instance_id.clone();
         let cluster_name = sess.state_data["cluster_name"]
             .as_str()
@@ -532,6 +539,9 @@ async fn run_agent_session(
         .context("failed to resolve LLM")?;
 
     // 2. Build relay client (with event broadcasting for connectivity status)
+    if req.relay_url.is_empty() {
+        anyhow::bail!("relay_url is empty — daemon has no relay proxy URL configured");
+    }
     let relay_client = Arc::new(
         relay_client::RelayClient::new(req.relay_url.clone(), proxy_token)
             .with_events(events_tx.clone())
