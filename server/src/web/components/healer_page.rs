@@ -410,6 +410,7 @@ pub async fn start_healer_stream(
         cluster_instances,
         cluster_name,
         hostname: hb.hostname.unwrap_or_default(),
+        skip_cooldown: std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1"),
     };
 
     let session_id = healer

@@ -124,6 +124,7 @@ pub async fn create_session(
         cluster_instances,
         cluster_name,
         hostname: hb.hostname.unwrap_or_default(),
+        skip_cooldown: false,
     };
 
     let session_id = healer

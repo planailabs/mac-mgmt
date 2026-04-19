@@ -57,6 +57,8 @@ pub struct SpawnRequest {
     pub cluster_instances: Vec<InstanceInfo>,
     pub cluster_name: String,
     pub hostname: String,
+    /// Skip the 1-hour cooldown (set when DEV_ONLY_NO_AUTH=1).
+    pub skip_cooldown: bool,
 }
 
 impl HealerState {
@@ -73,6 +75,40 @@ impl HealerState {
 
     /// Spawn a new healer session. Returns the session ID immediately.
     pub async fn spawn_session(&self, req: SpawnRequest) -> Result<Uuid> {
+        // Guard: no concurrent sessions for the same instance
+        let has_running = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM healer_sessions \
+             WHERE instance_id = $1 AND state NOT IN \
+             ('completed', 'done', 'failed', 'cancelled', 'needs_human_attention'))",
+        )
+        .bind(&req.instance_id)
+        .fetch_one(&self.inner.pool)
+        .await
+        .unwrap_or(false);
+
+        if has_running {
+            anyhow::bail!("a healer session is already running for this instance");
+        }
+
+        // Guard: 1-hour cooldown between sessions (skip in dev mode)
+        if !req.skip_cooldown {
+            let recent = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM healer_sessions \
+                 WHERE instance_id = $1 AND created_at > now() - interval '1 hour')",
+            )
+            .bind(&req.instance_id)
+            .fetch_one(&self.inner.pool)
+            .await
+            .unwrap_or(false);
+
+            if recent {
+                anyhow::bail!(
+                    "a healer session was created for this instance in the last hour — \
+                     please wait before starting another"
+                );
+            }
+        }
+
         // 1. Build initial issues snapshot
         let initial_issues = serde_json::to_value(&req.services_extended)
             .unwrap_or_else(|_| json!([]));
@@ -285,6 +321,7 @@ impl HealerState {
             cluster_instances: Vec::new(),
             cluster_name,
             hostname,
+            skip_cooldown: true, // resuming — cooldown doesn't apply
         };
 
         let state = self.clone();
