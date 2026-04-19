@@ -42,6 +42,40 @@ fn merge_json(base: &mut serde_json::Value, overlay: &serde_json::Value) {
     }
 }
 
+fn remote_config_cache_path() -> PathBuf {
+    config_dir().join(".remote-config.json")
+}
+
+fn cache_remote_config(json: &serde_json::Value) {
+    let path = remote_config_cache_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string(json) {
+        Ok(s) => {
+            if let Err(e) = std::fs::write(&path, s) {
+                tracing::warn!("failed to cache remote config to {}: {e}", path.display());
+            }
+        }
+        Err(e) => tracing::warn!("failed to serialize remote config for cache: {e}"),
+    }
+}
+
+fn load_cached_remote_config() -> Option<serde_json::Value> {
+    let path = remote_config_cache_path();
+    let contents = std::fs::read_to_string(&path).ok()?;
+    match serde_json::from_str(&contents) {
+        Ok(v) => {
+            tracing::info!("using cached remote config from {}", path.display());
+            Some(v)
+        }
+        Err(e) => {
+            tracing::warn!("cached remote config is invalid: {e}");
+            None
+        }
+    }
+}
+
 async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<serde_json::Value>> {
     let client = reqwest::Client::new();
     let resp = client
@@ -61,6 +95,7 @@ async fn fetch_remote_config(url: &str, token: &str) -> Result<Option<serde_json
     }
 
     let json: serde_json::Value = resp.json().await.context("failed to parse remote config")?;
+    cache_remote_config(&json);
     Ok(Some(json))
 }
 
@@ -111,9 +146,13 @@ pub async fn load() -> Result<Config> {
 
     if let (Some(url), Some(token)) = (server_url, server_token) {
         tracing::info!("fetching remote config from {url}");
-        let remote = fetch_remote_config(&url, &token)
-            .await
-            .context("failed to fetch remote config")?;
+        let remote = match fetch_remote_config(&url, &token).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("failed to fetch remote config: {e}; trying cached version");
+                load_cached_remote_config()
+            }
+        };
 
         if let Some(mut remote_json) = remote {
             // Apply config migrations to the remote JSON before merging
