@@ -575,6 +575,58 @@ healer_tool! {
     }
 }
 
+// ── Documentation tools ───────────────────────────────────────────────
+
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../server/docs/"]
+#[include = "*.md"]
+struct DocsAssets;
+
+#[derive(Deserialize, JsonSchema)]
+struct ReadDocParams {
+    /// Document slug (filename without .md extension, e.g. "configuration-reference", "cluster-setup")
+    slug: String,
+}
+
+healer_tool! {
+    name: "read_doc",
+    struct_name: ReadDocTool,
+    description: "Read a mac-mgmt platform documentation page by slug. Use `list_docs` first to see available pages.",
+    params: ReadDocParams,
+    handler: |_ctx, params| {
+        let filename = format!("{}.md", params.slug);
+        match DocsAssets::get(&filename) {
+            Some(file) => {
+                let content = std::str::from_utf8(file.data.as_ref())
+                    .unwrap_or("(binary content)");
+                Ok(ToolOutput::Text(content.to_string()))
+            }
+            None => {
+                let available: Vec<String> = DocsAssets::iter()
+                    .map(|f| f.trim_end_matches(".md").to_string())
+                    .collect();
+                Ok(ToolOutput::Text(format!(
+                    "Document '{}' not found. Available: {}",
+                    params.slug,
+                    available.join(", ")
+                )))
+            }
+        }
+    }
+}
+
+healer_tool! {
+    name: "list_docs",
+    struct_name: ListDocsTool,
+    description: "List all available mac-mgmt documentation pages. Returns slugs that can be passed to `read_doc`.",
+    handler: |_ctx| {
+        let docs: Vec<String> = DocsAssets::iter()
+            .map(|f| f.trim_end_matches(".md").to_string())
+            .collect();
+        Ok(ToolOutput::Text(docs.join("\n")))
+    }
+}
+
 // ── Data query tools ──────────────────────────────────────────────────
 
 healer_tool! {
@@ -824,6 +876,8 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         GetInventoryTool::new(ctx.clone()),
         GetSystemSampleTool::new(ctx.clone()),
         GetProbeHistoryTool::new(ctx.clone()),
-        GetMetricsTool::new(ctx),
+        GetMetricsTool::new(ctx.clone()),
+        ReadDocTool::new(ctx.clone()),
+        ListDocsTool::new(ctx),
     ]
 }

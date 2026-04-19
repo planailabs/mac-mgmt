@@ -24,6 +24,7 @@ hex = "0.4"
 rand = "0.9"
 dashmap = "6"
 urlencoding = "2"
+rust-embed = { version = "8", features = ["include-exclude"] }
 # Force async-openai to a version compatible with swiftide 0.32.
 # v0.31+ removed/restructured types that swiftide expects.
 async-openai = ">=0.29.6, <0.31"

@@ -117,6 +117,11 @@ pub fn build_system_prompt(
     prompt.push_str("- `list_mcp_servers` / `add_mcp_server` / `remove_mcp_server` — manage cluster MCP servers\n");
     prompt.push('\n');
 
+    prompt.push_str("### Documentation\n");
+    prompt.push_str("- `read_doc` — read mac-mgmt platform documentation by slug (e.g. \"configuration-reference\", \"cluster-setup\")\n");
+    prompt.push_str("- `list_docs` — list all available documentation pages\n");
+    prompt.push_str("- If Context7 tools are available (`Context7:resolve-library-id`, `Context7:query-docs`), use them to look up current documentation for third-party services (Ollama, LM Studio, nix, systemd, etc.) when the service's behavior or configuration is unclear.\n\n");
+
     // Guidelines
     prompt.push_str("## Guidelines\n\
         1. Start by reading logs for the failing service(s)\n\
@@ -133,7 +138,8 @@ pub fn build_system_prompt(
         11. If you **cannot** fix the issue automatically, call `staff_ping` to notify admins, \
             call `pin` with slot `final_report` documenting your findings, \
             then call `set_phase` with `needs_human_attention`\n\
-        12. NEVER make changes without understanding the root cause first\n\n");
+        12. NEVER make changes without understanding the root cause first\n\
+        13. When a service's configuration format or behavior is unclear, look up its documentation using `read_doc` (for mac-mgmt docs) or Context7 (for third-party service docs) before guessing\n\n");
 
     // Staff pings guidance
     prompt.push_str(
