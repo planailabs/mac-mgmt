@@ -236,6 +236,7 @@ async fn handle_daemon_ws(
     let listener_handle =
         ssh_listener::spawn(Arc::clone(&state.registry), instance_id.clone(), port);
 
+    let connected_at = Utc::now();
     let conn = DaemonConn {
         instance_id: instance_id.clone(),
         cluster_id: self_info.cluster_id,
@@ -243,7 +244,7 @@ async fn handle_daemon_ws(
         agent_name: query.agent_name,
         hostname: query.hostname,
         ssh_port: port,
-        connected_at: Utc::now(),
+        connected_at,
         control_tx,
         listener_handle,
         tunnels: Vec::new(),
@@ -268,7 +269,7 @@ async fn handle_daemon_ws(
         .await
     {
         tracing::warn!("failed to send registration ack to {instance_id}: {e}");
-        state.registry.unregister(&instance_id);
+        state.registry.unregister(&instance_id, connected_at);
         return;
     }
     tracing::debug!("sent registration ack to {instance_id} (port {port})");
@@ -478,7 +479,7 @@ async fn handle_daemon_ws(
     }
 
     tracing::info!("daemon {instance_id} disconnected, freeing port {port}");
-    state.registry.unregister(&instance_id);
+    state.registry.unregister(&instance_id, connected_at);
 }
 
 // ── Daemon data session WebSocket ───────────────────────────────────────

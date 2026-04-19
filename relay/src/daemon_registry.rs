@@ -377,8 +377,20 @@ impl DaemonRegistry {
         );
     }
 
-    pub fn unregister(&self, instance_id: &str) {
+    /// Unregister a daemon, but only if its `connected_at` matches.
+    /// This prevents a stale WS handler's cleanup from deleting a newer
+    /// registration that replaced it during a rapid reconnect.
+    pub fn unregister(&self, instance_id: &str, connected_at: DateTime<Utc>) {
         let mut daemons = self.daemons.write().unwrap();
+        let dominated = daemons
+            .get(instance_id)
+            .is_some_and(|c| c.connected_at != connected_at);
+        if dominated {
+            tracing::info!(
+                "skipping unregister for {instance_id}: newer connection exists"
+            );
+            return;
+        }
         if let Some(conn) = daemons.remove(instance_id) {
             conn.listener_handle.abort();
             // Reserve the port instead of releasing it.
