@@ -739,6 +739,28 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
         }
     });
 
+    // Auto-scroll: when new messages arrive and the user is near the bottom,
+    // scroll down automatically. Uses a MutationObserver on the messages div.
+    use_effect(move || {
+        document::eval(
+            r#"
+            (function() {
+                const el = document.getElementById('healer-messages');
+                if (!el) return;
+                const observer = new MutationObserver(() => {
+                    const threshold = 200;
+                    const distFromBottom = document.documentElement.scrollHeight
+                        - window.scrollY - window.innerHeight;
+                    if (distFromBottom < threshold) {
+                        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+                    }
+                });
+                observer.observe(el, { childList: true, subtree: true });
+            })();
+            "#,
+        );
+    });
+
     let back_url = format!("/fleet/{}/healer", instance_id);
 
     rsx! {
@@ -819,7 +841,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
         { render_pinned_slots_from_signal(&pins.read()) }
 
         // Chat messages (filter out pin messages — shown above)
-        div { class: "space-y-2",
+        div { id: "healer-messages", class: "space-y-2",
             for msg in messages.read().iter().filter(|m| m.role != "pin") {
                 {render_message(msg)}
             }
