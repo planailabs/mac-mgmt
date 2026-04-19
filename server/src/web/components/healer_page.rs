@@ -625,6 +625,19 @@ pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnErr
 }
 
 #[server]
+pub async fn pause_healer_session(session_id: String) -> Result<(), ServerFnError> {
+    let _user = current_user().await?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid id"))?;
+    healer
+        .pause_session(uuid)
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
 pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnError> {
     let _user = current_user().await?;
     let healer = crate::server_state::healer_state()
@@ -757,6 +770,16 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     }
 
                     if *running.read() {
+                        button {
+                            class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                            onclick: move |_| {
+                                let sid = session_id.read().clone();
+                                async move {
+                                    if let Some(sid) = sid { let _ = pause_healer_session(sid).await; }
+                                }
+                            },
+                            "Pause"
+                        }
                         button {
                             class: "px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700",
                             onclick: move |_| {

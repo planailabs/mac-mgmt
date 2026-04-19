@@ -221,6 +221,21 @@ pub async fn cancel_session(
     Ok(Status::Ok)
 }
 
+/// Pause a running healer session at its next checkpoint.
+#[post("/healer/sessions/<id>/pause")]
+pub async fn pause_session(
+    _auth: SettingAuth,
+    healer: &State<HealerState>,
+    id: &str,
+) -> Result<Status, Status> {
+    let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    healer.pause_session(session_id).map_err(|e| {
+        tracing::error!(err = %e, "failed to pause healer session");
+        Status::BadRequest
+    })?;
+    Ok(Status::Ok)
+}
+
 /// Resume a paused healer session.
 #[post("/healer/sessions/<id>/resume")]
 pub async fn resume_session(

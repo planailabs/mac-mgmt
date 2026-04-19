@@ -38,6 +38,7 @@ struct HealerStateInner {
 
 struct RunningSession {
     cancel: CancellationToken,
+    pause_requested: Arc<AtomicBool>,
     events_tx: broadcast::Sender<HealerEvent>,
     /// Currently executing tools (in-memory only, not persisted).
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
@@ -150,12 +151,14 @@ impl HealerState {
 
         // 5. Set up cancellation and event broadcasting
         let cancel = CancellationToken::new();
+        let pause_requested = Arc::new(AtomicBool::new(false));
         let (events_tx, _) = broadcast::channel::<HealerEvent>(1024);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
+                pause_requested: pause_requested.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
             },
@@ -172,6 +175,7 @@ impl HealerState {
                 proxy_token,
                 proxy_expires,
                 cancel.clone(),
+                pause_requested,
                 events_tx.clone(),
                 running_tools,
                 connector_config,
@@ -293,12 +297,14 @@ impl HealerState {
 
         // Set up cancellation and events
         let cancel = CancellationToken::new();
+        let pause_requested = Arc::new(AtomicBool::new(false));
         let (events_tx, _) = broadcast::channel::<HealerEvent>(1024);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
+                pause_requested: pause_requested.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
             },
@@ -334,6 +340,7 @@ impl HealerState {
                 proxy_token,
                 proxy_expires,
                 cancel,
+                pause_requested,
                 events_tx.clone(),
                 running_tools,
                 connector_config,
@@ -364,6 +371,17 @@ impl HealerState {
         });
 
         Ok(())
+    }
+
+    /// Request a running session to pause at its next checkpoint.
+    /// The agent will finish its current LLM request, then transition to Paused.
+    pub fn pause_session(&self, session_id: Uuid) -> Result<()> {
+        if let Some(entry) = self.inner.running.get(&session_id) {
+            entry.pause_requested.store(true, Ordering::Relaxed);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("session is not running"))
+        }
     }
 
     /// Cancel a running session.
@@ -489,6 +507,7 @@ async fn run_agent_session(
     proxy_token: String,
     proxy_expires: DateTime<Utc>,
     cancel: CancellationToken,
+    pause_requested: Arc<AtomicBool>,
     events_tx: broadcast::Sender<HealerEvent>,
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
     connector_config: ConnectorConfig,
@@ -776,6 +795,7 @@ async fn run_agent_session(
             })
             .before_completion(move |_agent, _req| {
                 let cancel = cancel.clone();
+                let pause_requested = pause_requested.clone();
                 let pool = pool_hook.clone();
                 let events_tx = events_tx_hook.clone();
                 let token_usage = token_usage.clone();
@@ -813,6 +833,24 @@ async fn run_agent_session(
                             state_data: json!({}),
                         });
                         return Err(anyhow::anyhow!("session cancelled"));
+                    }
+
+                    // 2b. Check manual pause request
+                    if pause_requested.swap(false, Ordering::Relaxed) {
+                        let data = json!({"reason": "manual_pause"});
+                        session::store::transition_state(
+                            &pool,
+                            session_id,
+                            &SessionState::Paused,
+                            &data,
+                        )
+                        .await
+                        .ok();
+                        let _ = events_tx.send(HealerEvent::State {
+                            state: "paused".to_string(),
+                            state_data: data,
+                        });
+                        return Err(anyhow::anyhow!("session paused by user"));
                     }
 
                     // 3. Check proxy token expiry
