@@ -122,6 +122,7 @@ impl RelayClient {
     pub async fn is_daemon_online(&self, instance_prefix: &str) -> bool {
         let base = self.instance_url(instance_prefix);
         let url = format!("{base}/api/ping");
+        tracing::debug!(url = %url, instance = instance_prefix, "checking daemon connectivity");
         match self
             .http
             .get(&url)
@@ -130,8 +131,24 @@ impl RelayClient {
             .send()
             .await
         {
-            Ok(resp) => resp.status() == reqwest::StatusCode::OK,
-            Err(_) => false,
+            Ok(resp) => {
+                let online = resp.status() == reqwest::StatusCode::OK;
+                tracing::debug!(
+                    instance = instance_prefix,
+                    status = %resp.status(),
+                    online,
+                    "ping response"
+                );
+                online
+            }
+            Err(e) => {
+                tracing::debug!(
+                    instance = instance_prefix,
+                    err = %e,
+                    "ping request failed"
+                );
+                false
+            }
         }
     }
 
@@ -249,10 +266,18 @@ impl RelayClient {
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
     {
+        tracing::debug!(instance = instance_prefix, label, "guarded_request: sending");
         match make_request().await {
             Ok(resp) if is_daemon_offline_status(resp.status()) => {
+                tracing::warn!(
+                    instance = instance_prefix,
+                    label,
+                    status = %resp.status(),
+                    "guarded_request: daemon offline status, entering wait loop"
+                );
                 let original = format!("{label} returned {}", resp.status());
                 if self.wait_for_daemon(instance_prefix).await.is_ok() {
+                    tracing::debug!(label, "guarded_request: retrying after reconnect");
                     make_request()
                         .await
                         .context(format!("{label} failed after reconnect"))
@@ -260,10 +285,25 @@ impl RelayClient {
                     anyhow::bail!("{original} (daemon did not reconnect)")
                 }
             }
-            Ok(resp) => Ok(resp),
+            Ok(resp) => {
+                tracing::debug!(
+                    instance = instance_prefix,
+                    label,
+                    status = %resp.status(),
+                    "guarded_request: ok"
+                );
+                Ok(resp)
+            }
             Err(e) if is_connection_error(&e) => {
+                tracing::warn!(
+                    instance = instance_prefix,
+                    label,
+                    err = %e,
+                    "guarded_request: connection error, entering wait loop"
+                );
                 let original = e.to_string();
                 if self.wait_for_daemon(instance_prefix).await.is_ok() {
+                    tracing::debug!(label, "guarded_request: retrying after reconnect");
                     make_request()
                         .await
                         .context(format!("{label} failed after reconnect"))
@@ -271,7 +311,15 @@ impl RelayClient {
                     anyhow::bail!("{label}: {original} (daemon did not reconnect)")
                 }
             }
-            Err(e) => Err(e).context(format!("{label} request failed")),
+            Err(e) => {
+                tracing::debug!(
+                    instance = instance_prefix,
+                    label,
+                    err = %e,
+                    "guarded_request: non-connection error"
+                );
+                Err(e).context(format!("{label} request failed"))
+            }
         }
     }
 

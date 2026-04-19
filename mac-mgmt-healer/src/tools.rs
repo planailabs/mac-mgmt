@@ -81,6 +81,7 @@ macro_rules! healer_tool {
                 let args = tool_call
                     .args()
                     .ok_or_else(|| ToolError::MissingArguments("no arguments".into()))?;
+                tracing::debug!(tool = $name, args = %args, "tool invoked");
                 let $params_var: $params_ty = serde_json::from_str(&args)
                     .map_err(|e| ToolError::MissingArguments(e.to_string().into()))?;
                 let $ctx_var = &self.ctx;
@@ -125,6 +126,7 @@ macro_rules! healer_tool {
                 _agent_context: &dyn AgentContext,
                 _tool_call: &ToolCall,
             ) -> Result<ToolOutput, ToolError> {
+                tracing::debug!(tool = $name, "tool invoked (no params)");
                 let $ctx_var = &self.ctx;
                 $body
             }
