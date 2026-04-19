@@ -556,6 +556,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     }
                 }
 
+                // Pinned slots
+                { render_pinned_slots(&messages.read()) }
+
                 // Staff pings for this session
                 if let Some(sid) = &*session_id.read() {
                     {
@@ -564,9 +567,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     }
                 }
 
-                // Chat messages
+                // Chat messages (filter out pin messages — shown above)
                 div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
-                    for msg in messages.read().iter() {
+                    for msg in messages.read().iter().filter(|m| m.role != "pin") {
                         {render_message(msg)}
                     }
                     if *running.read() {
@@ -843,6 +846,72 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
                 }
                 pre { class: "mt-2 p-2 text-xs font-mono bg-gray-900 text-green-400 rounded overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap",
                     "{display}"
+                }
+            }
+        }
+    }
+}
+
+/// Render pinned slots (diagnosis, remediation, final_report) extracted from messages.
+fn render_pinned_slots(messages: &[ChatMsg]) -> Element {
+    // Collect the latest pin for each slot
+    let mut pins: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+    for msg in messages {
+        if msg.role == "pin" {
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
+                if let Some(slot) = data.get("slot").and_then(|v| v.as_str()) {
+                    pins.insert(slot.to_string(), data);
+                }
+            }
+        }
+    }
+
+    if pins.is_empty() {
+        return rsx! {};
+    }
+
+    let slot_order = ["diagnosis", "remediation", "final_report"];
+
+    rsx! {
+        div { class: "mb-4 space-y-2",
+            for slot_name in slot_order.iter() {
+                if let Some(data) = pins.get(*slot_name) {
+                    {
+                        let summary = data.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let services: Vec<String> = data
+                            .get("affected_services")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default();
+                        let (icon, label, border) = match *slot_name {
+                            "diagnosis" => ("🔍", "Diagnosis", "border-yellow-400 dark:border-yellow-600"),
+                            "remediation" => ("🔧", "Remediation Plan", "border-orange-400 dark:border-orange-600"),
+                            "final_report" => ("📋", "Final Report", "border-green-400 dark:border-green-600"),
+                            _ => ("📌", *slot_name, "border-gray-400"),
+                        };
+                        let html = simple_md_to_html(&summary);
+                        rsx! {
+                            div { class: "p-3 bg-white dark:bg-gray-800 rounded border-l-4 {border} shadow-sm",
+                                div { class: "flex items-center gap-1.5 mb-1",
+                                    span { class: "text-sm", "{icon}" }
+                                    span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "{label}" }
+                                }
+                                div {
+                                    class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
+                                    dangerous_inner_html: "{html}",
+                                }
+                                if !services.is_empty() {
+                                    div { class: "mt-2 flex flex-wrap gap-1",
+                                        for svc in services.iter() {
+                                            span { class: "px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded",
+                                                "{svc}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
