@@ -282,19 +282,20 @@ impl Manager {
             }),
         );
 
-        // restart-daemon: stop the daemon process (service manager restarts it)
+        // restart-daemon: gracefully stop the daemon (service manager restarts it).
+        // Sends SIGTERM to self so the normal shutdown path runs (flushes
+        // notifications, closes relay WS, drains supervisors).
         reg.register_virtual(
             "restart-daemon",
             std::sync::Arc::new(|_user_arg: Option<&str>| {
                 use crate::shell_tunnels::VirtualOutput;
-                tracing::info!("restart-daemon: stopping daemon for restart");
-                // Spawn the exit in a background thread so the response is sent first
+                tracing::info!("restart-daemon: sending SIGTERM to self for graceful restart");
                 std::thread::spawn(|| {
                     std::thread::sleep(std::time::Duration::from_secs(1));
-                    std::process::exit(0);
+                    unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
                 });
                 VirtualOutput {
-                    lines: vec![("stdout".into(), "Daemon stopping for restart...".into())],
+                    lines: vec![("stdout".into(), "Daemon shutting down gracefully for restart...".into())],
                     exit_code: 0,
                 }
             }),
