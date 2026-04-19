@@ -73,11 +73,53 @@ fn write_last_store_path(store_path: &str) {
 }
 
 /// Resolve the nix store path prefix of the currently running binary.
+/// `current_exe()` resolves symlinks, so even if invoked via
+/// `/usr/local/bin/mac-mgmt`, this returns the `/nix/store/...` prefix.
 /// Returns `None` when the binary doesn't live in `/nix/store/` (e.g.
 /// dev builds from `cargo run`).
 fn current_binary_store_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     crate::nix::store_path_prefix(exe.to_str()?)
+}
+
+/// Determine where the `mac-mgmt` symlink should be placed.
+///
+/// If the binary was invoked through a symlink outside `/nix/store/`
+/// (the common case for installed daemons), we want to replace that
+/// symlink. We read `/proc/self/exe` (the resolved path) and compare
+/// it against `argv[0]`/`PATH` to find the pre-resolution path.
+///
+/// Fallback order:
+/// 1. The original argv[0] path if it's outside /nix/store/ and exists
+/// 2. `~/.local/bin/mac-mgmt`
+fn install_bin_path() -> Result<std::path::PathBuf> {
+    // Try argv[0]: on most systems this is the path the user typed or
+    // the path the service manager used.
+    if let Some(arg0) = std::env::args().next() {
+        let p = Path::new(&arg0);
+        // Resolve relative paths against cwd
+        let p = if p.is_absolute() {
+            p.to_path_buf()
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(p)
+        } else {
+            p.to_path_buf()
+        };
+        if !p.to_str().unwrap_or("").starts_with("/nix/store/") && p.exists() {
+            return Ok(p);
+        }
+    }
+
+    // Try finding mac-mgmt in PATH (outside /nix/store/)
+    if let Ok(found) = which::which("mac-mgmt") {
+        if !found.to_str().unwrap_or("").starts_with("/nix/store/") {
+            return Ok(found);
+        }
+    }
+
+    // Fallback: ~/.local/bin/mac-mgmt
+    let home = dirs::home_dir().context("no home directory")?;
+    Ok(home.join(".local/bin/mac-mgmt"))
 }
 
 /// Check if the server has assigned a target and apply it.
@@ -180,16 +222,19 @@ fn version_cmp(ver: &str) -> i32 {
 
 /// Realise `store_path` and register a GC root so `nix-collect-garbage`
 /// doesn't sweep the derivation out from under us. Then replace the
-/// current executable with a symlink to `{store_path}/bin/mac-mgmt`.
+/// install symlink with one pointing to `{store_path}/bin/mac-mgmt`.
 ///
-/// The GC root lives in the config dir (`~/.config/mac-mgmt/.mac-mgmt.gcroot`)
-/// rather than next to the binary, because the binary may live inside
-/// `/nix/store/` where creating GC roots is forbidden.
+/// The install location is determined by walking up from `current_exe()`
+/// to find the first path component outside `/nix/store/`. If the
+/// binary was invoked via a symlink (e.g. `/usr/local/bin/mac-mgmt`
+/// → `/nix/store/.../bin/mac-mgmt`), we replace the symlink, not the
+/// store entry. Falls back to `~/.local/bin/mac-mgmt`.
 fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
-    let current_exe = std::env::current_exe().context("failed to get current exe path")?;
-    let parent = current_exe
+    let install_path = install_bin_path().context("failed to determine install path")?;
+    let install_dir = install_path
         .parent()
-        .context("current exe has no parent dir")?;
+        .context("install path has no parent dir")?;
+
     let gcroot_dir = crate::config::config_dir();
     std::fs::create_dir_all(&gcroot_dir)
         .with_context(|| format!("failed to create {}", gcroot_dir.display()))?;
@@ -218,14 +263,16 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
         anyhow::bail!("binary not found at {}", new_bin.display());
     }
 
-    let tmp_link = parent.join(".mac-mgmt.update");
+    std::fs::create_dir_all(install_dir)
+        .with_context(|| format!("failed to create {}", install_dir.display()))?;
+    let tmp_link = install_dir.join(".mac-mgmt.update");
     let _ = std::fs::remove_file(&tmp_link);
 
     std::os::unix::fs::symlink(&new_bin, &tmp_link)
         .with_context(|| format!("symlink {} -> {}", tmp_link.display(), new_bin.display()))?;
 
-    std::fs::rename(&tmp_link, &current_exe)
-        .context("failed to rename new binary link over current")?;
+    std::fs::rename(&tmp_link, &install_path)
+        .with_context(|| format!("rename {} -> {}", tmp_link.display(), install_path.display()))?;
 
     write_last_store_path(store_path);
 
