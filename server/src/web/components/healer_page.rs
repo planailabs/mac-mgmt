@@ -832,7 +832,7 @@ fn consume_healer_sse(
 ) -> EventSourceGuard {
     use wasm_bindgen::prelude::*;
 
-    let url = format!("/web/healer/stream/{sid}");
+    let url = format!("/_sse/healer/{sid}");
     let es = web_sys::EventSource::new(&url).expect("failed to create EventSource");
 
     // Handle incoming messages (SSE "message" event = unnamed data events)

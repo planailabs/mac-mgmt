@@ -276,7 +276,10 @@ fn main() {
 
             let mut router = axum::Router::new()
                 .serve_dioxus_application(ServeConfig::new(), web::app::App)
-                .merge(web::healer_sse::router());
+                .route(
+                    web::healer_sse::SSE_PATH,
+                    axum::routing::get(web::healer_sse::view_session_sse),
+                );
 
             // Disable nginx response buffering so streaming server functions
             // (healer session streams, JsonStream) are forwarded immediately
