@@ -1,342 +1,241 @@
 # mac-mgmt
 
-A self-updating daemon that manages OpenClaw and Ollama installations on macOS and Linux, plus a management server with a web UI for multi-customer config delivery.
+A fleet management system for AI infrastructure. Manages service installations, configuration, health monitoring, and automated remediation across clusters of Linux and macOS machines.
 
 ## Features
 
-- **Service management** for OpenClaw and Ollama via a common `ManagedService` trait
-- **Self-updating binary** with automatic version checks and in-place replacement
-- **Health monitoring** with configurable intervals and automatic repair
-- **Nix-based package management** using plan-ai's custom nixpkgs
-- **Cross-platform** service installation (launchd on macOS, systemd on Linux)
-- **Crash recovery** via Sentry reporting and self-update on panic
-- **Embedded setup scripts** compiled into the binary for zero-dependency deployment
-- **TOML configuration** with sane defaults
-- **Remote config** — daemon can fetch base config from the management server, merging local overrides on top
-- **Management server** — Dioxus fullstack web UI for customer/token/config CRUD, plus a Rocket API for daemon config delivery
+- **Service management** — OpenClaw, Ollama, LM Studio, OpenCode, Apprise, McPorter via a common `ManagedService` trait
+- **GPU support** — NVIDIA (CUDA/nvidia-smi) and AMD (ROCm/rocm-smi) GPU monitoring and driver management
+- **Self-updating daemon** with automatic version checks, rollout stages, and health-gated deployments
+- **Health monitoring** — three-tier probes (liveness, functional, regression) with configurable intervals
+- **Nix-based package management** using plan-ai's custom nixpkgs with builtin file validators
+- **SSH relay** — reverse SSH tunnels through a central relay for NAT-traversed remote access
+- **File/shell/log tunnels** — browser-based config editing, command execution, and log tailing through the relay
+- **Self-healing agent** — AI-powered automated diagnostics and repair via the healer subsystem
+- **Staff pings** — actionable admin notifications from the healer agent with categories and resolution tracking
+- **Multi-tenant** — organizations, clusters, RBAC with OIDC authentication
+- **Remote config** — centralized config with local overrides, skills, MCP servers, and bundles
+- **Rollout system** — staged deployments with health gates and auto-pause
+- **Simulation testing** — Antithesis-style chaos and fault injection test framework
 
 ## Architecture
 
-The project is a Cargo workspace with two crates:
+The project is a Cargo workspace with 10 crates:
 
 ```
 mac-mgmt/
-  Cargo.toml          # workspace root
-  daemon/             # the daemon binary (mac-mgmt)
-  server/             # the management server (mac-mgmt-server)
+  common/              # Shared types, config structs, wire formats
+  daemon/              # The daemon binary (mac-mgmt)
+  server/              # Management server (Dioxus fullstack + Rocket API)
+  relay/               # SSH relay and HTTP tunnel proxy (axum)
+  relay-ssh/           # SSH listener helper
+  mac-mgmt-ws/         # Shared WebSocket utilities
+  mac-mgmt-services/   # Service supervisor (in-process or socket)
+  mac-mgmt-healer/     # Self-healing AI agent (swiftide + native tools)
+  runner/              # Update runner binary
+  sim-tests/           # Simulation test framework
 ```
 
 ## Quick Start
 
 ```bash
-# Initial setup: installs Nix, configures substituters, installs the service
-mac-mgmt setup
-
-# Or install the service manually
-mac-mgmt install
-
-# Check for updates manually
-mac-mgmt update
-mac-mgmt update --force
-```
-
-## CLI
-
-```
-mac-mgmt <COMMAND>
-
-Commands:
-  setup      Run the setup script and install the service
-  run        Run an embedded script by name
-  scripts    List all embedded scripts
-  install    Install the launchd/systemd service
-  uninstall  Remove the service
-  restart    Restart the service
-  daemon     Run the daemon (called by the service, not for manual use)
-  update     Check for updates and apply (--force to skip version check)
-```
-
-## Daemon
-
-The daemon manages two services (OpenClaw and Ollama) with two periodic loops:
-
-| Loop | Interval | Actions |
-|------|----------|---------|
-| **Update** | 1 hour | Self-update check, nix upgrade check for managed services |
-| **Health** | 1 minute | Process liveness, pending upgrade apply, health check + repair |
-
-### Startup sequence
-
-1. Load config from `~/.config/mac-mgmt/config.toml` (defaults if missing)
-2. If `[server]` section is present, fetch remote base config and merge local on top
-3. Ensure services installed via nix
-4. Run service setup (OpenClaw config, etc.)
-5. Spawn service processes
-6. Skip first health check per service (grace period for startup)
-7. After first healthy check, run `post_start` hook (model pulls, etc.)
-
-### Remote config
-
-When the daemon has a `[server]` section in its local config:
-
-1. Fetches `GET {url}/api/config` with `Authorization: Bearer {token}`
-2. Parses the response as TOML (the base config)
-3. Recursively merges local config on top (local values override remote)
-4. If the server is unreachable, logs a warning and uses local-only config
-
-This allows centralized config management — set defaults per customer on the server, and let individual machines override specific values locally.
-
-### Upgrade strategy
-
-Upgrades are checked by building a temporary nix profile copy and comparing store paths. When an upgrade is found:
-
-1. The nix upgrade is installed immediately
-2. Restart is **deferred** until the service is idle (no active sessions for OpenClaw, no loaded models for Ollama)
-3. After restart, health check is skipped once and `post_start` re-runs
-
-## Management Server
-
-The server (`mac-mgmt-server`) is a Dioxus fullstack application that provides:
-
-- **Web UI** (port 3000) — customer management dashboard with TailwindCSS
-- **Daemon API** (port 8080) — Rocket-based REST API for config delivery
-
-### Prerequisites
-
-- PostgreSQL database
-- [Dioxus CLI](https://dioxuslabs.com/) (`dx`)
-
-### Running locally
-
-From the repo root inside `nix develop` (which provides `dx`, `node`,
-`cargo`, `overmind`, and the wasm toolchain):
-
-```bash
-# 1. Enter the dev shell
+# Enter the dev shell (provides dx, cargo, node, overmind, wasm toolchain)
 nix develop
 
-# 2. Copy example configs (won't overwrite existing ones)
+# Copy example configs
 ./setup-configs.sh
 
-# 3. Install JS deps (first time only)
+# Install JS deps (first time only)
 cd server && npm install && cd ..
 
-# 4. Start everything with overmind (server, relay, tailwind)
+# Start everything
 overmind start
 ```
 
-This runs all services defined in the `Procfile`:
+| Process | Description | Port |
+|---------|-------------|------|
+| **server** | Dioxus fullstack + Rocket API | Web: 7377, API: 7378 |
+| **relay** | SSH relay + HTTP tunnel proxy | 7379 |
+| **tailwind** | TailwindCSS watcher | — |
 
-| Process | Command | Port |
-|---------|---------|------|
-| **server** | `dx serve` (Dioxus fullstack + Rocket API) | Web UI: 8080, API: 7378 |
-| **relay** | `cargo watch -- cargo run` | 7379 |
-| **tailwind** | `npm run tailwind` | — |
+Migrations run automatically on startup. Use `DEV_ONLY_NO_AUTH=1` to bypass OIDC in development.
 
-Migrations run automatically on startup. The server uses `DEV_ONLY_NO_AUTH=1`
-to bypass OIDC and create a dev admin user.
+## Daemon
 
-For a production build, use `dx build --release` instead of `dx serve`.
+The daemon manages services with two periodic loops:
 
-### Web UI routes
+| Loop | Interval | Actions |
+|------|----------|---------|
+| **Update** | 1 hour | Self-update check, nix upgrade check |
+| **Health** | 1 minute | Process liveness, pending upgrade apply, health probes |
+
+### Assessment system
+
+Three-tier health assessment:
+
+| Tier | Cadence | Purpose |
+|------|---------|---------|
+| **Sample** | Every heartbeat | CPU, memory, disk, network, GPU metrics |
+| **Inventory** | ~6 hours | Static system facts, security audit |
+| **Probes** | ~15 minutes | End-to-end functional validation per service |
+
+Probe results are reported via heartbeats (`services_extended`) and dedicated probe endpoints. Stale probes from disabled services are automatically cleaned up.
+
+### Managed services
+
+| Service | Package | Health Check | GPU |
+|---------|---------|-------------|-----|
+| **OpenClaw** | `openclaw` | Gateway health endpoint | — |
+| **Ollama** | `ollama` / `ollama-rocm` / `ollama-cuda` | HTTP GET `/` | ROCm, CUDA |
+| **LM Studio** | `lmstudio` | `lms server status --json` | — |
+| **OpenCode** | `opencode` | Functional probe | — |
+| **Apprise** | `apprise` | Liveness check | — |
+| **McPorter** | `mcporter` | Liveness check | — |
+| **NVIDIA SMI** | `cudatoolkit` | GPU metrics collection | CUDA |
+| **ROCm SMI** | `rocm-smi` | GPU metrics collection | ROCm |
+
+### File tunnel validators
+
+File tunnels support both builtin and external validators. Builtin validators run in-process (no binary dependency); external commands run as a fallback when available:
+
+| Builtin | Validates |
+|---------|-----------|
+| `json` | JSON syntax via serde_json |
+| `toml` | TOML syntax via toml crate |
+
+When both `builtin` and `command` are set, both run — builtin first, then external. If the external binary is missing but builtin passed, the write is accepted with a warning.
+
+## Management Server
+
+The server provides:
+
+- **Web UI** — Dioxus fullstack dashboard with TailwindCSS
+- **REST API** — Rocket-based API for daemon sync, settings management, admin operations
+- **SSE push** — real-time push notifications to connected daemons
+- **OpenAPI/Swagger** — auto-generated API docs at `/api/swagger-ui`
+
+### Key web UI pages
 
 | Route | Description |
 |-------|-------------|
-| `/` | Customer list |
-| `/customers/new` | Create a new customer |
-| `/customers/:id` | Customer detail — manage tokens and config |
+| `/` | Cluster list |
+| `/fleet` | Fleet dashboard — all instances with health badges |
+| `/fleet/:id` | Instance detail — probes, services, tunnels |
+| `/fleet/:id/files` | Config file editor (via file tunnels) |
+| `/fleet/:id/shell` | Shell command execution (via shell tunnels) |
+| `/fleet/:id/logs` | Live log viewer |
+| `/fleet/:id/healer` | Self-healing agent — chat UI with session history |
+| `/staff-pings` | Admin staff notifications from healer (resolvable) |
+| `/rollouts` | Staged deployment management |
+| `/skills` | Skill management |
+| `/mcp-servers` | MCP server management |
 
-### Daemon API
+### Auth model
 
-| Endpoint | Auth | Description |
-|----------|------|-------------|
-| `GET /api/config` | Bearer token | Returns the latest TOML config for the authenticated customer |
+| Token kind | Scope | Use case |
+|------------|-------|----------|
+| `sync` | Single cluster | Daemon polling (config, heartbeat, probes) |
+| `setting` | Cluster or org | Config/skills/MCP management |
+| `admin` | All clusters | Full access, cluster/rollout management |
+| `proxy` | Cluster, 6h TTL | Browser tunnel access (file/shell/log) |
 
-Tokens are SHA-256 hashed in the database. The raw token is shown once at creation time in the web UI.
+Web UI uses OIDC (Google, etc.) with org-based RBAC.
 
-### Workflow
+## Self-Healing Agent (mac-mgmt-healer)
 
-1. Create a customer in the web UI
-2. Generate an API token (copy the raw token — it's shown only once)
-3. Upload a TOML config for the customer
-4. On the daemon machine, add to `~/.config/mac-mgmt/config.toml`:
-   ```toml
-   [server]
-   url = "https://mgmt.example.com:8080"
-   token = "the-raw-token"
-   ```
-5. The daemon fetches the remote config on startup and merges it with local overrides
+AI-powered automated diagnostics and repair for customer servers. Runs as part of the server process, spawned on-demand via web UI or API.
 
-## Managed Services
+### How it works
 
-### OpenClaw
+1. Healthcheck detects an issue (service unhealthy, probe failure)
+2. Admin or automation triggers a healer session for the instance
+3. The agent reads logs, configs, and system metrics via relay tunnels
+4. Diagnoses the root cause and applies targeted fixes
+5. Verifies the fix worked via health probes
+6. Pins a diagnosis summary and final report for staff review
 
-| Operation | Implementation |
-|-----------|---------------|
-| Install | `nix profile add <nixpkgs>#openclaw` |
-| Setup | `openclaw setup` if `~/.openclaw/openclaw.json` missing, then merge `extra_config` |
-| Spawn | `openclaw gateway` |
-| Health | `openclaw health --json` |
-| Repair | `openclaw doctor --fix` |
-| Busy check | `openclaw sessions --active 1 --json` (defers restart if sessions exist) |
+### LLM backend
 
-### Ollama
+Tries local Ollama first (zero cost), falls back to Anthropic cloud. Configurable via `[healer]` section in server config:
 
-| Operation | Implementation |
-|-----------|---------------|
-| Install | `nix profile add <nixpkgs>#ollama` |
-| Spawn | `ollama serve` (with `OLLAMA_HOST` if non-default) |
-| Health | HTTP `GET /` expecting `"Ollama is running"` |
-| Post-start | `ollama pull` for each configured model, then `ollama launch --yes --config --model <default_model> openclaw` |
-| Busy check | HTTP `GET /api/ps` (busy if models loaded in memory) |
+```toml
+[healer]
+ollama_url = "http://localhost:11434"
+ollama_model = "qwen3"
+anthropic_model = "claude-sonnet-4-6"
+token_budget = 200000  # auto-pause per cloud session
+```
+
+### Agent tools (22)
+
+**Instance interaction**: list_files, read_file, write_file, run_command, fetch_logs, list_file_tunnels, list_shell_commands, fetch_cluster_logs, run_cluster_command
+
+**Session management**: pin (diagnosis/remediation/final_report), staff_ping, set_phase, check_node_online, wait_for_node, get_probe_status, wait, request_assessment
+
+**Cluster config**: get_config, patch_config, set_config, list_skills, add_skill, remove_skill, list_mcp_servers, add_mcp_server, remove_mcp_server
+
+### Session state machine
+
+```
+Created → Initializing → Diagnosing → Remediating → Verifying → Done
+                                                               → NeedsHumanAttention
+                                                               → Failed
+                                   (any active) → AwaitingRetry (auto-resume)
+                                   (any active) → Paused (token budget, manual resume)
+                                   (any active) → Cancelled
+```
+
+Sessions persist in PostgreSQL with full conversation history. Interrupted sessions auto-resume on server restart. Token budget auto-pauses cloud sessions to prevent runaway costs.
+
+### Staff pings
+
+The agent creates actionable notifications for admins with categories: hardware, network, disk_space, config_error, service_crash, model_issue, permission, dependency, security, performance, other. Pings are resolvable via the web UI.
+
+### Daemon reconnect guard
+
+All relay requests automatically wait up to 10 minutes if the daemon disconnects (502/503/504), then retry. The agent also has `check_node_online` and `wait_for_node` tools for explicit control.
+
+## Relay
+
+The relay (`mac-mgmt-relay`) provides:
+
+- **Reverse SSH tunnels** — daemons connect outbound, relay assigns ports
+- **HTTP proxy** — subdomain-routed TCP tunnel access (`{instance}.relay.example.com`)
+- **File tunnels** — read/write config files on daemons
+- **Shell tunnels** — execute predefined commands on daemons
+- **Log proxy** — fetch daemon logs
+- **WebSocket bridging** — SSH, file, and shell sessions over WebSocket
+
+Port reservations persist across daemon reconnects (30-day TTL).
 
 ## Configuration
 
-Config file: `~/.config/mac-mgmt/config.toml`
+### Daemon config
 
-If the file doesn't exist, all defaults are used. See [`daemon/config.example.toml`](daemon/config.example.toml)
+File: `~/.config/mac-mgmt/config.toml` — see [`daemon/config.example.toml`](daemon/config.example.toml)
 
-### OpenClaw options
+### Server config
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `provider` | string | `"ollama"` | Backend provider name |
-| `extra_config` | JSON object | none | Merged recursively into `~/.openclaw/openclaw.json` |
-
-### Ollama options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `host` | string | `"127.0.0.1"` | Bind address |
-| `port` | integer | `11434` | Listen port |
-| `models` | string array | see above | Models to pull on post-start |
-| `default_model` | string | `"qwen3.5"` | Model used for `ollama launch` |
-
-### Server options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `url` | string | none | Management server URL (e.g. `https://mgmt.example.com:8080`) |
-| `token` | string | none | API token for authentication |
-
-Both must be set for remote config to be fetched. If either is missing, the daemon uses local-only config.
-
-## Self-Update
-
-The daemon periodically fetches its target version from the management server via `GET /api/update`. The server resolves the target version in order of priority:
-
-1. An active rollout targeting this cluster
-2. The cluster's `pinned_version`
-3. The latest semver version from `daemon_versions` (fallback)
-
-Once a target version is known, the server resolves the nix store path from xzar (`daemon/{version}/{system}`). The daemon realises the store path via `nix-store --realise` and replaces itself in-place.
-
-## Service Installation
-
-### macOS (launchd)
-
-- Plist: `~/Library/LaunchAgents/com.plan-ai.mac-mgmt.plist`
-- Runs at login, kept alive
-- Logs: `/tmp/com.plan-ai.mac-mgmt.{out,err}.log`
-
-### Linux (systemd)
-
-- Unit: `/etc/systemd/system/mac-mgmt.service`
-- System service running as the installing user
-- Auto-restart on failure (5s delay)
-- Runs via `bash -lc` for nix profile availability
-- Uses `sudo` automatically when not root
+File: `./config.toml` — see [`server/config.example.toml`](server/config.example.toml)
 
 ## Building
 
-### Prerequisites
-
-- [Nix](https://nixos.org/download.html) with flakes enabled
-
-### Development
-
 ```bash
-# Enter the dev shell
 nix develop
 
-# Build the daemon
+# Daemon
 cargo build -p mac-mgmt
 
-# Build all daemon targets (Linux + macOS)
-cd daemon && bash build.sh
-
-# Build the server (requires dx CLI, provided by dev shell)
+# Server (requires dx CLI)
 cd server && dx build
-```
 
-### Build targets (daemon)
-
-| Target | Tool | Binary name |
-|--------|------|-------------|
-| `x86_64-unknown-linux-musl` | `cargo build` | `mac-mgmt-x86_64-unknown-linux-musl` |
-| `aarch64-apple-darwin` | `cargo zigbuild` | `mac-mgmt-aarch64-apple-darwin` |
-
-### Deployment
-
-```bash
-# Quick test on remote server
-bash test.sh [args]
+# All daemon targets
+cd daemon && bash build.sh
 ```
 
 ## CI/CD
 
-GitLab CI runs on the `trunk` branch:
+GitLab CI on `trunk`:
 
-1. **Build** - `nix develop -c bash daemon/build.sh` (produces `mac-mgmt.tar.gz`)
-2. **Upload** - `nix develop -c bash daemon/upload.sh dev` (rsync to update server)
-
-## Project Structure
-
-```
-daemon/
-  src/
-    main.rs                CLI entry point (clap)
-    daemon.rs              Main loop, self-update logic
-    config.rs              TOML config loading + remote config merge
-    crash.rs               Sentry + panic recovery
-    nix.rs                 Nix profile operations
-    managed_service.rs     ManagedService trait
-    scripts.rs             Embedded script runner (rust-embed)
-    service/
-      mod.rs               Platform dispatch (#[cfg] attributes)
-      launchd.rs           macOS plist management
-      systemd.rs           Linux systemd unit management
-    services/
-      mod.rs
-      openclaw.rs          OpenClaw implementation + config
-      ollama.rs            Ollama implementation + config
-  scripts/
-    setup.sh               Nix installation and initial setup
-  tests/
-    integration/           Shell-based integration tests
-
-server/
-  src/
-    main.rs                Starts Dioxus fullstack + Rocket API
-    db.rs                  PostgreSQL connection (sqlx)
-    models.rs              Customer, Token, CustomerConfig
-    api/
-      mod.rs               Rocket mount point
-      auth.rs              Bearer token request guard
-      routes.rs            GET /api/config
-    web/
-      mod.rs
-      app.rs               Dioxus router + App root
-      components/
-        layout.rs          Nav shell (TailwindCSS)
-        customer_list.rs   Customer table
-        customer_form.rs   Create customer form
-        customer_detail.rs Single customer view
-        token_list.rs      Create/revoke tokens
-        config_editor.rs   TOML config editor
-  migrations/
-    001_initial.sql        customers, tokens, customer_configs tables
-  Dioxus.toml              Dioxus CLI config
-  tailwind.config.js       TailwindCSS config
-  input.css                TailwindCSS entry point
-```
+1. **Build** — `nix develop -c bash daemon/build.sh`
+2. **Upload** — rsync to update server via xzar
