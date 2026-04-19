@@ -12,7 +12,7 @@ pub enum SessionState {
     Remediating,
     Verifying,
     Completed,
-    Success,
+    Done,
     Failed,
     Cancelled,
     AwaitingRetry,
@@ -29,7 +29,7 @@ impl SessionState {
             Self::Remediating => "remediating",
             Self::Verifying => "verifying",
             Self::Completed => "completed",
-            Self::Success => "success",
+            Self::Done => "done",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::AwaitingRetry => "awaiting_retry",
@@ -46,7 +46,7 @@ impl SessionState {
             "remediating" => Some(Self::Remediating),
             "verifying" => Some(Self::Verifying),
             "completed" => Some(Self::Completed),
-            "success" => Some(Self::Success),
+            "done" => Some(Self::Done),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
             "awaiting_retry" => Some(Self::AwaitingRetry),
@@ -60,7 +60,7 @@ impl SessionState {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Completed | Self::Success | Self::Failed | Self::Cancelled | Self::NeedsHumanAttention
+            Self::Completed | Self::Done | Self::Failed | Self::Cancelled | Self::NeedsHumanAttention
         )
     }
 
@@ -78,7 +78,7 @@ impl SessionState {
             "diagnosing" => Some(Self::Diagnosing),
             "remediating" => Some(Self::Remediating),
             "verifying" => Some(Self::Verifying),
-            "success" => Some(Self::Success),
+            "done" => Some(Self::Done),
             "needs_human_attention" => Some(Self::NeedsHumanAttention),
             _ => None,
         }

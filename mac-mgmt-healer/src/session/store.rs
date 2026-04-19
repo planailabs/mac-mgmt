@@ -144,7 +144,7 @@ pub async fn find_resumable(pool: &PgPool) -> Result<Vec<HealerSession>> {
         "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
                 created_at, updated_at, completed_at, error_message, initial_issues \
          FROM healer_sessions \
-         WHERE state NOT IN ('completed', 'success', 'failed', 'cancelled', 'paused', 'needs_human_attention') \
+         WHERE state NOT IN ('completed', 'done', 'failed', 'cancelled', 'paused', 'needs_human_attention') \
          ORDER BY created_at ASC",
     )
     .fetch_all(pool)

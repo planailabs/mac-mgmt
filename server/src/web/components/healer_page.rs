@@ -750,8 +750,8 @@ fn state_badge(st: &str) -> (&'static str, &'static str) {
             ("bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300", "Remediating"),
         "verifying" =>
             ("bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300", "Verifying"),
-        "completed" | "success" =>
-            ("bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300", "Success"),
+        "completed" | "done" =>
+            ("bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300", "Done"),
         "failed" =>
             ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Failed"),
         "cancelled" =>
@@ -849,83 +849,24 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     }
 }
 
-/// Minimal markdown to HTML: handles **bold**, *italic*, `code`, ```blocks```, and newlines.
-fn simple_md_to_html(md: &str) -> String {
-    let mut html = String::with_capacity(md.len() * 2);
-    let mut in_code_block = false;
-
-    for line in md.lines() {
-        if line.starts_with("```") {
-            if in_code_block {
-                html.push_str("</code></pre>");
-                in_code_block = false;
-            } else {
-                html.push_str("<pre class=\"bg-gray-900 text-green-400 p-2 rounded text-xs overflow-x-auto my-2\"><code>");
-                in_code_block = true;
-            }
-            continue;
-        }
-
-        if in_code_block {
-            html.push_str(&html_escape(line));
-            html.push('\n');
-            continue;
-        }
-
-        let line = html_escape(line);
-        // Headers
-        if line.starts_with("### ") {
-            html.push_str(&format!("<h4 class=\"font-semibold mt-2\">{}</h4>", &line[4..]));
-        } else if line.starts_with("## ") {
-            html.push_str(&format!("<h3 class=\"font-semibold text-lg mt-2\">{}</h3>", &line[3..]));
-        } else if line.starts_with("# ") {
-            html.push_str(&format!("<h2 class=\"font-bold text-xl mt-2\">{}</h2>", &line[2..]));
-        } else if line.starts_with("- ") || line.starts_with("* ") {
-            html.push_str(&format!("<li class=\"ml-4\">{}</li>", inline_md(&line[2..])));
-        } else if line.trim().is_empty() {
-            html.push_str("<br>");
-        } else {
-            html.push_str(&format!("<p>{}</p>", inline_md(&line)));
-        }
-    }
-
-    if in_code_block {
-        html.push_str("</code></pre>");
-    }
-
-    html
+/// Render markdown to HTML using pulldown_cmark.
+#[cfg(feature = "server")]
+pub fn simple_md_to_html(md: &str) -> String {
+    use pulldown_cmark::{Options, Parser, html};
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS;
+    let parser = Parser::new_ext(md, options);
+    let mut output = String::with_capacity(md.len() * 2);
+    html::push_html(&mut output, parser);
+    output
 }
 
-fn inline_md(s: &str) -> String {
-    let mut out = s.to_string();
-    // **bold**
-    while let Some(start) = out.find("**") {
-        if let Some(end) = out[start + 2..].find("**") {
-            let before = &out[..start];
-            let bold = &out[start + 2..start + 2 + end];
-            let after = &out[start + 2 + end + 2..];
-            out = format!("{before}<strong>{bold}</strong>{after}");
-        } else {
-            break;
-        }
-    }
-    // `code`
-    while let Some(start) = out.find('`') {
-        if let Some(end) = out[start + 1..].find('`') {
-            let before = &out[..start];
-            let code = &out[start + 1..start + 1 + end];
-            let after = &out[start + 1 + end + 1..];
-            out = format!("{before}<code class=\"px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs\">{code}</code>{after}");
-        } else {
-            break;
-        }
-    }
-    out
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
+/// Client-side fallback: return content as-is (escaped).
+#[cfg(not(feature = "server"))]
+pub fn simple_md_to_html(md: &str) -> String {
+    md.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-        .replace('"', "&quot;")
+        .replace('\n', "<br>")
 }

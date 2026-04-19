@@ -29,6 +29,7 @@ pub mod mcp_server_list;
 pub mod setting_token_list;
 pub mod skill_detail;
 pub mod skill_list;
+pub mod staff_pings_page;
 pub mod file_editor;
 pub mod fleet_dashboard;
 pub mod fleet_detail;

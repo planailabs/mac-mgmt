@@ -95,7 +95,7 @@ pub fn build_system_prompt(
     prompt.push_str("  - `diagnosis` slot: pin once you identify the root cause (include affected services)\n");
     prompt.push_str("  - `remediation` slot: pin your remediation plan before applying fixes\n");
     prompt.push_str("  - `final_report` slot: pin at the end summarizing what was done and any remaining issues\n");
-    prompt.push_str("- `set_phase` — transition between phases: `diagnosing`, `remediating`, `verifying`, `success`, `needs_human_attention`\n");
+    prompt.push_str("- `set_phase` — transition between phases: `diagnosing`, `remediating`, `verifying`, `done`, `needs_human_attention`\n");
     prompt.push_str("- `staff_ping` — notify admins when you need human help or encounter something unexpected\n");
     prompt.push('\n');
 
@@ -111,7 +111,7 @@ pub fn build_system_prompt(
         8. Explain every change you make and why\n\
         9. After applying a fix, call `set_phase` with `verifying` and check if it worked\n\
         10. If the fix worked, call `pin` with slot `final_report` summarizing what was done, \
-            then call `set_phase` with `success`\n\
+            then call `set_phase` with `done`\n\
         11. If you **cannot** fix the issue automatically, call `staff_ping` to notify admins, \
             call `pin` with slot `final_report` documenting your findings, \
             then call `set_phase` with `needs_human_attention`\n\

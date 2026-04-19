@@ -374,7 +374,7 @@ struct StaffPingParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct SetPhaseParams {
-    /// Phase to transition to: diagnosing, remediating, verifying, success, needs_human_attention
+    /// Phase to transition to: diagnosing, remediating, verifying, done, needs_human_attention
     phase: String,
     /// Brief explanation of why you are transitioning to this phase
     reason: String,
@@ -441,12 +441,12 @@ healer_tool! {
 healer_tool! {
     name: "set_phase",
     struct_name: SetPhaseTool,
-    description: "Transition the session to a new phase. Call this when you move between stages of your work. Valid phases: diagnosing (investigating), remediating (applying fixes), verifying (checking if fix worked), success (issue resolved), needs_human_attention (cannot be fixed automatically, requires human intervention).",
+    description: "Transition the session to a new phase. Call this when you move between stages of your work. Valid phases: diagnosing (investigating), remediating (applying fixes), verifying (checking if fix worked), done (work complete — whether fixed or not), needs_human_attention (cannot be fixed automatically, requires human intervention).",
     params: SetPhaseParams,
     handler: |ctx, params| {
         let Some(new_state) = crate::session::SessionState::agent_allowed(&params.phase) else {
             return Ok(ToolOutput::Text(format!(
-                "Invalid phase '{}'. Valid: diagnosing, remediating, verifying, success, needs_human_attention",
+                "Invalid phase '{}'. Valid: diagnosing, remediating, verifying, done, needs_human_attention",
                 params.phase
             )));
         };

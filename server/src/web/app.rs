@@ -33,6 +33,7 @@ use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
 use super::components::docs::{DocList, DocPage};
 use super::components::profile::Profile;
+use super::components::staff_pings_page::StaffPings;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
 use super::components::user_list::UserList;
@@ -90,6 +91,8 @@ pub enum Route {
     FleetLogs { instance_id: String },
     #[route("/fleet/:instance_id/healer")]
     FleetHealer { instance_id: String },
+    #[route("/staff-pings")]
+    StaffPings {},
     #[route("/rollout-groups")]
     RolloutGroupList {},
     #[route("/rollout-groups/:id")]
