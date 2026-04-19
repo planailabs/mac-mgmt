@@ -137,6 +137,25 @@ pub async fn get_messages(pool: &PgPool, session_id: Uuid) -> Result<Vec<HealerM
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
+/// Get messages created strictly after `after`, oldest first.
+/// Used to recover from broadcast channel lag by replaying from the DB.
+pub async fn get_messages_after(
+    pool: &PgPool,
+    session_id: Uuid,
+    after: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<HealerMessage>> {
+    let rows = sqlx::query_as::<_, MessageRow>(
+        "SELECT id, session_id, role, content, metadata, created_at \
+         FROM healer_messages WHERE session_id = $1 AND created_at > $2 \
+         ORDER BY created_at ASC",
+    )
+    .bind(session_id)
+    .bind(after)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
 /// Find sessions that should be auto-resumed on server startup.
 /// Excludes terminal states AND paused (paused requires manual resume).
 pub async fn find_resumable(pool: &PgPool) -> Result<Vec<HealerSession>> {

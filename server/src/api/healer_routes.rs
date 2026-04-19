@@ -258,8 +258,14 @@ pub async fn stream_session(
     let rx = healer.subscribe(session_id);
 
     Some(EventStream! {
+        // Track the latest replayed timestamp so we can recover from lag
+        let mut last_seen_at = chrono::DateTime::<chrono::Utc>::MIN_UTC;
+
         // Replay existing messages
         for msg in existing {
+            if msg.created_at > last_seen_at {
+                last_seen_at = msg.created_at;
+            }
             let event = mac_mgmt_healer::HealerEvent::Message {
                 role: msg.role,
                 content: msg.content,
@@ -277,13 +283,36 @@ pub async fn stream_session(
                     msg = rx.recv() => {
                         match msg {
                             Ok(event) => {
+                                if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } = &event {
+                                    if *created_at > last_seen_at {
+                                        last_seen_at = *created_at;
+                                    }
+                                }
                                 let is_done = matches!(&event, mac_mgmt_healer::HealerEvent::Done { .. });
                                 let json = serde_json::to_string(&event).unwrap_or_default();
                                 yield Event::data(json);
                                 if is_done { break; }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                tracing::warn!("healer SSE client lagged, skipped {n} events");
+                                tracing::warn!("healer SSE client lagged, skipped {n} events — replaying from DB");
+                                // Recover dropped messages from the database
+                                if let Ok(missed) = mac_mgmt_healer::session::store::get_messages_after(
+                                    &pool, session_id, last_seen_at,
+                                ).await {
+                                    for msg in missed {
+                                        if msg.created_at > last_seen_at {
+                                            last_seen_at = msg.created_at;
+                                        }
+                                        let event = mac_mgmt_healer::HealerEvent::Message {
+                                            role: msg.role,
+                                            content: msg.content,
+                                            metadata: msg.metadata,
+                                            created_at: msg.created_at,
+                                        };
+                                        let json = serde_json::to_string(&event).unwrap_or_default();
+                                        yield Event::data(json);
+                                    }
+                                }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }

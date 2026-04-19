@@ -248,11 +248,17 @@ pub async fn view_healer_session(
     Ok(JsonStream::spawn(move |tx| async move {
         let empty = HealerStreamEvent::default;
 
+        // Track latest replayed timestamp for lag recovery
+        let mut last_seen_at = chrono::DateTime::<chrono::Utc>::MIN_UTC;
+
         // Extract pins from existing messages
         let mut pins = extract_pins_from_messages(&existing_messages);
 
         // Replay persisted messages
         for msg in &existing_messages {
+            if msg.created_at > last_seen_at {
+                last_seen_at = msg.created_at;
+            }
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "message".to_string(),
                 role: Some(msg.role.clone()),
@@ -306,6 +312,15 @@ pub async fn view_healer_session(
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
+                            // Track latest message timestamp for lag recovery
+                            if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } =
+                                &event
+                            {
+                                if *created_at > last_seen_at {
+                                    last_seen_at = *created_at;
+                                }
+                            }
+
                             let (stream_event, is_done) = healer_event_to_stream(&event);
                             let _ = tx.unbounded_send(stream_event);
 
@@ -385,7 +400,26 @@ pub async fn view_healer_session(
                                 break;
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("healer view stream lagged, skipped {n} events — replaying from DB");
+                            // Recover dropped messages from the database
+                            if let Ok(missed) = mac_mgmt_healer::session::store::get_messages_after(
+                                &pool2, uuid, last_seen_at,
+                            ).await {
+                                for msg in missed {
+                                    if msg.created_at > last_seen_at {
+                                        last_seen_at = msg.created_at;
+                                    }
+                                    let _ = tx.unbounded_send(HealerStreamEvent {
+                                        kind: "message".to_string(),
+                                        role: Some(msg.role.clone()),
+                                        content: Some(msg.content.clone()),
+                                        metadata: msg.metadata.clone(),
+                                        ..empty()
+                                    });
+                                }
+                            }
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
@@ -514,16 +548,62 @@ pub async fn start_healer_stream(
             return;
         };
 
+        // Replay any messages the agent produced between spawn_session()
+        // and subscribe(). Messages are persisted to DB before broadcast,
+        // so the DB is the authoritative source.
+        let mut last_seen_at = chrono::DateTime::<chrono::Utc>::MIN_UTC;
+        if let Ok(existing) =
+            mac_mgmt_healer::session::store::get_messages(&pool, session_id).await
+        {
+            for msg in existing {
+                if msg.created_at > last_seen_at {
+                    last_seen_at = msg.created_at;
+                }
+                let _ = tx.unbounded_send(HealerStreamEvent {
+                    kind: "message".to_string(),
+                    role: Some(msg.role.clone()),
+                    content: Some(msg.content.clone()),
+                    metadata: msg.metadata.clone(),
+                    ..empty()
+                });
+            }
+        }
+
         loop {
             match rx.recv().await {
                 Ok(event) => {
+                    // Skip messages already replayed from DB
+                    if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } = &event {
+                        if *created_at <= last_seen_at {
+                            continue;
+                        }
+                        last_seen_at = *created_at;
+                    }
                     let (evt, is_done) = healer_event_to_stream(&event);
                     let _ = tx.unbounded_send(evt);
                     if is_done {
                         break;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("healer start stream lagged, skipped {n} events — replaying from DB");
+                    if let Ok(missed) = mac_mgmt_healer::session::store::get_messages_after(
+                        &pool, session_id, last_seen_at,
+                    ).await {
+                        for msg in missed {
+                            if msg.created_at > last_seen_at {
+                                last_seen_at = msg.created_at;
+                            }
+                            let _ = tx.unbounded_send(HealerStreamEvent {
+                                kind: "message".to_string(),
+                                role: Some(msg.role.clone()),
+                                content: Some(msg.content.clone()),
+                                metadata: msg.metadata.clone(),
+                                ..empty()
+                            });
+                        }
+                    }
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
