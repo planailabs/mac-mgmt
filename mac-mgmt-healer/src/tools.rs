@@ -22,7 +22,9 @@ pub struct ToolContext {
     pub target_instance: String,
     pub cluster_instances: Vec<String>,
     pub file_tunnels: Vec<String>,
+    pub file_tunnels_full: serde_json::Value,
     pub shell_commands: Vec<String>,
+    pub shell_commands_full: serde_json::Value,
     pub pool: sqlx::PgPool,
     pub session_id: uuid::Uuid,
     pub cluster_id: uuid::Uuid,
@@ -297,18 +299,61 @@ healer_tool! {
 healer_tool! {
     name: "list_file_tunnels",
     struct_name: ListFileTunnelsTool,
-    description: "List all available file tunnels on the target instance",
+    description: "List all available file tunnels on the target instance with descriptions",
     handler: |ctx| {
-        Ok(ToolOutput::Text(serde_json::to_string_pretty(&ctx.file_tunnels).unwrap_or_default()))
+        let entries = ctx.file_tunnels_full.as_array();
+        match entries {
+            Some(arr) if !arr.is_empty() => {
+                let mut out = String::new();
+                for entry in arr {
+                    let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let desc = entry.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                    let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("file");
+                    let writable = entry.get("writable").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let mode = if writable { "read-write" } else { "read-only" };
+                    out.push_str(&format!("- {name} ({kind}, {mode})"));
+                    if !desc.is_empty() {
+                        out.push_str(&format!(" — {desc}"));
+                    }
+                    out.push('\n');
+                }
+                Ok(ToolOutput::Text(out))
+            }
+            _ => Ok(ToolOutput::Text("No file tunnels available.".to_string())),
+        }
     }
 }
 
 healer_tool! {
     name: "list_shell_commands",
     struct_name: ListShellCommandsTool,
-    description: "List all available shell commands on the target instance",
+    description: "List all available shell commands on the target instance with descriptions",
     handler: |ctx| {
-        Ok(ToolOutput::Text(serde_json::to_string_pretty(&ctx.shell_commands).unwrap_or_default()))
+        let entries = ctx.shell_commands_full.as_array();
+        match entries {
+            Some(arr) if !arr.is_empty() => {
+                let mut out = String::new();
+                for entry in arr {
+                    let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let desc = entry.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                    let has_arg = entry.get("arg_template").is_some_and(|v| !v.is_null());
+                    out.push_str(&format!("- {name}"));
+                    if has_arg {
+                        let label = entry.get("arg_template")
+                            .and_then(|t| t.get("label"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("arg");
+                        out.push_str(&format!(" <{label}>"));
+                    }
+                    if !desc.is_empty() {
+                        out.push_str(&format!(" — {desc}"));
+                    }
+                    out.push('\n');
+                }
+                Ok(ToolOutput::Text(out))
+            }
+            _ => Ok(ToolOutput::Text("No shell commands available.".to_string())),
+        }
     }
 }
 
