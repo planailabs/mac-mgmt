@@ -56,6 +56,17 @@ Example:
 }
 ```
 
+## Remote tools
+
+When `relay.url` is configured, several remote tools are available for each instance from the Fleet dashboard:
+
+- **Logs** — stream service logs in real time
+- **Shell** — run predefined service commands
+- **Files** — edit configuration files on the instance
+- **Healer** — AI-powered automated diagnosis and remediation
+
+See [Remote Tools](/docs/remote-tools) for details on logs, shell, and files. See [Healer Agent](/docs/healer) for the AI healing agent.
+
 ## Remote SSH access
 
 When `relay.url` is configured and `relay.remote_ssh_enabled` is `true`, you can SSH into clusters through the relay server. See [Remote SSH](/docs/remote-ssh) for setup and usage.

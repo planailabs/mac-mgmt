@@ -16,6 +16,7 @@ mac-mgmt is a fleet management system for macOS and Linux devices. It provides:
 - **MCP server management** — configure Model Context Protocol servers for OpenClaw
 - **Rollout control** — staged rollouts with groups and scheduling
 - **Fleet monitoring** — heartbeats, metrics, and notifications
+- **Remote tools** — logs, shell commands, file editing, and AI-powered healing via the relay
 
 ## Quick Start
 
