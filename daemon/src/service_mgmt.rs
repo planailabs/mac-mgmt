@@ -822,7 +822,7 @@ fn daemon_config_file_tunnels() -> Vec<FileTunnel> {
 
 /// System-level shell commands (not tied to a ManagedService).
 fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
-    use crate::managed_service::ShellCommandDef;
+    use crate::managed_service::{ShellArgTemplate, ShellCommandDef};
     vec![
         ShellTunnel {
             def: ShellCommandDef {
@@ -830,6 +830,36 @@ fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
                 command: "nix".into(),
                 args: vec!["profile".into(), "list".into()],
                 description: "List installed nix packages".into(),
+                arg_template: None,
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "nix-collect-garbage".into(),
+                command: "nix-collect-garbage".into(),
+                args: vec!["--delete-old".into()],
+                description: "Delete old nix generations and collect garbage".into(),
+                arg_template: None,
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "nix-store-gc-print".into(),
+                command: "nix-store".into(),
+                args: vec!["--gc".into(), "--print-dead".into()],
+                description: "Show reclaimable nix store space (dry run)".into(),
+                arg_template: None,
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "df".into(),
+                command: "df".into(),
+                args: vec!["-h".into()],
+                description: "Disk usage (human-readable)".into(),
                 arg_template: None,
             },
             service: "daemon".into(),
@@ -857,6 +887,48 @@ fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
                 ],
                 description: "Daemon journal (last 100 lines)".into(),
                 arg_template: None,
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "service-journal".into(),
+                command: "journalctl".into(),
+                args: vec!["-n".into(), "100".into(), "--no-pager".into(), "-u".into()],
+                description: "System journal for a service unit (e.g. ollama, openclaw)".into(),
+                arg_template: Some(ShellArgTemplate {
+                    label: "Service unit name".into(),
+                    placeholder: "ollama".into(),
+                    validation: Some(r"^[a-zA-Z0-9._@-]+$".into()),
+                }),
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "systemctl-status".into(),
+                command: "systemctl".into(),
+                args: vec!["status".into()],
+                description: "Status of a systemd service unit".into(),
+                arg_template: Some(ShellArgTemplate {
+                    label: "Service unit name".into(),
+                    placeholder: "ollama".into(),
+                    validation: Some(r"^[a-zA-Z0-9._@-]+$".into()),
+                }),
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "systemctl-restart".into(),
+                command: "systemctl".into(),
+                args: vec!["restart".into()],
+                description: "Restart a systemd service unit".into(),
+                arg_template: Some(ShellArgTemplate {
+                    label: "Service unit name".into(),
+                    placeholder: "ollama".into(),
+                    validation: Some(r"^[a-zA-Z0-9._@-]+$".into()),
+                }),
             },
             service: "daemon".into(),
         },

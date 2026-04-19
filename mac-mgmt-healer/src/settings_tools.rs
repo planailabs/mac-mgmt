@@ -574,6 +574,132 @@ settings_tool! {
     }
 }
 
+// ── Cluster / instance query tools ─────────────────────────────────────
+
+settings_tool! {
+    name: "get_cluster_instances",
+    struct_name: GetClusterInstancesTool,
+    description: "List all instances in the cluster with their status, version, hostname, and last heartbeat time.",
+    handler: |ctx| {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            instance_id: String,
+            version: String,
+            hostname: Option<String>,
+            reported_at: chrono::DateTime<chrono::Utc>,
+            services_extended: Option<serde_json::Value>,
+        }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT instance_id, version, hostname, reported_at, services_extended \
+             FROM daemon_heartbeats WHERE cluster_id = $1 \
+             ORDER BY reported_at DESC",
+        )
+        .bind(ctx.cluster_id)
+        .fetch_all(&ctx.pool)
+        .await;
+
+        match rows {
+            Ok(rows) if rows.is_empty() => {
+                Ok(ToolOutput::Text("No instances found in this cluster.".to_string()))
+            }
+            Ok(rows) => {
+                let mut out = format!("{} instance(s):\n\n", rows.len());
+                for r in &rows {
+                    let age = (chrono::Utc::now() - r.reported_at).num_seconds();
+                    let prefix = &r.instance_id[..r.instance_id.len().min(12)];
+                    let host = r.hostname.as_deref().unwrap_or("?");
+                    let online = age < 120;
+
+                    // Count healthy/unhealthy services
+                    let (healthy, total) = r.services_extended
+                        .as_ref()
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            let h = arr.iter().filter(|s| s.get("healthy").and_then(|v| v.as_bool()) == Some(true)).count();
+                            (h, arr.len())
+                        })
+                        .unwrap_or((0, 0));
+
+                    let status = if !online { "OFFLINE" } else if healthy == total { "HEALTHY" } else { "DEGRADED" };
+                    let is_self = r.instance_id == ctx.instance_id;
+                    let marker = if is_self { " (this instance)" } else { "" };
+
+                    out.push_str(&format!(
+                        "  {prefix} — {status} v{} {host} ({age}s ago) services={healthy}/{total}{marker}\n",
+                        r.version
+                    ));
+                }
+                Ok(ToolOutput::Text(out))
+            }
+            Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
+        }
+    }
+}
+
+settings_tool! {
+    name: "get_service_state",
+    struct_name: GetServiceStateTool,
+    description: "Get detailed per-service state from the latest heartbeat: health, probe results, timing. Use this to decide whether to restart, wait, or escalate.",
+    handler: |ctx| {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            services: serde_json::Value,
+            services_extended: Option<serde_json::Value>,
+            reported_at: chrono::DateTime<chrono::Utc>,
+        }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT services, services_extended, reported_at \
+             FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+        )
+        .bind(&ctx.instance_id)
+        .fetch_optional(&ctx.pool)
+        .await;
+
+        match row {
+            Ok(Some(r)) => {
+                let age = (chrono::Utc::now() - r.reported_at).num_seconds();
+                let mut out = format!("Heartbeat age: {age}s\n\n");
+
+                out.push_str("Services (basic):\n");
+                out.push_str(&serde_json::to_string_pretty(&r.services).unwrap_or_default());
+
+                if let Some(ext) = r.services_extended {
+                    out.push_str("\n\nServices (extended probes):\n");
+                    out.push_str(&serde_json::to_string_pretty(&ext).unwrap_or_default());
+                }
+
+                Ok(ToolOutput::Text(out))
+            }
+            Ok(None) => Ok(ToolOutput::Text("No heartbeat data found.".to_string())),
+            Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
+        }
+    }
+}
+
+settings_tool! {
+    name: "nix_check_upgrades",
+    struct_name: NixCheckUpgradesTool,
+    description: "Check which nix packages have available upgrades by running `nix-profile-list` on the target instance and comparing installed vs available. Returns the raw profile listing.",
+    handler: |ctx| {
+        // Use the existing nix-profile-list shell command via the relay
+        match ctx.relay.shell_exec(&ctx.target_instance, "nix-profile-list", None).await {
+            Ok(output) => {
+                let mut text = String::new();
+                for line in &output.lines {
+                    text.push_str(&format!("{}\n", line.data));
+                }
+                if let Some(code) = output.exit_code {
+                    if code != 0 {
+                        text.push_str(&format!("\n[exit code: {code}]"));
+                    }
+                }
+                Ok(ToolOutput::Text(text))
+            }
+            Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
+        }
+    }
+}
+
 pub fn all_settings_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
         WaitTool::new(ctx.clone()),
@@ -589,7 +715,10 @@ pub fn all_settings_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         RemoveMcpServerTool::new(ctx.clone()),
         SendPushTool::new(ctx.clone()),
         GetVersionInfoTool::new(ctx.clone()),
-        GetHeartbeatTool::new(ctx),
+        GetHeartbeatTool::new(ctx.clone()),
+        GetClusterInstancesTool::new(ctx.clone()),
+        GetServiceStateTool::new(ctx.clone()),
+        NixCheckUpgradesTool::new(ctx),
     ]
 }
 
