@@ -156,6 +156,9 @@ settings_tool! {
     params: WaitParams,
     handler: |ctx, params| {
         let secs = params.seconds.min(300).max(1);
+        let _ = ctx.events_tx.send(crate::session::HealerEvent::Status {
+            message: format!("Waiting {secs}s..."),
+        });
         let mut elapsed = 0u64;
         while elapsed < secs {
             let chunk = (secs - elapsed).min(10);
@@ -168,9 +171,8 @@ settings_tool! {
                 });
             }
         }
-        // Clear status message
         let _ = ctx.events_tx.send(crate::session::HealerEvent::Status {
-            message: String::new(),
+            message: format!("Wait complete ({secs}s)."),
         });
         Ok(ToolOutput::Text(format!("Waited {secs} seconds.")))
     }
