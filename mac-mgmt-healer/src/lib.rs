@@ -152,7 +152,7 @@ impl HealerState {
         // 5. Set up cancellation and event broadcasting
         let cancel = CancellationToken::new();
         let pause_requested = Arc::new(AtomicBool::new(false));
-        let (events_tx, _) = broadcast::channel::<HealerEvent>(1024);
+        let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         self.inner.running.insert(
             session_id,
@@ -298,7 +298,7 @@ impl HealerState {
         // Set up cancellation and events
         let cancel = CancellationToken::new();
         let pause_requested = Arc::new(AtomicBool::new(false));
-        let (events_tx, _) = broadcast::channel::<HealerEvent>(1024);
+        let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         self.inner.running.insert(
             session_id,
