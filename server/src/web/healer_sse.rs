@@ -255,6 +255,7 @@ pub async fn view_session_sse(
             .send(Ok(event_json(&HealerStreamEvent {
                 kind: "done".to_string(),
                 state: Some(current_state),
+                state_reason: current_reason,
                 ..empty()
             })))
             .await;
