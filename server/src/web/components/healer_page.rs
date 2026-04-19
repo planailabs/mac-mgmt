@@ -656,24 +656,83 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     let mut state_reason = use_signal::<Option<String>>(|| None);
     let mut running = use_signal(|| true);
 
-    let sid = session_id.clone();
     let iid = instance_id.clone();
+    let sid_for_sse = session_id.clone();
 
-    // Connect to SSE after hydration (client-side only).
-    // use_effect runs only on the client after the initial render, not during SSR.
-    use_effect(move || {
-        #[cfg(target_arch = "wasm32")]
-        consume_healer_sse(
-            sid.clone(),
-            messages,
-            active_tools,
-            pins,
-            staff_pings_sig,
-            status_msg,
-            state,
-            state_reason,
-            running,
-        );
+    // Connect to SSE via JS eval — runs only in the browser, no SSR issues.
+    // eval() returns a channel we can recv() events from.
+    let _sse_task = use_future(move || {
+        let sid = sid_for_sse.clone();
+        async move {
+            let mut ev = document::eval(&format!(
+                r#"
+                const es = new EventSource("/_sse/healer/{sid}");
+                es.onmessage = (e) => dioxus.send(e.data);
+                es.onerror = () => {{
+                    if (es.readyState === EventSource.CLOSED) {{
+                        dioxus.send('{{"kind":"_closed"}}');
+                    }}
+                }};
+                // Keep alive until Dioxus drops the eval
+                await new Promise(() => {{}});
+                "#
+            ));
+
+            while let Ok(val) = ev.recv::<serde_json::Value>().await {
+                let val_str = val.as_str().unwrap_or_default();
+                let Ok(evt) = serde_json::from_str::<HealerStreamEvent>(val_str) else {
+                    continue;
+                };
+                match evt.kind.as_str() {
+                    "message" => {
+                        if let (Some(role), Some(content)) = (evt.role, evt.content) {
+                            if !content.is_empty() {
+                                messages.push(ChatMsg {
+                                    role,
+                                    content,
+                                    metadata: evt.metadata,
+                                });
+                            }
+                        }
+                    }
+                    "running_tools" => {
+                        active_tools.set(evt.running_tools.unwrap_or_default());
+                    }
+                    "pins" => {
+                        pins.set(evt.pins.unwrap_or_default());
+                    }
+                    "staff_pings" => {
+                        staff_pings_sig.set(evt.staff_pings.unwrap_or_default());
+                    }
+                    "status" => {
+                        status_msg.set(evt.status_message);
+                    }
+                    "state" => {
+                        if let Some(s) = evt.state {
+                            state.set(s);
+                        }
+                        state_reason.set(evt.state_reason);
+                    }
+                    "done" => {
+                        active_tools.set(Vec::new());
+                        status_msg.set(None);
+                        if let Some(s) = evt.state {
+                            state.set(s);
+                        }
+                        state_reason.set(evt.state_reason);
+                        running.set(false);
+                        break;
+                    }
+                    "_closed" | "error" => {
+                        if *running.peek() {
+                            running.set(false);
+                        }
+                        break;
+                    }
+                    _ => {} // ping, unknown
+                }
+            }
+        }
     });
 
     let back_url = format!("/fleet/{}/healer", instance_id);
@@ -796,122 +855,6 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     }
 }
 
-// ── SSE stream consumer (WASM client) ─────────────────────────────────
-
-/// Guard that closes the EventSource when dropped (component unmount).
-#[derive(Clone)]
-struct EventSourceGuard(web_sys::EventSource);
-
-impl Drop for EventSourceGuard {
-    fn drop(&mut self) {
-        self.0.close();
-    }
-}
-
-/// Connect to the axum SSE endpoint and process events into Dioxus signals.
-/// Returns a guard that closes the EventSource on drop — store it in `use_hook`
-/// so the connection is cleaned up when the component unmounts.
-fn consume_healer_sse(
-    sid: String,
-    mut messages: Signal<Vec<ChatMsg>>,
-    mut active_tools: Signal<Vec<RunningToolInfo>>,
-    mut pins: Signal<Vec<PinInfo>>,
-    mut staff_pings: Signal<Vec<StaffPingSummary>>,
-    mut status_msg: Signal<Option<String>>,
-    mut state: Signal<String>,
-    mut state_reason: Signal<Option<String>>,
-    mut running: Signal<bool>,
-) -> EventSourceGuard {
-    use wasm_bindgen::prelude::*;
-
-    let url = format!("/_sse/healer/{sid}");
-    let es = web_sys::EventSource::new(&url).expect("failed to create EventSource");
-
-    // Handle incoming messages (SSE "message" event = unnamed data events)
-    let on_message = {
-        let es_ref = es.clone();
-        Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
-            // If the EventSource was closed (component unmounted), bail out
-            if es_ref.ready_state() == web_sys::EventSource::CLOSED {
-                return;
-            }
-            let data = event.data().as_string().unwrap_or_default();
-            let Ok(evt) = serde_json::from_str::<HealerStreamEvent>(&data) else {
-                return;
-            };
-            match evt.kind.as_str() {
-                "message" => {
-                    if let (Some(role), Some(content)) = (evt.role, evt.content) {
-                        if !content.is_empty() {
-                            messages.push(ChatMsg {
-                                role,
-                                content,
-                                metadata: evt.metadata,
-                            });
-                        }
-                    }
-                }
-                "running_tools" => {
-                    active_tools.set(evt.running_tools.unwrap_or_default());
-                }
-                "pins" => {
-                    pins.set(evt.pins.unwrap_or_default());
-                }
-                "staff_pings" => {
-                    staff_pings.set(evt.staff_pings.unwrap_or_default());
-                }
-                "status" => {
-                    status_msg.set(evt.status_message);
-                }
-                "state" => {
-                    if let Some(s) = evt.state {
-                        state.set(s);
-                    }
-                    state_reason.set(evt.state_reason);
-                }
-                "done" => {
-                    active_tools.set(Vec::new());
-                    status_msg.set(None);
-                    if let Some(s) = evt.state {
-                        state.set(s);
-                    }
-                    state_reason.set(evt.state_reason);
-                    running.set(false);
-                    es_ref.close();
-                }
-                "error" => {
-                    active_tools.set(Vec::new());
-                    status_msg.set(None);
-                    messages.push(ChatMsg {
-                        role: "system".to_string(),
-                        content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
-                        metadata: None,
-                    });
-                    state.set("failed".to_string());
-                    running.set(false);
-                    es_ref.close();
-                }
-                _ => {} // ping, unknown
-            }
-        })
-    };
-    es.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
-    on_message.forget();
-
-    let on_error = {
-        let es2 = es.clone();
-        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-            if es2.ready_state() == web_sys::EventSource::CLOSED {
-                // Connection closed — normal after done/error or unmount
-                let _ = running.try_write().map(|mut v| *v = false);
-            }
-        })
-    };
-    es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-    on_error.forget();
-
-    EventSourceGuard(es)
-}
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
