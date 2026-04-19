@@ -120,7 +120,7 @@ pub fn build_system_prompt(
     prompt.push_str("### Documentation\n");
     prompt.push_str("- `read_doc` — read mac-mgmt platform documentation by slug (e.g. \"configuration-reference\", \"cluster-setup\")\n");
     prompt.push_str("- `list_docs` — list all available documentation pages\n");
-    prompt.push_str("- If Context7 tools are available (`Context7:resolve-library-id`, `Context7:query-docs`), use them to look up current documentation for third-party services (Ollama, LM Studio, nix, systemd, etc.) when the service's behavior or configuration is unclear.\n\n");
+    prompt.push_str("- If Context7 tools are available (`context7-resolve-library-id`, `context7-query-docs`), use them to look up current documentation for third-party services (Ollama, LM Studio, nix, systemd, etc.) when the service's behavior or configuration is unclear.\n\n");
 
     // Guidelines
     prompt.push_str("## Guidelines\n\

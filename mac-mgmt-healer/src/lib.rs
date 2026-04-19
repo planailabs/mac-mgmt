@@ -22,6 +22,7 @@ pub use session::models::{HealerEvent, HealerMessage, HealerSession, SessionStat
 
 use agent::InstanceInfo;
 use mac_mgmt_common::ServiceExtState;
+use swiftide::traits::ToolBox as _;
 
 /// Shared state for the healer subsystem. Clone-friendly (inner Arc).
 #[derive(Clone)]
@@ -704,13 +705,24 @@ async fn run_agent_session(
             builder.add_tool(tool);
         }
 
-        // Connect to Context7 MCP server if API key is configured
+        // Connect to Context7 MCP server if API key is configured.
+        // Wrap MCP tools with sanitized names — Anthropic rejects colons
+        // but swiftide formats MCP tool names as "server:tool".
         let mut _mcp_toolbox = None;
         if let Some(api_key) = &connector_config.context7_api_key {
             match connect_context7(api_key).await {
                 Ok(toolbox) => {
                     tracing::info!("Context7 MCP connected");
-                    builder.add_toolbox(toolbox.clone());
+                    match toolbox.available_tools().await {
+                        Ok(tools) => {
+                            for tool in tools {
+                                builder.add_tool(RenamedTool::wrap(tool));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Context7: failed to list tools: {e:#}");
+                        }
+                    }
                     _mcp_toolbox = Some(toolbox);
                 }
                 Err(e) => {
@@ -952,6 +964,51 @@ async fn run_agent_session(
     });
 
     Ok(())
+}
+
+/// Wrapper that sanitizes tool names for Anthropic compatibility.
+/// Replaces colons with hyphens (e.g. "Context7:query-docs" → "context7-query-docs").
+#[derive(Clone)]
+struct RenamedTool {
+    inner: Box<dyn swiftide::chat_completion::Tool>,
+    name: String,
+    spec: swiftide::chat_completion::ToolSpec,
+}
+
+impl RenamedTool {
+    fn wrap(tool: Box<dyn swiftide::chat_completion::Tool>) -> Box<dyn swiftide::chat_completion::Tool> {
+        let orig_name = tool.name().to_string();
+        let sanitized = orig_name
+            .replace(':', "-")
+            .replace(' ', "_")
+            .to_lowercase();
+        let mut spec = tool.tool_spec();
+        spec.name = sanitized.clone();
+        Box::new(Self {
+            inner: tool,
+            name: sanitized,
+            spec,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl swiftide::chat_completion::Tool for RenamedTool {
+    fn name(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(&self.name)
+    }
+
+    fn tool_spec(&self) -> swiftide::chat_completion::ToolSpec {
+        self.spec.clone()
+    }
+
+    async fn invoke(
+        &self,
+        agent_context: &dyn swiftide::traits::AgentContext,
+        tool_call: &swiftide::chat_completion::ToolCall,
+    ) -> Result<swiftide::chat_completion::ToolOutput, swiftide::chat_completion::errors::ToolError> {
+        self.inner.invoke(agent_context, tool_call).await
+    }
 }
 
 /// Connect to the Context7 documentation MCP server via SSE.
