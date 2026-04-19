@@ -277,6 +277,19 @@ fn main() {
             let mut router =
                 axum::Router::new().serve_dioxus_application(ServeConfig::new(), web::app::App);
 
+            // Disable nginx response buffering so streaming server functions
+            // (healer session streams, JsonStream) are forwarded immediately
+            // instead of being buffered until completion.
+            router = router.layer(axum::middleware::map_response(
+                |mut response: axum::http::Response<axum::body::Body>| async {
+                    response.headers_mut().insert(
+                        "X-Accel-Buffering",
+                        axum::http::HeaderValue::from_static("no"),
+                    );
+                    response
+                },
+            ));
+
             if let Some(auth_layer) = auth_layer {
                 router = router
                     .layer(axum::middleware::from_fn(web::auth::require_auth))
