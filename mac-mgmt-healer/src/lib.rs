@@ -704,6 +704,21 @@ async fn run_agent_session(
             builder.add_tool(tool);
         }
 
+        // Connect to Context7 MCP server if API key is configured
+        let mut _mcp_toolbox = None;
+        if let Some(api_key) = &connector_config.context7_api_key {
+            match connect_context7(api_key).await {
+                Ok(toolbox) => {
+                    tracing::info!("Context7 MCP connected");
+                    builder.add_toolbox(toolbox.clone());
+                    _mcp_toolbox = Some(toolbox);
+                }
+                Err(e) => {
+                    tracing::warn!("Context7 MCP connection failed: {e:#}");
+                }
+            }
+        }
+
         let events_tx_before_tool = events_tx.clone();
         let running_tools_before = running_tools.clone();
         let pool_after_tool = pool.clone();
@@ -937,4 +952,21 @@ async fn run_agent_session(
     });
 
     Ok(())
+}
+
+/// Connect to the Context7 documentation MCP server via SSE.
+async fn connect_context7(
+    api_key: &str,
+) -> Result<swiftide::agents::tools::mcp::McpToolbox> {
+    let url = format!("https://mcp.context7.com/sse?api_key={api_key}");
+    let mut toolbox =
+        swiftide::agents::tools::mcp::McpToolbox::try_from_transport(
+            rmcp::transport::SseClientTransport::<reqwest::Client>::start(url)
+                .await
+                .context("Context7 SSE transport failed")?,
+        )
+        .await
+        .context("Context7 MCP handshake failed")?;
+    toolbox.with_name("Context7");
+    Ok(toolbox)
 }

@@ -123,6 +123,9 @@ pub struct HealerConfig {
     /// Max input+output tokens per cloud session before auto-pause. 0 = unlimited.
     #[serde(default = "default_token_budget")]
     pub token_budget: u64,
+    /// Context7 API key for documentation lookup MCP server.
+    #[serde(default)]
+    pub context7_api_key: Option<String>,
 }
 
 pub fn load() -> &'static ServerConfig {

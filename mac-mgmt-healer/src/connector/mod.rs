@@ -17,6 +17,8 @@ pub struct ConnectorConfig {
     /// Max input+output tokens per session when using a cloud provider.
     /// Session auto-pauses when exceeded. 0 = unlimited.
     pub token_budget: u64,
+    /// Context7 API key for documentation lookup MCP server.
+    pub context7_api_key: Option<String>,
 }
 
 impl Default for ConnectorConfig {
@@ -27,6 +29,7 @@ impl Default for ConnectorConfig {
             anthropic_api_key: None,
             anthropic_model: None,
             token_budget: 200_000,
+            context7_api_key: None,
         }
     }
 }

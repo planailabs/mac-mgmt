@@ -129,6 +129,7 @@ async fn init_server() -> (
         anthropic_api_key: cfg.anthropic.as_ref().map(|a| a.api_key.clone()),
         anthropic_model: cfg.healer.anthropic_model.clone(),
         token_budget: cfg.healer.token_budget,
+        context7_api_key: cfg.healer.context7_api_key.clone(),
     };
     let healer_state = mac_mgmt_healer::HealerState::new(pool.clone(), healer_connector);
     #[cfg(feature = "webui")]
