@@ -958,15 +958,12 @@ async fn run_agent_session(
 async fn connect_context7(
     api_key: &str,
 ) -> Result<swiftide::agents::tools::mcp::McpToolbox> {
-    let url = format!("https://mcp.context7.com/sse?api_key={api_key}");
+    let url = format!("https://mcp.context7.com/mcp?api_key={api_key}");
+    let worker = rmcp::transport::streamable_http_client::StreamableHttpClientWorker::<reqwest::Client>::new_simple(url);
     let mut toolbox =
-        swiftide::agents::tools::mcp::McpToolbox::try_from_transport(
-            rmcp::transport::SseClientTransport::<reqwest::Client>::start(url)
-                .await
-                .context("Context7 SSE transport failed")?,
-        )
-        .await
-        .context("Context7 MCP handshake failed")?;
+        swiftide::agents::tools::mcp::McpToolbox::try_from_transport(worker)
+            .await
+            .context("Context7 MCP handshake failed")?;
     toolbox.with_name("Context7");
     Ok(toolbox)
 }
