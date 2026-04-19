@@ -534,7 +534,8 @@ async fn run_agent_session(
     // 2. Build relay client (with event broadcasting for connectivity status)
     let relay_client = Arc::new(
         relay_client::RelayClient::new(req.relay_url.clone(), proxy_token)
-            .with_events(events_tx.clone()),
+            .with_events(events_tx.clone())
+            .with_heartbeat_ctx(pool.clone(), req.instance_id.clone()),
     );
 
     // 3. Extract tunnel names
