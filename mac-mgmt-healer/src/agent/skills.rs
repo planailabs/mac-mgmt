@@ -5,6 +5,80 @@ pub struct RemediationSkill {
     pub steps: &'static str,
 }
 
+/// A built-in healer skill with frontmatter metadata.
+pub struct BuiltinSkill {
+    pub slug: String,
+    pub name: String,
+    pub desc: String,
+    pub content: String,
+}
+
+#[derive(rust_embed::RustEmbed)]
+#[folder = "skills/"]
+#[include = "*.md"]
+pub struct SkillsAssets;
+
+/// Parse `---`-delimited YAML frontmatter from a markdown file.
+/// Returns (name, desc, body-after-frontmatter).
+fn parse_frontmatter(raw: &str) -> (String, String, String) {
+    let trimmed = raw.trim_start();
+    if !trimmed.starts_with("---") {
+        return (String::new(), String::new(), raw.to_string());
+    }
+    // Find the closing ---
+    if let Some(end) = trimmed[3..].find("\n---") {
+        let fm_block = &trimmed[3..3 + end];
+        let body = &trimmed[3 + end + 4..]; // skip past closing ---
+        let mut name = String::new();
+        let mut desc = String::new();
+        for line in fm_block.lines() {
+            let line = line.trim();
+            if let Some(v) = line.strip_prefix("name:") {
+                name = v.trim().to_string();
+            } else if let Some(v) = line.strip_prefix("desc:") {
+                desc = v.trim().to_string();
+            }
+        }
+        (name, desc, body.to_string())
+    } else {
+        (String::new(), String::new(), raw.to_string())
+    }
+}
+
+/// List all embedded skills with their metadata.
+pub fn list_builtin_skills() -> Vec<BuiltinSkill> {
+    let mut skills = Vec::new();
+    for filename in SkillsAssets::iter() {
+        let slug = filename.trim_end_matches(".md").to_string();
+        if let Some(file) = SkillsAssets::get(&filename) {
+            let raw = std::str::from_utf8(file.data.as_ref()).unwrap_or("");
+            let (name, desc, content) = parse_frontmatter(raw);
+            skills.push(BuiltinSkill {
+                name: if name.is_empty() { slug.clone() } else { name },
+                desc,
+                slug,
+                content,
+            });
+        }
+    }
+    skills.sort_by(|a, b| a.slug.cmp(&b.slug));
+    skills
+}
+
+/// Get a single skill by slug, returning the full content (without frontmatter).
+pub fn get_builtin_skill(slug: &str) -> Option<BuiltinSkill> {
+    let filename = format!("{slug}.md");
+    let file = SkillsAssets::get(&filename)?;
+    let raw = std::str::from_utf8(file.data.as_ref()).unwrap_or("");
+    let (name, desc, content) = parse_frontmatter(raw);
+    Some(BuiltinSkill {
+        name: if name.is_empty() { slug.to_string() } else { name },
+        desc,
+        slug: slug.to_string(),
+        content,
+    })
+}
+
 pub static SKILLS: &[RemediationSkill] = &[
     RemediationSkill {
         error_class: "timeout",

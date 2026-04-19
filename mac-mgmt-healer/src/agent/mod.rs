@@ -122,6 +122,11 @@ pub fn build_system_prompt(
     prompt.push_str("- `list_docs` — list all available documentation pages\n");
     prompt.push_str("- If Context7 tools are available (`context7-resolve-library-id`, `context7-query-docs`), use them to look up current documentation for third-party services (Ollama, LM Studio, nix, systemd, etc.) when the service's behavior or configuration is unclear.\n\n");
 
+    prompt.push_str("### Skills\n");
+    prompt.push_str("- `list_builtin_skills` — list available healer skills (step-by-step procedures for common tasks)\n");
+    prompt.push_str("- `use_skill` — load a skill by slug to get detailed instructions for a specific remediation task\n");
+    prompt.push_str("- Use skills when you encounter a matching situation — they encode proven procedures from past sessions\n\n");
+
     // Guidelines
     prompt.push_str("## Guidelines\n\
         1. Start by reading logs for the failing service(s)\n\

@@ -909,6 +909,57 @@ healer_tool! {
     }
 }
 
+// ── Skill tools ───────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct UseSkillParams {
+    /// Skill slug (e.g. "ollama_model_swap", "service_crash_recovery")
+    skill: String,
+}
+
+healer_tool! {
+    name: "use_skill",
+    struct_name: UseSkillTool,
+    description: "Load a built-in healer skill by slug. Returns a detailed procedure with step-by-step instructions, tool usage patterns, and common pitfalls. Use `list_builtin_skills` to see available skills.",
+    params: UseSkillParams,
+    handler: |_ctx, params| {
+        use crate::agent::skills;
+        match skills::get_builtin_skill(&params.skill) {
+            Some(skill) => Ok(ToolOutput::Text(skill.content)),
+            None => {
+                let available: Vec<_> = skills::list_builtin_skills()
+                    .iter()
+                    .map(|s| s.slug.clone())
+                    .collect();
+                Ok(ToolOutput::Text(format!(
+                    "Unknown skill '{}'. Available skills: {}",
+                    params.skill,
+                    available.join(", ")
+                )))
+            }
+        }
+    }
+}
+
+healer_tool! {
+    name: "list_builtin_skills",
+    struct_name: ListBuiltinSkillsTool,
+    description: "List all available built-in healer skills. Each skill provides a detailed procedure for a common remediation task.",
+    handler: |_ctx| {
+        use crate::agent::skills;
+        let mut out = String::from("Available skills:\n\n");
+        for skill in skills::list_builtin_skills() {
+            if skill.desc.is_empty() {
+                out.push_str(&format!("- **{}** (`{}`)\n", skill.name, skill.slug));
+            } else {
+                out.push_str(&format!("- **{}** (`{}`) — {}\n", skill.name, skill.slug, skill.desc));
+            }
+        }
+        out.push_str("\nUse `use_skill` with the slug to load a skill's full procedure.");
+        Ok(ToolOutput::Text(out))
+    }
+}
+
 /// Create all healer tools for a session.
 pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
@@ -932,6 +983,8 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         GetProbeHistoryTool::new(ctx.clone()),
         GetMetricsTool::new(ctx.clone()),
         ReadDocTool::new(ctx.clone()),
-        ListDocsTool::new(ctx),
+        ListDocsTool::new(ctx.clone()),
+        UseSkillTool::new(ctx.clone()),
+        ListBuiltinSkillsTool::new(ctx),
     ]
 }
