@@ -2,6 +2,7 @@ pub mod agent;
 pub mod connector;
 pub mod relay_client;
 pub mod session;
+pub mod settings_tools;
 pub mod tools;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -494,7 +495,8 @@ async fn run_agent_session(
         cluster_id: req.cluster_id,
         instance_id: req.instance_id.clone(),
     };
-    let healer_tools = tools::all_tools(tool_ctx);
+    let healer_tools = tools::all_tools(tool_ctx.clone());
+    let settings_tools = settings_tools::all_settings_tools(tool_ctx);
 
     // 6. Build system prompt
     let sample_summary = req
@@ -587,6 +589,9 @@ async fn run_agent_session(
         }
 
         for tool in healer_tools {
+            builder.add_tool(tool);
+        }
+        for tool in settings_tools {
             builder.add_tool(tool);
         }
 

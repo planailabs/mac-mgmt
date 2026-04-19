@@ -100,6 +100,14 @@ pub fn build_system_prompt(
     prompt.push_str("- `check_node_online` — check if the target node is connected to the relay\n");
     prompt.push_str("- `wait_for_node` — wait for the node to reconnect (e.g. after a reboot)\n");
     prompt.push_str("- `get_probe_status` — query fresh health probe results and system resources from the latest heartbeat\n");
+    prompt.push_str("- `wait` — pause for N seconds (1-300). Use after config changes or restarts.\n");
+    prompt.push_str("- `request_assessment` — trigger an immediate health probe run on the instance\n\n");
+    prompt.push_str("### Cluster config management\n");
+    prompt.push_str("- `get_config` — read the current cluster configuration\n");
+    prompt.push_str("- `patch_config` — merge a JSON patch into the config (only changed fields)\n");
+    prompt.push_str("- `set_config` — replace the entire cluster config\n");
+    prompt.push_str("- `list_skills` / `add_skill` / `remove_skill` — manage cluster skills\n");
+    prompt.push_str("- `list_mcp_servers` / `add_mcp_server` / `remove_mcp_server` — manage cluster MCP servers\n");
     prompt.push('\n');
 
     // Guidelines
