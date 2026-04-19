@@ -92,19 +92,21 @@ impl RelayClient {
 
     // ── Daemon connectivity ────────────────────────────────────────────
 
-    /// Check if the daemon is reachable through the relay.
+    /// Check if the daemon is connected to the relay.
+    /// Uses the lightweight /api/ping endpoint — no forwarding to the daemon,
+    /// just a registry lookup on the relay side.
     pub async fn is_daemon_online(&self, instance_prefix: &str) -> bool {
         let base = self.instance_url(instance_prefix);
-        let url = format!("{base}/api/logs?n=1");
+        let url = format!("{base}/api/ping");
         match self
             .http
             .get(&url)
             .bearer_auth(&self.proxy_token)
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(5))
             .send()
             .await
         {
-            Ok(resp) => resp.status().as_u16() < 502,
+            Ok(resp) => resp.status() == reqwest::StatusCode::OK,
             Err(_) => false,
         }
     }
@@ -386,7 +388,9 @@ impl RelayClient {
 }
 
 fn is_daemon_offline_status(status: reqwest::StatusCode) -> bool {
-    matches!(status.as_u16(), 502 | 503 | 504)
+    // 404 = daemon not in relay registry (disconnected)
+    // 502/503/504 = relay can't reach daemon's control channel
+    matches!(status.as_u16(), 404 | 502 | 503 | 504)
 }
 
 fn is_connection_error(e: &reqwest::Error) -> bool {

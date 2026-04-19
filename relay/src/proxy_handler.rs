@@ -81,6 +81,8 @@ pub fn router(state: ProxyState) -> Router {
         .route("/api/shell/{command_name}/exec", post(shell_exec))
         // Log tunnel API
         .route("/api/logs", get(log_proxy))
+        // Daemon presence check (no forwarding, just registry lookup)
+        .route("/api/ping", get(daemon_ping))
         // Catch-all: reverse proxy for HTTP and WS upgrades
         .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
@@ -993,6 +995,25 @@ struct LogQuery {
     n: Option<usize>,
     service: Option<String>,
     after: Option<usize>,
+}
+
+/// Lightweight daemon presence check. Returns 200 if the daemon is connected
+/// to the relay, 404 if not. No forwarding — just a registry lookup.
+async fn daemon_ping(
+    headers: HeaderMap,
+    State(state): State<ProxyState>,
+) -> axum::response::Response {
+    let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
+        return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
+    };
+    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+        return resp;
+    }
+    if state.registry.resolve_control_tx(&instance_id).is_some() {
+        (StatusCode::OK, "ok").into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
 }
 
 /// Proxy the daemon's /logs endpoint via MetricsRequest.
