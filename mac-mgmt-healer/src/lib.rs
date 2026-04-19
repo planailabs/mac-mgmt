@@ -489,6 +489,10 @@ async fn run_agent_session(
         cluster_instances: cluster_instance_prefixes,
         file_tunnels: file_tunnel_names.clone(),
         shell_commands: shell_command_names.clone(),
+        pool: pool.clone(),
+        session_id,
+        cluster_id: req.cluster_id,
+        instance_id: req.instance_id.clone(),
     };
     let healer_tools = tools::all_tools(tool_ctx);
 

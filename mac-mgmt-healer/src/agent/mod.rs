@@ -78,17 +78,25 @@ pub fn build_system_prompt(
     }
 
     // Available tunnels
-    prompt.push_str("## Available Tools\n");
+    prompt.push_str("## Available Tools\n\n");
+    prompt.push_str("### Instance interaction\n");
     if !file_tunnels.is_empty() {
         prompt.push_str(&format!("- File tunnels: {}\n", file_tunnels.join(", ")));
     }
     if !shell_commands.is_empty() {
         prompt.push_str(&format!("- Shell commands: {}\n", shell_commands.join(", ")));
     }
-    prompt.push_str("- Logs: available via fetch_logs (optionally filtered by service)\n");
+    prompt.push_str("- `fetch_logs` — fetch logs, optionally filtered by service\n");
     if !other_instances.is_empty() {
-        prompt.push_str("- Cross-instance: fetch_cluster_logs and run_cluster_command for other instances\n");
+        prompt.push_str("- `fetch_cluster_logs` / `run_cluster_command` — for other instances\n");
     }
+    prompt.push_str("\n### Session management\n");
+    prompt.push_str("- `pin` — pin key information to the session (three slots):\n");
+    prompt.push_str("  - `diagnosis` slot: pin once you identify the root cause (include affected services)\n");
+    prompt.push_str("  - `remediation` slot: pin your remediation plan before applying fixes\n");
+    prompt.push_str("  - `final_report` slot: pin at the end summarizing what was done and any remaining issues\n");
+    prompt.push_str("- `set_phase` — transition between phases: `diagnosing`, `remediating`, `verifying`, `success`, `needs_human_attention`\n");
+    prompt.push_str("- `staff_ping` — notify admins when you need human help or encounter something unexpected\n");
     prompt.push('\n');
 
     // Guidelines
@@ -96,17 +104,41 @@ pub fn build_system_prompt(
         1. Start by reading logs for the failing service(s)\n\
         2. Check current configuration files for obvious issues\n\
         3. Look for resource exhaustion (CPU, memory, disk, VRAM) in the system resources above\n\
-        4. Make minimal, targeted fixes — prefer config changes over restarts\n\
-        5. Explain every change you make and why\n\
-        6. If you cannot fix the issue, document what you found and suggest manual steps\n\
-        7. NEVER make changes without understanding the root cause first\n\
-        8. Call report_phase when you transition between diagnosis, remediation, and verification\n\n");
+        4. Once you identify the root cause, call `pin` with slot `diagnosis`\n\
+        5. Call `set_phase` when transitioning between stages of your work\n\
+        6. Before applying fixes, call `pin` with slot `remediation` describing your plan\n\
+        7. Make minimal, targeted fixes — prefer config changes over restarts\n\
+        8. Explain every change you make and why\n\
+        9. After applying a fix, call `set_phase` with `verifying` and check if it worked\n\
+        10. If the fix worked, call `pin` with slot `final_report` summarizing what was done, \
+            then call `set_phase` with `success`\n\
+        11. If you **cannot** fix the issue automatically, call `staff_ping` to notify admins, \
+            call `pin` with slot `final_report` documenting your findings, \
+            then call `set_phase` with `needs_human_attention`\n\
+        12. NEVER make changes without understanding the root cause first\n\n");
+
+    // Staff pings guidance
+    prompt.push_str("## When to use staff_ping\n\
+        Use `staff_ping` to create actionable notifications for admin staff:\n\
+        - **hardware**: GPU failures, bad RAM, disk errors\n\
+        - **network**: DNS issues, firewall blocks, connectivity problems\n\
+        - **disk_space**: filesystem full, needs cleanup\n\
+        - **config_error**: configuration you can't fix (e.g. needs credential rotation)\n\
+        - **service_crash**: repeated crash loops you can't resolve\n\
+        - **model_issue**: model corruption, incompatible model format\n\
+        - **permission**: file permission issues, access denied\n\
+        - **dependency**: missing system packages, library version conflicts\n\
+        - **security**: suspicious activity, certificate expiry\n\
+        - **performance**: severe degradation that needs investigation\n\
+        - **other**: anything that doesn't fit the above\n\n\
+        Also use `staff_ping` when you encounter unexpected errors during tool calls \
+        that might indicate a deeper infrastructure issue.\n\n");
 
     // Remediation procedures
     let error_classes: Vec<String> = services_extended
         .iter()
         .filter(|s| !s.healthy)
-        .filter_map(|_| Some("error".to_string())) // TODO: integrate error_class from probes
+        .filter_map(|_| Some("error".to_string()))
         .collect();
     if !error_classes.is_empty() {
         prompt.push_str("## Remediation Procedures\n");

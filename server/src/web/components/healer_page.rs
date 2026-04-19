@@ -27,7 +27,6 @@ pub struct SessionSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealerStreamEvent {
-    /// "session_created", "message", "state", "done", "error"
     pub kind: String,
     #[serde(default)]
     pub session_id: Option<String>,
@@ -37,6 +36,17 @@ pub struct HealerStreamEvent {
     pub content: Option<String>,
     #[serde(default)]
     pub state: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaffPingSummary {
+    pub id: String,
+    pub category: String,
+    pub message: String,
+    pub resolved: bool,
+    pub created_at: String,
 }
 
 // ── Server functions ───────────────────────────────────────────────────
@@ -69,7 +79,6 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
-    // Load existing sessions for this instance
     #[derive(sqlx::FromRow)]
     struct SessRow {
         id: uuid::Uuid,
@@ -78,7 +87,7 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         created_at: chrono::DateTime<chrono::Utc>,
         error_message: Option<String>,
     }
-    let rows = sqlx::query_as::<_, SessRow>(
+    let sessions = sqlx::query_as::<_, SessRow>(
         "SELECT id, state, created_by, created_at, error_message \
          FROM healer_sessions \
          WHERE cluster_id = $1 AND instance_id = $2 \
@@ -88,18 +97,16 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     .bind(&instance_id)
     .fetch_all(&pool)
     .await
-    .unwrap_or_default();
-
-    let sessions = rows
-        .into_iter()
-        .map(|r| SessionSummary {
-            id: r.id.to_string(),
-            state: r.state,
-            created_by: r.created_by,
-            created_at: r.created_at.format("%Y-%m-%d %H:%M").to_string(),
-            error_message: r.error_message,
-        })
-        .collect();
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| SessionSummary {
+        id: r.id.to_string(),
+        state: r.state,
+        created_by: r.created_by,
+        created_at: r.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        error_message: r.error_message,
+    })
+    .collect();
 
     Ok(HealerContext {
         instance_id,
@@ -110,13 +117,11 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     })
 }
 
-/// Load an existing session's messages and stream live events if still running.
 #[server(output = JsonStream<HealerStreamEvent>)]
 pub async fn view_healer_session(
     session_id: String,
 ) -> Result<JsonStream<HealerStreamEvent>, ServerFnError> {
     let _user = current_user().await?;
-    let pool = crate::server_pool()?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
 
@@ -124,7 +129,6 @@ pub async fn view_healer_session(
         .parse()
         .map_err(|_| ServerFnError::new("invalid session id"))?;
 
-    // Load session to get its state
     let (session, existing_messages) = healer
         .get_session(uuid)
         .await
@@ -135,7 +139,6 @@ pub async fn view_healer_session(
     let current_state = session.state.as_str().to_string();
 
     Ok(JsonStream::spawn(move |tx| async move {
-        // Replay existing messages
         for msg in existing_messages {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "message".to_string(),
@@ -143,53 +146,62 @@ pub async fn view_healer_session(
                 role: Some(msg.role),
                 content: Some(msg.content),
                 state: None,
+                metadata: msg.metadata,
             });
         }
 
-        // Send current state
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "state".to_string(),
             session_id: None,
             role: None,
             content: None,
             state: Some(current_state.clone()),
+            metadata: None,
         });
 
-        // If session is still running, stream live events
         if is_active {
             if let Some(mut rx) = healer.subscribe(uuid) {
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
                             use mac_mgmt_healer::HealerEvent;
-                            let stream_event = match &event {
-                                HealerEvent::Message { role, content, .. } => HealerStreamEvent {
-                                    kind: "message".to_string(),
-                                    session_id: None,
-                                    role: Some(role.clone()),
-                                    content: Some(content.clone()),
-                                    state: None,
-                                },
-                                HealerEvent::State { state, .. } => HealerStreamEvent {
-                                    kind: "state".to_string(),
-                                    session_id: None,
-                                    role: None,
-                                    content: None,
-                                    state: Some(state.clone()),
-                                },
-                                HealerEvent::Done { state } => HealerStreamEvent {
-                                    kind: "done".to_string(),
-                                    session_id: None,
-                                    role: None,
-                                    content: None,
-                                    state: Some(state.clone()),
-                                },
+                            let (stream_event, is_done) = match &event {
+                                HealerEvent::Message { role, content, metadata, .. } => (
+                                    HealerStreamEvent {
+                                        kind: "message".to_string(),
+                                        session_id: None,
+                                        role: Some(role.clone()),
+                                        content: Some(content.clone()),
+                                        state: None,
+                                        metadata: metadata.clone(),
+                                    },
+                                    false,
+                                ),
+                                HealerEvent::State { state, .. } => (
+                                    HealerStreamEvent {
+                                        kind: "state".to_string(),
+                                        session_id: None,
+                                        role: None,
+                                        content: None,
+                                        state: Some(state.clone()),
+                                        metadata: None,
+                                    },
+                                    false,
+                                ),
+                                HealerEvent::Done { state } => (
+                                    HealerStreamEvent {
+                                        kind: "done".to_string(),
+                                        session_id: None,
+                                        role: None,
+                                        content: None,
+                                        state: Some(state.clone()),
+                                        metadata: None,
+                                    },
+                                    true,
+                                ),
                             };
-                            let is_done = matches!(&event, HealerEvent::Done { .. });
                             let _ = tx.unbounded_send(stream_event);
-                            if is_done {
-                                break;
-                            }
+                            if is_done { break; }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -198,18 +210,17 @@ pub async fn view_healer_session(
             }
         }
 
-        // Send done if not already sent
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "done".to_string(),
             session_id: None,
             role: None,
             content: None,
             state: Some(current_state),
+            metadata: None,
         });
     }))
 }
 
-/// Start a healer session and stream events back as they arrive.
 #[server(output = JsonStream<HealerStreamEvent>)]
 pub async fn start_healer_stream(
     instance_id: String,
@@ -260,10 +271,7 @@ pub async fn start_healer_stream(
             .unwrap_or_else(|| hb.cluster_id.to_string());
 
     #[derive(sqlx::FromRow)]
-    struct InstanceRow {
-        instance_id: String,
-        hostname: Option<String>,
-    }
+    struct InstanceRow { instance_id: String, hostname: Option<String> }
     let cluster_instances: Vec<InstanceInfo> = sqlx::query_as::<_, InstanceRow>(
         "SELECT instance_id, hostname FROM daemon_heartbeats \
          WHERE cluster_id = $1 AND instance_id != $2 \
@@ -311,18 +319,14 @@ pub async fn start_healer_stream(
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "session_created".to_string(),
             session_id: Some(session_id.to_string()),
-            role: None,
-            content: None,
-            state: None,
+            role: None, content: None, state: None, metadata: None,
         });
 
         let Some(mut rx) = healer.subscribe(session_id) else {
             let _ = tx.unbounded_send(HealerStreamEvent {
-                kind: "error".to_string(),
-                session_id: None,
-                role: None,
-                content: Some("failed to subscribe to session events".to_string()),
-                state: None,
+                kind: "error".to_string(), session_id: None, role: None,
+                content: Some("failed to subscribe".to_string()),
+                state: None, metadata: None,
             });
             return;
         };
@@ -330,34 +334,28 @@ pub async fn start_healer_stream(
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let stream_event = match &event {
-                        HealerEvent::Message { role, content, .. } => HealerStreamEvent {
-                            kind: "message".to_string(),
-                            session_id: None,
-                            role: Some(role.clone()),
-                            content: Some(content.clone()),
-                            state: None,
-                        },
-                        HealerEvent::State { state, .. } => HealerStreamEvent {
-                            kind: "state".to_string(),
-                            session_id: None,
-                            role: None,
-                            content: None,
-                            state: Some(state.clone()),
-                        },
-                        HealerEvent::Done { state } => HealerStreamEvent {
-                            kind: "done".to_string(),
-                            session_id: None,
-                            role: None,
-                            content: None,
-                            state: Some(state.clone()),
-                        },
+                    let (evt, is_done) = match &event {
+                        HealerEvent::Message { role, content, metadata, .. } => (
+                            HealerStreamEvent {
+                                kind: "message".to_string(), session_id: None,
+                                role: Some(role.clone()), content: Some(content.clone()),
+                                state: None, metadata: metadata.clone(),
+                            }, false),
+                        HealerEvent::State { state, .. } => (
+                            HealerStreamEvent {
+                                kind: "state".to_string(), session_id: None,
+                                role: None, content: None,
+                                state: Some(state.clone()), metadata: None,
+                            }, false),
+                        HealerEvent::Done { state } => (
+                            HealerStreamEvent {
+                                kind: "done".to_string(), session_id: None,
+                                role: None, content: None,
+                                state: Some(state.clone()), metadata: None,
+                            }, true),
                     };
-                    let is_done = matches!(&event, HealerEvent::Done { .. });
-                    let _ = tx.unbounded_send(stream_event);
-                    if is_done {
-                        break;
-                    }
+                    let _ = tx.unbounded_send(evt);
+                    if is_done { break; }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -371,13 +369,8 @@ pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnErr
     let _user = current_user().await?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
-    let uuid: uuid::Uuid = session_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid session id"))?;
-    healer
-        .cancel_session(uuid)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
+    let uuid: uuid::Uuid = session_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
+    healer.cancel_session(uuid).await.map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 #[server]
@@ -385,13 +378,38 @@ pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnErr
     let _user = current_user().await?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
-    let uuid: uuid::Uuid = session_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid session id"))?;
-    healer
-        .resume_session(uuid)
+    let uuid: uuid::Uuid = session_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
+    healer.resume_session(uuid).await.map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
+pub async fn resolve_staff_ping(ping_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = ping_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
+    mac_mgmt_healer::session::store::resolve_staff_ping(&pool, uuid, &user.email)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
+pub async fn get_staff_pings(session_id: String) -> Result<Vec<StaffPingSummary>, ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = session_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
+    let pings = mac_mgmt_healer::session::store::list_session_pings(&pool, uuid)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(pings
+        .into_iter()
+        .map(|p| StaffPingSummary {
+            id: p.id.to_string(),
+            category: p.category,
+            message: p.message,
+            resolved: p.resolved,
+            created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        })
+        .collect())
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -406,12 +424,8 @@ pub fn FleetHealer(instance_id: String) -> Element {
 
     match &*ctx.read() {
         Some(Ok(c)) => render_healer(c),
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
-        },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
+        None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
     }
 }
 
@@ -446,7 +460,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
             }
         }
 
-        // ── New session controls ───────────────────────────────────────
+        // New session controls
         if !*running.read() && session_id.read().is_none() {
             div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
                 h3 { class: "text-lg font-semibold mb-3", "New Session" }
@@ -484,18 +498,15 @@ fn render_healer(ctx: &HealerContext) -> Element {
             }
         }
 
-        // ── Active session view ────────────────────────────────────────
+        // Active session view
         if session_id.read().is_some() || *running.read() {
             div { class: "mb-6",
-                // Controls bar
-                div { class: "mb-3 flex items-center gap-3",
+                div { class: "mb-3 flex items-center gap-3 flex-wrap",
                     {
                         let st = state.read().clone();
                         let (badge_class, label) = state_badge(&st);
                         rsx! {
-                            span { class: "inline-block px-2 py-1 text-xs font-medium rounded {badge_class}",
-                                "{label}"
-                            }
+                            span { class: "inline-block px-2 py-1 text-xs font-medium rounded {badge_class}", "{label}" }
                         }
                     }
 
@@ -505,9 +516,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             onclick: move |_| {
                                 let sid = session_id.read().clone();
                                 async move {
-                                    if let Some(sid) = sid {
-                                        let _ = cancel_healer_session(sid).await;
-                                    }
+                                    if let Some(sid) = sid { let _ = cancel_healer_session(sid).await; }
                                 }
                             },
                             "Cancel"
@@ -523,9 +532,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     onclick: move |_| {
                                         let sid = session_id.read().clone();
                                         async move {
-                                            if let Some(sid) = sid {
-                                                let _ = resume_healer_session(sid).await;
-                                            }
+                                            if let Some(sid) = sid { let _ = resume_healer_session(sid).await; }
                                         }
                                     },
                                     "Resume"
@@ -536,10 +543,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                         }
                     }
 
-                    // Back to session list
                     if !*running.read() {
                         button {
-                            class: "px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600",
+                            class: "px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300",
                             onclick: move |_| {
                                 session_id.set(None);
                                 messages.set(Vec::new());
@@ -550,21 +556,27 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     }
                 }
 
+                // Staff pings for this session
+                if let Some(sid) = &*session_id.read() {
+                    {
+                        let sid = sid.clone();
+                        rsx! { StaffPingsPanel { session_id: sid } }
+                    }
+                }
+
                 // Chat messages
                 div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
                     for msg in messages.read().iter() {
                         {render_message(msg)}
                     }
                     if *running.read() {
-                        div { class: "p-3 text-sm text-gray-400 dark:text-gray-500 animate-pulse",
-                            "Agent is working..."
-                        }
+                        div { class: "p-3 text-sm text-gray-400 animate-pulse", "Agent is working..." }
                     }
                 }
             }
         }
 
-        // ── Previous sessions list ─────────────────────────────────────
+        // Previous sessions list
         if session_id.read().is_none() && !*running.read() && !sessions.is_empty() {
             div { class: "mt-6",
                 h3 { class: "text-lg font-semibold mb-3", "Previous Sessions" }
@@ -599,21 +611,13 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                         }
                                     },
                                     div { class: "flex items-center gap-3",
-                                        span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}",
-                                            "{badge_label}"
-                                        }
-                                        span { class: "text-sm text-gray-700 dark:text-gray-300",
-                                            "{created_at}"
-                                        }
-                                        span { class: "text-xs text-gray-500 dark:text-gray-400",
-                                            "{created_by}"
-                                        }
+                                        span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}", "{badge_label}" }
+                                        span { class: "text-sm text-gray-700 dark:text-gray-300", "{created_at}" }
+                                        span { class: "text-xs text-gray-500 dark:text-gray-400", "{created_by}" }
                                     }
                                     div { class: "flex items-center gap-2",
                                         if let Some(err) = &error_msg {
-                                            span { class: "text-xs text-red-500 dark:text-red-400 max-w-xs truncate",
-                                                "{err}"
-                                            }
+                                            span { class: "text-xs text-red-500 max-w-xs truncate", "{err}" }
                                         }
                                         span { class: "text-xs text-gray-400", "View" }
                                     }
@@ -627,7 +631,60 @@ fn render_healer(ctx: &HealerContext) -> Element {
     }
 }
 
-// ── Stream consumer (shared between start and view) ────────────────────
+// ── Staff pings panel ──────────────────────────────────────────────────
+
+#[component]
+fn StaffPingsPanel(session_id: String) -> Element {
+    let sid = session_id.clone();
+    let pings_res = use_server_future(move || {
+        let sid = sid.clone();
+        async move { get_staff_pings(sid).await }
+    })?;
+
+    let pings = match &*pings_res.read() {
+        Some(Ok(p)) if !p.is_empty() => p.clone(),
+        _ => return rsx! {},
+    };
+
+    rsx! {
+        div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded",
+            h4 { class: "text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2", "Staff Pings" }
+            div { class: "space-y-2",
+                for ping in pings.iter() {
+                    {
+                        let ping_id = ping.id.clone();
+                        let cat_badge = category_badge(&ping.category);
+                        rsx! {
+                            div { class: "flex items-start justify-between gap-2 text-sm",
+                                div { class: "flex-1",
+                                    span { class: "inline-block px-1.5 py-0.5 text-xs font-medium rounded mr-2 {cat_badge}", "{ping.category}" }
+                                    if ping.resolved {
+                                        span { class: "text-green-600 dark:text-green-400 line-through", "{ping.message}" }
+                                    } else {
+                                        span { class: "text-gray-800 dark:text-gray-200", "{ping.message}" }
+                                    }
+                                    span { class: "text-xs text-gray-400 ml-2", "{ping.created_at}" }
+                                }
+                                if !ping.resolved {
+                                    button {
+                                        class: "px-2 py-0.5 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded hover:bg-green-200",
+                                        onclick: move |_| {
+                                            let ping_id = ping_id.clone();
+                                            async move { let _ = resolve_staff_ping(ping_id).await; }
+                                        },
+                                        "Resolve"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Stream consumer ────────────────────────────────────────────────────
 
 async fn consume_stream(
     result: Result<JsonStream<HealerStreamEvent>, ServerFnError>,
@@ -639,31 +696,21 @@ async fn consume_stream(
         Ok(mut stream) => {
             while let Some(Ok(evt)) = stream.next().await {
                 match evt.kind.as_str() {
-                    "session_created" => {
-                        session_id.set(evt.session_id);
-                    }
+                    "session_created" => { session_id.set(evt.session_id); }
                     "message" => {
                         if let (Some(role), Some(content)) = (evt.role, evt.content) {
                             if !content.is_empty() {
-                                messages.push(ChatMsg { role, content });
+                                messages.push(ChatMsg { role, content, metadata: evt.metadata });
                             }
                         }
                     }
-                    "state" => {
-                        if let Some(s) = evt.state {
-                            state.set(s);
-                        }
-                    }
-                    "done" => {
-                        if let Some(s) = evt.state {
-                            state.set(s);
-                        }
-                        break;
-                    }
+                    "state" => { if let Some(s) = evt.state { state.set(s); } }
+                    "done" => { if let Some(s) = evt.state { state.set(s); } break; }
                     "error" => {
                         messages.push(ChatMsg {
                             role: "system".to_string(),
                             content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
+                            metadata: None,
                         });
                         state.set("failed".to_string());
                         break;
@@ -676,6 +723,7 @@ async fn consume_stream(
             messages.push(ChatMsg {
                 role: "system".to_string(),
                 content: format!("Error: {e}"),
+                metadata: None,
             });
             state.set("failed".to_string());
         }
@@ -688,42 +736,196 @@ async fn consume_stream(
 struct ChatMsg {
     role: String,
     content: String,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
 }
 
 fn state_badge(st: &str) -> (&'static str, &'static str) {
     match st {
-        "starting" | "loading" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Starting..."),
-        "created" | "initializing" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Initializing"),
-        "diagnosing" => ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Diagnosing"),
-        "remediating" => ("bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300", "Remediating"),
-        "verifying" => ("bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300", "Verifying"),
-        "completed" => ("bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300", "Completed"),
-        "failed" => ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Failed"),
-        "cancelled" => ("bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300", "Cancelled"),
-        "paused" => ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Paused (token budget)"),
-        "awaiting_retry" => ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Awaiting retry"),
-        _ => ("bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300", "Unknown"),
+        "starting" | "loading" | "created" | "initializing" =>
+            ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Initializing"),
+        "diagnosing" =>
+            ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Diagnosing"),
+        "remediating" =>
+            ("bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300", "Remediating"),
+        "verifying" =>
+            ("bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300", "Verifying"),
+        "completed" | "success" =>
+            ("bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300", "Success"),
+        "failed" =>
+            ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Failed"),
+        "cancelled" =>
+            ("bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300", "Cancelled"),
+        "paused" =>
+            ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Paused"),
+        "awaiting_retry" =>
+            ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Awaiting retry"),
+        "needs_human_attention" =>
+            ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Needs Human Attention"),
+        _ =>
+            ("bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300", "Unknown"),
     }
 }
 
+fn category_badge(cat: &str) -> &'static str {
+    match cat {
+        "hardware" => "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+        "network" => "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+        "disk_space" => "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
+        "config_error" => "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+        "service_crash" => "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+        "model_issue" => "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
+        "permission" => "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-300",
+        "dependency" => "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300",
+        "security" => "bg-red-200 text-red-900 dark:bg-red-800 dark:text-red-200",
+        "performance" => "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
+        _ => "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
+    }
+}
+
+/// Render a chat message. Tool calls/results get special UI.
+/// Assistant/system messages are rendered as markdown via dangerous_inner_html.
 fn render_message(msg: &ChatMsg) -> Element {
-    let (bg, label) = match msg.role.as_str() {
-        "system" => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400", "System"),
-        "assistant" => ("bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400", "Agent"),
-        "user" => ("bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400", "User"),
-        "tool_result" => ("bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400", "Tool"),
-        "summary" => ("bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400", "Summary"),
-        _ => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300", "Other"),
+    // Tool call/result messages: parse and show with collapsible UI
+    if msg.role == "tool_result" {
+        return render_tool_result(msg);
+    }
+
+    let (bg, icon, label) = match msg.role.as_str() {
+        "system" => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400", "⚙", "System"),
+        "assistant" => ("bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400", "🤖", "Agent"),
+        "user" => ("bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400", "👤", "User"),
+        "summary" => ("bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400", "📋", "Summary"),
+        _ => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300", "•", "Other"),
     };
+
+    // Simple markdown rendering: convert **bold**, `code`, and newlines
+    let html = simple_md_to_html(&msg.content);
 
     rsx! {
         div { class: "p-3 rounded {bg}",
-            span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider",
-                "{label}"
+            div { class: "flex items-center gap-1.5 mb-1",
+                span { class: "text-sm", "{icon}" }
+                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "{label}" }
             }
-            pre { class: "mt-1 text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto",
-                "{msg.content}"
+            div {
+                class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
+                dangerous_inner_html: "{html}",
             }
         }
     }
+}
+
+fn render_tool_result(msg: &ChatMsg) -> Element {
+    let (tool_name, result) = msg.content.split_once(": ").unwrap_or(("tool", &msg.content));
+    let is_error = result.starts_with("Error:");
+    let truncated = result.len() > 500;
+    let preview = if truncated { &result[..500] } else { result };
+    let tool_badge = if is_error {
+        "text-xs px-1.5 py-0.5 rounded font-mono bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+    } else {
+        "text-xs px-1.5 py-0.5 rounded font-mono bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+    };
+    let display = if truncated {
+        format!("{preview}\n... (output truncated)")
+    } else {
+        preview.to_string()
+    };
+
+    rsx! {
+        div { class: "p-2 rounded bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700",
+            details { class: "group",
+                summary { class: "flex items-center gap-2 cursor-pointer select-none",
+                    span { class: "{tool_badge}", "{tool_name}" }
+                    if is_error {
+                        span { class: "text-xs text-red-500", "error" }
+                    }
+                }
+                pre { class: "mt-2 p-2 text-xs font-mono bg-gray-900 text-green-400 rounded overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap",
+                    "{display}"
+                }
+            }
+        }
+    }
+}
+
+/// Minimal markdown to HTML: handles **bold**, *italic*, `code`, ```blocks```, and newlines.
+fn simple_md_to_html(md: &str) -> String {
+    let mut html = String::with_capacity(md.len() * 2);
+    let mut in_code_block = false;
+
+    for line in md.lines() {
+        if line.starts_with("```") {
+            if in_code_block {
+                html.push_str("</code></pre>");
+                in_code_block = false;
+            } else {
+                html.push_str("<pre class=\"bg-gray-900 text-green-400 p-2 rounded text-xs overflow-x-auto my-2\"><code>");
+                in_code_block = true;
+            }
+            continue;
+        }
+
+        if in_code_block {
+            html.push_str(&html_escape(line));
+            html.push('\n');
+            continue;
+        }
+
+        let line = html_escape(line);
+        // Headers
+        if line.starts_with("### ") {
+            html.push_str(&format!("<h4 class=\"font-semibold mt-2\">{}</h4>", &line[4..]));
+        } else if line.starts_with("## ") {
+            html.push_str(&format!("<h3 class=\"font-semibold text-lg mt-2\">{}</h3>", &line[3..]));
+        } else if line.starts_with("# ") {
+            html.push_str(&format!("<h2 class=\"font-bold text-xl mt-2\">{}</h2>", &line[2..]));
+        } else if line.starts_with("- ") || line.starts_with("* ") {
+            html.push_str(&format!("<li class=\"ml-4\">{}</li>", inline_md(&line[2..])));
+        } else if line.trim().is_empty() {
+            html.push_str("<br>");
+        } else {
+            html.push_str(&format!("<p>{}</p>", inline_md(&line)));
+        }
+    }
+
+    if in_code_block {
+        html.push_str("</code></pre>");
+    }
+
+    html
+}
+
+fn inline_md(s: &str) -> String {
+    let mut out = s.to_string();
+    // **bold**
+    while let Some(start) = out.find("**") {
+        if let Some(end) = out[start + 2..].find("**") {
+            let before = &out[..start];
+            let bold = &out[start + 2..start + 2 + end];
+            let after = &out[start + 2 + end + 2..];
+            out = format!("{before}<strong>{bold}</strong>{after}");
+        } else {
+            break;
+        }
+    }
+    // `code`
+    while let Some(start) = out.find('`') {
+        if let Some(end) = out[start + 1..].find('`') {
+            let before = &out[..start];
+            let code = &out[start + 1..start + 1 + end];
+            let after = &out[start + 1 + end + 1..];
+            out = format!("{before}<code class=\"px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs\">{code}</code>{after}");
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }

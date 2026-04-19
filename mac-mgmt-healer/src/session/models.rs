@@ -12,10 +12,12 @@ pub enum SessionState {
     Remediating,
     Verifying,
     Completed,
+    Success,
     Failed,
     Cancelled,
     AwaitingRetry,
     Paused,
+    NeedsHumanAttention,
 }
 
 impl SessionState {
@@ -27,10 +29,12 @@ impl SessionState {
             Self::Remediating => "remediating",
             Self::Verifying => "verifying",
             Self::Completed => "completed",
+            Self::Success => "success",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::AwaitingRetry => "awaiting_retry",
             Self::Paused => "paused",
+            Self::NeedsHumanAttention => "needs_human_attention",
         }
     }
 
@@ -42,17 +46,22 @@ impl SessionState {
             "remediating" => Some(Self::Remediating),
             "verifying" => Some(Self::Verifying),
             "completed" => Some(Self::Completed),
+            "success" => Some(Self::Success),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
             "awaiting_retry" => Some(Self::AwaitingRetry),
             "paused" => Some(Self::Paused),
+            "needs_human_attention" => Some(Self::NeedsHumanAttention),
             _ => None,
         }
     }
 
     /// Whether this is a terminal state (no further transitions possible).
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Completed | Self::Success | Self::Failed | Self::Cancelled | Self::NeedsHumanAttention
+        )
     }
 
     /// Whether this session is actively running (has a spawned agent task).
@@ -61,6 +70,18 @@ impl SessionState {
             self,
             Self::Initializing | Self::Diagnosing | Self::Remediating | Self::Verifying
         )
+    }
+
+    /// States the AI agent is allowed to transition to.
+    pub fn agent_allowed(name: &str) -> Option<Self> {
+        match name {
+            "diagnosing" => Some(Self::Diagnosing),
+            "remediating" => Some(Self::Remediating),
+            "verifying" => Some(Self::Verifying),
+            "success" => Some(Self::Success),
+            "needs_human_attention" => Some(Self::NeedsHumanAttention),
+            _ => None,
+        }
     }
 }
 
@@ -108,3 +129,33 @@ pub enum HealerEvent {
         state: String,
     },
 }
+
+/// A staff ping: actionable notification from the healer to admins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaffPing {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub cluster_id: Uuid,
+    pub instance_id: String,
+    pub category: String,
+    pub message: String,
+    pub resolved: bool,
+    pub resolved_by: Option<String>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Staff ping categories.
+pub const PING_CATEGORIES: &[&str] = &[
+    "hardware",
+    "network",
+    "disk_space",
+    "config_error",
+    "service_crash",
+    "model_issue",
+    "permission",
+    "dependency",
+    "security",
+    "performance",
+    "other",
+];

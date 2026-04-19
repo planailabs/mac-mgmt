@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::models::{HealerMessage, HealerSession, SessionState};
+use super::models::{HealerMessage, HealerSession, SessionState, StaffPing};
 
 /// Create a new healer session in the `created` state.
 pub async fn create_session(
@@ -144,7 +144,7 @@ pub async fn find_resumable(pool: &PgPool) -> Result<Vec<HealerSession>> {
         "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
                 created_at, updated_at, completed_at, error_message, initial_issues \
          FROM healer_sessions \
-         WHERE state NOT IN ('completed', 'failed', 'cancelled', 'paused') \
+         WHERE state NOT IN ('completed', 'success', 'failed', 'cancelled', 'paused', 'needs_human_attention') \
          ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -205,6 +205,107 @@ impl From<MessageRow> for HealerMessage {
             role: r.role,
             content: r.content,
             metadata: r.metadata,
+            created_at: r.created_at,
+        }
+    }
+}
+
+// ── Staff pings ────────────────────────────────────────────────────────
+
+/// Create a staff ping.
+pub async fn create_staff_ping(
+    pool: &PgPool,
+    session_id: Uuid,
+    cluster_id: Uuid,
+    instance_id: &str,
+    category: &str,
+    message: &str,
+) -> Result<Uuid> {
+    let id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO healer_staff_pings (session_id, cluster_id, instance_id, category, message) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(session_id)
+    .bind(cluster_id)
+    .bind(instance_id)
+    .bind(category)
+    .bind(message)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+/// List staff pings for a cluster (unresolved first).
+pub async fn list_staff_pings(pool: &PgPool, cluster_id: Uuid) -> Result<Vec<StaffPing>> {
+    let rows = sqlx::query_as::<_, StaffPingRow>(
+        "SELECT id, session_id, cluster_id, instance_id, category, message, \
+                resolved, resolved_by, resolved_at, created_at \
+         FROM healer_staff_pings WHERE cluster_id = $1 \
+         ORDER BY resolved ASC, created_at DESC LIMIT 100",
+    )
+    .bind(cluster_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// List staff pings for a session.
+pub async fn list_session_pings(pool: &PgPool, session_id: Uuid) -> Result<Vec<StaffPing>> {
+    let rows = sqlx::query_as::<_, StaffPingRow>(
+        "SELECT id, session_id, cluster_id, instance_id, category, message, \
+                resolved, resolved_by, resolved_at, created_at \
+         FROM healer_staff_pings WHERE session_id = $1 \
+         ORDER BY created_at ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// Resolve a staff ping.
+pub async fn resolve_staff_ping(
+    pool: &PgPool,
+    ping_id: Uuid,
+    resolved_by: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE healer_staff_pings SET resolved = true, resolved_by = $1, resolved_at = now() \
+         WHERE id = $2",
+    )
+    .bind(resolved_by)
+    .bind(ping_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct StaffPingRow {
+    id: Uuid,
+    session_id: Uuid,
+    cluster_id: Uuid,
+    instance_id: String,
+    category: String,
+    message: String,
+    resolved: bool,
+    resolved_by: Option<String>,
+    resolved_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+impl From<StaffPingRow> for StaffPing {
+    fn from(r: StaffPingRow) -> Self {
+        Self {
+            id: r.id,
+            session_id: r.session_id,
+            cluster_id: r.cluster_id,
+            instance_id: r.instance_id,
+            category: r.category,
+            message: r.message,
+            resolved: r.resolved,
+            resolved_by: r.resolved_by,
+            resolved_at: r.resolved_at,
             created_at: r.created_at,
         }
     }

@@ -20,6 +20,10 @@ pub struct ToolContext {
     pub cluster_instances: Vec<String>,
     pub file_tunnels: Vec<String>,
     pub shell_commands: Vec<String>,
+    pub pool: sqlx::PgPool,
+    pub session_id: uuid::Uuid,
+    pub cluster_id: uuid::Uuid,
+    pub instance_id: String,
 }
 
 macro_rules! healer_tool {
@@ -346,6 +350,119 @@ healer_tool! {
     }
 }
 
+// ── Session management tools ───────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct PinParams {
+    /// Which slot to pin: "diagnosis" or "final_report"
+    slot: String,
+    /// The content to pin
+    summary: String,
+    /// List of affected services (for diagnosis slot)
+    #[serde(default)]
+    affected_services: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct StaffPingParams {
+    /// Category: hardware, network, disk_space, config_error, service_crash,
+    /// model_issue, permission, dependency, security, performance, other
+    category: String,
+    /// Clear description of what needs human attention and why
+    message: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct SetPhaseParams {
+    /// Phase to transition to: diagnosing, remediating, verifying, success, needs_human_attention
+    phase: String,
+    /// Brief explanation of why you are transitioning to this phase
+    reason: String,
+}
+
+healer_tool! {
+    name: "pin",
+    struct_name: PinTool,
+    description: "Pin important information to the session. Three slots available:\n- \"diagnosis\": Pin once you identify the root cause. Include affected_services.\n- \"remediation\": Pin your remediation plan before applying fixes.\n- \"final_report\": Pin at the end summarizing what was done, what worked, and any remaining issues.\nAll are displayed to staff and persisted across restarts.",
+    params: PinParams,
+    handler: |ctx, params| {
+        let slot = match params.slot.as_str() {
+            "diagnosis" | "remediation" | "final_report" => params.slot.as_str(),
+            _ => return Ok(ToolOutput::Text("Invalid slot. Use 'diagnosis' or 'final_report'.".to_string())),
+        };
+        // Read current state_data, merge in the pin
+        let key = format!("pin_{slot}");
+        let pin_data = serde_json::json!({
+            "summary": params.summary,
+            "affected_services": params.affected_services,
+        });
+        // Store as a state_data update
+        let data = serde_json::json!({ key: pin_data });
+        crate::session::store::append_message(
+            &ctx.pool,
+            ctx.session_id,
+            "pin",
+            &serde_json::to_string(&serde_json::json!({
+                "slot": slot,
+                "summary": params.summary,
+                "affected_services": params.affected_services,
+            })).unwrap_or_default(),
+            Some(&data),
+        ).await.ok();
+        Ok(ToolOutput::Text(format!("Pinned to '{slot}': {}", params.summary)))
+    }
+}
+
+healer_tool! {
+    name: "staff_ping",
+    struct_name: StaffPingTool,
+    description: "Send a notification to the admin staff. Use this when you encounter an issue that requires human intervention, when you find something unexpected that admins should know about, or when you cannot resolve an issue automatically. Categories: hardware, network, disk_space, config_error, service_crash, model_issue, permission, dependency, security, performance, other.",
+    params: StaffPingParams,
+    handler: |ctx, params| {
+        let category = if crate::session::models::PING_CATEGORIES.contains(&params.category.as_str()) {
+            params.category.clone()
+        } else {
+            "other".to_string()
+        };
+        match crate::session::store::create_staff_ping(
+            &ctx.pool,
+            ctx.session_id,
+            ctx.cluster_id,
+            &ctx.instance_id,
+            &category,
+            &params.message,
+        ).await {
+            Ok(id) => Ok(ToolOutput::Text(format!("Staff ping created (id: {id}, category: {category})"))),
+            Err(e) => Ok(ToolOutput::Text(format!("Error creating staff ping: {e}"))),
+        }
+    }
+}
+
+healer_tool! {
+    name: "set_phase",
+    struct_name: SetPhaseTool,
+    description: "Transition the session to a new phase. Call this when you move between stages of your work. Valid phases: diagnosing (investigating), remediating (applying fixes), verifying (checking if fix worked), success (issue resolved), needs_human_attention (cannot be fixed automatically, requires human intervention).",
+    params: SetPhaseParams,
+    handler: |ctx, params| {
+        let Some(new_state) = crate::session::SessionState::agent_allowed(&params.phase) else {
+            return Ok(ToolOutput::Text(format!(
+                "Invalid phase '{}'. Valid: diagnosing, remediating, verifying, success, needs_human_attention",
+                params.phase
+            )));
+        };
+        let data = serde_json::json!({ "reason": params.reason });
+        match crate::session::store::transition_state(
+            &ctx.pool,
+            ctx.session_id,
+            &new_state,
+            &data,
+        ).await {
+            Ok(()) => Ok(ToolOutput::Text(format!("Phase set to: {}", params.phase))),
+            Err(e) => Ok(ToolOutput::Text(format!("Error setting phase: {e}"))),
+        }
+    }
+}
+
 /// Create all healer tools for a session.
 pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
@@ -357,6 +474,9 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         ListFileTunnelsTool::new(ctx.clone()),
         ListShellCommandsTool::new(ctx.clone()),
         FetchClusterLogsTool::new(ctx.clone()),
-        RunClusterCommandTool::new(ctx),
+        RunClusterCommandTool::new(ctx.clone()),
+        PinTool::new(ctx.clone()),
+        StaffPingTool::new(ctx.clone()),
+        SetPhaseTool::new(ctx),
     ]
 }
