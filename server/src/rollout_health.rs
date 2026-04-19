@@ -51,7 +51,6 @@ impl Default for HealthGate {
     fn default() -> Self {
         let mut min_probe = HashMap::new();
         min_probe.insert("openclaw".to_string(), 90);
-        min_probe.insert("openclaw-health".to_string(), 90);
         min_probe.insert("ollama".to_string(), 90);
         Self {
             min_heartbeat_fresh_pct: default_min_heartbeat_fresh_pct(),

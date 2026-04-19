@@ -27,7 +27,7 @@ pub struct OpenClawHealthProbe;
 #[async_trait]
 impl Probe for OpenClawHealthProbe {
     fn name(&self) -> &'static str {
-        "openclaw-health"
+        "openclaw"
     }
 
     fn kind(&self) -> ProbeKind {
