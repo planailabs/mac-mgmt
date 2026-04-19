@@ -1618,6 +1618,9 @@ pub struct HealerStreamEvent {
     pub pins: Option<Vec<HealerPin>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staff_pings: Option<Vec<HealerStaffPing>>,
+    /// Ephemeral status message (e.g. "Waiting for daemon reconnect...")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

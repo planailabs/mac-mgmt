@@ -66,11 +66,8 @@ impl RelayClient {
 
     fn broadcast_status(&self, message: &str) {
         if let Some(tx) = &self.events_tx {
-            let _ = tx.send(HealerEvent::Message {
-                role: "system".to_string(),
-                content: message.to_string(),
-                metadata: Some(serde_json::json!({"type": "connectivity"})),
-                created_at: chrono::Utc::now(),
+            let _ = tx.send(HealerEvent::Status {
+                message: message.to_string(),
             });
         }
     }

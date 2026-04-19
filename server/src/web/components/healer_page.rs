@@ -51,10 +51,7 @@ fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) -> Vec
 #[cfg(feature = "server")]
 fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStreamEvent, bool) {
     use mac_mgmt_healer::HealerEvent;
-    let empty = HealerStreamEvent {
-        kind: String::new(), session_id: None, role: None, content: None,
-        state: None, metadata: None, running_tools: None, pins: None, staff_pings: None,
-    };
+    let empty = HealerStreamEvent::default();
     match event {
         HealerEvent::Message { role, content, metadata, .. } => (
             HealerStreamEvent {
@@ -76,6 +73,13 @@ fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStream
             HealerStreamEvent {
                 kind: "state".to_string(),
                 state: Some(state.clone()), ..empty
+            },
+            false,
+        ),
+        HealerEvent::Status { message } => (
+            HealerStreamEvent {
+                kind: "status".to_string(),
+                status_message: Some(message.clone()), ..empty
             },
             false,
         ),
@@ -210,10 +214,7 @@ pub async fn view_healer_session(
     let cluster_id = session.cluster_id;
 
     Ok(JsonStream::spawn(move |tx| async move {
-        let empty = || HealerStreamEvent {
-            kind: String::new(), session_id: None, role: None, content: None,
-            state: None, metadata: None, running_tools: None, pins: None, staff_pings: None,
-        };
+        let empty = HealerStreamEvent::default;
 
         // Extract pins from existing messages
         let mut pins = extract_pins_from_messages(&existing_messages);
@@ -417,10 +418,7 @@ pub async fn start_healer_stream(
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(JsonStream::spawn(move |tx| async move {
-        let empty = || HealerStreamEvent {
-            kind: String::new(), session_id: None, role: None, content: None,
-            state: None, metadata: None, running_tools: None, pins: None, staff_pings: None,
-        };
+        let empty = HealerStreamEvent::default;
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "session_created".to_string(),
             session_id: Some(session_id.to_string()), ..empty()
@@ -500,6 +498,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut active_tools = use_signal::<Vec<RunningToolInfo>>(Vec::new);
     let mut pins = use_signal::<Vec<PinInfo>>(Vec::new);
     let mut staff_pings = use_signal::<Vec<StaffPingSummary>>(Vec::new);
+    let mut status_msg = use_signal::<Option<String>>(|| None);
     let mut state = use_signal(|| "idle".to_string());
     let mut user_input = use_signal(String::new);
     let mut running = use_signal(|| false);
@@ -554,11 +553,12 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             active_tools.set(Vec::new());
                             pins.set(Vec::new());
                             staff_pings.set(Vec::new());
+                            status_msg.set(None);
                             state.set("starting".to_string());
                             async move {
                                 consume_stream(
                                     start_healer_stream(instance_id, user_msg).await,
-                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut state,
+                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state,
                                 ).await;
                                 running.set(false);
                             }
@@ -623,6 +623,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 active_tools.set(Vec::new());
                                 pins.set(Vec::new());
                                 staff_pings.set(Vec::new());
+                                status_msg.set(None);
                                 state.set("idle".to_string());
                             },
                             "Back to sessions"
@@ -663,7 +664,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
                         }
                     }
 
-                    if *running.read() && active_tools.read().is_empty() {
+                    // Ephemeral status (e.g. "Waiting for daemon reconnect...")
+                    if let Some(msg) = &*status_msg.read() {
+                        div { class: "px-3 py-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300 animate-pulse",
+                            "{msg}"
+                        }
+                    }
+
+                    if *running.read() && active_tools.read().is_empty() && status_msg.read().is_none() {
                         div { class: "p-3 text-sm text-gray-400 animate-pulse", "Agent is thinking..." }
                     }
                 }
@@ -696,12 +704,13 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                             active_tools.set(Vec::new());
                                             pins.set(Vec::new());
                                             staff_pings.set(Vec::new());
+                                            status_msg.set(None);
                                             state.set("loading".to_string());
                                             running.set(true);
                                             async move {
                                                 consume_stream(
                                                     view_healer_session(sid).await,
-                                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut state,
+                                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state,
                                                 ).await;
                                                 running.set(false);
                                             }
@@ -737,6 +746,7 @@ async fn consume_stream(
     active_tools: &mut Signal<Vec<RunningToolInfo>>,
     pins: &mut Signal<Vec<PinInfo>>,
     staff_pings: &mut Signal<Vec<StaffPingSummary>>,
+    status_msg: &mut Signal<Option<String>>,
     state: &mut Signal<String>,
 ) {
     match result {
@@ -760,14 +770,19 @@ async fn consume_stream(
                     "staff_pings" => {
                         staff_pings.set(evt.staff_pings.unwrap_or_default());
                     }
+                    "status" => {
+                        status_msg.set(evt.status_message);
+                    }
                     "state" => { if let Some(s) = evt.state { state.set(s); } }
                     "done" => {
                         active_tools.set(Vec::new());
+                        status_msg.set(None);
                         if let Some(s) = evt.state { state.set(s); }
                         break;
                     }
                     "error" => {
                         active_tools.set(Vec::new());
+                        status_msg.set(None);
                         messages.push(ChatMsg {
                             role: "system".to_string(),
                             content: evt.content.unwrap_or_else(|| "unknown error".to_string()),

@@ -122,9 +122,12 @@ pub enum HealerEvent {
         created_at: DateTime<Utc>,
     },
     /// Snapshot of currently executing tools. Sent on every tool start/end.
-    /// The client should replace its running_tools display with this list.
     RunningTools {
         tools: Vec<RunningTool>,
+    },
+    /// Ephemeral status message (not persisted). Shown in UI but cleared on reload.
+    Status {
+        message: String,
     },
     State {
         state: String,
