@@ -19,19 +19,7 @@ pub struct ServerConfig {
     pub sentry: SentryConfig,
 }
 
-#[derive(Debug, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct SentryConfig {
-    /// Sentry DSN. When unset, Sentry is disabled.
-    #[serde(default)]
-    pub dsn: Option<String>,
-    /// Environment tag (e.g. "staging", "production").
-    #[serde(default)]
-    pub environment: Option<String>,
-    /// Sample rate for traces [0.0, 1.0]. Default 0 (off).
-    #[serde(default)]
-    pub traces_sample_rate: f32,
-}
+pub use mac_mgmt_common::sentry_ext::SentryConfig;
 
 #[derive(Debug, Deserialize)]
 pub struct AnthropicConfig {

@@ -1,12 +1,46 @@
-use sentry::protocol::{Breadcrumb, Map};
+use serde::{Deserialize, Serialize};
+
+/// Shared Sentry configuration — used by server, runner, and any other crate
+/// that initialises Sentry from a TOML config file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SentryConfig {
+    /// Sentry DSN. When unset, Sentry is disabled.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    /// Environment tag (e.g. "staging", "production").
+    #[serde(default)]
+    pub environment: Option<String>,
+    /// Sample rate for traces [0.0, 1.0]. Default 0 (off).
+    #[serde(default)]
+    pub traces_sample_rate: f32,
+}
+
+/// Initialise Sentry from a [`SentryConfig`]. Returns `None` when no DSN is
+/// configured (Sentry disabled). The returned guard must live for the lifetime
+/// of the process.
+pub fn init_sentry(cfg: &SentryConfig) -> Option<sentry::ClientInitGuard> {
+    let dsn = cfg.dsn.as_deref()?;
+    let guard = sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            environment: cfg.environment.clone().map(Into::into),
+            traces_sample_rate: cfg.traces_sample_rate,
+            ..Default::default()
+        },
+    ));
+    Some(guard)
+}
+
+// ── Sentry helper utilities ───────────────────────────────────────────
 
 /// Add a breadcrumb with category, message, and optional key-value data.
 pub fn breadcrumb(category: &str, message: &str, data: &[(&str, &str)]) {
-    let mut map = Map::new();
+    let mut map = sentry::protocol::Map::new();
     for (k, v) in data {
         map.insert(k.to_string(), serde_json::Value::String(v.to_string()));
     }
-    sentry::add_breadcrumb(Breadcrumb {
+    sentry::add_breadcrumb(sentry::protocol::Breadcrumb {
         category: Some(category.to_string()),
         message: Some(message.to_string()),
         data: map,

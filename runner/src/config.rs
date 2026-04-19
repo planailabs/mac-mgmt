@@ -141,15 +141,7 @@ impl Default for FleetConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SentryConfig {
-    /// Sentry DSN. When unset, Sentry is disabled.
-    #[serde(default)]
-    pub dsn: Option<String>,
-    /// Environment tag (e.g. "staging", "production").
-    #[serde(default)]
-    pub environment: Option<String>,
-}
+pub use mac_mgmt_common::sentry_ext::SentryConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatrixConfig {

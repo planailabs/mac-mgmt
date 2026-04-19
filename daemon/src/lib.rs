@@ -12,6 +12,7 @@ pub mod events;
 #[cfg(feature = "relay")]
 pub mod file_tunnels;
 pub mod host_keys;
+pub mod local_client;
 pub mod log_buffer;
 pub mod log_layer;
 pub mod logs;
@@ -28,7 +29,8 @@ pub mod remote_ssh;
 pub mod scripts;
 #[cfg(feature = "self-update")]
 pub mod self_update;
-pub mod sentry_ext;
+/// Re-export common sentry helpers for backwards compatibility.
+pub use mac_mgmt_common::sentry_ext;
 pub mod server_push;
 pub mod service;
 #[cfg(feature = "services")]

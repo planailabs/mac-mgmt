@@ -47,7 +47,7 @@ mac-mgmt-ws = { path = "../mac-mgmt-ws", features = ["client"] }
 futures-util = "0.3"
 urlencoding = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4"] }
-mac-mgmt-common = { path = "../common" }
+mac-mgmt-common = { path = "../common", features = ["sentry"] }
 mac-mgmt-services = { path = "../mac-mgmt-services" }
 dirs = "6"
 glob = "0.3"

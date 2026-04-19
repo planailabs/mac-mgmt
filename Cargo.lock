@@ -4566,9 +4566,12 @@ dependencies = [
  "chrono",
  "humantime",
  "schemars",
+ "sentry",
  "serde",
  "serde_json",
  "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

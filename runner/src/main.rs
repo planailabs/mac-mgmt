@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use tracing_subscriber::EnvFilter;
 
 mod api;
 mod config;
@@ -92,19 +91,14 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,mac_mgmt_runner=info")),
-        )
-        .init();
+    mac_mgmt_common::tracing_init::init_tracing("info,mac_mgmt_runner=info");
 
     let opts = Opts::parse();
     let cfg = RunnerConfig::load(&opts.config)
         .with_context(|| format!("loading runner config from {}", opts.config.display()))?;
 
     // Sentry must be initialised before the tokio runtime so the panic hook is in place.
-    let _sentry_guard = init_sentry(&cfg);
+    let _sentry_guard = mac_mgmt_common::sentry_ext::init_sentry(&cfg.sentry);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -124,18 +118,6 @@ fn main() -> Result<()> {
             Cmd::Matrix { json } => cmd_matrix(&cfg, json),
         }
     })
-}
-
-fn init_sentry(cfg: &RunnerConfig) -> Option<sentry::ClientInitGuard> {
-    let dsn = cfg.sentry.dsn.as_deref()?;
-    Some(sentry::init((
-        dsn,
-        sentry::ClientOptions {
-            release: sentry::release_name!(),
-            environment: cfg.sentry.environment.clone().map(Into::into),
-            ..Default::default()
-        },
-    )))
 }
 
 async fn run_daemon(cfg: RunnerConfig) -> Result<()> {

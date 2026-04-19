@@ -15,21 +15,11 @@ pub async fn print_status(port: Option<u16>) -> Result<()> {
     let port = port.unwrap_or_else(crate::config::read_metrics_port);
     let url = format!("http://[::1]:{port}/status");
 
-    let resp = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .local_address(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST))
-        .build()
-        .context("failed to build HTTP client")?
+    let resp = crate::local_client::build()?
         .get(&url)
         .send()
         .await
-        .map_err(|e| {
-            if e.is_connect() {
-                anyhow::anyhow!("daemon not running or metrics port differs")
-            } else {
-                anyhow::anyhow!("{e}")
-            }
-        })?;
+        .map_err(crate::local_client::map_connect_error)?;
 
     let status: StatusResponse = resp
         .json()

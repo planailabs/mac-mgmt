@@ -37,7 +37,7 @@ axum-extra = { version = "0.10", features = ["cookie-private"], optional = true 
 reqwest = { workspace = true, optional = true }
 dioxus-tabular = { version = "0.3", optional = true }
 ed25519-dalek = { version = "2", optional = true }
-mac-mgmt-common = { path = "../common" }
+mac-mgmt-common = { path = "../common", features = ["observability"] }
 mac-mgmt-healer = { path = "../mac-mgmt-healer", optional = true }
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
 similar = { version = "2", optional = true }

@@ -165,30 +165,13 @@ async fn init_server() -> (
 /// mode — the webui path otherwise relies on whatever dioxus sets up.
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 fn init_tracing() {
-    use tracing_subscriber::prelude::*;
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let _ = tracing_subscriber::registry()
-        .with(filter)
-        .with(tracing_subscriber::fmt::layer())
-        .with(sentry::integrations::tracing::layer())
-        .try_init();
+    mac_mgmt_common::tracing_init::init_tracing_with_sentry("info");
 }
 
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 fn init_sentry() -> Option<sentry::ClientInitGuard> {
     let cfg = config::load();
-    let dsn = cfg.sentry.dsn.as_deref()?;
-    let guard = sentry::init((
-        dsn,
-        sentry::ClientOptions {
-            release: sentry::release_name!(),
-            environment: cfg.sentry.environment.clone().map(Into::into),
-            traces_sample_rate: cfg.sentry.traces_sample_rate,
-            ..Default::default()
-        },
-    ));
-    Some(guard)
+    mac_mgmt_common::sentry_ext::init_sentry(&cfg.sentry)
 }
 
 fn main() {

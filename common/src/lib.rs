@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub mod config_migrate;
+#[cfg(feature = "sentry")]
+pub mod sentry_ext;
+#[cfg(feature = "tracing-init")]
+pub mod tracing_init;
 
 // ── Wire-format types (daemon ↔ server protocol) ─────────────────────
 
