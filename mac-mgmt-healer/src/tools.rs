@@ -511,6 +511,67 @@ healer_tool! {
     }
 }
 
+healer_tool! {
+    name: "get_probe_status",
+    struct_name: GetProbeStatusTool,
+    description: "Query the current health probe status for all services on the target instance. Returns fresh data from the latest heartbeat — use this after applying a fix to verify whether services recovered.",
+    handler: |ctx| {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            services_extended: Option<serde_json::Value>,
+            sample: Option<serde_json::Value>,
+            reported_at: chrono::DateTime<chrono::Utc>,
+        }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT services_extended, sample, reported_at \
+             FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+        )
+        .bind(&ctx.instance_id)
+        .fetch_optional(&ctx.pool)
+        .await;
+
+        match row {
+            Ok(Some(r)) => {
+                let age_secs = (chrono::Utc::now() - r.reported_at).num_seconds();
+                let services: Vec<serde_json::Value> = r
+                    .services_extended
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default();
+
+                let mut out = format!("Heartbeat age: {}s\n\n", age_secs);
+
+                if services.is_empty() {
+                    out.push_str("No service probe data available.\n");
+                } else {
+                    out.push_str("Service probes:\n");
+                    for svc in &services {
+                        let name = svc.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                        let healthy = svc.get("healthy").and_then(|v| v.as_bool());
+                        let probe_ok = svc.get("last_probe_ok").and_then(|v| v.as_bool());
+                        let kind = svc.get("last_probe_kind").and_then(|v| v.as_str()).unwrap_or("?");
+                        let status = match (healthy, probe_ok) {
+                            (Some(true), _) => "HEALTHY",
+                            (Some(false), _) => "UNHEALTHY",
+                            (_, Some(true)) => "PROBE OK",
+                            (_, Some(false)) => "PROBE FAILED",
+                            _ => "UNKNOWN",
+                        };
+                        out.push_str(&format!("  - {name}: {status} (last probe: {kind})\n"));
+                    }
+                }
+
+                if let Some(sample) = r.sample {
+                    out.push_str(&format!("\nSystem resources:\n{}", crate::agent::format_sample_summary(&sample)));
+                }
+
+                Ok(ToolOutput::Text(out))
+            }
+            Ok(None) => Ok(ToolOutput::Text("No heartbeat data found for this instance.".to_string())),
+            Err(e) => Ok(ToolOutput::Text(format!("Error querying probe status: {e}"))),
+        }
+    }
+}
+
 /// Create all healer tools for a session.
 pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
@@ -527,6 +588,7 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         StaffPingTool::new(ctx.clone()),
         SetPhaseTool::new(ctx.clone()),
         CheckNodeOnlineTool::new(ctx.clone()),
-        WaitForNodeTool::new(ctx),
+        WaitForNodeTool::new(ctx.clone()),
+        GetProbeStatusTool::new(ctx),
     ]
 }

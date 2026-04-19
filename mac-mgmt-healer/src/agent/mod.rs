@@ -99,6 +99,7 @@ pub fn build_system_prompt(
     prompt.push_str("- `staff_ping` — notify admins when you need human help or encounter something unexpected\n");
     prompt.push_str("- `check_node_online` — check if the target node is connected to the relay\n");
     prompt.push_str("- `wait_for_node` — wait for the node to reconnect (e.g. after a reboot)\n");
+    prompt.push_str("- `get_probe_status` — query fresh health probe results and system resources from the latest heartbeat\n");
     prompt.push('\n');
 
     // Guidelines
@@ -111,7 +112,7 @@ pub fn build_system_prompt(
         6. Before applying fixes, call `pin` with slot `remediation` describing your plan\n\
         7. Make minimal, targeted fixes — prefer config changes over restarts\n\
         8. Explain every change you make and why\n\
-        9. After applying a fix, call `set_phase` with `verifying` and check if it worked\n\
+        9. After applying a fix, call `set_phase` with `verifying`, then use `get_probe_status` to check if services recovered\n\
         10. If the fix worked, call `pin` with slot `final_report` summarizing what was done, \
             then call `set_phase` with `done`\n\
         11. If you **cannot** fix the issue automatically, call `staff_ping` to notify admins, \
