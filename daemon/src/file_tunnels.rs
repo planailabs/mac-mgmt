@@ -64,8 +64,18 @@ fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<Path
 
     let target = match (&tunnel.def, relative_path) {
         (FileTunnelDef::File { .. }, None | Some("")) => root.clone(),
-        (FileTunnelDef::File { .. }, Some(_)) => {
-            return Err("sub-paths not allowed for file tunnels".into());
+        (FileTunnelDef::File { .. }, Some(name)) => {
+            // Allow the file's own name — the list endpoint returns it and
+            // agents naturally pass it back as the path to read/write.
+            let file_name = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if name == file_name {
+                root.clone()
+            } else {
+                return Err("sub-paths not allowed for file tunnels".into());
+            }
         }
         (FileTunnelDef::Folder { .. }, None | Some("")) => root.clone(),
         (FileTunnelDef::Folder { .. }, Some(rel)) => {
