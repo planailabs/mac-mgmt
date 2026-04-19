@@ -563,7 +563,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 { render_staff_pings_inline(&staff_pings.read()) }
 
                 // Chat messages (filter out pin messages — shown above)
-                div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
+                div { class: "space-y-2",
                     for msg in messages.read().iter().filter(|m| m.role != "pin") {
                         {render_message(msg)}
                     }
@@ -819,7 +819,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
         { render_pinned_slots_from_signal(&pins.read()) }
 
         // Chat messages (filter out pin messages — shown above)
-        div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
+        div { class: "space-y-2",
             for msg in messages.read().iter().filter(|m| m.role != "pin") {
                 {render_message(msg)}
             }
