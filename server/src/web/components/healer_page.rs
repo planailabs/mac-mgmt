@@ -1,4 +1,3 @@
-use dioxus::fullstack::JsonStream;
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +31,7 @@ pub use mac_mgmt_common::{
 };
 
 #[cfg(feature = "server")]
-fn staff_pings_to_wire(pings: &[mac_mgmt_healer::session::StaffPing]) -> Vec<StaffPingSummary> {
+pub fn staff_pings_to_wire(pings: &[mac_mgmt_healer::session::StaffPing]) -> Vec<StaffPingSummary> {
     pings
         .iter()
         .map(|p| StaffPingSummary {
@@ -46,7 +45,7 @@ fn staff_pings_to_wire(pings: &[mac_mgmt_healer::session::StaffPing]) -> Vec<Sta
 }
 
 #[cfg(feature = "server")]
-fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) -> Vec<RunningToolInfo> {
+pub fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) -> Vec<RunningToolInfo> {
     tools
         .iter()
         .map(|t| RunningToolInfo {
@@ -58,7 +57,7 @@ fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) -> Vec
 }
 
 #[cfg(feature = "server")]
-fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStreamEvent, bool) {
+pub fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStreamEvent, bool) {
     use mac_mgmt_healer::HealerEvent;
     let empty = HealerStreamEvent::default();
     match event {
@@ -120,7 +119,7 @@ fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStream
 }
 
 #[cfg(feature = "server")]
-fn extract_pins_from_messages(messages: &[mac_mgmt_healer::HealerMessage]) -> Vec<PinInfo> {
+pub fn extract_pins_from_messages(messages: &[mac_mgmt_healer::HealerMessage]) -> Vec<PinInfo> {
     let mut pins = std::collections::HashMap::<String, PinInfo>::new();
     for msg in messages {
         if msg.role == "pin" {
@@ -228,244 +227,18 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     })
 }
 
-#[server(output = JsonStream<HealerStreamEvent>)]
-pub async fn view_healer_session(
-    session_id: String,
-) -> Result<JsonStream<HealerStreamEvent>, ServerFnError> {
-    let _user = current_user().await?;
-    let healer = crate::server_state::healer_state()
-        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+// view_healer_session streaming is handled by the axum SSE endpoint
+// at /web/healer/stream/{session_id} — see web/healer_sse.rs
 
-    let uuid: uuid::Uuid = session_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid session id"))?;
-
-    let (session, existing_messages) = healer
-        .get_session(uuid)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .ok_or_else(|| ServerFnError::new("session not found"))?;
-
-    let is_active = session.state.is_active();
-    let current_state = session.state.as_str().to_string();
-    let current_reason = session
-        .state_data
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    let pool = crate::server_pool()?;
-    let _cluster_id = session.cluster_id;
-
-    Ok(JsonStream::spawn(move |tx| async move {
-        let empty = HealerStreamEvent::default;
-
-        // Track latest replayed timestamp for lag recovery
-        let mut last_seen_at = chrono::DateTime::<chrono::Utc>::MIN_UTC;
-
-        // Extract pins from existing messages
-        let mut pins = extract_pins_from_messages(&existing_messages);
-
-        // Replay persisted messages
-        for msg in &existing_messages {
-            if msg.created_at > last_seen_at {
-                last_seen_at = msg.created_at;
-            }
-            let _ = tx.unbounded_send(HealerStreamEvent {
-                kind: "message".to_string(),
-                role: Some(msg.role.clone()),
-                content: Some(msg.content.clone()),
-                metadata: msg.metadata.clone(),
-                ..empty()
-            });
-        }
-
-        // Send pins snapshot
-        if !pins.is_empty() {
-            let _ = tx.unbounded_send(HealerStreamEvent {
-                kind: "pins".to_string(),
-                pins: Some(pins.clone()),
-                ..empty()
-            });
-        }
-
-        // Send staff pings
-        if let Ok(pings) = mac_mgmt_healer::session::store::list_session_pings(&pool, uuid).await {
-            if !pings.is_empty() {
-                let _ = tx.unbounded_send(HealerStreamEvent {
-                    kind: "staff_pings".to_string(),
-                    staff_pings: Some(staff_pings_to_wire(&pings)),
-                    ..empty()
-                });
-            }
-        }
-
-        // Current state
-        let _ = tx.unbounded_send(HealerStreamEvent {
-            kind: "state".to_string(),
-            state: Some(current_state.clone()),
-            state_reason: current_reason.clone(),
-            ..empty()
-        });
-
-        // Running tools snapshot
-        let tools = healer.running_tools(uuid);
-        if !tools.is_empty() {
-            let _ = tx.unbounded_send(HealerStreamEvent {
-                kind: "running_tools".to_string(),
-                running_tools: Some(running_tools_to_wire(&tools)),
-                ..empty()
-            });
-        }
-
-        // Stream live events
-        if is_active {
-            if let Some(mut rx) = healer.subscribe(uuid) {
-                let pool2 = pool.clone();
-                let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(30));
-                keepalive.tick().await; // consume the immediate first tick
-                loop {
-                    let event = tokio::select! {
-                        msg = rx.recv() => msg,
-                        _ = keepalive.tick() => {
-                            let _ = tx.unbounded_send(HealerStreamEvent {
-                                kind: "ping".to_string(),
-                                ..empty()
-                            });
-                            continue;
-                        }
-                    };
-                    match event {
-                        Ok(event) => {
-                            // Track latest message timestamp for lag recovery
-                            if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } =
-                                &event
-                            {
-                                if *created_at > last_seen_at {
-                                    last_seen_at = *created_at;
-                                }
-                            }
-
-                            let (stream_event, is_done) = healer_event_to_stream(&event);
-                            let _ = tx.unbounded_send(stream_event);
-
-                            // If this was a pin message, re-send pins snapshot
-                            if let mac_mgmt_healer::HealerEvent::Message { role, content, .. } =
-                                &event
-                            {
-                                if role == "pin" {
-                                    if let Ok(data) =
-                                        serde_json::from_str::<serde_json::Value>(content)
-                                    {
-                                        if let Some(slot) =
-                                            data.get("slot").and_then(|v| v.as_str())
-                                        {
-                                            let pin = PinInfo {
-                                                slot: slot.to_string(),
-                                                summary: data
-                                                    .get("summary")
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("")
-                                                    .to_string(),
-                                                affected_services: data
-                                                    .get("affected_services")
-                                                    .and_then(|v| v.as_array())
-                                                    .map(|a| {
-                                                        a.iter()
-                                                            .filter_map(|v| {
-                                                                v.as_str().map(String::from)
-                                                            })
-                                                            .collect()
-                                                    })
-                                                    .unwrap_or_default(),
-                                            };
-                                            pins.retain(|p| p.slot != pin.slot);
-                                            pins.push(pin);
-                                            let _ = tx.unbounded_send(HealerStreamEvent {
-                                                kind: "pins".to_string(),
-                                                pins: Some(pins.clone()),
-                                                ..empty()
-                                            });
-                                        }
-                                    }
-                                }
-
-                                // If tool result was staff_ping, re-send pings
-                                if role == "tool_result" && content.starts_with("staff_ping:") {
-                                    if let Ok(pings) =
-                                        mac_mgmt_healer::session::store::list_session_pings(
-                                            &pool2, uuid,
-                                        )
-                                        .await
-                                    {
-                                        let _ = tx.unbounded_send(HealerStreamEvent {
-                                            kind: "staff_pings".to_string(),
-                                            staff_pings: Some(
-                                                pings
-                                                    .iter()
-                                                    .map(|p| StaffPingSummary {
-                                                        id: p.id.to_string(),
-                                                        category: p.category.clone(),
-                                                        message: p.message.clone(),
-                                                        resolved: p.resolved,
-                                                        created_at: p
-                                                            .created_at
-                                                            .format("%Y-%m-%d %H:%M")
-                                                            .to_string(),
-                                                    })
-                                                    .collect(),
-                                            ),
-                                            ..empty()
-                                        });
-                                    }
-                                }
-                            }
-
-                            if is_done {
-                                break;
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!("healer view stream lagged, skipped {n} events — replaying from DB");
-                            // Recover dropped messages from the database
-                            if let Ok(missed) = mac_mgmt_healer::session::store::get_messages_after(
-                                &pool2, uuid, last_seen_at,
-                            ).await {
-                                for msg in missed {
-                                    if msg.created_at > last_seen_at {
-                                        last_seen_at = msg.created_at;
-                                    }
-                                    let _ = tx.unbounded_send(HealerStreamEvent {
-                                        kind: "message".to_string(),
-                                        role: Some(msg.role.clone()),
-                                        content: Some(msg.content.clone()),
-                                        metadata: msg.metadata.clone(),
-                                        ..empty()
-                                    });
-                                }
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            }
-        }
-
-        let _ = tx.unbounded_send(HealerStreamEvent {
-            kind: "done".to_string(),
-            state: Some(current_state),
-            ..empty()
-        });
-    }))
-}
-
-#[server(output = JsonStream<HealerStreamEvent>)]
-pub async fn start_healer_stream(
+/// Spawn a new healer session. Returns the session ID (no streaming — the
+/// client connects to the axum SSE endpoint at `/web/healer/stream/{id}`).
+#[server]
+pub async fn start_healer_session(
     instance_id: String,
     user_message: Option<String>,
-) -> Result<JsonStream<HealerStreamEvent>, ServerFnError> {
+) -> Result<String, ServerFnError> {
     use mac_mgmt_healer::agent::InstanceInfo;
-    use mac_mgmt_healer::{HealerEvent, SpawnRequest};
+    use mac_mgmt_healer::SpawnRequest;
 
     let user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -556,95 +329,7 @@ pub async fn start_healer_stream(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(JsonStream::spawn(move |tx| async move {
-        let empty = HealerStreamEvent::default;
-        let _ = tx.unbounded_send(HealerStreamEvent {
-            kind: "session_created".to_string(),
-            session_id: Some(session_id.to_string()),
-            ..empty()
-        });
-
-        let Some(mut rx) = healer.subscribe(session_id) else {
-            let _ = tx.unbounded_send(HealerStreamEvent {
-                kind: "error".to_string(),
-                content: Some("failed to subscribe".to_string()),
-                ..empty()
-            });
-            return;
-        };
-
-        // Replay any messages the agent produced between spawn_session()
-        // and subscribe(). Messages are persisted to DB before broadcast,
-        // so the DB is the authoritative source.
-        let mut last_seen_at = chrono::DateTime::<chrono::Utc>::MIN_UTC;
-        if let Ok(existing) =
-            mac_mgmt_healer::session::store::get_messages(&pool, session_id).await
-        {
-            for msg in existing {
-                if msg.created_at > last_seen_at {
-                    last_seen_at = msg.created_at;
-                }
-                let _ = tx.unbounded_send(HealerStreamEvent {
-                    kind: "message".to_string(),
-                    role: Some(msg.role.clone()),
-                    content: Some(msg.content.clone()),
-                    metadata: msg.metadata.clone(),
-                    ..empty()
-                });
-            }
-        }
-
-        let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(30));
-        keepalive.tick().await; // consume the immediate first tick
-        loop {
-            let event = tokio::select! {
-                msg = rx.recv() => msg,
-                _ = keepalive.tick() => {
-                    let _ = tx.unbounded_send(HealerStreamEvent {
-                        kind: "ping".to_string(),
-                        ..empty()
-                    });
-                    continue;
-                }
-            };
-            match event {
-                Ok(event) => {
-                    // Skip messages already replayed from DB
-                    if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } = &event {
-                        if *created_at <= last_seen_at {
-                            continue;
-                        }
-                        last_seen_at = *created_at;
-                    }
-                    let (evt, is_done) = healer_event_to_stream(&event);
-                    let _ = tx.unbounded_send(evt);
-                    if is_done {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("healer start stream lagged, skipped {n} events — replaying from DB");
-                    if let Ok(missed) = mac_mgmt_healer::session::store::get_messages_after(
-                        &pool, session_id, last_seen_at,
-                    ).await {
-                        for msg in missed {
-                            if msg.created_at > last_seen_at {
-                                last_seen_at = msg.created_at;
-                            }
-                            let _ = tx.unbounded_send(HealerStreamEvent {
-                                kind: "message".to_string(),
-                                role: Some(msg.role.clone()),
-                                content: Some(msg.content.clone()),
-                                metadata: msg.metadata.clone(),
-                                ..empty()
-                            });
-                        }
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    }))
+    Ok(session_id.to_string())
 }
 
 #[server]
@@ -783,11 +468,24 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             state.set("starting".to_string());
                             state_reason.set(None);
                             async move {
-                                consume_stream(
-                                    start_healer_stream(instance_id, user_msg).await,
-                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state, &mut state_reason,
-                                ).await;
-                                running.set(false);
+                                match start_healer_session(instance_id, user_msg).await {
+                                    Ok(sid) => {
+                                        session_id.set(Some(sid.clone()));
+                                        consume_healer_sse(
+                                            sid, messages, active_tools, pins, staff_pings,
+                                            status_msg, state, state_reason, running,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        messages.push(ChatMsg {
+                                            role: "system".to_string(),
+                                            content: format!("Error: {e}"),
+                                            metadata: None,
+                                        });
+                                        state.set("failed".to_string());
+                                        running.set(false);
+                                    }
+                                }
                             }
                         }
                     },
@@ -952,13 +650,10 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                             state.set("loading".to_string());
                                             state_reason.set(None);
                                             running.set(true);
-                                            async move {
-                                                consume_stream(
-                                                    view_healer_session(sid).await,
-                                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state, &mut state_reason,
-                                                ).await;
-                                                running.set(false);
-                                            }
+                                            consume_healer_sse(
+                                                sid, messages, active_tools, pins, staff_pings,
+                                                status_msg, state, state_reason, running,
+                                            );
                                         }
                                     },
                                     div { class: "flex items-center gap-3",
@@ -982,88 +677,105 @@ fn render_healer(ctx: &HealerContext) -> Element {
     }
 }
 
-// ── Stream consumer ────────────────────────────────────────────────────
+// ── SSE stream consumer (WASM client) ─────────────────────────────────
 
-async fn consume_stream(
-    result: Result<JsonStream<HealerStreamEvent>, ServerFnError>,
-    session_id: &mut Signal<Option<String>>,
-    messages: &mut Signal<Vec<ChatMsg>>,
-    active_tools: &mut Signal<Vec<RunningToolInfo>>,
-    pins: &mut Signal<Vec<PinInfo>>,
-    staff_pings: &mut Signal<Vec<StaffPingSummary>>,
-    status_msg: &mut Signal<Option<String>>,
-    state: &mut Signal<String>,
-    state_reason: &mut Signal<Option<String>>,
+/// Connect to the axum SSE endpoint and process events into Dioxus signals.
+fn consume_healer_sse(
+    sid: String,
+    mut messages: Signal<Vec<ChatMsg>>,
+    mut active_tools: Signal<Vec<RunningToolInfo>>,
+    mut pins: Signal<Vec<PinInfo>>,
+    mut staff_pings: Signal<Vec<StaffPingSummary>>,
+    mut status_msg: Signal<Option<String>>,
+    mut state: Signal<String>,
+    mut state_reason: Signal<Option<String>>,
+    mut running: Signal<bool>,
 ) {
-    match result {
-        Ok(mut stream) => {
-            while let Some(Ok(evt)) = stream.next().await {
-                match evt.kind.as_str() {
-                    "session_created" => {
-                        session_id.set(evt.session_id);
-                    }
-                    "message" => {
-                        if let (Some(role), Some(content)) = (evt.role, evt.content) {
-                            if !content.is_empty() {
-                                messages.push(ChatMsg {
-                                    role,
-                                    content,
-                                    metadata: evt.metadata,
-                                });
-                            }
+    use wasm_bindgen::prelude::*;
+
+    let url = format!("/web/healer/stream/{sid}");
+    let es = web_sys::EventSource::new(&url).expect("failed to create EventSource");
+
+    // Handle incoming messages (SSE "message" event = unnamed data events)
+    let on_message = {
+        Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
+            let data = event.data().as_string().unwrap_or_default();
+            let Ok(evt) = serde_json::from_str::<HealerStreamEvent>(&data) else {
+                return;
+            };
+            match evt.kind.as_str() {
+                "message" => {
+                    if let (Some(role), Some(content)) = (evt.role, evt.content) {
+                        if !content.is_empty() {
+                            messages.push(ChatMsg {
+                                role,
+                                content,
+                                metadata: evt.metadata,
+                            });
                         }
                     }
-                    "running_tools" => {
-                        active_tools.set(evt.running_tools.unwrap_or_default());
-                    }
-                    "pins" => {
-                        pins.set(evt.pins.unwrap_or_default());
-                    }
-                    "staff_pings" => {
-                        staff_pings.set(evt.staff_pings.unwrap_or_default());
-                    }
-                    "status" => {
-                        status_msg.set(evt.status_message);
-                    }
-                    "state" => {
-                        if let Some(s) = evt.state {
-                            state.set(s);
-                        }
-                        state_reason.set(evt.state_reason);
-                    }
-                    "done" => {
-                        active_tools.set(Vec::new());
-                        status_msg.set(None);
-                        if let Some(s) = evt.state {
-                            state.set(s);
-                        }
-                        state_reason.set(evt.state_reason);
-                        break;
-                    }
-                    "error" => {
-                        active_tools.set(Vec::new());
-                        status_msg.set(None);
-                        messages.push(ChatMsg {
-                            role: "system".to_string(),
-                            content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
-                            metadata: None,
-                        });
-                        state.set("failed".to_string());
-                        break;
-                    }
-                    _ => {}
                 }
+                "running_tools" => {
+                    active_tools.set(evt.running_tools.unwrap_or_default());
+                }
+                "pins" => {
+                    pins.set(evt.pins.unwrap_or_default());
+                }
+                "staff_pings" => {
+                    staff_pings.set(evt.staff_pings.unwrap_or_default());
+                }
+                "status" => {
+                    status_msg.set(evt.status_message);
+                }
+                "state" => {
+                    if let Some(s) = evt.state {
+                        state.set(s);
+                    }
+                    state_reason.set(evt.state_reason);
+                }
+                "done" => {
+                    active_tools.set(Vec::new());
+                    status_msg.set(None);
+                    if let Some(s) = evt.state {
+                        state.set(s);
+                    }
+                    state_reason.set(evt.state_reason);
+                    running.set(false);
+                    // Close the EventSource — session is done
+                    // (captured in the error handler below via readyState check)
+                }
+                "error" => {
+                    active_tools.set(Vec::new());
+                    status_msg.set(None);
+                    messages.push(ChatMsg {
+                        role: "system".to_string(),
+                        content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
+                        metadata: None,
+                    });
+                    state.set("failed".to_string());
+                    running.set(false);
+                }
+                _ => {} // ping, unknown
             }
-        }
-        Err(e) => {
-            messages.push(ChatMsg {
-                role: "system".to_string(),
-                content: format!("Error: {e}"),
-                metadata: None,
-            });
-            state.set("failed".to_string());
-        }
-    }
+        })
+    };
+    es.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+    on_message.forget();
+
+    let on_error = {
+        let es2 = es.clone();
+        Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+            // EventSource fires "error" when the connection closes (including
+            // after the server sends the final "done" event and closes the stream).
+            // Only report as an error if the session is still running.
+            if es2.ready_state() == web_sys::EventSource::CLOSED {
+                // Connection closed (normal after done event)
+                running.set(false);
+            }
+        })
+    };
+    es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+    on_error.forget();
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

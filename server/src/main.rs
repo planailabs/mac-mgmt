@@ -274,8 +274,9 @@ fn main() {
                 auth_layer
             };
 
-            let mut router =
-                axum::Router::new().serve_dioxus_application(ServeConfig::new(), web::app::App);
+            let mut router = axum::Router::new()
+                .serve_dioxus_application(ServeConfig::new(), web::app::App)
+                .merge(web::healer_sse::router());
 
             // Disable nginx response buffering so streaming server functions
             // (healer session streams, JsonStream) are forwarded immediately

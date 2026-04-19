@@ -4684,6 +4684,7 @@ dependencies = [
  "similar",
  "sqlx",
  "tokio",
+ "tokio-stream",
  "toml",
  "tracing",
  "tracing-subscriber",
@@ -4691,6 +4692,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
