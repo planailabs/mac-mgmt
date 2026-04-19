@@ -121,6 +121,11 @@ pub enum HealerEvent {
         metadata: Option<serde_json::Value>,
         created_at: DateTime<Utc>,
     },
+    /// Snapshot of currently executing tools. Sent on every tool start/end.
+    /// The client should replace its running_tools display with this list.
+    RunningTools {
+        tools: Vec<RunningTool>,
+    },
     State {
         state: String,
         state_data: serde_json::Value,
@@ -128,6 +133,14 @@ pub enum HealerEvent {
     Done {
         state: String,
     },
+}
+
+/// A tool currently being executed by the agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunningTool {
+    pub name: String,
+    pub args: Option<String>,
+    pub started_at: DateTime<Utc>,
 }
 
 /// A staff ping: actionable notification from the healer to admins.

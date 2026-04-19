@@ -38,6 +38,17 @@ pub struct HealerStreamEvent {
     pub state: Option<String>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
+    /// Snapshot of currently executing tools (sent with "running_tools" kind)
+    #[serde(default)]
+    pub running_tools: Option<Vec<RunningToolInfo>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RunningToolInfo {
+    pub name: String,
+    #[serde(default)]
+    pub args: Option<String>,
+    pub started_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +58,50 @@ pub struct StaffPingSummary {
     pub message: String,
     pub resolved: bool,
     pub created_at: String,
+}
+
+#[cfg(feature = "server")]
+fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStreamEvent, bool) {
+    use mac_mgmt_healer::HealerEvent;
+    match event {
+        HealerEvent::Message { role, content, metadata, .. } => (
+            HealerStreamEvent {
+                kind: "message".to_string(),
+                session_id: None, role: Some(role.clone()),
+                content: Some(content.clone()), state: None,
+                metadata: metadata.clone(), running_tools: None,
+            },
+            false,
+        ),
+        HealerEvent::RunningTools { tools } => (
+            HealerStreamEvent {
+                kind: "running_tools".to_string(),
+                session_id: None, role: None, content: None, state: None, metadata: None,
+                running_tools: Some(tools.iter().map(|t| RunningToolInfo {
+                    name: t.name.clone(),
+                    args: t.args.clone(),
+                    started_at: t.started_at.to_rfc3339(),
+                }).collect()),
+            },
+            false,
+        ),
+        HealerEvent::State { state, .. } => (
+            HealerStreamEvent {
+                kind: "state".to_string(),
+                session_id: None, role: None, content: None,
+                state: Some(state.clone()), metadata: None, running_tools: None,
+            },
+            false,
+        ),
+        HealerEvent::Done { state } => (
+            HealerStreamEvent {
+                kind: "done".to_string(),
+                session_id: None, role: None, content: None,
+                state: Some(state.clone()), metadata: None, running_tools: None,
+            },
+            true,
+        ),
+    }
 }
 
 // ── Server functions ───────────────────────────────────────────────────
@@ -139,67 +194,43 @@ pub async fn view_healer_session(
     let current_state = session.state.as_str().to_string();
 
     Ok(JsonStream::spawn(move |tx| async move {
+        // Replay persisted messages
         for msg in existing_messages {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "message".to_string(),
-                session_id: None,
-                role: Some(msg.role),
-                content: Some(msg.content),
-                state: None,
-                metadata: msg.metadata,
+                session_id: None, role: Some(msg.role), content: Some(msg.content),
+                state: None, metadata: msg.metadata, running_tools: None,
             });
         }
 
+        // Current state
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "state".to_string(),
-            session_id: None,
-            role: None,
-            content: None,
-            state: Some(current_state.clone()),
-            metadata: None,
+            session_id: None, role: None, content: None,
+            state: Some(current_state.clone()), metadata: None, running_tools: None,
         });
 
+        // Send current running tools snapshot (in-memory)
+        let tools = healer.running_tools(uuid);
+        if !tools.is_empty() {
+            let _ = tx.unbounded_send(HealerStreamEvent {
+                kind: "running_tools".to_string(),
+                session_id: None, role: None, content: None,
+                state: None, metadata: None,
+                running_tools: Some(tools.iter().map(|t| RunningToolInfo {
+                    name: t.name.clone(), args: t.args.clone(),
+                    started_at: t.started_at.to_rfc3339(),
+                }).collect()),
+            });
+        }
+
+        // Stream live events
         if is_active {
             if let Some(mut rx) = healer.subscribe(uuid) {
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
-                            use mac_mgmt_healer::HealerEvent;
-                            let (stream_event, is_done) = match &event {
-                                HealerEvent::Message { role, content, metadata, .. } => (
-                                    HealerStreamEvent {
-                                        kind: "message".to_string(),
-                                        session_id: None,
-                                        role: Some(role.clone()),
-                                        content: Some(content.clone()),
-                                        state: None,
-                                        metadata: metadata.clone(),
-                                    },
-                                    false,
-                                ),
-                                HealerEvent::State { state, .. } => (
-                                    HealerStreamEvent {
-                                        kind: "state".to_string(),
-                                        session_id: None,
-                                        role: None,
-                                        content: None,
-                                        state: Some(state.clone()),
-                                        metadata: None,
-                                    },
-                                    false,
-                                ),
-                                HealerEvent::Done { state } => (
-                                    HealerStreamEvent {
-                                        kind: "done".to_string(),
-                                        session_id: None,
-                                        role: None,
-                                        content: None,
-                                        state: Some(state.clone()),
-                                        metadata: None,
-                                    },
-                                    true,
-                                ),
-                            };
+                            let (stream_event, is_done) = healer_event_to_stream(&event);
                             let _ = tx.unbounded_send(stream_event);
                             if is_done { break; }
                         }
@@ -216,6 +247,7 @@ pub async fn view_healer_session(
             role: None,
             content: None,
             state: Some(current_state),
+            running_tools: None,
             metadata: None,
         });
     }))
@@ -319,14 +351,14 @@ pub async fn start_healer_stream(
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "session_created".to_string(),
             session_id: Some(session_id.to_string()),
-            role: None, content: None, state: None, metadata: None,
+            role: None, content: None, state: None, metadata: None, running_tools: None,
         });
 
         let Some(mut rx) = healer.subscribe(session_id) else {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "error".to_string(), session_id: None, role: None,
                 content: Some("failed to subscribe".to_string()),
-                state: None, metadata: None,
+                state: None, metadata: None, running_tools: None,
             });
             return;
         };
@@ -334,26 +366,7 @@ pub async fn start_healer_stream(
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let (evt, is_done) = match &event {
-                        HealerEvent::Message { role, content, metadata, .. } => (
-                            HealerStreamEvent {
-                                kind: "message".to_string(), session_id: None,
-                                role: Some(role.clone()), content: Some(content.clone()),
-                                state: None, metadata: metadata.clone(),
-                            }, false),
-                        HealerEvent::State { state, .. } => (
-                            HealerStreamEvent {
-                                kind: "state".to_string(), session_id: None,
-                                role: None, content: None,
-                                state: Some(state.clone()), metadata: None,
-                            }, false),
-                        HealerEvent::Done { state } => (
-                            HealerStreamEvent {
-                                kind: "done".to_string(), session_id: None,
-                                role: None, content: None,
-                                state: Some(state.clone()), metadata: None,
-                            }, true),
-                    };
+                    let (evt, is_done) = healer_event_to_stream(&event);
                     let _ = tx.unbounded_send(evt);
                     if is_done { break; }
                 }
@@ -432,6 +445,7 @@ pub fn FleetHealer(instance_id: String) -> Element {
 fn render_healer(ctx: &HealerContext) -> Element {
     let mut session_id = use_signal::<Option<String>>(|| None);
     let mut messages = use_signal::<Vec<ChatMsg>>(Vec::new);
+    let mut active_tools = use_signal::<Vec<RunningToolInfo>>(Vec::new);
     let mut state = use_signal(|| "idle".to_string());
     let mut user_input = use_signal(String::new);
     let mut running = use_signal(|| false);
@@ -487,7 +501,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             async move {
                                 consume_stream(
                                     start_healer_stream(instance_id, user_msg).await,
-                                    &mut session_id, &mut messages, &mut state,
+                                    &mut session_id, &mut messages, &mut active_tools, &mut state,
                                 ).await;
                                 running.set(false);
                             }
@@ -572,8 +586,26 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     for msg in messages.read().iter().filter(|m| m.role != "pin") {
                         {render_message(msg)}
                     }
-                    if *running.read() {
-                        div { class: "p-3 text-sm text-gray-400 animate-pulse", "Agent is working..." }
+
+                    // Running tools (server-managed, in-memory only)
+                    for tool in active_tools.read().iter() {
+                        {
+                            let name = tool.name.clone();
+                            let args_short = tool.args.as_deref()
+                                .map(|a| if a.len() > 120 { format!("{}...", &a[..120]) } else { a.to_string() })
+                                .unwrap_or_default();
+                            rsx! {
+                                div { class: "px-3 py-2 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2",
+                                    span { class: "inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" }
+                                    span { class: "text-xs font-mono font-semibold text-indigo-700 dark:text-indigo-300", "{name}" }
+                                    span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
+                                }
+                            }
+                        }
+                    }
+
+                    if *running.read() && active_tools.read().is_empty() {
+                        div { class: "p-3 text-sm text-gray-400 animate-pulse", "Agent is thinking..." }
                     }
                 }
             }
@@ -607,7 +639,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                             async move {
                                                 consume_stream(
                                                     view_healer_session(sid).await,
-                                                    &mut session_id, &mut messages, &mut state,
+                                                    &mut session_id, &mut messages, &mut active_tools, &mut state,
                                                 ).await;
                                                 running.set(false);
                                             }
@@ -693,6 +725,7 @@ async fn consume_stream(
     result: Result<JsonStream<HealerStreamEvent>, ServerFnError>,
     session_id: &mut Signal<Option<String>>,
     messages: &mut Signal<Vec<ChatMsg>>,
+    active_tools: &mut Signal<Vec<RunningToolInfo>>,
     state: &mut Signal<String>,
 ) {
     match result {
@@ -702,33 +735,22 @@ async fn consume_stream(
                     "session_created" => { session_id.set(evt.session_id); }
                     "message" => {
                         if let (Some(role), Some(content)) = (evt.role, evt.content) {
-                            if content.is_empty() {
-                                continue;
+                            if !content.is_empty() {
+                                messages.push(ChatMsg { role, content, metadata: evt.metadata });
                             }
-                            if role == "tool_result" {
-                                // Replace the matching tool_call "running" indicator
-                                let tool_name = evt.metadata.as_ref()
-                                    .and_then(|m| m.get("tool_name"))
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                messages.with_mut(|msgs| {
-                                    // Remove the last tool_call for this tool name
-                                    if let Some(pos) = msgs.iter().rposition(|m| {
-                                        m.role == "tool_call" && m.metadata.as_ref()
-                                            .and_then(|m| m.get("tool_name"))
-                                            .and_then(|v| v.as_str())
-                                            == Some(tool_name)
-                                    }) {
-                                        msgs.remove(pos);
-                                    }
-                                });
-                            }
-                            messages.push(ChatMsg { role, content, metadata: evt.metadata });
                         }
                     }
+                    "running_tools" => {
+                        active_tools.set(evt.running_tools.unwrap_or_default());
+                    }
                     "state" => { if let Some(s) = evt.state { state.set(s); } }
-                    "done" => { if let Some(s) = evt.state { state.set(s); } break; }
+                    "done" => {
+                        active_tools.set(Vec::new());
+                        if let Some(s) = evt.state { state.set(s); }
+                        break;
+                    }
                     "error" => {
+                        active_tools.set(Vec::new());
                         messages.push(ChatMsg {
                             role: "system".to_string(),
                             content: evt.content.unwrap_or_else(|| "unknown error".to_string()),
@@ -808,11 +830,6 @@ fn category_badge(cat: &str) -> &'static str {
 /// Render a chat message. Tool calls/results get special UI.
 /// Assistant/system messages are rendered as markdown via dangerous_inner_html.
 fn render_message(msg: &ChatMsg) -> Element {
-    // Tool call start: show as a compact running indicator
-    if msg.role == "tool_call" {
-        return render_tool_call(msg);
-    }
-    // Tool result: collapsible output
     if msg.role == "tool_result" {
         return render_tool_result(msg);
     }
@@ -837,34 +854,6 @@ fn render_message(msg: &ChatMsg) -> Element {
                 class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
                 dangerous_inner_html: "{html}",
             }
-        }
-    }
-}
-
-fn render_tool_call(msg: &ChatMsg) -> Element {
-    let tool_name = msg
-        .metadata
-        .as_ref()
-        .and_then(|m| m.get("tool_name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("tool");
-    let args = msg
-        .metadata
-        .as_ref()
-        .and_then(|m| m.get("tool_args"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("{}");
-    let args_short = if args.len() > 120 {
-        format!("{}...", &args[..120])
-    } else {
-        args.to_string()
-    };
-
-    rsx! {
-        div { class: "px-3 py-2 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2",
-            span { class: "inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" }
-            span { class: "text-xs font-mono font-semibold text-indigo-700 dark:text-indigo-300", "{tool_name}" }
-            span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
         }
     }
 }

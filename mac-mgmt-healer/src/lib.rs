@@ -39,6 +39,8 @@ struct HealerStateInner {
 struct RunningSession {
     cancel: CancellationToken,
     events_tx: broadcast::Sender<HealerEvent>,
+    /// Currently executing tools (in-memory only, not persisted).
+    running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
 }
 
 /// Request to spawn a new healer session.
@@ -113,11 +115,13 @@ impl HealerState {
         // 5. Set up cancellation and event broadcasting
         let cancel = CancellationToken::new();
         let (events_tx, _) = broadcast::channel::<HealerEvent>(256);
+        let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
                 events_tx: events_tx.clone(),
+                running_tools: running_tools.clone(),
             },
         );
 
@@ -133,6 +137,7 @@ impl HealerState {
                 proxy_expires,
                 cancel.clone(),
                 events_tx.clone(),
+                running_tools,
                 connector_config,
                 None, // no restored history
             )
@@ -255,11 +260,13 @@ impl HealerState {
         // Set up cancellation and events
         let cancel = CancellationToken::new();
         let (events_tx, _) = broadcast::channel::<HealerEvent>(256);
+        let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
                 events_tx: events_tx.clone(),
+                running_tools: running_tools.clone(),
             },
         );
 
@@ -293,6 +300,7 @@ impl HealerState {
                 proxy_expires,
                 cancel,
                 events_tx.clone(),
+                running_tools,
                 connector_config,
                 restored_history,
             )
@@ -365,6 +373,15 @@ impl HealerState {
             .running
             .get(&session_id)
             .map(|entry| entry.events_tx.subscribe())
+    }
+
+    /// Get the current running tools snapshot for a session.
+    pub fn running_tools(&self, session_id: Uuid) -> Vec<session::RunningTool> {
+        self.inner
+            .running
+            .get(&session_id)
+            .map(|entry| entry.running_tools.lock().unwrap().clone())
+            .unwrap_or_default()
     }
 
     /// Graceful shutdown: signal all sessions to stop at the next safe point,
@@ -440,6 +457,7 @@ async fn run_agent_session(
     proxy_expires: DateTime<Utc>,
     cancel: CancellationToken,
     events_tx: broadcast::Sender<HealerEvent>,
+    running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
     connector_config: ConnectorConfig,
     restored_history: Option<Vec<HealerMessage>>,
 ) -> Result<()> {
@@ -604,8 +622,10 @@ async fn run_agent_session(
         }
 
         let events_tx_before_tool = events_tx.clone();
+        let running_tools_before = running_tools.clone();
         let pool_after_tool = pool.clone();
         let events_tx_after_tool = events_tx.clone();
+        let running_tools_after = running_tools.clone();
 
         let state_ref = state.clone();
         builder
@@ -644,36 +664,44 @@ async fn run_agent_session(
             })
             .before_tool(move |_agent, tool_call| {
                 let events_tx = events_tx_before_tool.clone();
+                let running_tools = running_tools_before.clone();
                 let name = tool_call.name().to_string();
                 let args = tool_call.args().map(String::from);
                 Box::pin(async move {
-                    // Broadcast only (not persisted) — ephemeral "running" indicator.
-                    // The after_tool hook persists the final result.
-                    let args_preview = args.as_deref().unwrap_or("{}");
-                    let content = format!("Calling `{name}`...");
-                    let metadata = serde_json::json!({
-                        "tool_name": name,
-                        "tool_args": args_preview,
-                        "status": "running",
-                    });
-                    let _ = events_tx.send(HealerEvent::Message {
-                        role: "tool_call".to_string(),
-                        content,
-                        metadata: Some(metadata),
-                        created_at: Utc::now(),
-                    });
+                    // Add to in-memory running tools and broadcast snapshot
+                    let tool = session::RunningTool {
+                        name: name.clone(),
+                        args: args.clone(),
+                        started_at: Utc::now(),
+                    };
+                    let snapshot = {
+                        let mut tools = running_tools.lock().unwrap();
+                        tools.push(tool);
+                        tools.clone()
+                    };
+                    let _ = events_tx.send(HealerEvent::RunningTools { tools: snapshot });
                     Ok(())
                 })
             })
             .after_tool(move |_agent, tool_call, result| {
                 let pool = pool_after_tool.clone();
                 let events_tx = events_tx_after_tool.clone();
+                let running_tools = running_tools_after.clone();
                 let name = tool_call.name().to_string();
                 let (status, output) = match result {
                     Ok(out) => ("ok", out.to_string()),
                     Err(e) => ("error", e.to_string()),
                 };
                 Box::pin(async move {
+                    // Remove from running tools and broadcast snapshot
+                    let snapshot = {
+                        let mut tools = running_tools.lock().unwrap();
+                        tools.retain(|t| t.name != name);
+                        tools.clone()
+                    };
+                    let _ = events_tx.send(HealerEvent::RunningTools { tools: snapshot });
+
+                    // Persist and broadcast the result
                     let content = format!("{name}: {output}");
                     let metadata = serde_json::json!({
                         "tool_name": name,
