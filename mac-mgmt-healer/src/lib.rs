@@ -267,16 +267,31 @@ impl HealerState {
         let messages = session::store::get_messages(&self.inner.pool, session_id).await?;
 
         // Extract context from state_data
-        let relay_url = sess.state_data["relay_url"]
+        let mut relay_url = sess.state_data["relay_url"]
             .as_str()
             .unwrap_or_default()
             .to_string();
+        // If relay_url is missing from state_data, try the current heartbeat
         if relay_url.is_empty() {
-            anyhow::bail!(
-                "session {} has no relay_url in state_data — \
-                 cannot resume without relay connectivity",
-                session_id
-            );
+            relay_url = sqlx::query_scalar(
+                "SELECT relay_proxy_url FROM daemon_heartbeats \
+                 WHERE instance_id = $1 AND relay_proxy_url IS NOT NULL AND relay_proxy_url != '' \
+                 LIMIT 1",
+            )
+            .bind(&sess.instance_id)
+            .fetch_optional(&self.inner.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+            if relay_url.is_empty() {
+                anyhow::bail!(
+                    "session {} has no relay_url and daemon has no relay_proxy_url — \
+                     cannot resume without relay connectivity",
+                    session_id
+                );
+            }
+            tracing::info!("relay_url missing from state_data, using heartbeat value: {relay_url}");
         }
         let instance_id = sess.instance_id.clone();
         let cluster_name = sess.state_data["cluster_name"]
@@ -521,7 +536,7 @@ async fn mint_proxy_token(
 async fn run_agent_session(
     state: &HealerState,
     session_id: Uuid,
-    req: SpawnRequest,
+    mut req: SpawnRequest,
     proxy_token: String,
     proxy_expires: DateTime<Utc>,
     cancel: CancellationToken,
@@ -539,8 +554,38 @@ async fn run_agent_session(
         .context("failed to resolve LLM")?;
 
     // 2. Build relay client (with event broadcasting for connectivity status)
+    //    If relay_url is empty, poll heartbeats until it appears (the daemon
+    //    may not have received its proxy_url from the relay yet).
     if req.relay_url.is_empty() {
-        anyhow::bail!("relay_url is empty — daemon has no relay proxy URL configured");
+        tracing::warn!("relay_url is empty, waiting for daemon to report one via heartbeat");
+        let _ = events_tx.send(session::HealerEvent::Status {
+            message: "Waiting for daemon to connect to relay...".to_string(),
+        });
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let url: Option<String> = sqlx::query_scalar(
+                "SELECT relay_proxy_url FROM daemon_heartbeats \
+                 WHERE instance_id = $1 AND relay_proxy_url IS NOT NULL AND relay_proxy_url != '' \
+                 LIMIT 1",
+            )
+            .bind(&req.instance_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+            if let Some(url) = url {
+                tracing::info!("relay_url appeared: {url}");
+                req.relay_url = url;
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "daemon did not report a relay proxy URL within 2 minutes — \
+                     check that the relay has proxy_url configured"
+                );
+            }
+        }
     }
     let relay_client = Arc::new(
         relay_client::RelayClient::new(req.relay_url.clone(), proxy_token)
