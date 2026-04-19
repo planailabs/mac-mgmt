@@ -538,7 +538,17 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
     let desired_base = desired_flake_base()?;
 
     if !upgrade {
-        return run_profile_cmd(nix_bin, "install", pkg, &["add", &desired]);
+        match run_profile_cmd(nix_bin, "install", pkg, &["add", &desired]) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.to_string().contains("already provides") => {
+                // A different version of this package is already installed.
+                // Remove the old one and install the new one.
+                tracing::warn!("package conflict for {pkg}, replacing via remove+add");
+                run_profile_cmd(nix_bin, "remove", pkg, &["remove", pkg])?;
+                return run_profile_cmd(nix_bin, "add", pkg, &["add", &desired]);
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     let installed_url = profile_original_urls()
