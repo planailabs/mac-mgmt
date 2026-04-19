@@ -575,6 +575,178 @@ healer_tool! {
     }
 }
 
+// ── Data query tools ──────────────────────────────────────────────────
+
+healer_tool! {
+    name: "get_inventory",
+    struct_name: GetInventoryTool,
+    description: "Query the latest hardware/software inventory for the target instance. Returns OS, CPU, memory, disks, GPUs, network interfaces, nix version, and security posture. Data is collected every ~6 hours.",
+    handler: |ctx| {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            inventory: serde_json::Value,
+            security: serde_json::Value,
+            collected_at: chrono::DateTime<chrono::Utc>,
+        }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT inventory, security, collected_at \
+             FROM assessments WHERE instance_id = $1 \
+             ORDER BY collected_at DESC LIMIT 1",
+        )
+        .bind(&ctx.instance_id)
+        .fetch_optional(&ctx.pool)
+        .await;
+
+        match row {
+            Ok(Some(r)) => {
+                let age = chrono::Utc::now() - r.collected_at;
+                let mut out = format!("Inventory (collected {}h ago):\n", age.num_hours());
+                out.push_str(&serde_json::to_string_pretty(&r.inventory).unwrap_or_default());
+                out.push_str("\n\nSecurity posture:\n");
+                out.push_str(&serde_json::to_string_pretty(&r.security).unwrap_or_default());
+                Ok(ToolOutput::Text(out))
+            }
+            Ok(None) => Ok(ToolOutput::Text("No inventory data found for this instance. The daemon may not have submitted an assessment yet.".to_string())),
+            Err(e) => Ok(ToolOutput::Text(format!("Error querying inventory: {e}"))),
+        }
+    }
+}
+
+healer_tool! {
+    name: "get_system_sample",
+    struct_name: GetSystemSampleTool,
+    description: "Query the latest dynamic system sample (CPU load, memory, swap, disk free space, network I/O, process count, thermal state, GPU utilization). Updated with every heartbeat (~30s).",
+    handler: |ctx| {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            sample: Option<serde_json::Value>,
+            reported_at: chrono::DateTime<chrono::Utc>,
+        }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT sample, reported_at \
+             FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
+        )
+        .bind(&ctx.instance_id)
+        .fetch_optional(&ctx.pool)
+        .await;
+
+        match row {
+            Ok(Some(r)) => {
+                let age_secs = (chrono::Utc::now() - r.reported_at).num_seconds();
+                match r.sample {
+                    Some(sample) => {
+                        let mut out = format!("System sample ({}s ago):\n", age_secs);
+                        out.push_str(&serde_json::to_string_pretty(&sample).unwrap_or_default());
+                        Ok(ToolOutput::Text(out))
+                    }
+                    None => Ok(ToolOutput::Text(format!(
+                        "Heartbeat exists ({}s ago) but no sample data attached. Daemon may be an older version.",
+                        age_secs
+                    ))),
+                }
+            }
+            Ok(None) => Ok(ToolOutput::Text("No heartbeat data found for this instance.".to_string())),
+            Err(e) => Ok(ToolOutput::Text(format!("Error querying sample: {e}"))),
+        }
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ProbeHistoryParams {
+    /// Service name to query probes for (e.g. "ollama", "openclaw")
+    #[serde(default)]
+    service: Option<String>,
+    /// Maximum number of probe results to return (default 20, max 100)
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+healer_tool! {
+    name: "get_probe_history",
+    struct_name: GetProbeHistoryTool,
+    description: "Query recent probe results (health checks, functional tests) for the target instance. Optionally filter by service name. Returns timing, success/failure, error details, and LLM token counts.",
+    params: ProbeHistoryParams,
+    handler: |ctx, params| {
+        let limit = params.limit.unwrap_or(20).min(100);
+
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            service: String,
+            kind: String,
+            ok: bool,
+            duration_ms: i64,
+            collected_at: chrono::DateTime<chrono::Utc>,
+            model: Option<String>,
+            error_class: Option<String>,
+            error_detail: Option<String>,
+            tokens_in: Option<i32>,
+            tokens_out: Option<i32>,
+            first_token_ms: Option<i64>,
+        }
+
+        let rows = if let Some(svc) = &params.service {
+            sqlx::query_as::<_, Row>(
+                "SELECT service, kind, ok, duration_ms, collected_at, model, \
+                        error_class, error_detail, tokens_in, tokens_out, first_token_ms \
+                 FROM assessment_probes WHERE instance_id = $1 AND service = $2 \
+                 ORDER BY collected_at DESC LIMIT $3",
+            )
+            .bind(&ctx.instance_id)
+            .bind(svc)
+            .bind(limit)
+            .fetch_all(&ctx.pool)
+            .await
+        } else {
+            sqlx::query_as::<_, Row>(
+                "SELECT service, kind, ok, duration_ms, collected_at, model, \
+                        error_class, error_detail, tokens_in, tokens_out, first_token_ms \
+                 FROM assessment_probes WHERE instance_id = $1 \
+                 ORDER BY collected_at DESC LIMIT $2",
+            )
+            .bind(&ctx.instance_id)
+            .bind(limit)
+            .fetch_all(&ctx.pool)
+            .await
+        };
+
+        match rows {
+            Ok(rows) if rows.is_empty() => {
+                Ok(ToolOutput::Text("No probe results found.".to_string()))
+            }
+            Ok(rows) => {
+                let mut out = format!("{} probe result(s):\n\n", rows.len());
+                for r in &rows {
+                    let status = if r.ok { "OK" } else { "FAIL" };
+                    let ts = r.collected_at.format("%Y-%m-%d %H:%M:%S");
+                    out.push_str(&format!(
+                        "[{ts}] {}: {} ({}, {}ms)",
+                        r.service, status, r.kind, r.duration_ms
+                    ));
+                    if let Some(model) = &r.model {
+                        out.push_str(&format!(" model={model}"));
+                    }
+                    if let (Some(tin), Some(tout)) = (r.tokens_in, r.tokens_out) {
+                        out.push_str(&format!(" tokens={tin}/{tout}"));
+                    }
+                    if let Some(ttft) = r.first_token_ms {
+                        out.push_str(&format!(" ttft={ttft}ms"));
+                    }
+                    if let Some(ec) = &r.error_class {
+                        out.push_str(&format!(" error={ec}"));
+                    }
+                    if let Some(ed) = &r.error_detail {
+                        let short = if ed.len() > 200 { &ed[..200] } else { ed };
+                        out.push_str(&format!(": {short}"));
+                    }
+                    out.push('\n');
+                }
+                Ok(ToolOutput::Text(out))
+            }
+            Err(e) => Ok(ToolOutput::Text(format!("Error querying probes: {e}"))),
+        }
+    }
+}
+
 /// Create all healer tools for a session.
 pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
@@ -592,6 +764,9 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         SetPhaseTool::new(ctx.clone()),
         CheckNodeOnlineTool::new(ctx.clone()),
         WaitForNodeTool::new(ctx.clone()),
-        GetProbeStatusTool::new(ctx),
+        GetProbeStatusTool::new(ctx.clone()),
+        GetInventoryTool::new(ctx.clone()),
+        GetSystemSampleTool::new(ctx.clone()),
+        GetProbeHistoryTool::new(ctx),
     ]
 }
