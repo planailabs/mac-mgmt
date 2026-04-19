@@ -37,7 +37,20 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let cfg = config::load(&cli.config)?;
+    let mut cfg = config::load(&cli.config)?;
+
+    // Default proxy_url to http://{listen_addr} if not explicitly set.
+    // This ensures the healer gets a working URL in dev/localhost setups.
+    if cfg.proxy_url.is_none() {
+        let addr = &cfg.listen_addr;
+        let url = if addr.starts_with("0.0.0.0:") || addr.starts_with("[::]:") {
+            format!("http://localhost:{}", addr.rsplit(':').next().unwrap_or("8080"))
+        } else {
+            format!("http://{addr}")
+        };
+        tracing::info!("proxy_url not configured, defaulting to {url}");
+        cfg.proxy_url = Some(url);
+    }
     tracing::info!(
         "relay starting, WS listen: {}, SSH port range: {}-{}",
         cfg.listen_addr,
