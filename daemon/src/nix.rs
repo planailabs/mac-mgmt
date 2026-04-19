@@ -541,10 +541,15 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
         match run_profile_cmd(nix_bin, "install", pkg, &["add", &desired]) {
             Ok(()) => return Ok(()),
             Err(e) if e.to_string().contains("already provides") => {
-                // A different version of this package is already installed.
-                // Remove the old one and install the new one.
-                tracing::warn!("package conflict for {pkg}, replacing via remove+add");
-                run_profile_cmd(nix_bin, "remove", pkg, &["remove", pkg])?;
+                // A conflicting package provides the same files.
+                // Parse the error to find which package to remove:
+                //   "To remove the existing package:\n\n  nix profile remove <name>"
+                let err_msg = e.to_string();
+                let conflicting = parse_conflicting_package(&err_msg).unwrap_or(pkg.to_string());
+                tracing::warn!(
+                    "package conflict for {pkg}: '{conflicting}' provides conflicting files, removing it"
+                );
+                run_profile_cmd(nix_bin, "remove", &conflicting, &["remove", &conflicting])?;
                 return run_profile_cmd(nix_bin, "add", pkg, &["add", &desired]);
             }
             Err(e) => return Err(e),
@@ -573,6 +578,21 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
         run_profile_cmd(nix_bin, "remove", pkg, &["remove", pkg])?;
         run_profile_cmd(nix_bin, "add", pkg, &["add", &desired])
     }
+}
+
+/// Extract the conflicting package name from a nix "already provides" error.
+/// Looks for: "To remove the existing package:\n\n  nix profile remove <name>"
+fn parse_conflicting_package(err: &str) -> Option<String> {
+    for line in err.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("nix profile remove ") {
+            let name = rest.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Resolve the absolute path to the nix binary.
