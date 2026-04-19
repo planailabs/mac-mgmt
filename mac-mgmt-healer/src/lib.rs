@@ -41,6 +41,7 @@ struct HealerStateInner {
 struct RunningSession {
     cancel: CancellationToken,
     pause_requested: Arc<AtomicBool>,
+    budget_limit: Arc<std::sync::atomic::AtomicU64>,
     events_tx: broadcast::Sender<HealerEvent>,
     /// Currently executing tools (in-memory only, not persisted).
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
@@ -165,11 +166,15 @@ impl HealerState {
         let pause_requested = Arc::new(AtomicBool::new(false));
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(
+            self.inner.connector_config.token_budget,
+        ));
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
                 pause_requested: pause_requested.clone(),
+                budget_limit: budget_limit.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
             },
@@ -187,6 +192,7 @@ impl HealerState {
                 proxy_expires,
                 cancel.clone(),
                 pause_requested,
+                budget_limit,
                 events_tx.clone(),
                 running_tools,
                 connector_config,
@@ -333,11 +339,15 @@ impl HealerState {
         let pause_requested = Arc::new(AtomicBool::new(false));
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(
+            self.inner.connector_config.token_budget,
+        ));
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
                 pause_requested: pause_requested.clone(),
+                budget_limit: budget_limit.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
             },
@@ -374,6 +384,7 @@ impl HealerState {
                 proxy_expires,
                 cancel,
                 pause_requested,
+                budget_limit,
                 events_tx.clone(),
                 running_tools,
                 connector_config,
@@ -431,6 +442,20 @@ impl HealerState {
                 &json!({}),
             )
             .await
+        }
+    }
+
+    /// Increase the token budget for a running session to 1 million tokens.
+    /// Used by admins to let a paused session continue with more headroom.
+    pub fn extend_budget(&self, session_id: Uuid) -> Result<()> {
+        if let Some(entry) = self.inner.running.get(&session_id) {
+            entry
+                .budget_limit
+                .store(1_000_000, Ordering::Relaxed);
+            tracing::info!("extended token budget to 1M for session {session_id}");
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("session is not running"))
         }
     }
 
@@ -541,6 +566,7 @@ async fn run_agent_session(
     proxy_expires: DateTime<Utc>,
     cancel: CancellationToken,
     pause_requested: Arc<AtomicBool>,
+    budget_limit: Arc<std::sync::atomic::AtomicU64>,
     events_tx: broadcast::Sender<HealerEvent>,
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
     connector_config: ConnectorConfig,
@@ -690,7 +716,6 @@ async fn run_agent_session(
     // 8. Build and run agent
     let pool_msg = pool.clone();
     let events_tx_msg = events_tx.clone();
-    let budget_limit = connector_config.token_budget;
     let token_usage = llm.token_usage.clone();
     let is_cloud = llm.is_cloud;
     // state is Clone (inner Arc) — we can pass it into closures for shutdown checks
@@ -904,6 +929,7 @@ async fn run_agent_session(
             .before_completion(move |_agent, _req| {
                 let cancel = cancel.clone();
                 let pause_requested = pause_requested.clone();
+                let budget_limit = budget_limit.clone();
                 let pool = pool_hook.clone();
                 let events_tx = events_tx_hook.clone();
                 let token_usage = token_usage.clone();
@@ -979,13 +1005,14 @@ async fn run_agent_session(
                     }
 
                     // 4. Check cloud token budget
-                    if is_cloud && budget_limit > 0 {
+                    let current_budget = budget_limit.load(Ordering::Relaxed);
+                    if is_cloud && current_budget > 0 {
                         let used = token_usage.load(Ordering::Relaxed);
-                        if used >= budget_limit {
+                        if used >= current_budget {
                             let data = json!({
                                 "reason": "token_budget_exceeded",
                                 "tokens_used": used,
-                                "budget_limit": budget_limit
+                                "budget_limit": current_budget
                             });
                             session::store::transition_state(
                                 &pool,
@@ -1000,7 +1027,7 @@ async fn run_agent_session(
                                 state_data: data,
                             });
                             return Err(anyhow::anyhow!(
-                                "token budget exceeded ({used}/{budget_limit})"
+                                "token budget exceeded ({used}/{current_budget})"
                             ));
                         }
                     }

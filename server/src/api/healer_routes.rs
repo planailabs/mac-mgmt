@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::auth::SettingAuth;
+use super::auth::{AdminAuth, SettingAuth};
 
 // ── Request/Response types ─────────────────────────────────────────────
 
@@ -231,6 +231,22 @@ pub async fn pause_session(
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
     healer.pause_session(session_id).map_err(|e| {
         tracing::error!(err = %e, "failed to pause healer session");
+        Status::BadRequest
+    })?;
+    Ok(Status::Ok)
+}
+
+/// Extend the token budget for a running session to 1 million tokens.
+/// Admin-only — allows a paused-for-budget session to continue.
+#[post("/healer/sessions/<id>/extend-budget")]
+pub async fn extend_budget(
+    _auth: AdminAuth,
+    healer: &State<HealerState>,
+    id: &str,
+) -> Result<Status, Status> {
+    let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    healer.extend_budget(session_id).map_err(|e| {
+        tracing::error!(err = %e, "failed to extend budget");
         Status::BadRequest
     })?;
     Ok(Status::Ok)

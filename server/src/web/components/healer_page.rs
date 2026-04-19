@@ -360,6 +360,22 @@ pub async fn pause_healer_session(session_id: String) -> Result<(), ServerFnErro
 }
 
 #[server]
+pub async fn extend_healer_budget(session_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    if !user.is_admin {
+        return Err(ServerFnError::new("admin access required"));
+    }
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid id"))?;
+    healer
+        .extend_budget(uuid)
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
 pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnError> {
     let _user = current_user().await?;
     let healer = crate::server_state::healer_state()
@@ -811,7 +827,9 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 
             {
                 let st = state.read().clone();
+                let reason = state_reason.read().clone();
                 if st == "paused" {
+                    let is_budget = reason.as_deref() == Some("token_budget_exceeded");
                     rsx! {
                         button {
                             class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
@@ -823,6 +841,22 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                                 }
                             },
                             "Resume"
+                        }
+                        if is_budget {
+                            button {
+                                class: "px-3 py-1 text-xs font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700",
+                                onclick: {
+                                    let sid = session_id.clone();
+                                    move |_| {
+                                        let sid = sid.clone();
+                                        async move {
+                                            let _ = extend_healer_budget(sid.clone()).await;
+                                            let _ = resume_healer_session(sid).await;
+                                        }
+                                    }
+                                },
+                                "More Tokens (1M)"
+                            }
                         }
                     }
                 } else {
