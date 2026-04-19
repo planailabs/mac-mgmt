@@ -551,6 +551,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             let user_msg = if msg.is_empty() { None } else { Some(msg) };
                             running.set(true);
                             messages.set(Vec::new());
+                            active_tools.set(Vec::new());
+                            pins.set(Vec::new());
+                            staff_pings.set(Vec::new());
                             state.set("starting".to_string());
                             async move {
                                 consume_stream(
@@ -617,6 +620,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             onclick: move |_| {
                                 session_id.set(None);
                                 messages.set(Vec::new());
+                                active_tools.set(Vec::new());
+                                pins.set(Vec::new());
+                                staff_pings.set(Vec::new());
                                 state.set("idle".to_string());
                             },
                             "Back to sessions"
@@ -641,13 +647,17 @@ fn render_healer(ctx: &HealerContext) -> Element {
                         {
                             let name = tool.name.clone();
                             let args_short = tool.args.as_deref()
+                                .filter(|a| *a != "{}")
                                 .map(|a| if a.len() > 120 { format!("{}...", &a[..120]) } else { a.to_string() })
                                 .unwrap_or_default();
+                            let has_args = !args_short.is_empty();
                             rsx! {
                                 div { class: "px-3 py-2 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2",
                                     span { class: "inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" }
                                     span { class: "text-xs font-mono font-semibold text-indigo-700 dark:text-indigo-300", "{name}" }
-                                    span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
+                                    if has_args {
+                                        span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
+                                    }
                                 }
                             }
                         }
@@ -683,6 +693,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                             let sid = sid.clone();
                                             session_id.set(Some(sid.clone()));
                                             messages.set(Vec::new());
+                                            active_tools.set(Vec::new());
+                                            pins.set(Vec::new());
+                                            staff_pings.set(Vec::new());
                                             state.set("loading".to_string());
                                             running.set(true);
                                             async move {
@@ -880,24 +893,28 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     let args = msg.metadata.as_ref()
         .and_then(|m| m.get("tool_args"))
         .and_then(|v| v.as_str())
-        .unwrap_or("{}");
+        .filter(|a| *a != "{}")
+        .unwrap_or("");
     let args_short = if args.len() > 120 {
         format!("{}...", &args[..120])
     } else {
         args.to_string()
     };
+    let has_args = !args.is_empty();
 
     rsx! {
         div { class: "p-2 rounded bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700",
             details { class: "group",
                 summary { class: "flex items-center gap-2 cursor-pointer select-none",
                     span { class: "{tool_badge}", "{tool_name}" }
-                    span { class: "text-xs text-gray-500 dark:text-gray-400 truncate max-w-md", "{args_short}" }
+                    if has_args {
+                        span { class: "text-xs text-gray-500 dark:text-gray-400 truncate max-w-md", "{args_short}" }
+                    }
                     if is_error {
                         span { class: "text-xs text-red-500", "error" }
                     }
                 }
-                if args.len() > 2 {
+                if has_args {
                     pre { class: "mt-2 p-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-400 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap",
                         "{args}"
                     }
