@@ -1,7 +1,11 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use tokio::sync::broadcast;
+
+use crate::session::HealerEvent;
 
 const DAEMON_RECONNECT_TIMEOUT: Duration = Duration::from_secs(600);
 const DAEMON_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -12,10 +16,14 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// All relay-facing methods automatically wait for the daemon to reconnect
 /// if it bounces off (502/503/504). Waits up to 10 minutes, polling every 5s.
 /// On timeout, the **original** error is returned.
+///
+/// When an `events_tx` is set, broadcasts status messages about daemon
+/// connectivity so the UI can show the waiting state.
 pub struct RelayClient {
     http: reqwest::Client,
     relay_url: String,
     proxy_token: String,
+    events_tx: Option<broadcast::Sender<HealerEvent>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +53,25 @@ impl RelayClient {
                 .unwrap_or_default(),
             relay_url: relay_url.trim_end_matches('/').to_string(),
             proxy_token,
+            events_tx: None,
+        }
+    }
+
+    /// Attach an event broadcaster so daemon connectivity changes
+    /// are visible in the UI.
+    pub fn with_events(mut self, tx: broadcast::Sender<HealerEvent>) -> Self {
+        self.events_tx = Some(tx);
+        self
+    }
+
+    fn broadcast_status(&self, message: &str) {
+        if let Some(tx) = &self.events_tx {
+            let _ = tx.send(HealerEvent::Message {
+                role: "system".to_string(),
+                content: message.to_string(),
+                metadata: Some(serde_json::json!({"type": "connectivity"})),
+                created_at: chrono::Utc::now(),
+            });
         }
     }
 
@@ -88,23 +115,26 @@ impl RelayClient {
     /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
     pub async fn wait_for_daemon(&self, instance_prefix: &str) -> Result<()> {
         let deadline = tokio::time::Instant::now() + DAEMON_RECONNECT_TIMEOUT;
-        tracing::warn!(
-            instance = instance_prefix,
-            "daemon appears offline, waiting up to 10m for reconnect"
-        );
+        tracing::warn!(instance = instance_prefix, "daemon appears offline, waiting up to 10m for reconnect");
+        self.broadcast_status("Daemon disconnected from relay. Waiting for reconnect (up to 10 minutes)...");
         let mut attempt = 0u32;
         loop {
             tokio::time::sleep(DAEMON_POLL_INTERVAL).await;
             attempt += 1;
             if self.is_daemon_online(instance_prefix).await {
-                tracing::info!(instance = instance_prefix, wait_secs = attempt * 5, "daemon back online");
+                let secs = attempt * 5;
+                tracing::info!(instance = instance_prefix, wait_secs = secs, "daemon back online");
+                self.broadcast_status(&format!("Daemon reconnected after {secs}s."));
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
+                self.broadcast_status("Daemon did not reconnect within 10 minutes.");
                 anyhow::bail!("daemon {} did not reconnect within 10 minutes", instance_prefix);
             }
             if attempt % 12 == 0 {
-                tracing::debug!(instance = instance_prefix, elapsed_secs = attempt * 5, "still waiting...");
+                let elapsed = attempt * 5;
+                tracing::debug!(instance = instance_prefix, elapsed_secs = elapsed, "still waiting...");
+                self.broadcast_status(&format!("Still waiting for daemon... ({elapsed}s elapsed)"));
             }
         }
     }

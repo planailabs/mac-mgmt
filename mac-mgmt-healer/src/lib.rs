@@ -468,11 +468,11 @@ async fn run_agent_session(
         .await
         .context("failed to resolve LLM")?;
 
-    // 2. Build relay client
-    let relay_client = Arc::new(relay_client::RelayClient::new(
-        req.relay_url.clone(),
-        proxy_token,
-    ));
+    // 2. Build relay client (with event broadcasting for connectivity status)
+    let relay_client = Arc::new(
+        relay_client::RelayClient::new(req.relay_url.clone(), proxy_token)
+            .with_events(events_tx.clone()),
+    );
 
     // 3. Extract tunnel names
     let file_tunnel_names: Vec<String> = req
