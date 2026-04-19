@@ -7,8 +7,8 @@ edition = "2024"
 default = ["web", "server", "webui"]
 web = ["webui", "dioxus/web"]
 webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:dioxus-tabular"]
-server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer"]
-server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:sentry", "dep:mac-mgmt-healer"]
+server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "mac-mgmt-common/observability"]
+server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:sentry", "dep:mac-mgmt-healer", "mac-mgmt-common/observability"]
 
 [dependencies]
 dioxus = { version = "0.7", features = ["fullstack", "router"], optional = true }
@@ -37,7 +37,7 @@ axum-extra = { version = "0.10", features = ["cookie-private"], optional = true 
 reqwest = { workspace = true, optional = true }
 dioxus-tabular = { version = "0.3", optional = true }
 ed25519-dalek = { version = "2", optional = true }
-mac-mgmt-common = { path = "../common", features = ["observability"] }
+mac-mgmt-common = { path = "../common" }
 mac-mgmt-healer = { path = "../mac-mgmt-healer", optional = true }
 schemars = { version = "1.2.1", features = ["derive"], optional = true }
 similar = { version = "2", optional = true }
