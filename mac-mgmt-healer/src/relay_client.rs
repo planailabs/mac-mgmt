@@ -1,9 +1,17 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+const DAEMON_RECONNECT_TIMEOUT: Duration = Duration::from_secs(600);
+const DAEMON_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// HTTP client for relay proxy endpoints.
-/// Talks to file tunnels, shell tunnels, and log endpoints on remote daemon instances
-/// through the relay's proxy layer.
+///
+/// All relay-facing methods automatically wait for the daemon to reconnect
+/// if it bounces off (502/503/504). Waits up to 10 minutes, polling every 5s.
+/// On timeout, the **original** error is returned.
 pub struct RelayClient {
     http: reqwest::Client,
     relay_url: String,
@@ -23,20 +31,24 @@ pub struct ShellLine {
     pub data: String,
 }
 
+pub struct FileReadResult {
+    pub content: Vec<u8>,
+    pub mtime: Option<i64>,
+}
+
 impl RelayClient {
     pub fn new(relay_url: String, proxy_token: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .unwrap_or_default(),
             relay_url: relay_url.trim_end_matches('/').to_string(),
             proxy_token,
         }
     }
 
-    /// Build the base URL for a specific instance, using subdomain routing.
-    /// relay_url = "https://relay.plan.ai" + instance_prefix = "a1b2c3d4e5f6"
-    /// → "https://a1b2c3d4e5f6.relay.plan.ai"
     fn instance_url(&self, instance_prefix: &str) -> String {
-        // Parse the relay URL to extract scheme and host
         if let Some(rest) = self.relay_url.strip_prefix("https://") {
             format!("https://{instance_prefix}.{rest}")
         } else if let Some(rest) = self.relay_url.strip_prefix("http://") {
@@ -46,7 +58,94 @@ impl RelayClient {
         }
     }
 
-    /// List files in a file tunnel directory.
+    fn req(&self, url: &str) -> reqwest::RequestBuilder {
+        self.http.get(url).bearer_auth(&self.proxy_token)
+    }
+
+    fn post_req(&self, url: &str) -> reqwest::RequestBuilder {
+        self.http.post(url).bearer_auth(&self.proxy_token)
+    }
+
+    // ── Daemon connectivity ────────────────────────────────────────────
+
+    /// Check if the daemon is reachable through the relay.
+    pub async fn is_daemon_online(&self, instance_prefix: &str) -> bool {
+        let base = self.instance_url(instance_prefix);
+        let url = format!("{base}/api/logs?n=1");
+        match self
+            .http
+            .get(&url)
+            .bearer_auth(&self.proxy_token)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) => resp.status().as_u16() < 502,
+            Err(_) => false,
+        }
+    }
+
+    /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
+    pub async fn wait_for_daemon(&self, instance_prefix: &str) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + DAEMON_RECONNECT_TIMEOUT;
+        tracing::warn!(
+            instance = instance_prefix,
+            "daemon appears offline, waiting up to 10m for reconnect"
+        );
+        let mut attempt = 0u32;
+        loop {
+            tokio::time::sleep(DAEMON_POLL_INTERVAL).await;
+            attempt += 1;
+            if self.is_daemon_online(instance_prefix).await {
+                tracing::info!(instance = instance_prefix, wait_secs = attempt * 5, "daemon back online");
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("daemon {} did not reconnect within 10 minutes", instance_prefix);
+            }
+            if attempt % 12 == 0 {
+                tracing::debug!(instance = instance_prefix, elapsed_secs = attempt * 5, "still waiting...");
+            }
+        }
+    }
+
+    /// Execute a request with automatic daemon reconnect guard.
+    /// If the first attempt gets a 502/503/504 or connection error,
+    /// waits for the daemon and retries once. On timeout, returns the original error.
+    async fn guarded_request<F, Fut>(
+        &self,
+        instance_prefix: &str,
+        label: &str,
+        make_request: F,
+    ) -> Result<reqwest::Response>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
+    {
+        match make_request().await {
+            Ok(resp) if is_daemon_offline_status(resp.status()) => {
+                let original = format!("{label} returned {}", resp.status());
+                if self.wait_for_daemon(instance_prefix).await.is_ok() {
+                    make_request().await.context(format!("{label} failed after reconnect"))
+                } else {
+                    anyhow::bail!("{original} (daemon did not reconnect)")
+                }
+            }
+            Ok(resp) => Ok(resp),
+            Err(e) if is_connection_error(&e) => {
+                let original = e.to_string();
+                if self.wait_for_daemon(instance_prefix).await.is_ok() {
+                    make_request().await.context(format!("{label} failed after reconnect"))
+                } else {
+                    anyhow::bail!("{label}: {original} (daemon did not reconnect)")
+                }
+            }
+            Err(e) => Err(e).context(format!("{label} request failed")),
+        }
+    }
+
+    // ── Public API ─────────────────────────────────────────────────────
+
     pub async fn file_list(
         &self,
         instance_prefix: &str,
@@ -59,12 +158,8 @@ impl RelayClient {
             url.push_str(&format!("?path={}", urlencoding::encode(p)));
         }
         let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.proxy_token)
-            .send()
-            .await
-            .context("file_list request failed")?;
+            .guarded_request(instance_prefix, "file_list", || self.req(&url).send())
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -73,7 +168,6 @@ impl RelayClient {
         resp.json().await.context("file_list: invalid JSON response")
     }
 
-    /// Read a file from a file tunnel.
     pub async fn file_read(
         &self,
         instance_prefix: &str,
@@ -86,12 +180,8 @@ impl RelayClient {
             urlencoding::encode(path)
         );
         let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.proxy_token)
-            .send()
-            .await
-            .context("file_read request failed")?;
+            .guarded_request(instance_prefix, "file_read", || self.req(&url).send())
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -103,13 +193,9 @@ impl RelayClient {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok());
         let bytes = resp.bytes().await.context("file_read: failed to read body")?;
-        Ok(FileReadResult {
-            content: bytes.to_vec(),
-            mtime,
-        })
+        Ok(FileReadResult { content: bytes.to_vec(), mtime })
     }
 
-    /// Write a file to a file tunnel.
     pub async fn file_write(
         &self,
         instance_prefix: &str,
@@ -126,15 +212,15 @@ impl RelayClient {
         if let Some(mtime) = expected_mtime {
             url.push_str(&format!("&expected_mtime={mtime}"));
         }
+        let content = content.to_vec();
         let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.proxy_token)
-            .header("content-type", "application/octet-stream")
-            .body(content.to_vec())
-            .send()
-            .await
-            .context("file_write request failed")?;
+            .guarded_request(instance_prefix, "file_write", || {
+                self.post_req(&url)
+                    .header("content-type", "application/octet-stream")
+                    .body(content.clone())
+                    .send()
+            })
+            .await?;
         let status = resp.status();
         let body: serde_json::Value = resp
             .json()
@@ -146,8 +232,6 @@ impl RelayClient {
         Ok(body)
     }
 
-    /// Execute a predefined shell command and collect all output.
-    /// The relay returns SSE events; we collect them into a single ShellOutput.
     pub async fn shell_exec(
         &self,
         instance_prefix: &str,
@@ -161,32 +245,24 @@ impl RelayClient {
             None => serde_json::json!({}),
         };
         let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.proxy_token)
-            .json(&body)
-            .send()
-            .await
-            .context("shell_exec request failed")?;
+            .guarded_request(instance_prefix, "shell_exec", || {
+                self.post_req(&url).json(&body).send()
+            })
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
             anyhow::bail!("shell_exec returned {status}: {text}");
         }
 
-        // Parse SSE stream
         let text = resp.text().await.context("shell_exec: failed to read body")?;
         let mut lines = Vec::new();
         let mut exit_code = None;
         let mut error = None;
 
         for line in text.lines() {
-            let Some(data) = line.strip_prefix("data: ") else {
-                continue;
-            };
-            let Ok(obj) = serde_json::from_str::<serde_json::Value>(data) else {
-                continue;
-            };
+            let Some(data) = line.strip_prefix("data: ") else { continue };
+            let Ok(obj) = serde_json::from_str::<serde_json::Value>(data) else { continue };
             if let Some(code) = obj.get("exit_code").and_then(|v| v.as_i64()) {
                 exit_code = Some(code as i32);
                 error = obj.get("error").and_then(|v| v.as_str()).map(String::from);
@@ -194,21 +270,13 @@ impl RelayClient {
                 obj.get("stream").and_then(|v| v.as_str()),
                 obj.get("data").and_then(|v| v.as_str()),
             ) {
-                lines.push(ShellLine {
-                    stream: stream.to_string(),
-                    data: data.to_string(),
-                });
+                lines.push(ShellLine { stream: stream.to_string(), data: data.to_string() });
             }
         }
 
-        Ok(ShellOutput {
-            lines,
-            exit_code,
-            error,
-        })
+        Ok(ShellOutput { lines, exit_code, error })
     }
 
-    /// Fetch logs from a daemon instance.
     pub async fn log_fetch(
         &self,
         instance_prefix: &str,
@@ -218,28 +286,15 @@ impl RelayClient {
     ) -> Result<serde_json::Value> {
         let base = self.instance_url(instance_prefix);
         let mut params = Vec::new();
-        if let Some(n) = n {
-            params.push(format!("n={n}"));
-        }
-        if let Some(svc) = service {
-            params.push(format!("service={}", urlencoding::encode(svc)));
-        }
-        if let Some(after) = after {
-            params.push(format!("after={after}"));
-        }
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
+        if let Some(n) = n { params.push(format!("n={n}")); }
+        if let Some(svc) = service { params.push(format!("service={}", urlencoding::encode(svc))); }
+        if let Some(after) = after { params.push(format!("after={after}")); }
+        let query = if params.is_empty() { String::new() } else { format!("?{}", params.join("&")) };
         let url = format!("{base}/api/logs{query}");
+
         let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.proxy_token)
-            .send()
-            .await
-            .context("log_fetch request failed")?;
+            .guarded_request(instance_prefix, "log_fetch", || self.req(&url).send())
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -249,7 +304,15 @@ impl RelayClient {
     }
 }
 
-pub struct FileReadResult {
-    pub content: Vec<u8>,
-    pub mtime: Option<i64>,
+fn is_daemon_offline_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 502 | 503 | 504)
+}
+
+fn is_connection_error(e: &reqwest::Error) -> bool {
+    e.is_connect() || e.is_timeout() || {
+        let msg = e.to_string().to_lowercase();
+        msg.contains("connection refused")
+            || msg.contains("connection reset")
+            || msg.contains("broken pipe")
+    }
 }

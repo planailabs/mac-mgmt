@@ -463,6 +463,54 @@ healer_tool! {
     }
 }
 
+healer_tool! {
+    name: "check_node_online",
+    struct_name: CheckNodeOnlineTool,
+    description: "Check if the target node is currently connected to the relay. Returns online/offline status.",
+    handler: |ctx| {
+        let online = ctx.relay.is_daemon_online(&ctx.target_instance).await;
+        Ok(ToolOutput::Text(if online {
+            "Node is online and reachable through the relay.".to_string()
+        } else {
+            "Node is OFFLINE — not connected to the relay.".to_string()
+        }))
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WaitForNodeParams {
+    /// Maximum seconds to wait (1-600, default 300)
+    #[serde(default)]
+    max_seconds: Option<u64>,
+}
+
+healer_tool! {
+    name: "wait_for_node",
+    struct_name: WaitForNodeTool,
+    description: "Wait for the target node to reconnect to the relay. Use this after a reboot or service restart that may cause the daemon to temporarily disconnect. Waits up to the specified time (default 5 minutes, max 10 minutes).",
+    params: WaitForNodeParams,
+    handler: |ctx, params| {
+        if ctx.relay.is_daemon_online(&ctx.target_instance).await {
+            return Ok(ToolOutput::Text("Node is already online.".to_string()));
+        }
+        let max = params.max_seconds.unwrap_or(300).min(600);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(max);
+        let mut elapsed = 0u64;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            elapsed += 5;
+            if ctx.relay.is_daemon_online(&ctx.target_instance).await {
+                return Ok(ToolOutput::Text(format!("Node came back online after {elapsed}s.")));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(ToolOutput::Text(format!(
+                    "Node did not come back online within {max}s. It may need manual intervention."
+                )));
+            }
+        }
+    }
+}
+
 /// Create all healer tools for a session.
 pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
@@ -477,6 +525,8 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         RunClusterCommandTool::new(ctx.clone()),
         PinTool::new(ctx.clone()),
         StaffPingTool::new(ctx.clone()),
-        SetPhaseTool::new(ctx),
+        SetPhaseTool::new(ctx.clone()),
+        CheckNodeOnlineTool::new(ctx.clone()),
+        WaitForNodeTool::new(ctx),
     ]
 }
