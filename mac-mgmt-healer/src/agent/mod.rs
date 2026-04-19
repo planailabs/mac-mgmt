@@ -134,7 +134,15 @@ pub fn build_system_prompt(
         - **performance**: severe degradation that needs investigation\n\
         - **other**: anything that doesn't fit the above\n\n\
         Also use `staff_ping` when you encounter unexpected errors during tool calls \
-        that might indicate a deeper infrastructure issue.\n\n");
+        that might indicate a deeper infrastructure issue.\n\n\
+        Common tool errors to watch for:\n\
+        - **\"validation command failed to run: No such file or directory\"**: The file tunnel \
+          has a validator configured but the binary is missing on the daemon. The write was \
+          rolled back. Send a `staff_ping` with category `dependency` and do NOT retry the \
+          write — it will fail again until the binary is installed.\n\
+        - **502/503/504 errors**: The daemon disconnected from the relay. The tool will \
+          automatically wait up to 10 minutes for it to reconnect. If it times out, use \
+          `check_node_online` and consider using `staff_ping` with category `network`.\n\n");
 
     // Remediation procedures
     let error_classes: Vec<String> = services_extended
