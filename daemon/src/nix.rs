@@ -542,14 +542,38 @@ fn profile_install_with_nix(nix_bin: &str, pkg: &str, upgrade: bool) -> Result<(
             Ok(()) => return Ok(()),
             Err(e) if e.to_string().contains("already provides") => {
                 // A conflicting package provides the same files.
-                // Parse the error to find which package to remove:
-                //   "To remove the existing package:\n\n  nix profile remove <name>"
+                // Parse the error to find which package to remove, and also
+                // remove any other entries whose store paths contain the
+                // same binary prefix (e.g. all ollama variants).
                 let err_msg = e.to_string();
-                let conflicting = parse_conflicting_package(&err_msg).unwrap_or(pkg.to_string());
-                tracing::warn!(
-                    "package conflict for {pkg}: '{conflicting}' provides conflicting files, removing it"
-                );
-                run_profile_cmd(nix_bin, "remove", &conflicting, &["remove", &conflicting])?;
+                let conflicting = parse_conflicting_package(&err_msg);
+
+                // Remove the specifically named conflicting package
+                if let Some(ref name) = conflicting {
+                    if name != pkg {
+                        tracing::warn!("removing conflicting package '{name}' for {pkg}");
+                        let _ = run_profile_cmd(nix_bin, "remove", name, &["remove", name]);
+                    }
+                }
+                // Also remove our own package name in case it's a version mismatch
+                tracing::warn!("removing {pkg} before re-add");
+                let _ = run_profile_cmd(nix_bin, "remove", pkg, &["remove", pkg]);
+
+                // Try the conflicting file's store-path prefix to find more
+                // profile elements that provide the same binary.
+                // The error contains paths like /nix/store/XXX-ollama-0.21.0/bin/engine
+                // Extract the base name (e.g. "ollama") and remove any profile
+                // element whose store path contains it.
+                if let Some(base) = parse_conflicting_store_base(&err_msg) {
+                    let elements = installed_elements().unwrap_or_default();
+                    for elem in &elements {
+                        if elem != pkg && elem.contains(&base) {
+                            tracing::warn!("removing related package '{elem}' (base={base})");
+                            let _ = run_profile_cmd(nix_bin, "remove", elem, &["remove", elem]);
+                        }
+                    }
+                }
+
                 return run_profile_cmd(nix_bin, "add", pkg, &["add", &desired]);
             }
             Err(e) => return Err(e),
@@ -590,6 +614,33 @@ fn parse_conflicting_package(err: &str) -> Option<String> {
             if !name.is_empty() {
                 return Some(name.to_string());
             }
+        }
+    }
+    None
+}
+
+/// Extract the base package name from a conflicting store path in the error.
+/// E.g., from "/nix/store/XXX-ollama-0.21.0/bin/engine" extracts "ollama".
+fn parse_conflicting_store_base(err: &str) -> Option<String> {
+    // Look for the "existing" store path line
+    for line in err.lines() {
+        let trimmed = line.trim().trim_matches('"');
+        if trimmed.starts_with("/nix/store/") && trimmed.contains("/bin/") {
+            // /nix/store/<hash>-<name>-<version>/bin/...
+            let after_store = &trimmed["/nix/store/".len()..];
+            // Skip the hash (everything before the first '-' after the hash)
+            let after_hash = after_store.find('-').map(|i| &after_store[i + 1..])?;
+            // Take everything before /bin/
+            let before_bin = after_hash.find("/bin/").map(|i| &after_hash[..i])?;
+            // Strip version: "ollama-0.21.0" → "ollama"
+            // Find the last segment that starts with a digit
+            let parts: Vec<&str> = before_bin.rsplitn(2, '-').collect();
+            if parts.len() == 2 {
+                if parts[0].chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                    return Some(parts[1].to_string());
+                }
+            }
+            return Some(before_bin.to_string());
         }
     }
     None
