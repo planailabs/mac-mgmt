@@ -789,32 +789,63 @@ fn category_badge(cat: &str) -> &'static str {
 /// Render a chat message. Tool calls/results get special UI.
 /// Assistant/system messages are rendered as markdown via dangerous_inner_html.
 fn render_message(msg: &ChatMsg) -> Element {
-    // Tool call/result messages: parse and show with collapsible UI
+    // Tool call start: show as a compact running indicator
+    if msg.role == "tool_call" {
+        return render_tool_call(msg);
+    }
+    // Tool result: collapsible output
     if msg.role == "tool_result" {
         return render_tool_result(msg);
     }
 
     let (bg, icon, label) = match msg.role.as_str() {
-        "system" => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400", "⚙", "System"),
-        "assistant" => ("bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400", "🤖", "Agent"),
-        "user" => ("bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400", "👤", "User"),
-        "summary" => ("bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400", "📋", "Summary"),
-        _ => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300", "•", "Other"),
+        "system" => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400", "S", "System"),
+        "assistant" => ("bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400", "A", "Agent"),
+        "user" => ("bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400", "U", "User"),
+        "summary" => ("bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400", "S", "Summary"),
+        _ => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300", "-", "Other"),
     };
 
-    // Simple markdown rendering: convert **bold**, `code`, and newlines
     let html = simple_md_to_html(&msg.content);
 
     rsx! {
         div { class: "p-3 rounded {bg}",
             div { class: "flex items-center gap-1.5 mb-1",
-                span { class: "text-sm", "{icon}" }
+                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300", "{icon}" }
                 span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "{label}" }
             }
             div {
                 class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
                 dangerous_inner_html: "{html}",
             }
+        }
+    }
+}
+
+fn render_tool_call(msg: &ChatMsg) -> Element {
+    let tool_name = msg
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("tool_name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("tool");
+    let args = msg
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("tool_args"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("{}");
+    let args_short = if args.len() > 120 {
+        format!("{}...", &args[..120])
+    } else {
+        args.to_string()
+    };
+
+    rsx! {
+        div { class: "px-3 py-2 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2",
+            span { class: "inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" }
+            span { class: "text-xs font-mono font-semibold text-indigo-700 dark:text-indigo-300", "{tool_name}" }
+            span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
         }
     }
 }

@@ -574,17 +574,25 @@ async fn run_agent_session(
         }
 
         // Extract role/content from ChatMessage enum for persistence
-        fn extract_role_content(msg: &swiftide::chat_completion::ChatMessage) -> (String, String) {
+        /// Extract role/content from ChatMessage. Returns None for ToolOutput
+        /// (handled by before_tool/after_tool hooks to avoid duplicates).
+        fn extract_role_content(msg: &swiftide::chat_completion::ChatMessage) -> Option<(String, String)> {
             match msg {
-                swiftide::chat_completion::ChatMessage::System(s) => ("system".to_string(), s.clone()),
-                swiftide::chat_completion::ChatMessage::User(s) => ("user".to_string(), s.clone()),
-                swiftide::chat_completion::ChatMessage::Assistant(s, _) => {
-                    ("assistant".to_string(), s.clone().unwrap_or_default())
+                swiftide::chat_completion::ChatMessage::System(s) => Some(("system".to_string(), s.clone())),
+                swiftide::chat_completion::ChatMessage::User(s) => Some(("user".to_string(), s.clone())),
+                swiftide::chat_completion::ChatMessage::Assistant(s, tool_calls) => {
+                    let mut content = s.clone().unwrap_or_default();
+                    // Include tool call names in the assistant message for visibility
+                    if let Some(calls) = tool_calls {
+                        if !calls.is_empty() && content.is_empty() {
+                            content = calls.iter().map(|tc| format!("`{}`", tc.name())).collect::<Vec<_>>().join(", ");
+                        }
+                    }
+                    Some(("assistant".to_string(), content))
                 }
-                swiftide::chat_completion::ChatMessage::ToolOutput(tc, to) => {
-                    ("tool_result".to_string(), format!("{tc}: {to}"))
-                }
-                swiftide::chat_completion::ChatMessage::Summary(s) => ("summary".to_string(), s.clone()),
+                // Skip ToolOutput — persisted by after_tool hook
+                swiftide::chat_completion::ChatMessage::ToolOutput(_, _) => None,
+                swiftide::chat_completion::ChatMessage::Summary(s) => Some(("summary".to_string(), s.clone())),
             }
         }
 
@@ -595,14 +603,25 @@ async fn run_agent_session(
             builder.add_tool(tool);
         }
 
+        let pool_before_tool = pool.clone();
+        let events_tx_before_tool = events_tx.clone();
+        let pool_after_tool = pool.clone();
+        let events_tx_after_tool = events_tx.clone();
+
         let state_ref = state.clone();
         builder
             .system_prompt(system_prompt)
             .on_new_message(move |_agent, msg| {
                 let pool = pool_msg.clone();
                 let events_tx = events_tx_msg.clone();
-                let (role, content) = extract_role_content(msg);
+                let extracted = extract_role_content(msg);
                 Box::pin(async move {
+                    let Some((role, content)) = extracted else {
+                        return Ok(()); // ToolOutput handled by after_tool
+                    };
+                    if content.is_empty() {
+                        return Ok(());
+                    }
                     // Persist message
                     session::store::append_message(
                         &pool,
@@ -619,6 +638,58 @@ async fn run_agent_session(
                         role,
                         content,
                         metadata: None,
+                        created_at: Utc::now(),
+                    });
+                    Ok(())
+                })
+            })
+            .before_tool(move |_agent, tool_call| {
+                let pool = pool_before_tool.clone();
+                let events_tx = events_tx_before_tool.clone();
+                let name = tool_call.name().to_string();
+                let args = tool_call.args().map(String::from);
+                Box::pin(async move {
+                    // Persist the tool call start so it's visible immediately
+                    let args_preview = args.as_deref().unwrap_or("{}");
+                    let content = format!("Calling `{name}`...");
+                    let metadata = serde_json::json!({
+                        "tool_name": name,
+                        "tool_args": args_preview,
+                        "status": "running",
+                    });
+                    session::store::append_message(
+                        &pool, session_id, "tool_call", &content, Some(&metadata),
+                    ).await.ok();
+                    let _ = events_tx.send(HealerEvent::Message {
+                        role: "tool_call".to_string(),
+                        content,
+                        metadata: Some(metadata),
+                        created_at: Utc::now(),
+                    });
+                    Ok(())
+                })
+            })
+            .after_tool(move |_agent, tool_call, result| {
+                let pool = pool_after_tool.clone();
+                let events_tx = events_tx_after_tool.clone();
+                let name = tool_call.name().to_string();
+                let (status, output) = match result {
+                    Ok(out) => ("ok", out.to_string()),
+                    Err(e) => ("error", e.to_string()),
+                };
+                Box::pin(async move {
+                    let content = format!("{name}: {output}");
+                    let metadata = serde_json::json!({
+                        "tool_name": name,
+                        "status": status,
+                    });
+                    session::store::append_message(
+                        &pool, session_id, "tool_result", &content, Some(&metadata),
+                    ).await.ok();
+                    let _ = events_tx.send(HealerEvent::Message {
+                        role: "tool_result".to_string(),
+                        content,
+                        metadata: Some(metadata),
                         created_at: Utc::now(),
                     });
                     Ok(())
