@@ -688,6 +688,7 @@ async fn run_agent_session(
                 let events_tx = events_tx_after_tool.clone();
                 let running_tools = running_tools_after.clone();
                 let name = tool_call.name().to_string();
+                let args = tool_call.args().map(String::from);
                 let (status, output) = match result {
                     Ok(out) => ("ok", out.to_string()),
                     Err(e) => ("error", e.to_string()),
@@ -705,6 +706,7 @@ async fn run_agent_session(
                     let content = format!("{name}: {output}");
                     let metadata = serde_json::json!({
                         "tool_name": name,
+                        "tool_args": args.as_deref().unwrap_or("{}"),
                         "status": status,
                     });
                     session::store::append_message(

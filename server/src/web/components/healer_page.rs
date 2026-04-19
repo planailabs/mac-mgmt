@@ -877,17 +877,32 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     } else {
         preview.to_string()
     };
+    let args = msg.metadata.as_ref()
+        .and_then(|m| m.get("tool_args"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("{}");
+    let args_short = if args.len() > 120 {
+        format!("{}...", &args[..120])
+    } else {
+        args.to_string()
+    };
 
     rsx! {
         div { class: "p-2 rounded bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700",
             details { class: "group",
                 summary { class: "flex items-center gap-2 cursor-pointer select-none",
                     span { class: "{tool_badge}", "{tool_name}" }
+                    span { class: "text-xs text-gray-500 dark:text-gray-400 truncate max-w-md", "{args_short}" }
                     if is_error {
                         span { class: "text-xs text-red-500", "error" }
                     }
                 }
-                pre { class: "mt-2 p-2 text-xs font-mono bg-gray-900 text-green-400 rounded overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap",
+                if args.len() > 2 {
+                    pre { class: "mt-2 p-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-400 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap",
+                        "{args}"
+                    }
+                }
+                pre { class: "mt-1 p-2 text-xs font-mono bg-gray-900 text-green-400 rounded overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap",
                     "{display}"
                 }
             }
