@@ -1591,3 +1591,56 @@ upgrade_window = "bogus"
         assert!(json.contains("Default LLM backend"), "schema missing default_llm description");
     }
 }
+
+// ── Healer stream events (shared between server and web client) ────────
+
+/// Event streamed from server to client during a healer session.
+/// This is the canonical wire type — used directly by both the server
+/// streaming functions and the WASM client renderer.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HealerStreamEvent {
+    /// Event kind: "session_created", "message", "running_tools", "pins",
+    /// "staff_pings", "state", "done", "error"
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_tools: Option<Vec<HealerRunningTool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pins: Option<Vec<HealerPin>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staff_pings: Option<Vec<HealerStaffPing>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HealerRunningTool {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<String>,
+    pub started_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealerPin {
+    pub slot: String,
+    pub summary: String,
+    #[serde(default)]
+    pub affected_services: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealerStaffPing {
+    pub id: String,
+    pub category: String,
+    pub message: String,
+    pub resolved: bool,
+    pub created_at: String,
+}

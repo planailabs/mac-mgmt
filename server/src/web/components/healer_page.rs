@@ -25,50 +25,27 @@ pub struct SessionSummary {
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealerStreamEvent {
-    pub kind: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub role: Option<String>,
-    #[serde(default)]
-    pub content: Option<String>,
-    #[serde(default)]
-    pub state: Option<String>,
-    #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
-    #[serde(default)]
-    pub running_tools: Option<Vec<RunningToolInfo>>,
-    #[serde(default)]
-    pub pins: Option<Vec<PinInfo>>,
-    #[serde(default)]
-    pub staff_pings: Option<Vec<StaffPingSummary>>,
+// Re-export wire types from common — single source of truth.
+pub use mac_mgmt_common::{
+    HealerStreamEvent, HealerRunningTool as RunningToolInfo,
+    HealerPin as PinInfo, HealerStaffPing as StaffPingSummary,
+};
+
+#[cfg(feature = "server")]
+fn staff_pings_to_wire(pings: &[mac_mgmt_healer::session::StaffPing]) -> Vec<StaffPingSummary> {
+    pings.iter().map(|p| StaffPingSummary {
+        id: p.id.to_string(), category: p.category.clone(),
+        message: p.message.clone(), resolved: p.resolved,
+        created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
+    }).collect()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PinInfo {
-    pub slot: String,
-    pub summary: String,
-    #[serde(default)]
-    pub affected_services: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RunningToolInfo {
-    pub name: String,
-    #[serde(default)]
-    pub args: Option<String>,
-    pub started_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StaffPingSummary {
-    pub id: String,
-    pub category: String,
-    pub message: String,
-    pub resolved: bool,
-    pub created_at: String,
+#[cfg(feature = "server")]
+fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) -> Vec<RunningToolInfo> {
+    tools.iter().map(|t| RunningToolInfo {
+        name: t.name.clone(), args: t.args.clone(),
+        started_at: t.started_at.to_rfc3339(),
+    }).collect()
 }
 
 #[cfg(feature = "server")]
@@ -90,10 +67,7 @@ fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStream
         HealerEvent::RunningTools { tools } => (
             HealerStreamEvent {
                 kind: "running_tools".to_string(),
-                running_tools: Some(tools.iter().map(|t| RunningToolInfo {
-                    name: t.name.clone(), args: t.args.clone(),
-                    started_at: t.started_at.to_rfc3339(),
-                }).collect()),
+                running_tools: Some(running_tools_to_wire(tools)),
                 ..empty
             },
             false,
@@ -265,11 +239,7 @@ pub async fn view_healer_session(
             if !pings.is_empty() {
                 let _ = tx.unbounded_send(HealerStreamEvent {
                     kind: "staff_pings".to_string(),
-                    staff_pings: Some(pings.iter().map(|p| StaffPingSummary {
-                        id: p.id.to_string(), category: p.category.clone(),
-                        message: p.message.clone(), resolved: p.resolved,
-                        created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
-                    }).collect()),
+                    staff_pings: Some(staff_pings_to_wire(&pings)),
                     ..empty()
                 });
             }
@@ -285,10 +255,7 @@ pub async fn view_healer_session(
         if !tools.is_empty() {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "running_tools".to_string(),
-                running_tools: Some(tools.iter().map(|t| RunningToolInfo {
-                    name: t.name.clone(), args: t.args.clone(),
-                    started_at: t.started_at.to_rfc3339(),
-                }).collect()),
+                running_tools: Some(running_tools_to_wire(&tools)),
                 ..empty()
             });
         }
