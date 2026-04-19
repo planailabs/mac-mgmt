@@ -102,8 +102,18 @@ pub async fn resolve_llm(config: &ConnectorConfig) -> Result<LlmHandle> {
         // SAFETY: called during server startup, before parallel agent tasks.
         unsafe { std::env::set_var("ANTHROPIC_API_KEY", api_key) };
 
+        // Wire usage tracking so the token budget actually works.
+        // input_tokens includes the full context (system prompt, history, tools)
+        // on every call — this is what Anthropic bills for.
+        let usage_counter = token_usage.clone();
         let anthropic = swiftide::integrations::anthropic::Anthropic::builder()
             .default_prompt_model(&model)
+            .on_usage(move |usage| {
+                let input = usage.prompt_tokens as u64;
+                let output = usage.completion_tokens as u64;
+                usage_counter.fetch_add(input + output, Ordering::Relaxed);
+                Ok(())
+            })
             .build()
             .context("failed to build Anthropic integration")?;
 
