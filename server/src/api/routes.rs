@@ -2770,6 +2770,27 @@ pub async fn post_heartbeat(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
+    // Clean up assessment_probes for services no longer reported by this instance.
+    // This prevents stale probe data from disabled services showing up in the UI.
+    if !body.services_extended.is_empty() {
+        let active_services: Vec<String> = body
+            .services_extended
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        if let Err(e) = sqlx::query(
+            "DELETE FROM assessment_probes \
+             WHERE instance_id = $1 AND service != ALL($2)",
+        )
+        .bind(&body.instance_id)
+        .bind(&active_services)
+        .execute(pool.inner())
+        .await
+        {
+            tracing::debug!("failed to clean up stale probes: {e}");
+        }
+    }
+
     Ok(Status::Ok)
 }
 
