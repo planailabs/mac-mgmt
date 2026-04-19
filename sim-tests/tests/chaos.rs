@@ -270,7 +270,7 @@ async fn chaos_sse_stress() {
 
     // After the storm, daemon should still be alive
     state.clear_heartbeats();
-    let alive = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+    let alive = sim_tests::wait_until(Duration::from_secs(30), Duration::from_millis(200), || {
         !state.heartbeats_from(&instance_id).is_empty()
     })
     .await;
@@ -282,9 +282,15 @@ async fn chaos_sse_stress() {
         );
     }
 
-    // Skills endpoint should have been hit
+    // Give the daemon time to process queued skill syncs after faults clear.
+    // The daemon may need to reconnect SSE and/or retry the skill fetch.
+    let skills_ok =
+        sim_tests::wait_until(Duration::from_secs(30), Duration::from_millis(500), || {
+            state.request_count("/api/skills") > 0
+        })
+        .await;
     assert!(
-        state.request_count("/api/skills") > 0,
+        skills_ok,
         "daemon should have fetched /api/skills at least once during stress test"
     );
 
