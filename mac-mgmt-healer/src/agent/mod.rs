@@ -139,7 +139,8 @@ pub fn build_system_prompt(
             call `pin` with slot `final_report` documenting your findings, \
             then call `set_phase` with `needs_human_attention`\n\
         12. NEVER make changes without understanding the root cause first\n\
-        13. When a service's configuration format or behavior is unclear, look up its documentation using `read_doc` (for mac-mgmt docs) or Context7 (for third-party service docs) before guessing\n\n");
+        13. When a service's configuration format or behavior is unclear, look up its documentation using `read_doc` (for mac-mgmt docs) or Context7 (for third-party service docs) before guessing\n\
+        14. If you need a tool or capability that is not available, use `staff_ping` with category `tool_needed` describing what you need and why — staff can add tools for future sessions\n\n");
 
     // Staff pings guidance
     prompt.push_str(
@@ -155,6 +156,7 @@ pub fn build_system_prompt(
         - **dependency**: missing system packages, library version conflicts\n\
         - **security**: suspicious activity, certificate expiry\n\
         - **performance**: severe degradation that needs investigation\n\
+        - **tool_needed**: a tool you need is not available (describe what tool/capability is missing and why you need it)\n\
         - **other**: anything that doesn't fit the above\n\n\
         Also use `staff_ping` when you encounter unexpected errors during tool calls \
         that might indicate a deeper infrastructure issue.\n\n\

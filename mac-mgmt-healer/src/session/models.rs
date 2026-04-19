@@ -177,5 +177,6 @@ pub const PING_CATEGORIES: &[&str] = &[
     "dependency",
     "security",
     "performance",
+    "tool_needed",
     "other",
 ];
