@@ -13,7 +13,7 @@ use super::components::docs::{DocList, DocPage};
 use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
 use super::components::fleet_detail::FleetDetail;
-use super::components::healer_page::FleetHealer;
+use super::components::healer_page::{FleetHealer, FleetHealerSession};
 use super::components::layout::Layout;
 use super::components::log_viewer::FleetLogs;
 use super::components::mcp_bundle_detail::McpBundleDetail;
@@ -91,6 +91,8 @@ pub enum Route {
     FleetLogs { instance_id: String },
     #[route("/fleet/:instance_id/healer")]
     FleetHealer { instance_id: String },
+    #[route("/fleet/:instance_id/healer/:session_id")]
+    FleetHealerSession { instance_id: String, session_id: String },
     #[route("/staff-pings")]
     StaffPings {},
     #[route("/rollout-groups")]

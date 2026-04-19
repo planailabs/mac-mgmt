@@ -459,31 +459,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             let instance_id = instance_id.clone();
                             let msg = user_input.read().clone();
                             let user_msg = if msg.is_empty() { None } else { Some(msg) };
-                            running.set(true);
-                            messages.set(Vec::new());
-                            active_tools.set(Vec::new());
-                            pins.set(Vec::new());
-                            staff_pings.set(Vec::new());
-                            status_msg.set(None);
-                            state.set("starting".to_string());
-                            state_reason.set(None);
                             async move {
-                                match start_healer_session(instance_id, user_msg).await {
+                                match start_healer_session(instance_id.clone(), user_msg).await {
                                     Ok(sid) => {
-                                        session_id.set(Some(sid.clone()));
-                                        consume_healer_sse(
-                                            sid, messages, active_tools, pins, staff_pings,
-                                            status_msg, state, state_reason, running,
-                                        );
+                                        // Navigate to the session subroute
+                                        navigator().push(format!("/fleet/{}/healer/{}", instance_id, sid));
                                     }
                                     Err(e) => {
-                                        messages.push(ChatMsg {
-                                            role: "system".to_string(),
-                                            content: format!("Error: {e}"),
-                                            metadata: None,
-                                        });
-                                        state.set("failed".to_string());
-                                        running.set(false);
+                                        tracing::error!("failed to start healer session: {e}");
                                     }
                                 }
                             }
@@ -633,29 +616,12 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             let created_by = sess.created_by.clone();
                             let error_msg = sess.error_message.clone();
                             let (badge_class, badge_label) = state_badge(&sess_state);
+                            let url = format!("/fleet/{}/healer/{}", instance_id, sid);
 
                             rsx! {
-                                div {
+                                Link {
+                                    to: url,
                                     class: "flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer",
-                                    onclick: {
-                                        let sid = sid.clone();
-                                        move |_| {
-                                            let sid = sid.clone();
-                                            session_id.set(Some(sid.clone()));
-                                            messages.set(Vec::new());
-                                            active_tools.set(Vec::new());
-                                            pins.set(Vec::new());
-                                            staff_pings.set(Vec::new());
-                                            status_msg.set(None);
-                                            state.set("loading".to_string());
-                                            state_reason.set(None);
-                                            running.set(true);
-                                            consume_healer_sse(
-                                                sid, messages, active_tools, pins, staff_pings,
-                                                status_msg, state, state_reason, running,
-                                            );
-                                        }
-                                    },
                                     div { class: "flex items-center gap-3",
                                         span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}", "{badge_label}" }
                                         span { class: "text-sm text-gray-700 dark:text-gray-300", "{created_at}" }
@@ -672,6 +638,157 @@ fn render_healer(ctx: &HealerContext) -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// ── Session detail view (routed at /fleet/:instance_id/healer/:session_id) ──
+
+#[component]
+pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
+    let mut messages = use_signal::<Vec<ChatMsg>>(Vec::new);
+    let mut active_tools = use_signal::<Vec<RunningToolInfo>>(Vec::new);
+    let mut pins = use_signal::<Vec<PinInfo>>(Vec::new);
+    let mut staff_pings_sig = use_signal::<Vec<StaffPingSummary>>(Vec::new);
+    let mut status_msg = use_signal::<Option<String>>(|| None);
+    let mut state = use_signal(|| "loading".to_string());
+    let mut state_reason = use_signal::<Option<String>>(|| None);
+    let mut running = use_signal(|| true);
+
+    let sid = session_id.clone();
+    let iid = instance_id.clone();
+
+    // Connect to SSE on mount
+    use_hook(move || {
+        consume_healer_sse(
+            sid,
+            messages,
+            active_tools,
+            pins,
+            staff_pings_sig,
+            status_msg,
+            state,
+            state_reason,
+            running,
+        );
+    });
+
+    let back_url = format!("/fleet/{}/healer", instance_id);
+
+    rsx! {
+        h2 { class: "text-2xl font-bold mb-4", "Healer Session" }
+        p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
+            "Instance: {iid} — Session: {session_id}"
+        }
+
+        div { class: "mb-3 flex items-center gap-3 flex-wrap",
+            {
+                let st = state.read().clone();
+                let (badge_class, label) = state_badge(&st);
+                let reason = state_reason.read().clone();
+                rsx! {
+                    span { class: "inline-block px-2 py-1 text-xs font-medium rounded {badge_class}", "{label}" }
+                    if let Some(reason) = reason {
+                        span { class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                            "({reason_display(&reason)})"
+                        }
+                    }
+                }
+            }
+
+            if *running.read() {
+                button {
+                    class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                    onclick: {
+                        let sid = session_id.clone();
+                        move |_| {
+                            let sid = sid.clone();
+                            async move { let _ = pause_healer_session(sid).await; }
+                        }
+                    },
+                    "Pause"
+                }
+                button {
+                    class: "px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700",
+                    onclick: {
+                        let sid = session_id.clone();
+                        move |_| {
+                            let sid = sid.clone();
+                            async move { let _ = cancel_healer_session(sid).await; }
+                        }
+                    },
+                    "Cancel"
+                }
+            }
+
+            {
+                let st = state.read().clone();
+                if st == "paused" {
+                    rsx! {
+                        button {
+                            class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                            onclick: {
+                                let sid = session_id.clone();
+                                move |_| {
+                                    let sid = sid.clone();
+                                    async move { let _ = resume_healer_session(sid).await; }
+                                }
+                            },
+                            "Resume"
+                        }
+                    }
+                } else {
+                    rsx! {}
+                }
+            }
+
+            Link {
+                to: back_url,
+                class: "px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300",
+                "Back to sessions"
+            }
+        }
+
+        // Pinned slots (from stream)
+        { render_pinned_slots_from_signal(&pins.read()) }
+
+        // Chat messages (filter out pin messages — shown above)
+        div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
+            for msg in messages.read().iter().filter(|m| m.role != "pin") {
+                {render_message(msg)}
+            }
+
+            // Running tools
+            for tool in active_tools.read().iter() {
+                {
+                    let name = tool.name.clone();
+                    let args_short = tool.args.as_deref()
+                        .filter(|a| *a != "{}")
+                        .map(|a| if a.len() > 120 { format!("{}...", &a[..120]) } else { a.to_string() })
+                        .unwrap_or_default();
+                    let has_args = !args_short.is_empty();
+                    rsx! {
+                        div { class: "px-3 py-2 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2",
+                            span { class: "inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" }
+                            span { class: "text-xs font-mono font-semibold text-indigo-700 dark:text-indigo-300", "{name}" }
+                            if has_args {
+                                span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Ephemeral status
+            if let Some(msg) = &*status_msg.read() {
+                div { class: "px-3 py-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300 animate-pulse",
+                    "{msg}"
+                }
+            }
+
+            if *running.read() && active_tools.read().is_empty() && status_msg.read().is_none() {
+                div { class: "p-3 text-sm text-gray-400 animate-pulse", "Agent is thinking..." }
             }
         }
     }
