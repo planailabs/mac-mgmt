@@ -262,6 +262,7 @@ impl ManagedService for Ollama {
                 args: vec!["list".into()],
                 description: "List installed models".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "ollama-ps".into(),
@@ -269,13 +270,15 @@ impl ManagedService for Ollama {
                 args: vec!["ps".into()],
                 description: "Show running models".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "ollama-pull".into(),
                 command: "ollama".into(),
                 args: vec!["pull".into()],
-                description: "Pull a model".into(),
+                description: "Pull a model (up to 1h timeout)".into(),
                 arg_template: model_arg(),
+                timeout_secs: Some(3600),
             },
             ShellCommandDef {
                 name: "ollama-show".into(),
@@ -283,6 +286,7 @@ impl ManagedService for Ollama {
                 args: vec!["show".into()],
                 description: "Show model details".into(),
                 arg_template: model_arg(),
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "ollama-rm".into(),
@@ -290,6 +294,7 @@ impl ManagedService for Ollama {
                 args: vec!["rm".into()],
                 description: "Remove a model".into(),
                 arg_template: model_arg(),
+                timeout_secs: None,
             },
         ]
     }

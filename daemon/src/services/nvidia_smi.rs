@@ -105,6 +105,7 @@ impl ManagedService for NvidiaSmi {
                 args: vec![],
                 description: "NVIDIA GPU status".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "nvidia-smi-query".into(),
@@ -115,6 +116,7 @@ impl ManagedService for NvidiaSmi {
                 ],
                 description: "GPU metrics (CSV)".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
         ]
     }

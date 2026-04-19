@@ -160,6 +160,7 @@ impl ManagedService for Lms {
                 args: vec!["server".into(), "status".into(), "--json".into()],
                 description: "Show server status".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "lms-ps".into(),
@@ -167,6 +168,7 @@ impl ManagedService for Lms {
                 args: vec!["ps".into(), "--json".into()],
                 description: "List loaded models".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "lms-ls".into(),
@@ -174,6 +176,7 @@ impl ManagedService for Lms {
                 args: vec!["ls".into()],
                 description: "List available models".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "lms-load".into(),
@@ -185,6 +188,7 @@ impl ManagedService for Lms {
                     placeholder: "model-id".into(),
                     validation: None,
                 }),
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "lms-unload-all".into(),
@@ -192,6 +196,7 @@ impl ManagedService for Lms {
                 args: vec!["unload".into(), "--all".into()],
                 description: "Unload all models".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
         ]
     }

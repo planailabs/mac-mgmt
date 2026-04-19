@@ -153,7 +153,7 @@ pub fn run_builtin_validator(name: &str, path: &std::path::Path) -> Result<(), S
 /// A predefined shell command that a managed service exposes for remote
 /// execution through the relay. Only registered commands can be run —
 /// no arbitrary shell access.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ShellCommandDef {
     /// Short, URL-safe identifier (e.g. "ollama-list", "nvidia-smi-query").
     pub name: String,
@@ -167,6 +167,9 @@ pub struct ShellCommandDef {
     /// after `args`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arg_template: Option<ShellArgTemplate>,
+    /// Custom timeout in seconds. Defaults to 300 (5 min) if unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
 
 /// Template for a user-provided argument on a shell command.

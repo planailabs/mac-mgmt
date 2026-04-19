@@ -445,6 +445,7 @@ impl ManagedService for OpenClaw {
                 args: vec!["health".into(), "--json".into()],
                 description: "Check gateway health".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "openclaw-config-validate".into(),
@@ -452,6 +453,7 @@ impl ManagedService for OpenClaw {
                 args: vec!["config".into(), "validate".into()],
                 description: "Validate configuration".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
             ShellCommandDef {
                 name: "openclaw-doctor".into(),
@@ -459,6 +461,7 @@ impl ManagedService for OpenClaw {
                 args: vec!["doctor".into(), "--fix".into()],
                 description: "Run diagnostics and auto-fix".into(),
                 arg_template: None,
+                timeout_secs: None,
             },
         ]
     }

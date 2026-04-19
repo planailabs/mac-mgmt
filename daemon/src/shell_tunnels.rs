@@ -74,9 +74,9 @@ impl ShellTunnelRegistry {
 
 // ── Shell command execution (data session) ─────────────────────────────
 
-/// Maximum execution time for a shell command (5 minutes).
+/// Default maximum execution time for a shell command (5 minutes).
 #[cfg(feature = "services")]
-const MAX_EXEC_SECS: u64 = 300;
+const DEFAULT_EXEC_SECS: u64 = 300;
 
 /// Handle a shell command execution via a dedicated data WebSocket session.
 ///
@@ -191,7 +191,8 @@ pub async fn handle_exec_session(
     let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
     let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
 
-    let timeout = tokio::time::sleep(std::time::Duration::from_secs(MAX_EXEC_SECS));
+    let exec_timeout = tunnel.def.timeout_secs.unwrap_or(DEFAULT_EXEC_SECS);
+    let timeout = tokio::time::sleep(std::time::Duration::from_secs(exec_timeout));
     tokio::pin!(timeout);
 
     // Stream output until process exits or timeout
@@ -250,9 +251,9 @@ pub async fn handle_exec_session(
                 }
             }
             _ = &mut timeout => {
-                tracing::warn!("shell exec timeout for {}", tunnel.def.name);
+                tracing::warn!("shell exec timeout for {} ({}s)", tunnel.def.name, exec_timeout);
                 let _ = child.kill().await;
-                let msg = serde_json::json!({ "exit_code": -1, "error": "command timed out after 5 minutes" });
+                let msg = serde_json::json!({ "exit_code": -1, "error": format!("command timed out after {exec_timeout}s") });
                 let _ = sink.send(tungstenite::Message::Text(msg.to_string().into())).await;
                 let _ = sink.send(tungstenite::Message::Close(None)).await;
                 return;

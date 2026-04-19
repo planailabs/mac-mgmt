@@ -59,6 +59,7 @@ impl MockManagedService {
             args: args.iter().map(|s| s.to_string()).collect(),
             description: format!("Mock command: {name}"),
             arg_template: None,
+            timeout_secs: None,
         });
         self
     }
@@ -82,6 +83,7 @@ impl MockManagedService {
                 placeholder: placeholder.to_string(),
                 validation: None,
             }),
+            timeout_secs: None,
         });
         self
     }
