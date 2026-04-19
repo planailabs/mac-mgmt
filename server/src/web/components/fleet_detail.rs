@@ -143,12 +143,12 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         collected_at: DateTime<Utc>,
     }
     let probe_rows: Vec<ProbeRow> = sqlx::query_as(
-        "SELECT DISTINCT ON (service) \
+        "SELECT DISTINCT ON (service, kind) \
                 service, kind, ok, duration_ms, tokens_in, tokens_out, first_token_ms, \
                 model, canary_digest, error_class, error_detail, collected_at \
          FROM assessment_probes \
          WHERE instance_id = $1 \
-         ORDER BY service, collected_at DESC",
+         ORDER BY service, kind, collected_at DESC",
     )
     .bind(&instance_id)
     .fetch_all(&pool)
