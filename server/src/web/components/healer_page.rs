@@ -38,9 +38,20 @@ pub struct HealerStreamEvent {
     pub state: Option<String>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
-    /// Snapshot of currently executing tools (sent with "running_tools" kind)
     #[serde(default)]
     pub running_tools: Option<Vec<RunningToolInfo>>,
+    #[serde(default)]
+    pub pins: Option<Vec<PinInfo>>,
+    #[serde(default)]
+    pub staff_pings: Option<Vec<StaffPingSummary>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinInfo {
+    pub slot: String,
+    pub summary: String,
+    #[serde(default)]
+    pub affected_services: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -63,45 +74,73 @@ pub struct StaffPingSummary {
 #[cfg(feature = "server")]
 fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStreamEvent, bool) {
     use mac_mgmt_healer::HealerEvent;
+    let empty = HealerStreamEvent {
+        kind: String::new(), session_id: None, role: None, content: None,
+        state: None, metadata: None, running_tools: None, pins: None, staff_pings: None,
+    };
     match event {
         HealerEvent::Message { role, content, metadata, .. } => (
             HealerStreamEvent {
                 kind: "message".to_string(),
-                session_id: None, role: Some(role.clone()),
-                content: Some(content.clone()), state: None,
-                metadata: metadata.clone(), running_tools: None,
+                role: Some(role.clone()), content: Some(content.clone()),
+                metadata: metadata.clone(), ..empty
             },
             false,
         ),
         HealerEvent::RunningTools { tools } => (
             HealerStreamEvent {
                 kind: "running_tools".to_string(),
-                session_id: None, role: None, content: None, state: None, metadata: None,
                 running_tools: Some(tools.iter().map(|t| RunningToolInfo {
-                    name: t.name.clone(),
-                    args: t.args.clone(),
+                    name: t.name.clone(), args: t.args.clone(),
                     started_at: t.started_at.to_rfc3339(),
                 }).collect()),
+                ..empty
             },
             false,
         ),
         HealerEvent::State { state, .. } => (
             HealerStreamEvent {
                 kind: "state".to_string(),
-                session_id: None, role: None, content: None,
-                state: Some(state.clone()), metadata: None, running_tools: None,
+                state: Some(state.clone()), ..empty
             },
             false,
         ),
         HealerEvent::Done { state } => (
             HealerStreamEvent {
                 kind: "done".to_string(),
-                session_id: None, role: None, content: None,
-                state: Some(state.clone()), metadata: None, running_tools: None,
+                state: Some(state.clone()), ..empty
             },
             true,
         ),
     }
+}
+
+#[cfg(feature = "server")]
+fn extract_pins_from_messages(messages: &[mac_mgmt_healer::HealerMessage]) -> Vec<PinInfo> {
+    let mut pins = std::collections::HashMap::<String, PinInfo>::new();
+    for msg in messages {
+        if msg.role == "pin" {
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
+                if let Some(slot) = data.get("slot").and_then(|v| v.as_str()) {
+                    pins.insert(slot.to_string(), PinInfo {
+                        slot: slot.to_string(),
+                        summary: data.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        affected_services: data.get("affected_services").and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default(),
+                    });
+                }
+            }
+        }
+    }
+    let order = ["diagnosis", "remediation", "final_report"];
+    let mut result = Vec::new();
+    for slot in &order {
+        if let Some(pin) = pins.remove(*slot) {
+            result.push(pin);
+        }
+    }
+    result
 }
 
 // ── Server functions ───────────────────────────────────────────────────
@@ -193,45 +232,114 @@ pub async fn view_healer_session(
     let is_active = session.state.is_active();
     let current_state = session.state.as_str().to_string();
 
+    let pool = crate::server_pool()?;
+    let cluster_id = session.cluster_id;
+
     Ok(JsonStream::spawn(move |tx| async move {
+        let empty = || HealerStreamEvent {
+            kind: String::new(), session_id: None, role: None, content: None,
+            state: None, metadata: None, running_tools: None, pins: None, staff_pings: None,
+        };
+
+        // Extract pins from existing messages
+        let mut pins = extract_pins_from_messages(&existing_messages);
+
         // Replay persisted messages
-        for msg in existing_messages {
+        for msg in &existing_messages {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "message".to_string(),
-                session_id: None, role: Some(msg.role), content: Some(msg.content),
-                state: None, metadata: msg.metadata, running_tools: None,
+                role: Some(msg.role.clone()), content: Some(msg.content.clone()),
+                metadata: msg.metadata.clone(), ..empty()
             });
+        }
+
+        // Send pins snapshot
+        if !pins.is_empty() {
+            let _ = tx.unbounded_send(HealerStreamEvent {
+                kind: "pins".to_string(), pins: Some(pins.clone()), ..empty()
+            });
+        }
+
+        // Send staff pings
+        if let Ok(pings) = mac_mgmt_healer::session::store::list_session_pings(&pool, uuid).await {
+            if !pings.is_empty() {
+                let _ = tx.unbounded_send(HealerStreamEvent {
+                    kind: "staff_pings".to_string(),
+                    staff_pings: Some(pings.iter().map(|p| StaffPingSummary {
+                        id: p.id.to_string(), category: p.category.clone(),
+                        message: p.message.clone(), resolved: p.resolved,
+                        created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                    }).collect()),
+                    ..empty()
+                });
+            }
         }
 
         // Current state
         let _ = tx.unbounded_send(HealerStreamEvent {
-            kind: "state".to_string(),
-            session_id: None, role: None, content: None,
-            state: Some(current_state.clone()), metadata: None, running_tools: None,
+            kind: "state".to_string(), state: Some(current_state.clone()), ..empty()
         });
 
-        // Send current running tools snapshot (in-memory)
+        // Running tools snapshot
         let tools = healer.running_tools(uuid);
         if !tools.is_empty() {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "running_tools".to_string(),
-                session_id: None, role: None, content: None,
-                state: None, metadata: None,
                 running_tools: Some(tools.iter().map(|t| RunningToolInfo {
                     name: t.name.clone(), args: t.args.clone(),
                     started_at: t.started_at.to_rfc3339(),
                 }).collect()),
+                ..empty()
             });
         }
 
         // Stream live events
         if is_active {
             if let Some(mut rx) = healer.subscribe(uuid) {
+                let pool2 = pool.clone();
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
                             let (stream_event, is_done) = healer_event_to_stream(&event);
                             let _ = tx.unbounded_send(stream_event);
+
+                            // If this was a pin message, re-send pins snapshot
+                            if let mac_mgmt_healer::HealerEvent::Message { role, content, .. } = &event {
+                                if role == "pin" {
+                                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(content) {
+                                        if let Some(slot) = data.get("slot").and_then(|v| v.as_str()) {
+                                            let pin = PinInfo {
+                                                slot: slot.to_string(),
+                                                summary: data.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                affected_services: data.get("affected_services").and_then(|v| v.as_array())
+                                                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                                                    .unwrap_or_default(),
+                                            };
+                                            pins.retain(|p| p.slot != pin.slot);
+                                            pins.push(pin);
+                                            let _ = tx.unbounded_send(HealerStreamEvent {
+                                                kind: "pins".to_string(), pins: Some(pins.clone()), ..empty()
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // If tool result was staff_ping, re-send pings
+                                if role == "tool_result" && content.starts_with("staff_ping:") {
+                                    if let Ok(pings) = mac_mgmt_healer::session::store::list_session_pings(&pool2, uuid).await {
+                                        let _ = tx.unbounded_send(HealerStreamEvent {
+                                            kind: "staff_pings".to_string(),
+                                            staff_pings: Some(pings.iter().map(|p| StaffPingSummary {
+                                                id: p.id.to_string(), category: p.category.clone(),
+                                                message: p.message.clone(), resolved: p.resolved,
+                                                created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                                            }).collect()),
+                                            ..empty()
+                                        });
+                                    }
+                                }
+                            }
+
                             if is_done { break; }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -242,13 +350,7 @@ pub async fn view_healer_session(
         }
 
         let _ = tx.unbounded_send(HealerStreamEvent {
-            kind: "done".to_string(),
-            session_id: None,
-            role: None,
-            content: None,
-            state: Some(current_state),
-            running_tools: None,
-            metadata: None,
+            kind: "done".to_string(), state: Some(current_state), ..empty()
         });
     }))
 }
@@ -348,17 +450,19 @@ pub async fn start_healer_stream(
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(JsonStream::spawn(move |tx| async move {
+        let empty = || HealerStreamEvent {
+            kind: String::new(), session_id: None, role: None, content: None,
+            state: None, metadata: None, running_tools: None, pins: None, staff_pings: None,
+        };
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "session_created".to_string(),
-            session_id: Some(session_id.to_string()),
-            role: None, content: None, state: None, metadata: None, running_tools: None,
+            session_id: Some(session_id.to_string()), ..empty()
         });
 
         let Some(mut rx) = healer.subscribe(session_id) else {
             let _ = tx.unbounded_send(HealerStreamEvent {
-                kind: "error".to_string(), session_id: None, role: None,
-                content: Some("failed to subscribe".to_string()),
-                state: None, metadata: None, running_tools: None,
+                kind: "error".to_string(),
+                content: Some("failed to subscribe".to_string()), ..empty()
             });
             return;
         };
@@ -405,25 +509,6 @@ pub async fn resolve_staff_ping(ping_id: String) -> Result<(), ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
-#[server]
-pub async fn get_staff_pings(session_id: String) -> Result<Vec<StaffPingSummary>, ServerFnError> {
-    let _user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = session_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
-    let pings = mac_mgmt_healer::session::store::list_session_pings(&pool, uuid)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(pings
-        .into_iter()
-        .map(|p| StaffPingSummary {
-            id: p.id.to_string(),
-            category: p.category,
-            message: p.message,
-            resolved: p.resolved,
-            created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        })
-        .collect())
-}
 
 // ── Component ──────────────────────────────────────────────────────────
 
@@ -446,6 +531,8 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut session_id = use_signal::<Option<String>>(|| None);
     let mut messages = use_signal::<Vec<ChatMsg>>(Vec::new);
     let mut active_tools = use_signal::<Vec<RunningToolInfo>>(Vec::new);
+    let mut pins = use_signal::<Vec<PinInfo>>(Vec::new);
+    let mut staff_pings = use_signal::<Vec<StaffPingSummary>>(Vec::new);
     let mut state = use_signal(|| "idle".to_string());
     let mut user_input = use_signal(String::new);
     let mut running = use_signal(|| false);
@@ -501,7 +588,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             async move {
                                 consume_stream(
                                     start_healer_stream(instance_id, user_msg).await,
-                                    &mut session_id, &mut messages, &mut active_tools, &mut state,
+                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut state,
                                 ).await;
                                 running.set(false);
                             }
@@ -570,16 +657,11 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     }
                 }
 
-                // Pinned slots
-                { render_pinned_slots(&messages.read()) }
+                // Pinned slots (from stream)
+                { render_pinned_slots_from_signal(&pins.read()) }
 
-                // Staff pings for this session
-                if let Some(sid) = &*session_id.read() {
-                    {
-                        let sid = sid.clone();
-                        rsx! { StaffPingsPanel { session_id: sid } }
-                    }
-                }
+                // Staff pings (from stream)
+                { render_staff_pings_inline(&staff_pings.read()) }
 
                 // Chat messages (filter out pin messages — shown above)
                 div { class: "space-y-2 max-h-[70vh] overflow-y-auto",
@@ -639,7 +721,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                             async move {
                                                 consume_stream(
                                                     view_healer_session(sid).await,
-                                                    &mut session_id, &mut messages, &mut active_tools, &mut state,
+                                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut state,
                                                 ).await;
                                                 running.set(false);
                                             }
@@ -666,59 +748,6 @@ fn render_healer(ctx: &HealerContext) -> Element {
     }
 }
 
-// ── Staff pings panel ──────────────────────────────────────────────────
-
-#[component]
-fn StaffPingsPanel(session_id: String) -> Element {
-    let sid = session_id.clone();
-    let pings_res = use_server_future(move || {
-        let sid = sid.clone();
-        async move { get_staff_pings(sid).await }
-    })?;
-
-    let pings = match &*pings_res.read() {
-        Some(Ok(p)) if !p.is_empty() => p.clone(),
-        _ => return rsx! {},
-    };
-
-    rsx! {
-        div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded",
-            h4 { class: "text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2", "Staff Pings" }
-            div { class: "space-y-2",
-                for ping in pings.iter() {
-                    {
-                        let ping_id = ping.id.clone();
-                        let cat_badge = category_badge(&ping.category);
-                        rsx! {
-                            div { class: "flex items-start justify-between gap-2 text-sm",
-                                div { class: "flex-1",
-                                    span { class: "inline-block px-1.5 py-0.5 text-xs font-medium rounded mr-2 {cat_badge}", "{ping.category}" }
-                                    if ping.resolved {
-                                        span { class: "text-green-600 dark:text-green-400 line-through", "{ping.message}" }
-                                    } else {
-                                        span { class: "text-gray-800 dark:text-gray-200", "{ping.message}" }
-                                    }
-                                    span { class: "text-xs text-gray-400 ml-2", "{ping.created_at}" }
-                                }
-                                if !ping.resolved {
-                                    button {
-                                        class: "px-2 py-0.5 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded hover:bg-green-200",
-                                        onclick: move |_| {
-                                            let ping_id = ping_id.clone();
-                                            async move { let _ = resolve_staff_ping(ping_id).await; }
-                                        },
-                                        "Resolve"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ── Stream consumer ────────────────────────────────────────────────────
 
 async fn consume_stream(
@@ -726,6 +755,8 @@ async fn consume_stream(
     session_id: &mut Signal<Option<String>>,
     messages: &mut Signal<Vec<ChatMsg>>,
     active_tools: &mut Signal<Vec<RunningToolInfo>>,
+    pins: &mut Signal<Vec<PinInfo>>,
+    staff_pings: &mut Signal<Vec<StaffPingSummary>>,
     state: &mut Signal<String>,
 ) {
     match result {
@@ -742,6 +773,12 @@ async fn consume_stream(
                     }
                     "running_tools" => {
                         active_tools.set(evt.running_tools.unwrap_or_default());
+                    }
+                    "pins" => {
+                        pins.set(evt.pins.unwrap_or_default());
+                    }
+                    "staff_pings" => {
+                        staff_pings.set(evt.staff_pings.unwrap_or_default());
                     }
                     "state" => { if let Some(s) = evt.state { state.set(s); } }
                     "done" => {
@@ -891,62 +928,68 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     }
 }
 
-/// Render pinned slots (diagnosis, remediation, final_report) extracted from messages.
-fn render_pinned_slots(messages: &[ChatMsg]) -> Element {
-    // Collect the latest pin for each slot
-    let mut pins: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
-    for msg in messages {
-        if msg.role == "pin" {
-            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
-                if let Some(slot) = data.get("slot").and_then(|v| v.as_str()) {
-                    pins.insert(slot.to_string(), data);
+fn render_pinned_slots_from_signal(pins: &[PinInfo]) -> Element {
+    if pins.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        div { class: "mb-4 space-y-2",
+            for pin in pins.iter() {
+                {
+                    let (icon, label, border) = match pin.slot.as_str() {
+                        "diagnosis" => ("D", "Diagnosis", "border-yellow-400 dark:border-yellow-600"),
+                        "remediation" => ("R", "Remediation Plan", "border-orange-400 dark:border-orange-600"),
+                        "final_report" => ("F", "Final Report", "border-green-400 dark:border-green-600"),
+                        _ => ("P", pin.slot.as_str(), "border-gray-400"),
+                    };
+                    let html = simple_md_to_html(&pin.summary);
+                    let services = pin.affected_services.clone();
+                    rsx! {
+                        div { class: "p-3 bg-white dark:bg-gray-800 rounded border-l-4 {border} shadow-sm",
+                            div { class: "flex items-center gap-1.5 mb-1",
+                                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300", "{icon}" }
+                                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "{label}" }
+                            }
+                            div {
+                                class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
+                                dangerous_inner_html: "{html}",
+                            }
+                            if !services.is_empty() {
+                                div { class: "mt-2 flex flex-wrap gap-1",
+                                    for svc in services.iter() {
+                                        span { class: "px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded", "{svc}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+}
 
-    if pins.is_empty() {
+fn render_staff_pings_inline(pings: &[StaffPingSummary]) -> Element {
+    if pings.is_empty() {
         return rsx! {};
     }
-
-    let slot_order = ["diagnosis", "remediation", "final_report"];
-
     rsx! {
-        div { class: "mb-4 space-y-2",
-            for slot_name in slot_order.iter() {
-                if let Some(data) = pins.get(*slot_name) {
+        div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded",
+            h4 { class: "text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2", "Staff Pings" }
+            div { class: "space-y-2",
+                for ping in pings.iter() {
                     {
-                        let summary = data.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let services: Vec<String> = data
-                            .get("affected_services")
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                            .unwrap_or_default();
-                        let (icon, label, border) = match *slot_name {
-                            "diagnosis" => ("🔍", "Diagnosis", "border-yellow-400 dark:border-yellow-600"),
-                            "remediation" => ("🔧", "Remediation Plan", "border-orange-400 dark:border-orange-600"),
-                            "final_report" => ("📋", "Final Report", "border-green-400 dark:border-green-600"),
-                            _ => ("📌", *slot_name, "border-gray-400"),
-                        };
-                        let html = simple_md_to_html(&summary);
+                        let cat_badge = category_badge(&ping.category);
                         rsx! {
-                            div { class: "p-3 bg-white dark:bg-gray-800 rounded border-l-4 {border} shadow-sm",
-                                div { class: "flex items-center gap-1.5 mb-1",
-                                    span { class: "text-sm", "{icon}" }
-                                    span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "{label}" }
-                                }
-                                div {
-                                    class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
-                                    dangerous_inner_html: "{html}",
-                                }
-                                if !services.is_empty() {
-                                    div { class: "mt-2 flex flex-wrap gap-1",
-                                        for svc in services.iter() {
-                                            span { class: "px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded",
-                                                "{svc}"
-                                            }
-                                        }
+                            div { class: "flex items-start gap-2 text-sm",
+                                div { class: "flex-1",
+                                    span { class: "inline-block px-1.5 py-0.5 text-xs font-medium rounded mr-2 {cat_badge}", "{ping.category}" }
+                                    if ping.resolved {
+                                        span { class: "text-green-600 dark:text-green-400 line-through", "{ping.message}" }
+                                    } else {
+                                        span { class: "text-gray-800 dark:text-gray-200", "{ping.message}" }
                                     }
+                                    span { class: "text-xs text-gray-400 ml-2", "{ping.created_at}" }
                                 }
                             }
                         }
