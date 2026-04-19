@@ -196,7 +196,7 @@ pub fn SyncTokenList(cluster_id: String, read_only: bool) -> Element {
                                             span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
                                         }
                                     }
-                                    if !revoked && !read_only {
+                                    if !revoked && !expired && !read_only {
                                         button {
                                             class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
                                             onclick: move |_| {
