@@ -630,9 +630,20 @@ async fn run_agent_session(
     let initial_prompt = if restored_history.is_some() {
         "You have been resumed. Review your previous conversation above and continue your work from where you left off.".to_string()
     } else {
-        req.user_message.unwrap_or_else(|| {
+        let msg = req.user_message.unwrap_or_else(|| {
             "Diagnose and fix the detected issues. Start by listing available tools and reading logs.".to_string()
-        })
+        });
+        // Persist the initial user message so it appears in the chat log
+        session::store::append_message(pool, session_id, "user", &msg, None)
+            .await
+            .ok();
+        let _ = events_tx.send(session::HealerEvent::Message {
+            role: "user".to_string(),
+            content: msg.clone(),
+            metadata: None,
+            created_at: chrono::Utc::now(),
+        });
+        msg
     };
 
     // Build agent with swiftide
