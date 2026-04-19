@@ -4667,6 +4667,7 @@ dependencies = [
  "axum-oidc-client",
  "base64 0.22.1",
  "chrono",
+ "clap",
  "dioxus",
  "dioxus-tabular",
  "ed25519-dalek",

@@ -187,7 +187,46 @@ fn init_sentry() -> Option<sentry::ClientInitGuard> {
     mac_mgmt_common::sentry_ext::init_sentry(&cfg.sentry)
 }
 
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "mac-mgmt-server", version, about = "mac-mgmt management server")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Dump all healer sessions to JSONL files (one file per session, named by ID)
+    DumpSessions {
+        /// Output directory (created if it doesn't exist)
+        #[arg(short, long, default_value = "healer-sessions")]
+        output: String,
+    },
+}
+
 fn main() {
+    let cli = Cli::parse();
+
+    // Handle subcommands that don't need the full server
+    #[cfg(any(feature = "server", feature = "server-api-only"))]
+    if let Some(cmd) = &cli.command {
+        match cmd {
+            Commands::DumpSessions { output } => {
+                let cfg = config::load();
+                let rt = tokio::runtime::Runtime::new().expect("failed to create runtime");
+                rt.block_on(dump_healer_sessions(&cfg.database.url, output));
+                return;
+            }
+        }
+    }
+    #[cfg(not(any(feature = "server", feature = "server-api-only")))]
+    if cli.command.is_some() {
+        eprintln!("subcommands require the server feature");
+        std::process::exit(1);
+    }
+
     // Sentry must be initialised on the main thread before any runtime
     // spins up so the panic handler is installed globally. The guard must
     // live for the lifetime of the process. We set up tracing first so
@@ -354,4 +393,88 @@ fn main() {
     {
         dioxus::launch(web::app::App);
     }
+}
+
+/// Dump all healer sessions to JSONL files in the output directory.
+/// Each file is named `{session_id}.jsonl` and contains the session metadata
+/// as the first line, followed by one message per line.
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+async fn dump_healer_sessions(database_url: &str, output_dir: &str) {
+    use std::io::Write;
+
+    let pool = db::connect(database_url).await;
+
+    #[derive(sqlx::FromRow, serde::Serialize)]
+    struct SessionRow {
+        id: uuid::Uuid,
+        cluster_id: uuid::Uuid,
+        instance_id: String,
+        state: String,
+        state_data: serde_json::Value,
+        created_by: String,
+        created_at: chrono::DateTime<chrono::Utc>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        error_message: Option<String>,
+        initial_issues: serde_json::Value,
+    }
+
+    #[derive(sqlx::FromRow, serde::Serialize)]
+    struct MessageRow {
+        id: uuid::Uuid,
+        session_id: uuid::Uuid,
+        role: String,
+        content: String,
+        metadata: Option<serde_json::Value>,
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    let sessions: Vec<SessionRow> = sqlx::query_as(
+        "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
+                created_at, updated_at, completed_at, error_message, initial_issues \
+         FROM healer_sessions ORDER BY created_at ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("failed to query sessions");
+
+    if sessions.is_empty() {
+        eprintln!("no healer sessions found");
+        return;
+    }
+
+    std::fs::create_dir_all(output_dir).expect("failed to create output directory");
+
+    let mut total_messages = 0usize;
+    for sess in &sessions {
+        let messages: Vec<MessageRow> = sqlx::query_as(
+            "SELECT id, session_id, role, content, metadata, created_at \
+             FROM healer_messages WHERE session_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(sess.id)
+        .fetch_all(&pool)
+        .await
+        .expect("failed to query messages");
+
+        let path = format!("{output_dir}/{}.jsonl", sess.id);
+        let mut file = std::fs::File::create(&path).expect("failed to create file");
+
+        // First line: session metadata
+        serde_json::to_writer(&mut file, &sess).expect("failed to write session");
+        writeln!(file).expect("failed to write newline");
+
+        // Subsequent lines: one message per line
+        for msg in &messages {
+            serde_json::to_writer(&mut file, &msg).expect("failed to write message");
+            writeln!(file).expect("failed to write newline");
+        }
+
+        total_messages += messages.len();
+    }
+
+    eprintln!(
+        "dumped {} session(s) with {} message(s) to {output_dir}/",
+        sessions.len(),
+        total_messages
+    );
 }
