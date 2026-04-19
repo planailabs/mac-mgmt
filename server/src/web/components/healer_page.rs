@@ -659,7 +659,9 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     let sid = session_id.clone();
     let iid = instance_id.clone();
 
-    // Connect to SSE on mount; guard closes EventSource on unmount
+    // Connect to SSE on mount (client-side only — EventSource is a browser API).
+    // The guard closes the EventSource on drop (component unmount).
+    #[cfg(target_arch = "wasm32")]
     let _es_guard = use_hook(move || {
         consume_healer_sse(
             sid,
