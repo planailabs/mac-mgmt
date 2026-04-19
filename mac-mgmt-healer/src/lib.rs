@@ -36,6 +36,9 @@ struct HealerStateInner {
     running: DashMap<Uuid, RunningSession>,
     shutting_down: AtomicBool,
     push_fn: Option<tools::PushFn>,
+    /// Budget extensions for sessions that were extended while not running
+    /// (e.g. paused). Consumed when the session resumes.
+    extended_budgets: DashMap<Uuid, u64>,
 }
 
 struct RunningSession {
@@ -74,6 +77,7 @@ impl HealerState {
                 running: DashMap::new(),
                 shutting_down: AtomicBool::new(false),
                 push_fn: None,
+                extended_budgets: DashMap::new(),
             }),
         }
     }
@@ -250,6 +254,10 @@ impl HealerState {
     }
 
     /// Resume a paused session (manual resume via API).
+    ///
+    /// If the session was paused due to token budget exhaustion, refuses
+    /// to resume unless `extend_budget()` was called first (the extended
+    /// budget is stored in `self.extended_budgets`).
     pub async fn resume_session(&self, session_id: Uuid) -> Result<()> {
         let sess = session::store::get_session(&self.inner.pool, session_id)
             .await?
@@ -261,6 +269,29 @@ impl HealerState {
                 session_id,
                 sess.state
             );
+        }
+
+        // Block resume if paused for budget exhaustion and budget wasn't extended.
+        let reason = sess
+            .state_data
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if reason == "token_budget_exceeded" {
+            // Check if an extend_budget was applied (stored on the running session
+            // if one exists, or in the extended_budgets map otherwise).
+            let extended = self
+                .inner
+                .running
+                .get(&session_id)
+                .is_some_and(|r| r.budget_limit.load(Ordering::Relaxed) > self.inner.connector_config.token_budget)
+                || self.inner.extended_budgets.contains_key(&session_id);
+            if !extended {
+                anyhow::bail!(
+                    "session was paused for token budget exhaustion — \
+                     use 'More Tokens' to extend the budget before resuming"
+                );
+            }
         }
 
         self.resume_session_internal(sess).await
@@ -339,9 +370,10 @@ impl HealerState {
         let pause_requested = Arc::new(AtomicBool::new(false));
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(
-            self.inner.connector_config.token_budget,
-        ));
+        // Use extended budget if one was granted, otherwise default
+        let extended = self.inner.extended_budgets.remove(&session_id);
+        let budget = extended.map(|(_, v)| v).unwrap_or(self.inner.connector_config.token_budget);
+        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(budget));
         self.inner.running.insert(
             session_id,
             RunningSession {
@@ -445,18 +477,18 @@ impl HealerState {
         }
     }
 
-    /// Increase the token budget for a running session to 1 million tokens.
-    /// Used by admins to let a paused session continue with more headroom.
+    /// Increase the token budget for a session to 1 million tokens.
+    /// Works for both running and paused sessions.
     pub fn extend_budget(&self, session_id: Uuid) -> Result<()> {
         if let Some(entry) = self.inner.running.get(&session_id) {
             entry
                 .budget_limit
                 .store(1_000_000, Ordering::Relaxed);
-            tracing::info!("extended token budget to 1M for session {session_id}");
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("session is not running"))
         }
+        // Also record for paused sessions that will resume later
+        self.inner.extended_budgets.insert(session_id, 1_000_000);
+        tracing::info!("extended token budget to 1M for session {session_id}");
+        Ok(())
     }
 
     /// List sessions for a cluster.
