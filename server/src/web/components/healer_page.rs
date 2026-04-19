@@ -1122,7 +1122,6 @@ fn render_staff_pings_inline(pings: &[StaffPingSummary]) -> Element {
 }
 
 /// Render markdown to HTML using pulldown_cmark.
-#[cfg(feature = "server")]
 pub fn simple_md_to_html(md: &str) -> String {
     use pulldown_cmark::{Options, Parser, html};
     let options =
@@ -1131,13 +1130,4 @@ pub fn simple_md_to_html(md: &str) -> String {
     let mut output = String::with_capacity(md.len() * 2);
     html::push_html(&mut output, parser);
     output
-}
-
-/// Client-side fallback: return content as-is (escaped).
-#[cfg(not(feature = "server"))]
-pub fn simple_md_to_html(md: &str) -> String {
-    md.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\n', "<br>")
 }
