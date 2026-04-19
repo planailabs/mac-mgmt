@@ -164,35 +164,16 @@ settings_tool! {
 settings_tool! {
     name: "request_assessment",
     struct_name: RequestAssessmentTool,
-    description: "Request the target instance to run health probes immediately instead of waiting for the next scheduled run. The probes run asynchronously — use wait + get_probe_status to check results.",
+    description: "Request the target instance to run health probes immediately instead of waiting for the next scheduled run. Sends a push event via SSE to the daemon. Use wait (30-60s) then get_probe_status to check results.",
     handler: |ctx| {
-        use mac_mgmt_common::PushEvent;
-        let result = sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT cluster_id FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
-        )
-        .bind(&ctx.instance_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        match result {
-            Ok(Some(cluster_id)) => {
-                // Send push via broadcast channel — the daemon's SSE connection picks it up
-                crate::session::store::append_message(
-                    &ctx.pool, ctx.session_id, "system",
-                    "Requested immediate health assessment from instance.",
-                    None,
-                ).await.ok();
-
-                // Directly insert a push event record since we have the pool
-                // The daemon picks up RequestAssessment via its SSE connection
-                // We trigger it by notifying the push channels
-                Ok(ToolOutput::Text(
-                    "Assessment requested. The instance will run probes shortly. \
-                     Use `wait` (30-60s) then `get_probe_status` to check results.".to_string()
-                ))
-            }
-            Ok(None) => Ok(ToolOutput::Text("Instance not found in heartbeats.".to_string())),
-            Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
+        if let Some(push_fn) = &ctx.push_fn {
+            push_fn(ctx.cluster_id, mac_mgmt_common::PushEvent::RequestAssessment);
+            Ok(ToolOutput::Text(
+                "Assessment requested. The instance will run probes shortly. \
+                 Use `wait` (30-60s) then `get_probe_status` to check results.".to_string()
+            ))
+        } else {
+            Ok(ToolOutput::Text("Push not available — assessment cannot be triggered remotely.".to_string()))
         }
     }
 }

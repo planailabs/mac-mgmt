@@ -12,6 +12,9 @@ use swiftide::traits::AgentContext;
 
 use crate::relay_client::RelayClient;
 
+/// Callback for sending SSE push events to daemons.
+pub type PushFn = Arc<dyn Fn(uuid::Uuid, mac_mgmt_common::PushEvent) + Send + Sync>;
+
 /// Shared context for all healer tools.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -24,6 +27,8 @@ pub struct ToolContext {
     pub session_id: uuid::Uuid,
     pub cluster_id: uuid::Uuid,
     pub instance_id: String,
+    /// Send a push event to all daemons in a cluster.
+    pub push_fn: Option<PushFn>,
 }
 
 macro_rules! healer_tool {

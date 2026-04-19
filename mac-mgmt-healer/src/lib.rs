@@ -35,6 +35,7 @@ struct HealerStateInner {
     connector_config: ConnectorConfig,
     running: DashMap<Uuid, RunningSession>,
     shutting_down: AtomicBool,
+    push_fn: Option<tools::PushFn>,
 }
 
 struct RunningSession {
@@ -71,8 +72,17 @@ impl HealerState {
                 connector_config,
                 running: DashMap::new(),
                 shutting_down: AtomicBool::new(false),
+                push_fn: None,
             }),
         }
+    }
+
+    /// Set the push callback for sending SSE events to daemons.
+    /// Must be called after construction, before spawning sessions.
+    pub fn set_push_fn(&mut self, f: tools::PushFn) {
+        Arc::get_mut(&mut self.inner)
+            .expect("set_push_fn must be called before cloning HealerState")
+            .push_fn = Some(f);
     }
 
     /// Spawn a new healer session. Returns the session ID immediately.
@@ -565,6 +575,7 @@ async fn run_agent_session(
         session_id,
         cluster_id: req.cluster_id,
         instance_id: req.instance_id.clone(),
+        push_fn: state.inner.push_fn.clone(),
     };
     let healer_tools = tools::all_tools(tool_ctx.clone());
     let settings_tools = settings_tools::all_settings_tools(tool_ctx);

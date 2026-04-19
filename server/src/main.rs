@@ -131,7 +131,19 @@ async fn init_server() -> (
         token_budget: cfg.healer.token_budget,
         context7_api_key: cfg.healer.context7_api_key.clone(),
     };
-    let healer_state = mac_mgmt_healer::HealerState::new(pool.clone(), healer_connector);
+    let mut healer_state = mac_mgmt_healer::HealerState::new(pool.clone(), healer_connector);
+
+    // Wire push callback so healer tools can send SSE events to daemons
+    {
+        let channels = push_channels.clone();
+        healer_state.set_push_fn(std::sync::Arc::new(move |cluster_id, event| {
+            let channels = channels.clone();
+            tokio::spawn(async move {
+                api::push::notify(&channels, cluster_id, event).await;
+            });
+        }));
+    }
+
     #[cfg(feature = "webui")]
     server_state::set_healer_state(healer_state.clone());
 
