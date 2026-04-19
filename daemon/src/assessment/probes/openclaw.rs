@@ -156,7 +156,7 @@ impl Probe for OpenClawProbe {
 async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
     let client = Client::builder().timeout(ctx.timeout).build()?;
     let body = ChatBody {
-        model: "openclaw".into(),
+        model: "openclaw/default".into(),
         messages: vec![ChatMessage {
             role: "user".into(),
             content: ctx.canary_prompt.clone(),

@@ -125,13 +125,28 @@ impl OpenClaw {
 
         let mut patch = serde_json::json!({});
 
-        if let Some(gw) = &self.config.gateway {
-            let mut gw_cfg = serde_json::json!({ "port": gw.port });
-            if gw.host != "127.0.0.1" && gw.host != "localhost" {
-                gw_cfg["bind"] = serde_json::json!("custom");
-                gw_cfg["customBindHost"] = serde_json::json!(gw.host);
-            }
+        {
+            let gw_cfg = if let Some(gw) = &self.config.gateway {
+                let mut cfg = serde_json::json!({ "port": gw.port });
+                if gw.host != "127.0.0.1" && gw.host != "localhost" {
+                    cfg["bind"] = serde_json::json!("custom");
+                    cfg["customBindHost"] = serde_json::json!(gw.host);
+                }
+                cfg
+            } else {
+                serde_json::json!({})
+            };
             patch["gateway"] = gw_cfg;
+            // Enable OpenAI-compatible HTTP chat completions endpoint
+            // for probing and external integrations.
+            patch["gateway"]["http"] = serde_json::json!({
+                "endpoints": {
+                    "chatCompletions": { "enabled": true }
+                }
+            });
+            // Disable gateway auth on loopback — the daemon manages the machine
+            // and needs unauthenticated access for health probes.
+            patch["gateway"]["auth"] = serde_json::json!({ "mode": "none" });
         }
 
         if let Some(skills) = &self.config.skills {
