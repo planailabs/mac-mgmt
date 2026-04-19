@@ -48,13 +48,12 @@ async fn get_group_detail(id: String) -> Result<GroupInfo, ServerFnError> {
         description: String,
     }
 
-    let group = sqlx::query_as::<_, GRow>(
-        "SELECT id, name, description FROM rollout_groups WHERE id = $1",
-    )
-    .bind(gid)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let group =
+        sqlx::query_as::<_, GRow>("SELECT id, name, description FROM rollout_groups WHERE id = $1")
+            .bind(gid)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct MRow {
@@ -206,7 +205,9 @@ async fn delete_group(id: String) -> Result<(), ServerFnError> {
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     if gid.is_nil() {
-        return Err(ServerFnError::new("the All Clusters group cannot be deleted"));
+        return Err(ServerFnError::new(
+            "the All Clusters group cannot be deleted",
+        ));
     }
     sqlx::query("DELETE FROM rollout_groups WHERE id = $1")
         .bind(gid)
@@ -450,7 +451,9 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+        Some(Err(e)) => {
+            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } }
+        }
         None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
     }
 }

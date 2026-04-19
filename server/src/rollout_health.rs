@@ -37,9 +37,15 @@ pub struct HealthGate {
     pub grace_period_secs: u32,
 }
 
-fn default_min_heartbeat_fresh_pct() -> u8 { 95 }
-fn default_heartbeat_freshness_secs() -> u32 { 180 }
-fn default_grace_period_secs() -> u32 { 600 }
+fn default_min_heartbeat_fresh_pct() -> u8 {
+    95
+}
+fn default_heartbeat_freshness_secs() -> u32 {
+    180
+}
+fn default_grace_period_secs() -> u32 {
+    600
+}
 
 impl Default for HealthGate {
     fn default() -> Self {
@@ -167,12 +173,11 @@ pub async fn evaluate_stage(
         target_version: Option<String>,
         nixpkgs_commit: Option<String>,
     }
-    let target: TargetRow = sqlx::query_as(
-        "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
-    )
-    .bind(stage.rollout_id)
-    .fetch_one(pool)
-    .await?;
+    let target: TargetRow =
+        sqlx::query_as("SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1")
+            .bind(stage.rollout_id)
+            .fetch_one(pool)
+            .await?;
 
     let cohort: Vec<Uuid> = sqlx::query_scalar(
         "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \
@@ -271,9 +276,7 @@ pub async fn evaluate_stage(
     for (service, required) in &gate.min_probe_ok_pct {
         let got = probe_ok_pct.get(service).copied().unwrap_or(0);
         if got < *required {
-            reasons.push(format!(
-                "{service} probe ok {got}% < required {required}%"
-            ));
+            reasons.push(format!("{service} probe ok {got}% < required {required}%"));
         }
     }
 
@@ -358,7 +361,8 @@ async fn collect_probe_stats(
     // Backfill gated services that produced no rows so the UI sees 0/0
     // rather than silently omitting a required probe.
     for service in gated.keys() {
-        out.entry(service.clone()).or_insert_with(ProbeStats::default);
+        out.entry(service.clone())
+            .or_insert_with(ProbeStats::default);
     }
     Ok(out)
 }
@@ -446,8 +450,14 @@ async fn collect_sample_summary(
         if let Some(v) = s.get("cpu_load_1m").and_then(|v| v.as_f64()) {
             cpu_acc += v;
         }
-        let used = s.get("mem_used_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
-        let total = s.get("mem_total_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+        let used = s
+            .get("mem_used_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let total = s
+            .get("mem_total_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         if total > 0 {
             mem_acc += used.saturating_mul(100) / total;
             mem_count += 1;
@@ -458,7 +468,8 @@ async fn collect_sample_summary(
                 let dtotal = d.get("total_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
                 if dtotal > 0 {
                     let used_pct = ((dtotal - free).saturating_mul(100) / dtotal).min(100) as u8;
-                    max_disk_used_pct = Some(max_disk_used_pct.map_or(used_pct, |m| m.max(used_pct)));
+                    max_disk_used_pct =
+                        Some(max_disk_used_pct.map_or(used_pct, |m| m.max(used_pct)));
                 }
             }
         }
@@ -496,7 +507,9 @@ async fn collect_sample_summary(
 }
 
 fn pct(num: u32, denom: u32) -> u8 {
-    if denom == 0 { return 100; }
+    if denom == 0 {
+        return 100;
+    }
     ((num as u64 * 100 / denom as u64).min(100)) as u8
 }
 

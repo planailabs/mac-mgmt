@@ -39,25 +39,36 @@ impl Ollama {
             "Number of models currently loaded in ollama",
         )
         .unwrap();
-        Self { config, loaded_models, last_env_hash: std::sync::atomic::AtomicU64::new(0) }
+        Self {
+            config,
+            loaded_models,
+            last_env_hash: std::sync::atomic::AtomicU64::new(0),
+        }
     }
 
     fn env_file_hash() -> u64 {
         use std::hash::{Hash, Hasher};
-        let content = std::fs::read_to_string(
-            crate::config::config_dir().join("ollama-env"),
-        ).unwrap_or_default();
+        let content = std::fs::read_to_string(crate::config::config_dir().join("ollama-env"))
+            .unwrap_or_default();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         content.hash(&mut hasher);
         hasher.finish()
     }
 
     fn effective_host(&self) -> &str {
-        if self.config.host.is_empty() { "127.0.0.1" } else { &self.config.host }
+        if self.config.host.is_empty() {
+            "127.0.0.1"
+        } else {
+            &self.config.host
+        }
     }
 
     fn effective_port(&self) -> u16 {
-        if self.config.port == 0 { 11434 } else { self.config.port }
+        if self.config.port == 0 {
+            11434
+        } else {
+            self.config.port
+        }
     }
 
     fn base_url(&self) -> String {
@@ -110,10 +121,11 @@ impl ManagedService for Ollama {
         for wrong_pkg in other_flavour_pkgs(&self.config.flavour) {
             if installed.iter().any(|name| name == &wrong_pkg) {
                 tracing::info!("removing wrong ollama flavour: {wrong_pkg}");
-                sentry_ext::breadcrumb("install", &format!("removing wrong flavour {wrong_pkg}"), &[
-                    ("service", "ollama"),
-                    ("package", &wrong_pkg),
-                ]);
+                sentry_ext::breadcrumb(
+                    "install",
+                    &format!("removing wrong flavour {wrong_pkg}"),
+                    &[("service", "ollama"), ("package", &wrong_pkg)],
+                );
                 crate::nix::profile_remove(&wrong_pkg)?;
             }
         }
@@ -124,10 +136,11 @@ impl ManagedService for Ollama {
         }
 
         tracing::info!("{pkg} not found, installing via nix");
-        sentry_ext::breadcrumb("install", &format!("installing {pkg} via nix"), &[
-            ("service", "ollama"),
-            ("package", &pkg),
-        ]);
+        sentry_ext::breadcrumb(
+            "install",
+            &format!("installing {pkg} via nix"),
+            &[("service", "ollama"), ("package", &pkg)],
+        );
         crate::nix::profile_install(&pkg, false)?;
         Ok(())
     }
@@ -150,7 +163,8 @@ impl ManagedService for Ollama {
             env.entry(k).or_insert(v);
         }
         // Record the env file hash so we can detect changes.
-        self.last_env_hash.store(Self::env_file_hash(), std::sync::atomic::Ordering::Relaxed);
+        self.last_env_hash
+            .store(Self::env_file_hash(), std::sync::atomic::Ordering::Relaxed);
         crate::managed_service::SpawnSpec {
             program: "ollama".into(),
             args: vec!["serve".into()],
@@ -164,7 +178,9 @@ impl ManagedService for Ollama {
         })
     }
 
-    fn check_health_async(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + '_>> {
+    fn check_health_async(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + '_>> {
         Box::pin(self.check_health_impl())
     }
 
@@ -185,10 +201,11 @@ impl ManagedService for Ollama {
         }
 
         tracing::info!("upgrading {pkg} via nix");
-        sentry_ext::breadcrumb("upgrade", &format!("upgrading {pkg} via nix"), &[
-            ("service", "ollama"),
-            ("package", &pkg),
-        ]);
+        sentry_ext::breadcrumb(
+            "upgrade",
+            &format!("upgrading {pkg} via nix"),
+            &[("service", "ollama"), ("package", &pkg)],
+        );
         crate::nix::profile_install(&pkg, true)?;
         tracing::info!("{pkg} upgraded, restart pending");
         Ok(true)
@@ -206,7 +223,9 @@ impl ManagedService for Ollama {
 
     fn needs_restart(&self) -> bool {
         let current = Self::env_file_hash();
-        let last = self.last_env_hash.load(std::sync::atomic::Ordering::Relaxed);
+        let last = self
+            .last_env_hash
+            .load(std::sync::atomic::Ordering::Relaxed);
         // Only trigger if we've spawned at least once (last != 0) and hash changed.
         last != 0 && current != last
     }
@@ -229,11 +248,13 @@ impl ManagedService for Ollama {
 
     fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {
         use crate::managed_service::{ShellArgTemplate, ShellCommandDef};
-        let model_arg = || Some(ShellArgTemplate {
-            label: "Model name".into(),
-            placeholder: "llama3.2".into(),
-            validation: Some(r"^[a-zA-Z0-9._:/-]+$".into()),
-        });
+        let model_arg = || {
+            Some(ShellArgTemplate {
+                label: "Model name".into(),
+                placeholder: "llama3.2".into(),
+                validation: Some(r"^[a-zA-Z0-9._:/-]+$".into()),
+            })
+        };
         vec![
             ShellCommandDef {
                 name: "ollama-list".into(),
@@ -291,10 +312,11 @@ pub fn pull_configured_models(config: &mac_mgmt_common::OllamaConfig) -> anyhow:
     use std::process::Command;
     for model in &config.models {
         tracing::info!("pulling ollama model: {model}");
-        crate::sentry_ext::breadcrumb("post_start", &format!("pulling model {model}"), &[
-            ("service", "ollama"),
-            ("model", model),
-        ]);
+        crate::sentry_ext::breadcrumb(
+            "post_start",
+            &format!("pulling model {model}"),
+            &[("service", "ollama"), ("model", model)],
+        );
         let output = Command::new("ollama")
             .args(["pull", model])
             .output()

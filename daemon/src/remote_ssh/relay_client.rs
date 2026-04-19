@@ -3,11 +3,11 @@ use mac_mgmt_ws::tungstenite;
 use russh::keys::PublicKey;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 
 use super::ssh_server::{self, SshSession};
 use crate::file_tunnels::FileTunnelRegistry;
@@ -29,7 +29,10 @@ enum ControlMessage {
         session_id: String,
         session_secret: String,
     },
-    MetricsRequest { request_id: String, path: String },
+    MetricsRequest {
+        request_id: String,
+        path: String,
+    },
     ProxyRequest {
         request_id: String,
         tunnel_name: String,
@@ -142,7 +145,10 @@ fn apply_headers_json(
 }
 
 /// Decode a base64-encoded body and attach it to the request.
-fn apply_body_b64(req: reqwest::RequestBuilder, body_b64: Option<String>) -> reqwest::RequestBuilder {
+fn apply_body_b64(
+    req: reqwest::RequestBuilder,
+    body_b64: Option<String>,
+) -> reqwest::RequestBuilder {
     if let Some(b64) = body_b64 {
         use base64::Engine;
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
@@ -215,7 +221,11 @@ pub async fn run(
         };
 
         match control {
-            ControlMessage::Registered { ssh_port, proxy_hostname, proxy_url } => {
+            ControlMessage::Registered {
+                ssh_port,
+                proxy_hostname,
+                proxy_url,
+            } => {
                 tracing::info!(
                     "relay registered: instance={instance_id} ssh_port={ssh_port} proxy_hostname={proxy_hostname:?} proxy_url={proxy_url:?}"
                 );
@@ -239,7 +249,10 @@ pub async fn run(
                 });
                 let _ = outgoing_tx.send(advert.to_string()).await;
             }
-            ControlMessage::SessionRequest { session_id, session_secret } => {
+            ControlMessage::SessionRequest {
+                session_id,
+                session_secret,
+            } => {
                 if !ssh_allowed.load(Ordering::Relaxed) {
                     tracing::info!("session request {session_id} denied (remote SSH disabled)");
                     continue;
@@ -250,7 +263,16 @@ pub async fn run(
                 let config = Arc::clone(&russh_config);
                 let ssh_keys = Arc::clone(&server_ssh_keys);
                 tokio::spawn(async move {
-                    match handle_session(&relay_url, &token, &session_id, &session_secret, config, ssh_keys).await {
+                    match handle_session(
+                        &relay_url,
+                        &token,
+                        &session_id,
+                        &session_secret,
+                        config,
+                        ssh_keys,
+                    )
+                    .await
+                    {
                         Ok(()) => tracing::info!("session {session_id} completed"),
                         Err(e) => tracing::error!("session {session_id} failed: {e:#}"),
                     }
@@ -264,7 +286,14 @@ pub async fn run(
                     handle_metrics_request(&out_tx, &request_id, &path, port).await;
                 });
             }
-            ControlMessage::ProxyRequest { request_id, tunnel_name, method, path, headers, body } => {
+            ControlMessage::ProxyRequest {
+                request_id,
+                tunnel_name,
+                method,
+                path,
+                headers,
+                body,
+            } => {
                 tracing::debug!("proxy request {request_id}: {tunnel_name}{path}");
                 let target = {
                     let defs = tunnel_defs.read().await;
@@ -272,10 +301,26 @@ pub async fn run(
                 };
                 let out_tx = outgoing_tx.clone();
                 tokio::spawn(async move {
-                    handle_proxy_request(&out_tx, &request_id, target, &method, &path, headers, body).await;
+                    handle_proxy_request(
+                        &out_tx,
+                        &request_id,
+                        target,
+                        &method,
+                        &path,
+                        headers,
+                        body,
+                    )
+                    .await;
                 });
             }
-            ControlMessage::ProxyStreamRequest { request_id, tunnel_name, method, path, headers, body } => {
+            ControlMessage::ProxyStreamRequest {
+                request_id,
+                tunnel_name,
+                method,
+                path,
+                headers,
+                body,
+            } => {
                 tracing::debug!("proxy stream {request_id}: {method} {tunnel_name}{path}");
                 let target = {
                     let defs = tunnel_defs.read().await;
@@ -283,10 +328,25 @@ pub async fn run(
                 };
                 let out_tx = outgoing_tx.clone();
                 tokio::spawn(async move {
-                    handle_proxy_stream_request(&out_tx, &request_id, target, &method, &path, headers, body).await;
+                    handle_proxy_stream_request(
+                        &out_tx,
+                        &request_id,
+                        target,
+                        &method,
+                        &path,
+                        headers,
+                        body,
+                    )
+                    .await;
                 });
             }
-            ControlMessage::ProxySessionRequest { session_id, session_secret, tunnel_name, mode, path } => {
+            ControlMessage::ProxySessionRequest {
+                session_id,
+                session_secret,
+                tunnel_name,
+                mode,
+                path,
+            } => {
                 tracing::info!("proxy session {session_id}: {mode} {tunnel_name}{path}");
                 let target = {
                     let defs = tunnel_defs.read().await;
@@ -296,13 +356,25 @@ pub async fn run(
                 let tok = token.to_string();
                 tokio::spawn(async move {
                     if let Err(e) = handle_proxy_session(
-                        &relay, &tok, &session_id, &session_secret, target, &mode, &path,
-                    ).await {
+                        &relay,
+                        &tok,
+                        &session_id,
+                        &session_secret,
+                        target,
+                        &mode,
+                        &path,
+                    )
+                    .await
+                    {
                         tracing::error!("proxy session {session_id} failed: {e:#}");
                     }
                 });
             }
-            ControlMessage::FileListRequest { request_id, tunnel_name, path } => {
+            ControlMessage::FileListRequest {
+                request_id,
+                tunnel_name,
+                path,
+            } => {
                 tracing::debug!("file list {request_id}: {tunnel_name}");
                 #[cfg(feature = "services")]
                 {
@@ -338,7 +410,14 @@ pub async fn run(
                     });
                 }
             }
-            ControlMessage::FileSessionRequest { session_id, session_secret, tunnel_name, mode, path, expected_mtime } => {
+            ControlMessage::FileSessionRequest {
+                session_id,
+                session_secret,
+                tunnel_name,
+                mode,
+                path,
+                expected_mtime,
+            } => {
                 #[cfg(feature = "services")]
                 {
                     tracing::info!("file session {session_id}: {mode} {tunnel_name}");
@@ -349,19 +428,39 @@ pub async fn run(
                     let tok = token.to_string();
                     tokio::spawn(async move {
                         if let Err(e) = handle_file_session(
-                            &relay, &tok, &session_id, &session_secret,
-                            tunnel, &mode, path.as_deref(), expected_mtime,
-                        ).await {
+                            &relay,
+                            &tok,
+                            &session_id,
+                            &session_secret,
+                            tunnel,
+                            &mode,
+                            path.as_deref(),
+                            expected_mtime,
+                        )
+                        .await
+                        {
                             tracing::error!("file session {session_id} failed: {e:#}");
                         }
                     });
                 }
                 #[cfg(not(feature = "services"))]
                 {
-                    let _ = (&session_id, &session_secret, &tunnel_name, &mode, &path, &expected_mtime);
+                    let _ = (
+                        &session_id,
+                        &session_secret,
+                        &tunnel_name,
+                        &mode,
+                        &path,
+                        &expected_mtime,
+                    );
                 }
             }
-            ControlMessage::ShellSessionRequest { session_id, session_secret, command_name, user_arg } => {
+            ControlMessage::ShellSessionRequest {
+                session_id,
+                session_secret,
+                command_name,
+                user_arg,
+            } => {
                 #[cfg(feature = "services")]
                 {
                     tracing::info!("shell session {session_id}: {command_name}");
@@ -372,9 +471,15 @@ pub async fn run(
                     let tok = token.to_string();
                     tokio::spawn(async move {
                         if let Err(e) = handle_shell_session(
-                            &relay, &tok, &session_id, &session_secret,
-                            tunnel, user_arg.as_deref(),
-                        ).await {
+                            &relay,
+                            &tok,
+                            &session_id,
+                            &session_secret,
+                            tunnel,
+                            user_arg.as_deref(),
+                        )
+                        .await
+                        {
                             tracing::error!("shell session {session_id} failed: {e:#}");
                         }
                     });
@@ -465,7 +570,10 @@ async fn handle_metrics_request(
             )
         }
     };
-    tracing::debug!("metrics response {request_id} status={status} ({} bytes)", body.len());
+    tracing::debug!(
+        "metrics response {request_id} status={status} ({} bytes)",
+        body.len()
+    );
 
     let msg = serde_json::json!({
         "type": "metrics_response",
@@ -504,10 +612,7 @@ async fn handle_proxy_request(
     let req = apply_headers_vec(req, &headers);
     let req = apply_body_b64(req, body);
 
-    let (status, resp_headers, resp_body) = match req
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await
+    let (status, resp_headers, resp_body) = match req.timeout(Duration::from_secs(60)).send().await
     {
         Ok(resp) => {
             let status = resp.status().as_u16();
@@ -522,7 +627,11 @@ async fn handle_proxy_request(
             (status, hdrs, b64)
         }
         Err(e) => {
-            tracing::warn!("proxy request to {}:{}{path} failed: {e}", target.host, target.port);
+            tracing::warn!(
+                "proxy request to {}:{}{path} failed: {e}",
+                target.host,
+                target.port
+            );
             (502, vec![], String::new())
         }
     };
@@ -559,9 +668,14 @@ async fn handle_proxy_stream_request(
             "headers": [],
         });
         let _ = out_tx.send(msg.to_string()).await;
-        let _ = out_tx.send(serde_json::json!({
-            "type": "proxy_stream_end", "request_id": request_id
-        }).to_string()).await;
+        let _ = out_tx
+            .send(
+                serde_json::json!({
+                    "type": "proxy_stream_end", "request_id": request_id
+                })
+                .to_string(),
+            )
+            .await;
         return;
     };
 
@@ -573,16 +687,30 @@ async fn handle_proxy_stream_request(
     let resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!("proxy stream {request_id} to {}:{}{path} failed: {e}", target.host, target.port);
-            let _ = out_tx.send(serde_json::json!({
-                "type": "proxy_stream_headers",
-                "request_id": request_id,
-                "status": 502,
-                "headers": [],
-            }).to_string()).await;
-            let _ = out_tx.send(serde_json::json!({
-                "type": "proxy_stream_end", "request_id": request_id
-            }).to_string()).await;
+            tracing::warn!(
+                "proxy stream {request_id} to {}:{}{path} failed: {e}",
+                target.host,
+                target.port
+            );
+            let _ = out_tx
+                .send(
+                    serde_json::json!({
+                        "type": "proxy_stream_headers",
+                        "request_id": request_id,
+                        "status": 502,
+                        "headers": [],
+                    })
+                    .to_string(),
+                )
+                .await;
+            let _ = out_tx
+                .send(
+                    serde_json::json!({
+                        "type": "proxy_stream_end", "request_id": request_id
+                    })
+                    .to_string(),
+                )
+                .await;
             return;
         }
     };
@@ -595,12 +723,17 @@ async fn handle_proxy_stream_request(
         .collect();
 
     // Send response headers.
-    let _ = out_tx.send(serde_json::json!({
-        "type": "proxy_stream_headers",
-        "request_id": request_id,
-        "status": status,
-        "headers": resp_headers,
-    }).to_string()).await;
+    let _ = out_tx
+        .send(
+            serde_json::json!({
+                "type": "proxy_stream_headers",
+                "request_id": request_id,
+                "status": status,
+                "headers": resp_headers,
+            })
+            .to_string(),
+        )
+        .await;
 
     // Stream body chunks as base64.
     use futures_util::StreamExt;
@@ -610,11 +743,16 @@ async fn handle_proxy_stream_request(
             Ok(bytes) => {
                 use base64::Engine;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                let _ = out_tx.send(serde_json::json!({
-                    "type": "proxy_stream_chunk",
-                    "request_id": request_id,
-                    "data": b64,
-                }).to_string()).await;
+                let _ = out_tx
+                    .send(
+                        serde_json::json!({
+                            "type": "proxy_stream_chunk",
+                            "request_id": request_id,
+                            "data": b64,
+                        })
+                        .to_string(),
+                    )
+                    .await;
             }
             Err(e) => {
                 tracing::warn!("proxy stream {request_id} chunk error: {e}");
@@ -624,9 +762,14 @@ async fn handle_proxy_stream_request(
     }
 
     // Signal response complete.
-    let _ = out_tx.send(serde_json::json!({
-        "type": "proxy_stream_end", "request_id": request_id
-    }).to_string()).await;
+    let _ = out_tx
+        .send(
+            serde_json::json!({
+                "type": "proxy_stream_end", "request_id": request_id
+            })
+            .to_string(),
+        )
+        .await;
 }
 
 /// Maximum chunk size for streaming over data WS (must be under relay's WS limit).
@@ -705,7 +848,9 @@ async fn proxy_session_stream(
     let (mut sink, mut stream) = data_ws.split();
 
     // Read the request details from the first message
-    let first_msg = stream.next().await
+    let first_msg = stream
+        .next()
+        .await
         .ok_or_else(|| anyhow::anyhow!("data WS closed before request"))?
         .context("data WS read error")?;
 
@@ -722,7 +867,10 @@ async fn proxy_session_stream(
     req = apply_headers_json(req, &req_json["headers"]);
 
     // Collect request body chunks from data WS until "end_request"
-    let has_body = req_json.get("has_body").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_body = req_json
+        .get("has_body")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if has_body {
         let mut body_bytes = Vec::new();
         while let Some(Ok(msg)) = stream.next().await {
@@ -740,7 +888,9 @@ async fn proxy_session_stream(
         Ok(r) => r,
         Err(e) => {
             let err = serde_json::json!({ "status": 502, "headers": [] });
-            let _ = sink.send(tungstenite::Message::Text(err.to_string().into())).await;
+            let _ = sink
+                .send(tungstenite::Message::Text(err.to_string().into()))
+                .await;
             anyhow::bail!("local request failed: {e}");
         }
     };
@@ -767,7 +917,11 @@ async fn proxy_session_stream(
                 buf.extend_from_slice(&bytes);
                 while buf.len() >= STREAM_CHUNK_SIZE {
                     let chunk: Vec<u8> = buf.drain(..STREAM_CHUNK_SIZE).collect();
-                    if sink.send(tungstenite::Message::Binary(chunk.into())).await.is_err() {
+                    if sink
+                        .send(tungstenite::Message::Binary(chunk.into()))
+                        .await
+                        .is_err()
+                    {
                         return Ok(());
                     }
                 }
@@ -824,8 +978,7 @@ async fn handle_file_session(
             crate::file_tunnels::handle_read_session(&tunnel, path, data_ws).await;
         }
         "write" => {
-            crate::file_tunnels::handle_write_session(&tunnel, path, expected_mtime, data_ws)
-                .await;
+            crate::file_tunnels::handle_write_session(&tunnel, path, expected_mtime, data_ws).await;
         }
         _ => anyhow::bail!("unknown file session mode: {mode}"),
     }

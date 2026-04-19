@@ -1,9 +1,9 @@
 use anyhow::Result;
+use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
 use axum::response::IntoResponse;
 use axum::routing::any;
-use axum::Router;
 use axum_extra::extract::Host;
 use clap::Parser;
 use std::sync::Arc;
@@ -19,7 +19,11 @@ mod ssh_listener;
 mod ws_handler;
 
 #[derive(Parser)]
-#[command(name = "mac-mgmt-relay", version, about = "SSH relay for mac-mgmt daemons")]
+#[command(
+    name = "mac-mgmt-relay",
+    version,
+    about = "SSH relay for mac-mgmt daemons"
+)]
 struct Cli {
     /// Path to config file
     #[arg(short, long, default_value = "relay.toml")]
@@ -36,7 +40,9 @@ async fn main() -> Result<()> {
     let cfg = config::load(&cli.config)?;
     tracing::info!(
         "relay starting, WS listen: {}, SSH port range: {}-{}",
-        cfg.listen_addr, cfg.ssh_port_min, cfg.ssh_port_max
+        cfg.listen_addr,
+        cfg.ssh_port_min,
+        cfg.ssh_port_max
     );
 
     let data_dir = std::path::Path::new(&cfg.data_dir);
@@ -79,24 +85,23 @@ async fn main() -> Result<()> {
     });
 
     // Virtual-host dispatcher: route by hostname
-    let app = Router::new()
-        .fallback(any(move |Host(hostname): Host, req: Request<Body>| {
-            let api = api_router.clone();
-            let proxy = proxy_router.clone();
-            async move {
-                let host_no_port = hostname.split(':').next().unwrap_or(&hostname);
+    let app = Router::new().fallback(any(move |Host(hostname): Host, req: Request<Body>| {
+        let api = api_router.clone();
+        let proxy = proxy_router.clone();
+        async move {
+            let host_no_port = hostname.split(':').next().unwrap_or(&hostname);
 
-                // Check if this is a tunnel subdomain request
-                if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
-                    if host_no_port.ends_with(&format!(".{proxy_hostname}")) {
-                        return proxy_router.clone().oneshot(req).await.into_response();
-                    }
+            // Check if this is a tunnel subdomain request
+            if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
+                if host_no_port.ends_with(&format!(".{proxy_hostname}")) {
+                    return proxy_router.clone().oneshot(req).await.into_response();
                 }
-
-                // Default: relay API
-                api.clone().oneshot(req).await.into_response()
             }
-        }));
+
+            // Default: relay API
+            api.clone().oneshot(req).await.into_response()
+        }
+    }));
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {}", cfg.listen_addr);

@@ -53,15 +53,9 @@ impl ConfigStore {
                 return false;
             }
         }
-        let version = self
-            .providers
-            .get(name)
-            .map(|e| e.version + 1)
-            .unwrap_or(1);
-        self.providers.insert(
-            name.to_string(),
-            ProviderEntry { value, version },
-        );
+        let version = self.providers.get(name).map(|e| e.version + 1).unwrap_or(1);
+        self.providers
+            .insert(name.to_string(), ProviderEntry { value, version });
         self.save_cache();
         true
     }
@@ -113,16 +107,20 @@ impl ConfigStore {
 
     /// Load cached providers from disk.
     fn load_cache(&mut self) {
-        let Some(ref path) = self.cache_path else { return };
-        let Ok(contents) = std::fs::read_to_string(path) else { return };
-        let Ok(cache) = serde_json::from_str::<CacheFile>(&contents) else { return };
+        let Some(ref path) = self.cache_path else {
+            return;
+        };
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(cache) = serde_json::from_str::<CacheFile>(&contents) else {
+            return;
+        };
         for (name, value) in cache.providers {
             // Don't overwrite providers already set (runtime values take priority).
             if !self.providers.contains_key(&name) {
-                self.providers.insert(
-                    name.clone(),
-                    ProviderEntry { value, version: 1 },
-                );
+                self.providers
+                    .insert(name.clone(), ProviderEntry { value, version: 1 });
                 tracing::info!("restored config provider '{name}' from cache");
             }
         }
@@ -130,7 +128,9 @@ impl ConfigStore {
 
     /// Save all providers to disk cache.
     fn save_cache(&self) {
-        let Some(ref path) = self.cache_path else { return };
+        let Some(ref path) = self.cache_path else {
+            return;
+        };
         let cache = CacheFile {
             providers: self
                 .providers

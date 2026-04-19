@@ -1,5 +1,5 @@
 use anyhow::Result;
-use russh::keys::{parse_public_key_base64, PublicKey};
+use russh::keys::{PublicKey, parse_public_key_base64};
 use russh::server::{Auth, Handler, Msg, Session};
 use russh::{Channel, ChannelId, MethodKind, MethodSet};
 use std::collections::HashMap;
@@ -58,11 +58,7 @@ impl Handler for SshSession {
         Ok(reject_with_pubkey())
     }
 
-    async fn auth_password(
-        &mut self,
-        _user: &str,
-        _password: &str,
-    ) -> Result<Auth, Self::Error> {
+    async fn auth_password(&mut self, _user: &str, _password: &str) -> Result<Auth, Self::Error> {
         Ok(reject_with_pubkey())
     }
 
@@ -90,7 +86,10 @@ impl Handler for SshSession {
 
         let master_fd = pty_pair.master_fd;
         let channels = Arc::clone(&self.channels);
-        channels.lock().await.insert(channel_id, ChannelState { pty_pair });
+        channels
+            .lock()
+            .await
+            .insert(channel_id, ChannelState { pty_pair });
 
         // Spawn PTY → SSH channel reader
         let handle = session.handle();
@@ -137,14 +136,14 @@ impl Handler for SshSession {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let command = String::from_utf8_lossy(data).to_string();
-        tracing::info!("exec request on channel {channel_id:?}: <{} bytes>", data.len());
+        tracing::info!(
+            "exec request on channel {channel_id:?}: <{} bytes>",
+            data.len()
+        );
 
         let handle = session.handle();
         tokio::spawn(async move {
-            let result = Command::new("bash")
-                .args(["-c", &command])
-                .output()
-                .await;
+            let result = Command::new("bash").args(["-c", &command]).output().await;
 
             match result {
                 Ok(output) => {

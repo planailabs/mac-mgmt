@@ -1,3 +1,5 @@
+#[cfg(feature = "webui")]
+mod anthropic;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod api;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
@@ -6,12 +8,10 @@ mod config;
 mod db;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod mcp_schema;
-#[cfg(any(feature = "server", feature = "server-api-only"))]
-mod rollout_health;
-#[cfg(feature = "webui")]
-mod anthropic;
 #[cfg(feature = "webui")]
 mod models;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+mod rollout_health;
 #[cfg(feature = "webui")]
 mod web;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
@@ -33,7 +33,8 @@ mod server_state {
     }
 
     pub fn set_push_channels(channels: PushChannels) {
-        PUSH.set(channels).expect("push channels already initialized");
+        PUSH.set(channels)
+            .expect("push channels already initialized");
     }
 
     pub fn set_healer_state(state: HealerState) {
@@ -68,7 +69,11 @@ pub fn push_channels() -> Result<crate::api::push::PushChannels, dioxus::prelude
 }
 
 #[cfg(any(feature = "server", feature = "server-api-only"))]
-async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>, mac_mgmt_healer::HealerState) {
+async fn init_server() -> (
+    sqlx::PgPool,
+    rocket::Rocket<rocket::Ignite>,
+    mac_mgmt_healer::HealerState,
+) {
     let cfg = config::load();
     let pool = db::connect(&cfg.database.url).await;
 
@@ -141,10 +146,15 @@ async fn init_server() -> (sqlx::PgPool, rocket::Rocket<rocket::Ignite>, mac_mgm
         });
     }
 
-    let api_rocket = api::build_rocket(pool.clone(), cfg.api.port, push_channels, healer_state.clone())
-        .ignite()
-        .await
-        .expect("failed to ignite API rocket");
+    let api_rocket = api::build_rocket(
+        pool.clone(),
+        cfg.api.port,
+        push_channels,
+        healer_state.clone(),
+    )
+    .ignite()
+    .await
+    .expect("failed to ignite API rocket");
 
     (pool, api_rocket, healer_state)
 }
@@ -225,7 +235,9 @@ fn main() {
                     tracing::info!("received SIGTERM, shutting down");
                     // Drain healer sessions before stopping
                     if let Some(healer) = crate::server_state::healer_state() {
-                        let drained = healer.graceful_shutdown(std::time::Duration::from_secs(30)).await;
+                        let drained = healer
+                            .graceful_shutdown(std::time::Duration::from_secs(30))
+                            .await;
                         if drained > 0 {
                             tracing::info!("drained {drained} healer sessions");
                         }
@@ -261,8 +273,7 @@ fn main() {
                     }
                     None
                 } else if cfg.oidc.is_some() {
-                    let (layer, _cache) =
-                        web::auth::build_auth_layer(&cfg.database.url).await;
+                    let (layer, _cache) = web::auth::build_auth_layer(&cfg.database.url).await;
                     Some(layer)
                 } else {
                     tracing::warn!("OIDC not configured — web authentication disabled");
@@ -280,8 +291,8 @@ fn main() {
                 auth_layer
             };
 
-            let mut router = axum::Router::new()
-                .serve_dioxus_application(ServeConfig::new(), web::app::App);
+            let mut router =
+                axum::Router::new().serve_dioxus_application(ServeConfig::new(), web::app::App);
 
             if let Some(auth_layer) = auth_layer {
                 router = router
@@ -289,8 +300,7 @@ fn main() {
                     .layer(auth_layer);
             } else if dev_no_auth {
                 // DEV mode: add require_auth middleware (for dev user injection) without OIDC layer
-                router = router
-                    .layer(axum::middleware::from_fn(web::auth::require_auth));
+                router = router.layer(axum::middleware::from_fn(web::auth::require_auth));
             }
 
             Ok(router)
@@ -312,7 +322,9 @@ fn main() {
                     .recv()
                     .await;
                 tracing::info!("received SIGTERM, draining healer sessions...");
-                let drained = healer_state.graceful_shutdown(std::time::Duration::from_secs(30)).await;
+                let drained = healer_state
+                    .graceful_shutdown(std::time::Duration::from_secs(30))
+                    .await;
                 if drained > 0 {
                     tracing::info!("drained {drained} healer sessions");
                 }

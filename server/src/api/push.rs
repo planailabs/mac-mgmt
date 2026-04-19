@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rocket::response::stream::{Event, EventStream};
-use rocket::{get, Shutdown, State};
+use rocket::{Shutdown, State, get};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 pub use mac_mgmt_common::PushEvent as PushMessage;
@@ -121,7 +121,12 @@ pub async fn notify_mcp_server_global(mcp_server_id: Uuid) {
 }
 
 /// Notify all clusters targeted by a rollout's currently-rolling stages.
-pub async fn notify_rollout_clusters(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
+pub async fn notify_rollout_clusters(
+    channels: &PushChannels,
+    pool: &PgPool,
+    rollout_id: Uuid,
+    msg: PushMessage,
+) {
     let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
          JOIN LATERAL ( \
@@ -145,7 +150,12 @@ pub async fn notify_rollout_clusters(channels: &PushChannels, pool: &PgPool, rol
 }
 
 /// Same as notify_rollout_clusters but for all stages (used on complete).
-pub async fn notify_all_rollout_clusters(channels: &PushChannels, pool: &PgPool, rollout_id: Uuid, msg: PushMessage) {
+pub async fn notify_all_rollout_clusters(
+    channels: &PushChannels,
+    pool: &PgPool,
+    rollout_id: Uuid,
+    msg: PushMessage,
+) {
     let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT DISTINCT rgm.cluster_id FROM rollout_stages rs \
          JOIN LATERAL ( \
@@ -193,9 +203,7 @@ pub async fn notify_bundle_clusters(
     bundle_id: Uuid,
     msg: PushMessage,
 ) {
-    let query = format!(
-        "SELECT DISTINCT cluster_id FROM {assignment_table} WHERE bundle_id = $1"
-    );
+    let query = format!("SELECT DISTINCT cluster_id FROM {assignment_table} WHERE bundle_id = $1");
     let cluster_ids: Vec<Uuid> = sqlx::query_scalar(&query)
         .bind(bundle_id)
         .fetch_all(pool)

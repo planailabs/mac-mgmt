@@ -31,10 +31,7 @@ pub fn capture_cmd_failure(command: &str, exit_code: Option<i32>, stderr: &str) 
             }
         },
         || {
-            sentry::capture_message(
-                &format!("command failed: {command}"),
-                sentry::Level::Error,
-            );
+            sentry::capture_message(&format!("command failed: {command}"), sentry::Level::Error);
         },
     );
 }

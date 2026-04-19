@@ -21,7 +21,10 @@ impl Searchable for UserRow {
     fn matches_search(&self, query: &str) -> bool {
         self.email.to_lowercase().contains(query)
             || self.name.to_lowercase().contains(query)
-            || self.org_names.iter().any(|o| o.to_lowercase().contains(query))
+            || self
+                .org_names
+                .iter()
+                .any(|o| o.to_lowercase().contains(query))
     }
 }
 

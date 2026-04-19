@@ -27,7 +27,9 @@ pub fn is_in_path(bin: &str) -> bool {
 /// result (no matching device) returns `Ok(false)` so callers can
 /// distinguish "no hardware" from "can't tell".
 pub fn lspci_has_vendor(vendor_id_hex: &str) -> io::Result<bool> {
-    let output = Command::new("lspci").args(["-mmn", "-d", "::0300"]).output()?;
+    let output = Command::new("lspci")
+        .args(["-mmn", "-d", "::0300"])
+        .output()?;
     if !output.status.success() {
         return Err(io::Error::new(
             io::ErrorKind::Other,

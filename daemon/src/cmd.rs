@@ -25,7 +25,9 @@ pub fn output_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<Outpu
         Ok(result) => result.context("command execution failed"),
         Err(_) => {
             // Kill the process on timeout.
-            unsafe { libc::kill(pid as i32, libc::SIGKILL); }
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
             anyhow::bail!("command timed out after {timeout:?}");
         }
     }

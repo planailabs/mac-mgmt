@@ -31,8 +31,16 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
         .unwrap_or_else(|| vec!["ollama".into(), "lms".into(), "cloud".into()]);
     let cloud_providers = matrix.cloud_providers.clone().unwrap_or_else(|| {
         vec![
-            "anthropic", "openai", "google", "mistral", "groq", "xai", "deepseek",
-            "openrouter", "together", "bedrock",
+            "anthropic",
+            "openai",
+            "google",
+            "mistral",
+            "groq",
+            "xai",
+            "deepseek",
+            "openrouter",
+            "together",
+            "bedrock",
         ]
         .into_iter()
         .map(String::from)
@@ -88,7 +96,11 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
 /// Cells with `size == 1` keep their legacy key for continuity with existing
 /// state files; larger sizes append `-n{size}`.
 fn with_size(key: String, size: u32) -> String {
-    if size <= 1 { key } else { format!("{key}-n{size}") }
+    if size <= 1 {
+        key
+    } else {
+        format!("{key}-n{size}")
+    }
 }
 
 fn is_known_cloud_provider(s: &str) -> bool {
@@ -149,7 +161,11 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> Ma
         }],
         "relay": relay(),
     });
-    MatrixCell { key, config, node_count: size }
+    MatrixCell {
+        key,
+        config,
+        node_count: size,
+    }
 }
 
 fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
@@ -163,7 +179,11 @@ fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
         },
         "relay": relay(),
     });
-    MatrixCell { key, config, node_count: size }
+    MatrixCell {
+        key,
+        config,
+        node_count: size,
+    }
 }
 
 fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
@@ -177,7 +197,11 @@ fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
         },
         "relay": relay(),
     });
-    MatrixCell { key, config, node_count: size }
+    MatrixCell {
+        key,
+        config,
+        node_count: size,
+    }
 }
 
 fn build_none_llm_cell(agent: &str, size: u32) -> MatrixCell {
@@ -186,7 +210,11 @@ fn build_none_llm_cell(agent: &str, size: u32) -> MatrixCell {
         "global": global(agent, "none"),
         "relay": relay(),
     });
-    MatrixCell { key, config, node_count: size }
+    MatrixCell {
+        key,
+        config,
+        node_count: size,
+    }
 }
 
 #[cfg(test)]
@@ -205,8 +233,7 @@ mod tests {
         m.cluster_sizes = vec![1, 2];
         m.cloud_api_keys
             .insert("anthropic".into(), "sk-ant-test".into());
-        m.cloud_api_keys
-            .insert("openai".into(), "sk-test".into());
+        m.cloud_api_keys.insert("openai".into(), "sk-test".into());
 
         let cells = generate(&m);
         assert!(!cells.is_empty(), "matrix should not be empty");
@@ -230,8 +257,16 @@ mod tests {
         m.cluster_sizes = vec![1, 2];
         let cells = generate(&m);
         assert_eq!(cells.len(), 2);
-        assert!(cells.iter().any(|c| c.key == "openclaw-ollama" && c.node_count == 1));
-        assert!(cells.iter().any(|c| c.key == "openclaw-ollama-n2" && c.node_count == 2));
+        assert!(
+            cells
+                .iter()
+                .any(|c| c.key == "openclaw-ollama" && c.node_count == 1)
+        );
+        assert!(
+            cells
+                .iter()
+                .any(|c| c.key == "openclaw-ollama-n2" && c.node_count == 2)
+        );
     }
 
     /// End-to-end fairness simulation: take the interleaved matrix output
@@ -318,7 +353,10 @@ mod tests {
             .filter(|(k, _)| !k.ends_with("-n2"))
             .filter_map(|(_, t)| *t)
             .collect();
-        assert!(!n2_ticks.is_empty() && !n1_ticks.is_empty(), "need both sizes");
+        assert!(
+            !n2_ticks.is_empty() && !n1_ticks.is_empty(),
+            "need both sizes"
+        );
         let n2_min = n2_ticks.iter().min().copied().unwrap();
         let n1_max = n1_ticks.iter().max().copied().unwrap();
         assert!(
@@ -366,16 +404,37 @@ mod tests {
             let present: Vec<&String> = obj.keys().collect();
             // global is required; cloud/ollama/lms/daemon/metrics/etc. should
             // only appear when the cell actively sets them.
-            assert!(present.iter().any(|k| *k == "global"), "{}: no global", cell.key);
-            assert!(!present.iter().any(|k| *k == "daemon"), "{}: daemon leaked", cell.key);
-            assert!(!present.iter().any(|k| *k == "metrics"), "{}: metrics leaked", cell.key);
-            assert!(present.iter().any(|k| *k == "relay"), "{}: relay missing", cell.key);
+            assert!(
+                present.iter().any(|k| *k == "global"),
+                "{}: no global",
+                cell.key
+            );
+            assert!(
+                !present.iter().any(|k| *k == "daemon"),
+                "{}: daemon leaked",
+                cell.key
+            );
+            assert!(
+                !present.iter().any(|k| *k == "metrics"),
+                "{}: metrics leaked",
+                cell.key
+            );
+            assert!(
+                present.iter().any(|k| *k == "relay"),
+                "{}: relay missing",
+                cell.key
+            );
             assert!(
                 !present.iter().any(|k| *k == "notifications"),
-                "{}: notifications leaked", cell.key
+                "{}: notifications leaked",
+                cell.key
             );
             if !cell.key.contains("-cloud-") {
-                assert!(!present.iter().any(|k| *k == "cloud"), "{}: cloud leaked", cell.key);
+                assert!(
+                    !present.iter().any(|k| *k == "cloud"),
+                    "{}: cloud leaked",
+                    cell.key
+                );
             }
         }
     }

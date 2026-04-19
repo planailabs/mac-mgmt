@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use chrono::{DateTime, Utc};
+use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -95,14 +95,15 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
         let has_reasons = reasons_arr
             .map(|arr| arr.iter().any(|r| r.is_string()))
             .unwrap_or(false);
-        let entry = health_by_rollout
-            .entry(ev.rollout_id)
-            .or_insert_with(|| RolloutHealthSummary {
-                state: "pass".into(),
-                evaluated_stages: 0,
-                failing_stages: 0,
-                summary: String::new(),
-            });
+        let entry =
+            health_by_rollout
+                .entry(ev.rollout_id)
+                .or_insert_with(|| RolloutHealthSummary {
+                    state: "pass".into(),
+                    evaluated_stages: 0,
+                    failing_stages: 0,
+                    summary: String::new(),
+                });
         entry.evaluated_stages += 1;
         // State precedence: fail > grace (only when grace is actually
         // shielding a real reason) > pass. A clean pass during grace is
@@ -111,8 +112,8 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
             entry.failing_stages += 1;
             entry.state = "fail".into();
             if entry.summary.is_empty() {
-                if let Some(first) = reasons_arr
-                    .and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
+                if let Some(first) =
+                    reasons_arr.and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
                 {
                     entry.summary = truncate(first, 80);
                 }
@@ -238,11 +239,26 @@ fn render_health_cell(health: Option<&RolloutHealthSummary>) -> Element {
 
 fn status_badge(status: &str) -> (&'static str, &'static str) {
     match status {
-        "rolling" => ("bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200", "rolling"),
-        "completed" => ("bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200", "completed"),
-        "paused" => ("bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200", "paused"),
-        "failed" => ("bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200", "failed"),
-        _ => ("bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200", "pending"),
+        "rolling" => (
+            "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
+            "rolling",
+        ),
+        "completed" => (
+            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+            "completed",
+        ),
+        "paused" => (
+            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
+            "paused",
+        ),
+        "failed" => (
+            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+            "failed",
+        ),
+        _ => (
+            "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
+            "pending",
+        ),
     }
 }
 

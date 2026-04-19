@@ -76,10 +76,7 @@ pub async fn client_ws(ws_a: crate::ClientWs, ws_b: crate::ClientWs) {
 
 /// Bridge two axum WebSockets bidirectionally, forwarding close frames.
 #[cfg(feature = "axum")]
-pub async fn axum_ws(
-    ws_a: axum::extract::ws::WebSocket,
-    ws_b: axum::extract::ws::WebSocket,
-) {
+pub async fn axum_ws(ws_a: axum::extract::ws::WebSocket, ws_b: axum::extract::ws::WebSocket) {
     use axum::extract::ws::Message;
 
     let (mut a_sink, mut a_stream) = ws_a.split();
@@ -222,9 +219,7 @@ pub async fn tcp_ws(
         n = tcp_to_ws => { tcp_to_ws_bytes = n; }
     }
 
-    tracing::info!(
-        "bridge closed (ws->tcp: {ws_to_tcp_bytes}B, tcp->ws: {tcp_to_ws_bytes}B)"
-    );
+    tracing::info!("bridge closed (ws->tcp: {ws_to_tcp_bytes}B, tcp->ws: {tcp_to_ws_bytes}B)");
 
     (ws_to_tcp_bytes, tcp_to_ws_bytes)
 }

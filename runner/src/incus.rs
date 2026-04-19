@@ -49,9 +49,10 @@ impl IncusClient {
         client_pem_combined: &[u8],
         server_ca: Option<&[u8]>,
     ) -> Result<Self> {
-        let mut builder = reqwest::Client::builder()
-            .identity(reqwest::Identity::from_pem(client_pem_combined)
-                .context("parsing Incus client identity (cert+key PEM)")?);
+        let mut builder = reqwest::Client::builder().identity(
+            reqwest::Identity::from_pem(client_pem_combined)
+                .context("parsing Incus client identity (cert+key PEM)")?,
+        );
         match server_ca {
             Some(ca) => {
                 builder = builder.add_root_certificate(
@@ -93,7 +94,9 @@ impl IncusClient {
         match env.kind.as_str() {
             "sync" => Ok(env.metadata.unwrap_or(Value::Null)),
             "async" => {
-                let op = env.operation.context("async response had no operation URL")?;
+                let op = env
+                    .operation
+                    .context("async response had no operation URL")?;
                 let op_url = format!("{}{}/wait?timeout=120", self.base, op);
                 let wait = self
                     .http
@@ -181,7 +184,10 @@ impl IncusClient {
             }
         }
         if !status.is_success() && env.status_code.unwrap_or_default() / 100 != 2 {
-            bail!("delete_instance({name}): status={status} err={:?}", env.error);
+            bail!(
+                "delete_instance({name}): status={status} err={:?}",
+                env.error
+            );
         }
         Ok(())
     }

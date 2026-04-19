@@ -42,10 +42,7 @@ impl fmt::Display for DaemonEvent {
         match self {
             Self::DaemonStarted => write!(f, "mac-mgmt daemon started"),
             Self::DaemonStopped => write!(f, "mac-mgmt daemon stopped"),
-            Self::ServiceCrashed {
-                service,
-                exit_code,
-            } => {
+            Self::ServiceCrashed { service, exit_code } => {
                 write!(f, "{service} crashed")?;
                 if let Some(code) = exit_code {
                     write!(f, " (exit code {code})")?;
@@ -117,8 +114,14 @@ mod tests {
 
     #[test]
     fn event_display_messages() {
-        assert_eq!(DaemonEvent::DaemonStarted.to_string(), "mac-mgmt daemon started");
-        assert_eq!(DaemonEvent::DaemonStopped.to_string(), "mac-mgmt daemon stopped");
+        assert_eq!(
+            DaemonEvent::DaemonStarted.to_string(),
+            "mac-mgmt daemon started"
+        );
+        assert_eq!(
+            DaemonEvent::DaemonStopped.to_string(),
+            "mac-mgmt daemon stopped"
+        );
         assert_eq!(
             DaemonEvent::ServiceCrashed {
                 service: "ollama".into(),

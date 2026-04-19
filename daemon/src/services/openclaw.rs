@@ -33,18 +33,25 @@ pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Resu
 
     merge_json(&mut existing, patch);
 
-    let merged = serde_json::to_string_pretty(&existing)
-        .context("failed to serialize merged config")?;
+    let merged =
+        serde_json::to_string_pretty(&existing).context("failed to serialize merged config")?;
     std::fs::write(config_path, &merged)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
 
     // Validate
-    let valid = match Command::new("openclaw").args(["config", "validate"]).output() {
+    let valid = match Command::new("openclaw")
+        .args(["config", "validate"])
+        .output()
+    {
         Ok(output) if output.status.success() => true,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            tracing::warn!("openclaw config invalid: {} {}", stdout.trim(), stderr.trim());
+            tracing::warn!(
+                "openclaw config invalid: {} {}",
+                stdout.trim(),
+                stderr.trim()
+            );
             false
         }
         Err(e) => {
@@ -75,7 +82,10 @@ impl OpenClaw {
             "Number of active openclaw sessions",
         )
         .unwrap();
-        Self { config, active_sessions }
+        Self {
+            config,
+            active_sessions,
+        }
     }
 
     /// Uninstall any preexisting openclaw daemon service so it doesn't race ours.
@@ -86,7 +96,10 @@ impl OpenClaw {
             "running openclaw daemon uninstall",
             &[("service", "openclaw")],
         );
-        match Command::new("openclaw").args(["daemon", "uninstall"]).output() {
+        match Command::new("openclaw")
+            .args(["daemon", "uninstall"])
+            .output()
+        {
             Ok(o) if o.status.success() => {
                 tracing::info!("openclaw daemon uninstall completed");
             }
@@ -173,7 +186,9 @@ impl OpenClaw {
             .args(["sessions", "--active", "1", "--json"])
             .output();
         let Ok(output) = output else { return 0 };
-        if !output.status.success() { return 0; }
+        if !output.status.success() {
+            return 0;
+        }
         let stdout = String::from_utf8_lossy(&output.stdout);
         let json: serde_json::Value = match serde_json::from_str(&stdout) {
             Ok(v) => v,
@@ -227,7 +242,11 @@ impl ManagedService for OpenClaw {
         }
 
         tracing::info!("openclaw not found, installing via nix");
-        sentry_ext::breadcrumb("install", "installing openclaw via nix", &[("service", "openclaw")]);
+        sentry_ext::breadcrumb(
+            "install",
+            "installing openclaw via nix",
+            &[("service", "openclaw")],
+        );
         crate::nix::profile_install("openclaw", false)?;
         Ok(())
     }
@@ -239,7 +258,11 @@ impl ManagedService for OpenClaw {
 
         if !config_path.exists() {
             tracing::info!("openclaw config not found, running openclaw setup");
-            sentry_ext::breadcrumb("setup", "running openclaw setup", &[("service", "openclaw")]);
+            sentry_ext::breadcrumb(
+                "setup",
+                "running openclaw setup",
+                &[("service", "openclaw")],
+            );
             let output = Command::new("openclaw")
                 .arg("setup")
                 .output()
@@ -284,7 +307,8 @@ impl ManagedService for OpenClaw {
         let output = crate::cmd::output_with_timeout(
             Command::new("openclaw").args(["health", "--json"]),
             crate::cmd::DEFAULT_TIMEOUT,
-        ).context("failed to run openclaw health")?;
+        )
+        .context("failed to run openclaw health")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -311,12 +335,17 @@ impl ManagedService for OpenClaw {
         Self::uninstall_existing_daemon("repair");
 
         tracing::info!("running openclaw doctor --fix");
-        sentry_ext::breadcrumb("repair", "running openclaw doctor --fix", &[("service", "openclaw")]);
+        sentry_ext::breadcrumb(
+            "repair",
+            "running openclaw doctor --fix",
+            &[("service", "openclaw")],
+        );
 
         let output = crate::cmd::output_with_timeout(
             Command::new("openclaw").args(["doctor", "--fix"]),
             std::time::Duration::from_secs(60),
-        ).context("failed to run openclaw doctor --fix")?;
+        )
+        .context("failed to run openclaw doctor --fix")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -351,7 +380,11 @@ impl ManagedService for OpenClaw {
         }
 
         tracing::info!("upgrading openclaw via nix");
-        sentry_ext::breadcrumb("upgrade", "upgrading openclaw via nix", &[("service", "openclaw")]);
+        sentry_ext::breadcrumb(
+            "upgrade",
+            "upgrading openclaw via nix",
+            &[("service", "openclaw")],
+        );
         crate::nix::profile_install("openclaw", true)?;
         tracing::info!("openclaw upgraded, restart pending until idle");
         Ok(true)
@@ -372,12 +405,17 @@ impl ManagedService for OpenClaw {
     }
 
     fn collect_metrics(&self) {
-        self.active_sessions.set(Self::active_session_count() as i64);
+        self.active_sessions
+            .set(Self::active_session_count() as i64);
     }
 
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
         let gw = self.config.gateway.as_ref().cloned().unwrap_or_default();
-        let host = if gw.host.is_empty() { "127.0.0.1".to_string() } else { gw.host };
+        let host = if gw.host.is_empty() {
+            "127.0.0.1".to_string()
+        } else {
+            gw.host
+        };
         let port = if gw.port == 0 { 18789 } else { gw.port };
         vec![TunnelDef {
             name: "openclaw".into(),

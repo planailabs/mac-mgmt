@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioxus::fullstack::JsonStream;
+use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -27,25 +27,34 @@ pub struct SessionSummary {
 
 // Re-export wire types from common — single source of truth.
 pub use mac_mgmt_common::{
-    HealerStreamEvent, HealerRunningTool as RunningToolInfo,
-    HealerPin as PinInfo, HealerStaffPing as StaffPingSummary,
+    HealerPin as PinInfo, HealerRunningTool as RunningToolInfo,
+    HealerStaffPing as StaffPingSummary, HealerStreamEvent,
 };
 
 #[cfg(feature = "server")]
 fn staff_pings_to_wire(pings: &[mac_mgmt_healer::session::StaffPing]) -> Vec<StaffPingSummary> {
-    pings.iter().map(|p| StaffPingSummary {
-        id: p.id.to_string(), category: p.category.clone(),
-        message: p.message.clone(), resolved: p.resolved,
-        created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
-    }).collect()
+    pings
+        .iter()
+        .map(|p| StaffPingSummary {
+            id: p.id.to_string(),
+            category: p.category.clone(),
+            message: p.message.clone(),
+            resolved: p.resolved,
+            created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        })
+        .collect()
 }
 
 #[cfg(feature = "server")]
 fn running_tools_to_wire(tools: &[mac_mgmt_healer::session::RunningTool]) -> Vec<RunningToolInfo> {
-    tools.iter().map(|t| RunningToolInfo {
-        name: t.name.clone(), args: t.args.clone(),
-        started_at: t.started_at.to_rfc3339(),
-    }).collect()
+    tools
+        .iter()
+        .map(|t| RunningToolInfo {
+            name: t.name.clone(),
+            args: t.args.clone(),
+            started_at: t.started_at.to_rfc3339(),
+        })
+        .collect()
 }
 
 #[cfg(feature = "server")]
@@ -53,11 +62,18 @@ fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStream
     use mac_mgmt_healer::HealerEvent;
     let empty = HealerStreamEvent::default();
     match event {
-        HealerEvent::Message { role, content, metadata, .. } => (
+        HealerEvent::Message {
+            role,
+            content,
+            metadata,
+            ..
+        } => (
             HealerStreamEvent {
                 kind: "message".to_string(),
-                role: Some(role.clone()), content: Some(content.clone()),
-                metadata: metadata.clone(), ..empty
+                role: Some(role.clone()),
+                content: Some(content.clone()),
+                metadata: metadata.clone(),
+                ..empty
             },
             false,
         ),
@@ -72,21 +88,24 @@ fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStream
         HealerEvent::State { state, .. } => (
             HealerStreamEvent {
                 kind: "state".to_string(),
-                state: Some(state.clone()), ..empty
+                state: Some(state.clone()),
+                ..empty
             },
             false,
         ),
         HealerEvent::Status { message } => (
             HealerStreamEvent {
                 kind: "status".to_string(),
-                status_message: Some(message.clone()), ..empty
+                status_message: Some(message.clone()),
+                ..empty
             },
             false,
         ),
         HealerEvent::Done { state } => (
             HealerStreamEvent {
                 kind: "done".to_string(),
-                state: Some(state.clone()), ..empty
+                state: Some(state.clone()),
+                ..empty
             },
             true,
         ),
@@ -100,13 +119,26 @@ fn extract_pins_from_messages(messages: &[mac_mgmt_healer::HealerMessage]) -> Ve
         if msg.role == "pin" {
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
                 if let Some(slot) = data.get("slot").and_then(|v| v.as_str()) {
-                    pins.insert(slot.to_string(), PinInfo {
-                        slot: slot.to_string(),
-                        summary: data.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        affected_services: data.get("affected_services").and_then(|v| v.as_array())
-                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                            .unwrap_or_default(),
-                    });
+                    pins.insert(
+                        slot.to_string(),
+                        PinInfo {
+                            slot: slot.to_string(),
+                            summary: data
+                                .get("summary")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            affected_services: data
+                                .get("affected_services")
+                                .and_then(|v| v.as_array())
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|v| v.as_str().map(String::from))
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        },
+                    );
                 }
             }
         }
@@ -223,15 +255,19 @@ pub async fn view_healer_session(
         for msg in &existing_messages {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "message".to_string(),
-                role: Some(msg.role.clone()), content: Some(msg.content.clone()),
-                metadata: msg.metadata.clone(), ..empty()
+                role: Some(msg.role.clone()),
+                content: Some(msg.content.clone()),
+                metadata: msg.metadata.clone(),
+                ..empty()
             });
         }
 
         // Send pins snapshot
         if !pins.is_empty() {
             let _ = tx.unbounded_send(HealerStreamEvent {
-                kind: "pins".to_string(), pins: Some(pins.clone()), ..empty()
+                kind: "pins".to_string(),
+                pins: Some(pins.clone()),
+                ..empty()
             });
         }
 
@@ -248,7 +284,9 @@ pub async fn view_healer_session(
 
         // Current state
         let _ = tx.unbounded_send(HealerStreamEvent {
-            kind: "state".to_string(), state: Some(current_state.clone()), ..empty()
+            kind: "state".to_string(),
+            state: Some(current_state.clone()),
+            ..empty()
         });
 
         // Running tools snapshot
@@ -272,21 +310,41 @@ pub async fn view_healer_session(
                             let _ = tx.unbounded_send(stream_event);
 
                             // If this was a pin message, re-send pins snapshot
-                            if let mac_mgmt_healer::HealerEvent::Message { role, content, .. } = &event {
+                            if let mac_mgmt_healer::HealerEvent::Message { role, content, .. } =
+                                &event
+                            {
                                 if role == "pin" {
-                                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(content) {
-                                        if let Some(slot) = data.get("slot").and_then(|v| v.as_str()) {
+                                    if let Ok(data) =
+                                        serde_json::from_str::<serde_json::Value>(content)
+                                    {
+                                        if let Some(slot) =
+                                            data.get("slot").and_then(|v| v.as_str())
+                                        {
                                             let pin = PinInfo {
                                                 slot: slot.to_string(),
-                                                summary: data.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                                affected_services: data.get("affected_services").and_then(|v| v.as_array())
-                                                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                                                summary: data
+                                                    .get("summary")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string(),
+                                                affected_services: data
+                                                    .get("affected_services")
+                                                    .and_then(|v| v.as_array())
+                                                    .map(|a| {
+                                                        a.iter()
+                                                            .filter_map(|v| {
+                                                                v.as_str().map(String::from)
+                                                            })
+                                                            .collect()
+                                                    })
                                                     .unwrap_or_default(),
                                             };
                                             pins.retain(|p| p.slot != pin.slot);
                                             pins.push(pin);
                                             let _ = tx.unbounded_send(HealerStreamEvent {
-                                                kind: "pins".to_string(), pins: Some(pins.clone()), ..empty()
+                                                kind: "pins".to_string(),
+                                                pins: Some(pins.clone()),
+                                                ..empty()
                                             });
                                         }
                                     }
@@ -294,21 +352,38 @@ pub async fn view_healer_session(
 
                                 // If tool result was staff_ping, re-send pings
                                 if role == "tool_result" && content.starts_with("staff_ping:") {
-                                    if let Ok(pings) = mac_mgmt_healer::session::store::list_session_pings(&pool2, uuid).await {
+                                    if let Ok(pings) =
+                                        mac_mgmt_healer::session::store::list_session_pings(
+                                            &pool2, uuid,
+                                        )
+                                        .await
+                                    {
                                         let _ = tx.unbounded_send(HealerStreamEvent {
                                             kind: "staff_pings".to_string(),
-                                            staff_pings: Some(pings.iter().map(|p| StaffPingSummary {
-                                                id: p.id.to_string(), category: p.category.clone(),
-                                                message: p.message.clone(), resolved: p.resolved,
-                                                created_at: p.created_at.format("%Y-%m-%d %H:%M").to_string(),
-                                            }).collect()),
+                                            staff_pings: Some(
+                                                pings
+                                                    .iter()
+                                                    .map(|p| StaffPingSummary {
+                                                        id: p.id.to_string(),
+                                                        category: p.category.clone(),
+                                                        message: p.message.clone(),
+                                                        resolved: p.resolved,
+                                                        created_at: p
+                                                            .created_at
+                                                            .format("%Y-%m-%d %H:%M")
+                                                            .to_string(),
+                                                    })
+                                                    .collect(),
+                                            ),
                                             ..empty()
                                         });
                                     }
                                 }
                             }
 
-                            if is_done { break; }
+                            if is_done {
+                                break;
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -318,7 +393,9 @@ pub async fn view_healer_session(
         }
 
         let _ = tx.unbounded_send(HealerStreamEvent {
-            kind: "done".to_string(), state: Some(current_state), ..empty()
+            kind: "done".to_string(),
+            state: Some(current_state),
+            ..empty()
         });
     }))
 }
@@ -328,8 +405,8 @@ pub async fn start_healer_stream(
     instance_id: String,
     user_message: Option<String>,
 ) -> Result<JsonStream<HealerStreamEvent>, ServerFnError> {
-    use mac_mgmt_healer::{HealerEvent, SpawnRequest};
     use mac_mgmt_healer::agent::InstanceInfo;
+    use mac_mgmt_healer::{HealerEvent, SpawnRequest};
 
     let user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -363,17 +440,19 @@ pub async fn start_healer_stream(
         .relay_proxy_url
         .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL"))?;
 
-    let cluster_name: String =
-        sqlx::query_scalar("SELECT name FROM clusters WHERE id = $1")
-            .bind(hb.cluster_id)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| hb.cluster_id.to_string());
+    let cluster_name: String = sqlx::query_scalar("SELECT name FROM clusters WHERE id = $1")
+        .bind(hb.cluster_id)
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| hb.cluster_id.to_string());
 
     #[derive(sqlx::FromRow)]
-    struct InstanceRow { instance_id: String, hostname: Option<String> }
+    struct InstanceRow {
+        instance_id: String,
+        hostname: Option<String>,
+    }
     let cluster_instances: Vec<InstanceInfo> = sqlx::query_as::<_, InstanceRow>(
         "SELECT instance_id, hostname FROM daemon_heartbeats \
          WHERE cluster_id = $1 AND instance_id != $2 \
@@ -422,13 +501,15 @@ pub async fn start_healer_stream(
         let empty = HealerStreamEvent::default;
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "session_created".to_string(),
-            session_id: Some(session_id.to_string()), ..empty()
+            session_id: Some(session_id.to_string()),
+            ..empty()
         });
 
         let Some(mut rx) = healer.subscribe(session_id) else {
             let _ = tx.unbounded_send(HealerStreamEvent {
                 kind: "error".to_string(),
-                content: Some("failed to subscribe".to_string()), ..empty()
+                content: Some("failed to subscribe".to_string()),
+                ..empty()
             });
             return;
         };
@@ -438,7 +519,9 @@ pub async fn start_healer_stream(
                 Ok(event) => {
                     let (evt, is_done) = healer_event_to_stream(&event);
                     let _ = tx.unbounded_send(evt);
-                    if is_done { break; }
+                    if is_done {
+                        break;
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -452,8 +535,13 @@ pub async fn cancel_healer_session(session_id: String) -> Result<(), ServerFnErr
     let _user = current_user().await?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
-    let uuid: uuid::Uuid = session_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
-    healer.cancel_session(uuid).await.map_err(|e| ServerFnError::new(e.to_string()))
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid id"))?;
+    healer
+        .cancel_session(uuid)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 #[server]
@@ -461,20 +549,26 @@ pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnErr
     let _user = current_user().await?;
     let healer = crate::server_state::healer_state()
         .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
-    let uuid: uuid::Uuid = session_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
-    healer.resume_session(uuid).await.map_err(|e| ServerFnError::new(e.to_string()))
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid id"))?;
+    healer
+        .resume_session(uuid)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 #[server]
 pub async fn resolve_staff_ping(ping_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = ping_id.parse().map_err(|_| ServerFnError::new("invalid id"))?;
+    let uuid: uuid::Uuid = ping_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid id"))?;
     mac_mgmt_healer::session::store::resolve_staff_ping(&pool, uuid, &user.email)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
-
 
 // ── Component ──────────────────────────────────────────────────────────
 
@@ -754,11 +848,17 @@ async fn consume_stream(
         Ok(mut stream) => {
             while let Some(Ok(evt)) = stream.next().await {
                 match evt.kind.as_str() {
-                    "session_created" => { session_id.set(evt.session_id); }
+                    "session_created" => {
+                        session_id.set(evt.session_id);
+                    }
                     "message" => {
                         if let (Some(role), Some(content)) = (evt.role, evt.content) {
                             if !content.is_empty() {
-                                messages.push(ChatMsg { role, content, metadata: evt.metadata });
+                                messages.push(ChatMsg {
+                                    role,
+                                    content,
+                                    metadata: evt.metadata,
+                                });
                             }
                         }
                     }
@@ -774,11 +874,17 @@ async fn consume_stream(
                     "status" => {
                         status_msg.set(evt.status_message);
                     }
-                    "state" => { if let Some(s) = evt.state { state.set(s); } }
+                    "state" => {
+                        if let Some(s) = evt.state {
+                            state.set(s);
+                        }
+                    }
                     "done" => {
                         active_tools.set(Vec::new());
                         status_msg.set(None);
-                        if let Some(s) = evt.state { state.set(s); }
+                        if let Some(s) = evt.state {
+                            state.set(s);
+                        }
                         break;
                     }
                     "error" => {
@@ -819,28 +925,50 @@ struct ChatMsg {
 
 fn state_badge(st: &str) -> (&'static str, &'static str) {
     match st {
-        "starting" | "loading" | "created" | "initializing" =>
-            ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Initializing"),
-        "diagnosing" =>
-            ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Diagnosing"),
-        "remediating" =>
-            ("bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300", "Remediating"),
-        "verifying" =>
-            ("bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300", "Verifying"),
-        "completed" | "done" =>
-            ("bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300", "Done"),
-        "failed" =>
-            ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Failed"),
-        "cancelled" =>
-            ("bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300", "Cancelled"),
-        "paused" =>
-            ("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300", "Paused"),
-        "awaiting_retry" =>
-            ("bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300", "Awaiting retry"),
-        "needs_human_attention" =>
-            ("bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300", "Needs Human Attention"),
-        _ =>
-            ("bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300", "Unknown"),
+        "starting" | "loading" | "created" | "initializing" => (
+            "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+            "Initializing",
+        ),
+        "diagnosing" => (
+            "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+            "Diagnosing",
+        ),
+        "remediating" => (
+            "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
+            "Remediating",
+        ),
+        "verifying" => (
+            "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
+            "Verifying",
+        ),
+        "completed" | "done" => (
+            "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
+            "Done",
+        ),
+        "failed" => (
+            "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+            "Failed",
+        ),
+        "cancelled" => (
+            "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
+            "Cancelled",
+        ),
+        "paused" => (
+            "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+            "Paused",
+        ),
+        "awaiting_retry" => (
+            "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+            "Awaiting retry",
+        ),
+        "needs_human_attention" => (
+            "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+            "Needs Human Attention",
+        ),
+        _ => (
+            "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
+            "Unknown",
+        ),
     }
 }
 
@@ -868,11 +996,31 @@ fn render_message(msg: &ChatMsg) -> Element {
     }
 
     let (bg, icon, label) = match msg.role.as_str() {
-        "system" => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400", "S", "System"),
-        "assistant" => ("bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400", "A", "Agent"),
-        "user" => ("bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400", "U", "User"),
-        "summary" => ("bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400", "S", "Summary"),
-        _ => ("bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300", "-", "Other"),
+        "system" => (
+            "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400",
+            "S",
+            "System",
+        ),
+        "assistant" => (
+            "bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400",
+            "A",
+            "Agent",
+        ),
+        "user" => (
+            "bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400",
+            "U",
+            "User",
+        ),
+        "summary" => (
+            "bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400",
+            "S",
+            "Summary",
+        ),
+        _ => (
+            "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300",
+            "-",
+            "Other",
+        ),
     };
 
     let html = simple_md_to_html(&msg.content);
@@ -892,7 +1040,10 @@ fn render_message(msg: &ChatMsg) -> Element {
 }
 
 fn render_tool_result(msg: &ChatMsg) -> Element {
-    let (tool_name, result) = msg.content.split_once(": ").unwrap_or(("tool", &msg.content));
+    let (tool_name, result) = msg
+        .content
+        .split_once(": ")
+        .unwrap_or(("tool", &msg.content));
     let is_error = result.starts_with("Error:");
     let truncated = result.len() > 500;
     let preview = if truncated { &result[..500] } else { result };
@@ -906,7 +1057,9 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     } else {
         preview.to_string()
     };
-    let args = msg.metadata.as_ref()
+    let args = msg
+        .metadata
+        .as_ref()
         .and_then(|m| m.get("tool_args"))
         .and_then(|v| v.as_str())
         .filter(|a| *a != "{}")
@@ -1019,9 +1172,8 @@ fn render_staff_pings_inline(pings: &[StaffPingSummary]) -> Element {
 #[cfg(feature = "server")]
 pub fn simple_md_to_html(md: &str) -> String {
     use pulldown_cmark::{Options, Parser, html};
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS;
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(md, options);
     let mut output = String::with_capacity(md.len() * 2);
     html::push_html(&mut output, parser);

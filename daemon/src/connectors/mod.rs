@@ -15,7 +15,10 @@ use crate::services::{
     apprise::Apprise, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
     openclaw::OpenClaw, opencode::Opencode, rocm_smi::RocmSmi,
 };
-use mac_mgmt_common::{AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig, OpencodeConfig};
+use mac_mgmt_common::{
+    AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig,
+    OpencodeConfig,
+};
 
 /// A connector wires two services together after they are both healthy.
 ///
@@ -28,7 +31,8 @@ pub trait Connector: Send + Sync {
     fn depends_on(&self) -> &[&str];
     /// Run the connector. `configs` contains the current values of all
     /// config provider dependencies.
-    fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()>;
+    fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>)
+    -> Result<()>;
 }
 
 /// Build the list of managed services based on per-provider `enabled` flags.

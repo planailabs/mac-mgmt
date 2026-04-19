@@ -12,8 +12,7 @@ use super::{ServiceStrategy, UnmanagedService};
 pub fn acquire_lock() -> Result<std::fs::File> {
     let lock_path = crate::config::config_dir().join("daemon.lock");
     std::fs::create_dir_all(lock_path.parent().unwrap()).ok();
-    let lock_file =
-        std::fs::File::create(&lock_path).context("failed to create lockfile")?;
+    let lock_file = std::fs::File::create(&lock_path).context("failed to create lockfile")?;
     match lock_file.try_lock() {
         Ok(()) => Ok(lock_file),
         Err(std::fs::TryLockError::WouldBlock) => {
@@ -22,9 +21,7 @@ pub fn acquire_lock() -> Result<std::fs::File> {
                 lock_path.display()
             );
         }
-        Err(std::fs::TryLockError::Error(e)) => {
-            Err(e).context("failed to lock lockfile")
-        }
+        Err(std::fs::TryLockError::Error(e)) => Err(e).context("failed to lock lockfile"),
     }
 }
 
@@ -55,8 +52,7 @@ pub fn ensure_service(
             manifest.save(manifest_path)?;
         }
         Err(e) => {
-            manifest.get_or_create(&name).last_error =
-                Some(format!("ensure_installed: {e}"));
+            manifest.get_or_create(&name).last_error = Some(format!("ensure_installed: {e}"));
             manifest.save(manifest_path)?;
             return Err(e).with_context(|| format!("{name}: ensure_installed"));
         }
@@ -72,8 +68,7 @@ pub fn ensure_service(
             manifest.save(manifest_path)?;
         }
         Err(e) => {
-            manifest.get_or_create(&name).last_error =
-                Some(format!("ensure_setup: {e}"));
+            manifest.get_or_create(&name).last_error = Some(format!("ensure_setup: {e}"));
             manifest.save(manifest_path)?;
             return Err(e).with_context(|| format!("{name}: ensure_setup"));
         }
@@ -140,8 +135,7 @@ pub fn ensure_service(
 
     // 4. Post-start (model pulling, etc). Idempotent — already-pulled
     //    models are a fast no-op from the service's perspective.
-    if manifest.get_or_create(&name).service_active
-        && !manifest.get_or_create(&name).models_pulled
+    if manifest.get_or_create(&name).service_active && !manifest.get_or_create(&name).models_pulled
     {
         tracing::info!("{name}: running post_start");
         if let Err(e) = svc.post_start() {
@@ -176,8 +170,7 @@ pub fn remove_service(
             Err(e) => {
                 // Leave service_active = true so next run retries.
                 tracing::warn!("{name}: destroy_service failed (will retry): {e:#}");
-                manifest.get_or_create(&name).last_error =
-                    Some(format!("destroy_service: {e}"));
+                manifest.get_or_create(&name).last_error = Some(format!("destroy_service: {e}"));
                 manifest.save(manifest_path)?;
                 return Err(e).with_context(|| format!("{name}: destroy_service"));
             }

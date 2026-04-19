@@ -1,3 +1,4 @@
+use axum::Router;
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{FromRequest, Json, Query, Request, State};
@@ -5,7 +6,6 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use axum::Router;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -119,7 +119,10 @@ async fn proxy_security_headers(
                 .status(StatusCode::NO_CONTENT)
                 .header("access-control-allow-origin", ao.as_str())
                 .header("access-control-allow-methods", "GET, POST, OPTIONS")
-                .header("access-control-allow-headers", "authorization, content-type")
+                .header(
+                    "access-control-allow-headers",
+                    "authorization, content-type",
+                )
                 .header("access-control-expose-headers", "x-file-mtime, x-file-size")
                 .header("access-control-max-age", "3600")
                 .body(Body::empty())
@@ -294,7 +297,11 @@ async fn proxy_bootstrap(
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    if state.registry.find_tunnel(&instance_id, &tunnel_name).is_none() {
+    if state
+        .registry
+        .find_tunnel(&instance_id, &tunnel_name)
+        .is_none()
+    {
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     }
 
@@ -357,13 +364,12 @@ const PROXY_BOOTSTRAP_HTML: &str = r#"<!DOCTYPE html>
 /// Handles all non-special requests by proxying them to the daemon's tunnel.
 /// Detects WebSocket upgrades and routes them through proxy sessions.
 /// Regular HTTP (including SSE) is streamed via a proxy session.
-async fn proxy_catchall(
-    State(state): State<ProxyState>,
-    req: Request,
-) -> axum::response::Response {
+async fn proxy_catchall(State(state): State<ProxyState>, req: Request) -> axum::response::Response {
     let headers = req.headers().clone();
     let method = req.method().clone();
-    let path = req.uri().path_and_query()
+    let path = req
+        .uri()
+        .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
 
@@ -394,31 +400,32 @@ async fn proxy_catchall(
         let session_id = Uuid::new_v4().to_string();
         let session_secret = Uuid::new_v4().to_string();
 
-        return ws.on_upgrade(move |socket| async move {
-            tracing::info!("WS upgrade for tunnel {tunnel_name} path {path}");
+        return ws
+            .on_upgrade(move |socket| async move {
+                tracing::info!("WS upgrade for tunnel {tunnel_name} path {path}");
 
-            bridge::register_pending_proxy_session(
-                session_id.clone(),
-                session_secret.clone(),
-                socket,
-            );
+                bridge::register_pending_proxy_session(
+                    session_id.clone(),
+                    session_secret.clone(),
+                    socket,
+                );
 
-            if control_tx
-                .send(ControlMsg::ProxySessionRequest {
-                    session_id: session_id.clone(),
-                    session_secret: session_secret.clone(),
-                    tunnel_name,
-                    mode: "websocket".to_string(),
-                    path,
-                })
-                .await
-                .is_err()
-            {
-                tracing::warn!("proxy catchall WS: daemon control channel closed");
-                bridge::remove_pending_proxy_session(&session_id);
-            }
-        })
-        .into_response();
+                if control_tx
+                    .send(ControlMsg::ProxySessionRequest {
+                        session_id: session_id.clone(),
+                        session_secret: session_secret.clone(),
+                        tunnel_name,
+                        mode: "websocket".to_string(),
+                        path,
+                    })
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("proxy catchall WS: daemon control channel closed");
+                    bridge::remove_pending_proxy_session(&session_id);
+                }
+            })
+            .into_response();
     }
 
     // Collect request headers to forward
@@ -469,22 +476,21 @@ async fn proxy_catchall(
     }
 
     // Wait for response headers from daemon (first event).
-    let headers_event = match tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        stream_rx.recv(),
-    ).await {
-        Ok(Some(ProxyStreamEvent::Headers { status, headers })) => (status, headers),
-        _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
-    };
+    let headers_event =
+        match tokio::time::timeout(std::time::Duration::from_secs(60), stream_rx.recv()).await {
+            Ok(Some(ProxyStreamEvent::Headers { status, headers })) => (status, headers),
+            _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+        };
 
     let (status, resp_headers) = headers_event;
 
     // Stream body chunks as they arrive from daemon via the control channel.
     let body_stream = futures_util::stream::unfold(stream_rx, |mut rx| async move {
         match rx.recv().await {
-            Some(ProxyStreamEvent::BodyChunk(data)) => {
-                Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data)), rx))
-            }
+            Some(ProxyStreamEvent::BodyChunk(data)) => Some((
+                Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data)),
+                rx,
+            )),
             Some(ProxyStreamEvent::End) | None => None,
             Some(ProxyStreamEvent::Headers { .. }) => None, // unexpected
         }
@@ -696,7 +702,9 @@ async fn file_read(
     {
         Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
         _ => {
-            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            let _ = daemon_sink
+                .send(axum::extract::ws::Message::Close(None))
+                .await;
             return StatusCode::BAD_GATEWAY.into_response();
         }
     };
@@ -704,7 +712,9 @@ async fn file_read(
     let header: serde_json::Value = match serde_json::from_str(&header_msg) {
         Ok(v) => v,
         Err(_) => {
-            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            let _ = daemon_sink
+                .send(axum::extract::ws::Message::Close(None))
+                .await;
             return StatusCode::BAD_GATEWAY.into_response();
         }
     };
@@ -712,11 +722,15 @@ async fn file_read(
     let status = header["status"].as_u64().unwrap_or(500) as u16;
     if status != 200 {
         let error = header["error"].as_str().unwrap_or("unknown error");
-        let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+        let _ = daemon_sink
+            .send(axum::extract::ws::Message::Close(None))
+            .await;
         return axum::response::Response::builder()
             .status(status)
             .header("content-type", "application/json")
-            .body(Body::from(serde_json::json!({ "error": error }).to_string()))
+            .body(Body::from(
+                serde_json::json!({ "error": error }).to_string(),
+            ))
             .unwrap()
             .into_response();
     }
@@ -726,9 +740,10 @@ async fn file_read(
 
     let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
         match stream.next().await {
-            Some(Ok(axum::extract::ws::Message::Binary(data))) => {
-                Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())), stream))
-            }
+            Some(Ok(axum::extract::ws::Message::Binary(data))) => Some((
+                Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())),
+                stream,
+            )),
             _ => None,
         }
     });
@@ -813,14 +828,18 @@ async fn file_write(
     {
         Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
         _ => {
-            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            let _ = daemon_sink
+                .send(axum::extract::ws::Message::Close(None))
+                .await;
             return StatusCode::BAD_GATEWAY.into_response();
         }
     };
 
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ready_msg) {
         if v.get("status").is_some() && v.get("ready").is_none() {
-            let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+            let _ = daemon_sink
+                .send(axum::extract::ws::Message::Close(None))
+                .await;
             let status = v["status"].as_u64().unwrap_or(500) as u16;
             return axum::response::Response::builder()
                 .status(status)
@@ -864,7 +883,9 @@ async fn file_write(
         _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
     };
 
-    let _ = daemon_sink.send(axum::extract::ws::Message::Close(None)).await;
+    let _ = daemon_sink
+        .send(axum::extract::ws::Message::Close(None))
+        .await;
 
     let result: serde_json::Value = serde_json::from_str(&result_msg).unwrap_or_default();
     let status = result["status"].as_u64().unwrap_or(500) as u16;

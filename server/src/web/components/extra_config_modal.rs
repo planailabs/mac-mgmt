@@ -163,10 +163,7 @@ fn sort_tree(node: &mut Node) {
 /// modal itself is rendered at a higher level (StructuredEditor) so it
 /// stays mounted regardless of whether the openclaw section is collapsed.
 #[component]
-pub fn ExtraConfigField(
-    form_values: Signal<serde_json::Value>,
-    mut open: Signal<bool>,
-) -> Element {
+pub fn ExtraConfigField(form_values: Signal<serde_json::Value>, mut open: Signal<bool>) -> Element {
     let path = vec!["openclaw".to_string(), "extra_config".to_string()];
     let current = get_at(&form_values.read(), &path).unwrap_or(serde_json::Value::Null);
     let key_count = current
@@ -377,7 +374,11 @@ fn prune(v: serde_json::Value) -> serde_json::Value {
             serde_json::Value::Object(out)
         }
         serde_json::Value::Array(arr) => {
-            let pruned: Vec<_> = arr.into_iter().map(prune).filter(|v| !is_empty(v)).collect();
+            let pruned: Vec<_> = arr
+                .into_iter()
+                .map(prune)
+                .filter(|v| !is_empty(v))
+                .collect();
             serde_json::Value::Array(pruned)
         }
         other => other,
@@ -625,7 +626,9 @@ fn render_node_inner(
     }
 
     // Object / branch with children: collapsible group
-    if !node.children.is_empty() && (entry_ty == "object" || entry_ty.is_empty() || entry_ty == "any") {
+    if !node.children.is_empty()
+        && (entry_ty == "object" || entry_ty.is_empty() || entry_ty == "any")
+    {
         let filter_owned = filter.to_string();
         let has_value = get_at(&working.read(), &path)
             .map(|v| !is_empty(&v))
@@ -754,8 +757,10 @@ fn render_node_inner(
                 .and_then(|n| n.entry.as_ref())
                 .map(|e| e.ty().to_string())
                 .unwrap_or_default();
-            let item_has_children =
-                item.as_ref().map(|n| !n.children.is_empty()).unwrap_or(false);
+            let item_has_children = item
+                .as_ref()
+                .map(|n| !n.children.is_empty())
+                .unwrap_or(false);
             if item_has_children || item_ty == "object" {
                 render_object_array(item.unwrap(), path.clone(), working, filter)
             } else if matches!(
@@ -1302,7 +1307,11 @@ mod tests {
         // children are sorted alphabetically
         let names: Vec<_> = acp.children.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["allowedAgents", "backend", "enabled"]);
-        let allowed = acp.children.iter().find(|c| c.name == "allowedAgents").unwrap();
+        let allowed = acp
+            .children
+            .iter()
+            .find(|c| c.name == "allowedAgents")
+            .unwrap();
         assert_eq!(allowed.entry.as_ref().unwrap().ty(), "array");
         let item = allowed.array_item.as_ref().expect("* child");
         assert_eq!(item.entry.as_ref().unwrap().ty(), "string");
@@ -1354,7 +1363,11 @@ mod tests {
             entry("providers.*.region", "string"),
         ];
         let root = build_tree(&entries);
-        let providers = root.children.iter().find(|c| c.name == "providers").unwrap();
+        let providers = root
+            .children
+            .iter()
+            .find(|c| c.name == "providers")
+            .unwrap();
         let item = providers.array_item.as_ref().expect("array_item");
         assert_eq!(item.entry.as_ref().unwrap().ty(), "object");
         let names: Vec<_> = item.children.iter().map(|c| c.name.as_str()).collect();
@@ -1377,15 +1390,9 @@ mod tests {
     fn union_active_mode_picks_current_then_first() {
         let tys = vec!["object".to_string(), "string".to_string()];
         // Current value is a string → string mode
-        assert_eq!(
-            union_active_mode(Some(&json!("token")), &tys),
-            "string"
-        );
+        assert_eq!(union_active_mode(Some(&json!("token")), &tys), "string");
         // Current value is an object → object mode
-        assert_eq!(
-            union_active_mode(Some(&json!({"id": "x"})), &tys),
-            "object"
-        );
+        assert_eq!(union_active_mode(Some(&json!({"id": "x"})), &tys), "object");
         // Unset → first declared type
         assert_eq!(union_active_mode(None, &tys), "object");
         // integer falls back to number when only number declared
@@ -1436,11 +1443,10 @@ mod tests {
 
     #[test]
     fn parses_full_embedded_baseline() {
-        let parsed: Baseline = serde_json::from_str(OPENCLAW_BASELINE)
-            .expect("embedded baseline must parse");
-        let total = parsed.core_entries.len()
-            + parsed.channel_entries.len()
-            + parsed.plugin_entries.len();
+        let parsed: Baseline =
+            serde_json::from_str(OPENCLAW_BASELINE).expect("embedded baseline must parse");
+        let total =
+            parsed.core_entries.len() + parsed.channel_entries.len() + parsed.plugin_entries.len();
         assert!(total > 100, "expected many entries, got {total}");
         // sanity: a known core entry exists
         assert!(parsed.core_entries.iter().any(|e| e.path == "acp.enabled"));

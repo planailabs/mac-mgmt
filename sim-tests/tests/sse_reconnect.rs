@@ -6,9 +6,7 @@
 use std::time::Duration;
 
 fn init_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("warn")
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("warn").try_init();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -57,7 +55,10 @@ async fn sse_push_triggers_mcp_sync() {
         state.request_count("/api/mcp-servers") > mcp_before
     })
     .await;
-    assert!(ok, "daemon should fetch /api/mcp-servers after SyncMcpServers push");
+    assert!(
+        ok,
+        "daemon should fetch /api/mcp-servers after SyncMcpServers push"
+    );
 
     let _ = shutdown_tx.send(());
 }
@@ -70,8 +71,7 @@ async fn sse_push_triggers_config_reload() {
 
     // Wait for SSE connection and first heartbeat
     let ok = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        state.request_count("/api/events") > 0
-            && !state.heartbeats_from(&instance_id).is_empty()
+        state.request_count("/api/events") > 0 && !state.heartbeats_from(&instance_id).is_empty()
     })
     .await;
     assert!(ok, "daemon should connect to SSE and send heartbeat");

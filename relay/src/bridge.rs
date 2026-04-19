@@ -40,14 +40,19 @@ static PENDING_PROXY_SESSIONS: LazyLock<Mutex<HashMap<String, PendingProxySessio
 pub fn register_pending_proxy_session(session_id: String, secret: String, ws: WebSocket) -> bool {
     let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
     if sessions.len() >= MAX_PENDING_PROXY_SESSIONS {
-        tracing::warn!("pending proxy session limit reached ({MAX_PENDING_PROXY_SESSIONS}), rejecting");
+        tracing::warn!(
+            "pending proxy session limit reached ({MAX_PENDING_PROXY_SESSIONS}), rejecting"
+        );
         return false;
     }
-    sessions.insert(session_id.clone(), PendingProxySession::WebSocket {
-        ws,
-        secret,
-        created_at: Instant::now(),
-    });
+    sessions.insert(
+        session_id.clone(),
+        PendingProxySession::WebSocket {
+            ws,
+            secret,
+            created_at: Instant::now(),
+        },
+    );
     tracing::debug!("registered pending proxy session {session_id} (ws bridge)");
     true
 }
@@ -59,14 +64,19 @@ pub fn register_pending_proxy_session_with_callback(
 ) -> bool {
     let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
     if sessions.len() >= MAX_PENDING_PROXY_SESSIONS {
-        tracing::warn!("pending proxy session limit reached ({MAX_PENDING_PROXY_SESSIONS}), rejecting");
+        tracing::warn!(
+            "pending proxy session limit reached ({MAX_PENDING_PROXY_SESSIONS}), rejecting"
+        );
         return false;
     }
-    sessions.insert(session_id.clone(), PendingProxySession::Callback {
-        tx,
-        secret,
-        created_at: Instant::now(),
-    });
+    sessions.insert(
+        session_id.clone(),
+        PendingProxySession::Callback {
+            tx,
+            secret,
+            created_at: Instant::now(),
+        },
+    );
     tracing::debug!("registered pending proxy session {session_id} (callback)");
     true
 }
@@ -78,7 +88,10 @@ pub fn remove_pending_proxy_session(session_id: &str) {
 
 /// Check if a pending proxy session exists (without consuming it).
 pub fn has_pending_proxy_session(session_id: &str) -> bool {
-    PENDING_PROXY_SESSIONS.lock().unwrap().contains_key(session_id)
+    PENDING_PROXY_SESSIONS
+        .lock()
+        .unwrap()
+        .contains_key(session_id)
 }
 
 /// Complete a pending proxy session with the daemon's data WS.
@@ -89,17 +102,30 @@ pub async fn complete_proxy_session(session_id: &str, secret: &str, daemon_ws: W
     let pending = {
         let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
         // Always remove the session to prevent orphans.
-        let Some(pending) = sessions.remove(session_id) else { return false; };
+        let Some(pending) = sessions.remove(session_id) else {
+            return false;
+        };
         let (pending_secret, pending_time) = match &pending {
-            PendingProxySession::WebSocket { secret: s, created_at, .. } => (s.as_str(), *created_at),
-            PendingProxySession::Callback { secret: s, created_at, .. } => (s.as_str(), *created_at),
+            PendingProxySession::WebSocket {
+                secret: s,
+                created_at,
+                ..
+            } => (s.as_str(), *created_at),
+            PendingProxySession::Callback {
+                secret: s,
+                created_at,
+                ..
+            } => (s.as_str(), *created_at),
         };
         if pending_secret != secret {
             tracing::warn!("proxy session {session_id}: secret mismatch, dropping");
             return false;
         }
         if pending_time.elapsed() > SESSION_TTL {
-            tracing::warn!("proxy session {session_id}: expired ({:.1}s old), dropping", pending_time.elapsed().as_secs_f64());
+            tracing::warn!(
+                "proxy session {session_id}: expired ({:.1}s old), dropping",
+                pending_time.elapsed().as_secs_f64()
+            );
             return false;
         }
         Some(pending)
@@ -166,11 +192,15 @@ pub fn cleanup_expired() {
         let before = sessions.len();
         sessions.retain(|id, s| {
             let expired = s.created_at.elapsed() > SESSION_TTL;
-            if expired { tracing::info!("expiring stale pending session {id}"); }
+            if expired {
+                tracing::info!("expiring stale pending session {id}");
+            }
             !expired
         });
         let removed = before - sessions.len();
-        if removed > 0 { tracing::debug!("cleaned up {removed} expired pending session(s)"); }
+        if removed > 0 {
+            tracing::debug!("cleaned up {removed} expired pending session(s)");
+        }
     }
     {
         let mut sessions = PENDING_PROXY_SESSIONS.lock().unwrap();
@@ -180,7 +210,9 @@ pub fn cleanup_expired() {
                 PendingProxySession::Callback { created_at, .. } => *created_at,
             };
             let expired = created_at.elapsed() > SESSION_TTL;
-            if expired { tracing::info!("expiring stale pending proxy session {id}"); }
+            if expired {
+                tracing::info!("expiring stale pending proxy session {id}");
+            }
             !expired
         });
     }

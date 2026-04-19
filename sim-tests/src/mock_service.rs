@@ -116,9 +116,7 @@ impl ManagedService for MockManagedService {
     }
 
     fn check_health(&self) -> Result<bool> {
-        Ok(self
-            .healthy
-            .load(std::sync::atomic::Ordering::Relaxed))
+        Ok(self.healthy.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     fn check_health_async(&self) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {

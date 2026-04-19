@@ -27,10 +27,7 @@ impl Future for YieldNow {
 }
 
 #[component]
-pub fn GenerateAllButton(
-    items: Vec<GenerateAllItem>,
-    on_complete: EventHandler<()>,
-) -> Element {
+pub fn GenerateAllButton(items: Vec<GenerateAllItem>, on_complete: EventHandler<()>) -> Element {
     let mut running = use_signal(|| false);
     let mut done = use_signal(|| 0usize);
     let mut total = use_signal(|| 0usize);

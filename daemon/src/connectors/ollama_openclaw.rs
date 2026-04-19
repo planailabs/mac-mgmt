@@ -21,7 +21,10 @@ impl Connector for OllamaOpenClaw {
         &["ollama", "openclaw"]
     }
 
-    fn connect(&self, _configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+    fn connect(
+        &self,
+        _configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
         let model = &self.default_model;
         tracing::info!("connecting ollama to openclaw with model {model}");
         sentry_ext::breadcrumb(
@@ -31,15 +34,21 @@ impl Connector for OllamaOpenClaw {
         );
 
         let output = crate::cmd::output_with_timeout(
-            Command::new("ollama").args(["launch", "--yes", "--config", "--model", model, "openclaw"]),
+            Command::new("ollama")
+                .args(["launch", "--yes", "--config", "--model", model, "openclaw"]),
             crate::cmd::DEFAULT_TIMEOUT,
-        ).with_context(|| format!("failed to run ollama launch --model {model}"))?;
+        )
+        .with_context(|| format!("failed to run ollama launch --model {model}"))?;
 
         if output.status.success() {
             tracing::info!("ollama→openclaw connected successfully");
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!("ollama launch exited with {}: {}", output.status, stderr.trim());
+            tracing::warn!(
+                "ollama launch exited with {}: {}",
+                output.status,
+                stderr.trim()
+            );
             sentry_ext::capture_cmd_failure(
                 &format!("ollama launch --model {model} openclaw"),
                 output.status.code(),

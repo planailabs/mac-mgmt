@@ -15,14 +15,9 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub enum FaultEvent {
     /// Make an endpoint return an error status.
-    FailEndpoint {
-        endpoint: &'static str,
-        status: u16,
-    },
+    FailEndpoint { endpoint: &'static str, status: u16 },
     /// Restore an endpoint to normal operation.
-    RecoverEndpoint {
-        endpoint: &'static str,
-    },
+    RecoverEndpoint { endpoint: &'static str },
     /// Push a command via SSE.
     Push(PushEvent),
     /// Clear all faults.
@@ -43,7 +38,13 @@ pub struct FaultSchedule {
 
 impl std::fmt::Display for FaultSchedule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "FaultSchedule(seed={}, daemons={}, events={})", self.seed, self.num_daemons, self.events.len())?;
+        writeln!(
+            f,
+            "FaultSchedule(seed={}, daemons={}, events={})",
+            self.seed,
+            self.num_daemons,
+            self.events.len()
+        )?;
         for (t, e) in &self.events {
             writeln!(f, "  +{:.1}s  {:?}", t.as_secs_f64(), e)?;
         }
@@ -116,10 +117,7 @@ pub fn generate(seed: u64, num_events: usize, num_daemons: usize) -> FaultSchedu
                 // Fail an endpoint
                 let endpoint = rng.pick(ENDPOINTS);
                 let status = *rng.pick(ERROR_STATUSES);
-                FaultEvent::FailEndpoint {
-                    endpoint,
-                    status,
-                }
+                FaultEvent::FailEndpoint { endpoint, status }
             }
             1 => {
                 // Recover an endpoint
@@ -157,11 +155,7 @@ pub fn generate(seed: u64, num_events: usize, num_daemons: usize) -> FaultSchedu
 }
 
 /// Execute a fault schedule against the mock server, recording to timeline.
-pub async fn execute(
-    schedule: &FaultSchedule,
-    state: &Arc<MockServerState>,
-    timeline: &Timeline,
-) {
+pub async fn execute(schedule: &FaultSchedule, state: &Arc<MockServerState>, timeline: &Timeline) {
     let start = tokio::time::Instant::now();
 
     for (target_time, event) in &schedule.events {
@@ -196,11 +190,7 @@ pub async fn execute(
             }
             FaultEvent::Push(push) => {
                 state.push(push.clone());
-                timeline.record(
-                    "scheduler",
-                    EventKind::Push,
-                    format!("{push:?}"),
-                );
+                timeline.record("scheduler", EventKind::Push, format!("{push:?}"));
             }
             FaultEvent::ClearAllFaults => {
                 state.clear_faults();
@@ -235,18 +225,27 @@ pub fn generate_config_churn(seed: u64, num_pushes: usize) -> FaultSchedule {
 
         // Occasionally also fail the config endpoint briefly
         if rng.bool(20) {
-            events.push((time_cursor, FaultEvent::FailEndpoint {
-                endpoint: "/api/config",
-                status: 503,
-            }));
+            events.push((
+                time_cursor,
+                FaultEvent::FailEndpoint {
+                    endpoint: "/api/config",
+                    status: 503,
+                },
+            ));
             time_cursor += Duration::from_millis(rng.range(50, 200));
-            events.push((time_cursor, FaultEvent::RecoverEndpoint {
-                endpoint: "/api/config",
-            }));
+            events.push((
+                time_cursor,
+                FaultEvent::RecoverEndpoint {
+                    endpoint: "/api/config",
+                },
+            ));
         }
     }
 
-    events.push((time_cursor + Duration::from_millis(100), FaultEvent::ClearAllFaults));
+    events.push((
+        time_cursor + Duration::from_millis(100),
+        FaultEvent::ClearAllFaults,
+    ));
     let settle_time = Duration::from_millis(health_interval.as_millis() as u64 * 3);
 
     FaultSchedule {
@@ -284,7 +283,10 @@ pub fn generate_endpoint_cycling(seed: u64, num_cycles: usize) -> FaultSchedule 
         }
     }
 
-    events.push((time_cursor + Duration::from_millis(100), FaultEvent::ClearAllFaults));
+    events.push((
+        time_cursor + Duration::from_millis(100),
+        FaultEvent::ClearAllFaults,
+    ));
     let settle_time = Duration::from_millis(health_interval.as_millis() as u64 * 3);
 
     FaultSchedule {
@@ -306,10 +308,13 @@ pub fn generate_cascading_failure(seed: u64) -> FaultSchedule {
 
     // Fail all endpoints at once
     for &endpoint in ENDPOINTS {
-        events.push((time_cursor, FaultEvent::FailEndpoint {
-            endpoint,
-            status: 503,
-        }));
+        events.push((
+            time_cursor,
+            FaultEvent::FailEndpoint {
+                endpoint,
+                status: 503,
+            },
+        ));
     }
 
     // Wait for a while with everything broken

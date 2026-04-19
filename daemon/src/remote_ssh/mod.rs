@@ -4,10 +4,10 @@ pub mod pty;
 pub mod relay_client;
 pub mod ssh_keys;
 pub mod ssh_server;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use russh::keys::{PrivateKey, PublicKey};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 use crate::file_tunnels::FileTunnelRegistry;
@@ -96,29 +96,49 @@ impl Manager {
             tokio::spawn(async move {
                 let hk = Arc::unwrap_or_clone(host_key);
                 if let Err(e) = relay_client::run(
-                    &url, &token, &iid, None, hk, keys, allowed, metrics_port, tdefs, rph, rpu, wstx, ftreg, streg,
-                ).await {
+                    &url,
+                    &token,
+                    &iid,
+                    None,
+                    hk,
+                    keys,
+                    allowed,
+                    metrics_port,
+                    tdefs,
+                    rph,
+                    rpu,
+                    wstx,
+                    ftreg,
+                    streg,
+                )
+                .await
+                {
                     tracing::error!("relay client exited: {e:#}");
                 }
             });
         } else {
-            tracing::debug!("relay not configured (url or token missing), relay client not spawned");
+            tracing::debug!(
+                "relay not configured (url or token missing), relay client not spawned"
+            );
         }
 
-        (Self {
-            ssh_allowed,
-            ssh_cmd_rx,
-            server_ssh_keys,
-            server_url,
-            server_token,
-            tunnel_defs,
-            relay_proxy_hostname,
-            relay_proxy_url,
-            ws_outgoing_tx,
-            heartbeat_tx,
-            file_tunnel_registry,
-            shell_tunnel_registry,
-        }, heartbeat_rx)
+        (
+            Self {
+                ssh_allowed,
+                ssh_cmd_rx,
+                server_ssh_keys,
+                server_url,
+                server_token,
+                tunnel_defs,
+                relay_proxy_hostname,
+                relay_proxy_url,
+                ws_outgoing_tx,
+                heartbeat_tx,
+                file_tunnel_registry,
+                shell_tunnel_registry,
+            },
+            heartbeat_rx,
+        )
     }
 
     /// Sync SSH keys from the server in a background task (non-blocking).
@@ -170,12 +190,20 @@ impl Manager {
         };
         map.clear();
         for d in defs {
-            map.insert(d.name.clone(), TunnelTarget { host: d.host, port: d.tcp_port });
+            map.insert(
+                d.name.clone(),
+                TunnelTarget {
+                    host: d.host,
+                    port: d.tcp_port,
+                },
+            );
         }
         drop(map);
 
         // Re-advertise to the relay if connected (non-blocking to avoid stalling the main loop).
-        let Ok(ws_tx_guard) = self.ws_outgoing_tx.try_read() else { return; };
+        let Ok(ws_tx_guard) = self.ws_outgoing_tx.try_read() else {
+            return;
+        };
         if let Some(tx) = ws_tx_guard.as_ref() {
             let advert = serde_json::json!({
                 "type": "tunnel_advertisement",

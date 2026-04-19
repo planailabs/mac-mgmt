@@ -31,8 +31,8 @@ pub fn merge_and_write(config_path: &Path, patch: &serde_json::Value) -> Result<
 
     merge_json(&mut existing, patch);
 
-    let merged = serde_json::to_string_pretty(&existing)
-        .context("failed to serialize merged config")?;
+    let merged =
+        serde_json::to_string_pretty(&existing).context("failed to serialize merged config")?;
     std::fs::write(config_path, &merged)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
 
@@ -87,7 +87,11 @@ impl ManagedService for Opencode {
         }
 
         tracing::info!("opencode not found, installing via nix");
-        sentry_ext::breadcrumb("install", "installing opencode via nix", &[("service", "opencode")]);
+        sentry_ext::breadcrumb(
+            "install",
+            "installing opencode via nix",
+            &[("service", "opencode")],
+        );
         crate::nix::profile_install("opencode", false)?;
         Ok(())
     }
@@ -145,7 +149,11 @@ impl ManagedService for Opencode {
 
     fn repair(&self) -> Result<()> {
         tracing::info!("opencode repair: re-applying config");
-        sentry_ext::breadcrumb("repair", "re-applying opencode config", &[("service", "opencode")]);
+        sentry_ext::breadcrumb(
+            "repair",
+            "re-applying opencode config",
+            &[("service", "opencode")],
+        );
         self.apply_config_patch()?;
         Ok(())
     }
@@ -158,15 +166,27 @@ impl ManagedService for Opencode {
         }
 
         tracing::info!("upgrading opencode via nix");
-        sentry_ext::breadcrumb("upgrade", "upgrading opencode via nix", &[("service", "opencode")]);
+        sentry_ext::breadcrumb(
+            "upgrade",
+            "upgrading opencode via nix",
+            &[("service", "opencode")],
+        );
         crate::nix::profile_install("opencode", true)?;
         tracing::info!("opencode upgraded, restart pending until idle");
         Ok(true)
     }
 
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
-        let host = if self.config.host.is_empty() { "127.0.0.1".to_string() } else { self.config.host.clone() };
-        let port = if self.config.port == 0 { 18790 } else { self.config.port };
+        let host = if self.config.host.is_empty() {
+            "127.0.0.1".to_string()
+        } else {
+            self.config.host.clone()
+        };
+        let port = if self.config.port == 0 {
+            18790
+        } else {
+            self.config.port
+        };
         vec![TunnelDef {
             name: "opencode".into(),
             host,

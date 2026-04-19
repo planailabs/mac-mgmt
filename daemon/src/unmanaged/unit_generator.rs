@@ -116,8 +116,7 @@ WantedBy=multi-user.target
 fn write_systemd(name: &str, spec: &SpawnSpec) -> Result<()> {
     let path = unit_path(name);
     let contents = systemd_unit(name, spec);
-    std::fs::write(&path, &contents)
-        .with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(&path, &contents).with_context(|| format!("writing {}", path.display()))?;
     Command::new("systemctl")
         .args(["daemon-reload"])
         .status()
@@ -193,24 +192,17 @@ fn launchd_plist(name: &str, spec: &SpawnSpec) -> Result<String> {
     } else {
         format!("{} {}", spec.program, spec.args.join(" "))
     };
-    let username = crate::service::launchd::current_username()
-        .unwrap_or_else(|_| "root".into());
+    let username = crate::service::launchd::current_username().unwrap_or_else(|_| "root".into());
     let env_dict: String = spec
         .env
         .iter()
-        .map(|(k, v)| {
-            format!(
-                "        <key>{k}</key>\n        <string>{v}</string>"
-            )
-        })
+        .map(|(k, v)| format!("        <key>{k}</key>\n        <string>{v}</string>"))
         .collect::<Vec<_>>()
         .join("\n");
     let env_section = if env_dict.is_empty() {
         String::new()
     } else {
-        format!(
-            "    <key>EnvironmentVariables</key>\n    <dict>\n{env_dict}\n    </dict>"
-        )
+        format!("    <key>EnvironmentVariables</key>\n    <dict>\n{env_dict}\n    </dict>")
     };
     Ok(format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -248,8 +240,7 @@ fn launchd_plist(name: &str, spec: &SpawnSpec) -> Result<String> {
 fn write_launchd(name: &str, spec: &SpawnSpec) -> Result<()> {
     let path = plist_path(name);
     let contents = launchd_plist(name, spec)?;
-    std::fs::write(&path, &contents)
-        .with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(&path, &contents).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
 

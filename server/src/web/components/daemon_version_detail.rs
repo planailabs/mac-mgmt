@@ -29,9 +29,7 @@ pub struct VersionRollout {
 }
 
 #[server]
-async fn get_rollouts_for_version(
-    version: String,
-) -> Result<Vec<VersionRollout>, ServerFnError> {
+async fn get_rollouts_for_version(version: String) -> Result<Vec<VersionRollout>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
@@ -70,9 +68,7 @@ pub struct PinnedCluster {
 }
 
 #[server]
-async fn get_clusters_pinned_to(
-    version: String,
-) -> Result<Vec<PinnedCluster>, ServerFnError> {
+async fn get_clusters_pinned_to(version: String) -> Result<Vec<PinnedCluster>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
@@ -93,14 +89,15 @@ async fn get_clusters_pinned_to(
 
     Ok(rows
         .into_iter()
-        .map(|r| PinnedCluster { id: r.id, name: r.name })
+        .map(|r| PinnedCluster {
+            id: r.id,
+            name: r.name,
+        })
         .collect())
 }
 
 #[server]
-async fn get_clusters_on_version(
-    version: String,
-) -> Result<Vec<VersionCluster>, ServerFnError> {
+async fn get_clusters_on_version(version: String) -> Result<Vec<VersionCluster>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
@@ -144,9 +141,7 @@ pub struct DaemonStorePath {
 /// Fetch all `daemon/{version}/{system}` pins from xzar live and return
 /// the (system, store_path) pairs for the requested version.
 #[server]
-async fn get_daemon_store_paths(
-    version: String,
-) -> Result<Vec<DaemonStorePath>, ServerFnError> {
+async fn get_daemon_store_paths(version: String) -> Result<Vec<DaemonStorePath>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let cfg = crate::config::config();

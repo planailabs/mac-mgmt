@@ -9,9 +9,7 @@ use std::time::Duration;
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()),
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()))
         .try_init();
 }
 
@@ -49,13 +47,22 @@ async fn run_targeted(
     }
 
     // Wait for initial heartbeats
-    let init_ok = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        instance_ids.iter().all(|iid| !state.heartbeats_from(iid).is_empty())
-    }).await;
+    let init_ok =
+        sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
+            instance_ids
+                .iter()
+                .all(|iid| !state.heartbeats_from(iid).is_empty())
+        })
+        .await;
 
     if !init_ok {
-        for tx in shutdowns { let _ = tx.send(()); }
-        return Err(format!("initial heartbeat timeout\n{}", timeline.format_full()));
+        for tx in shutdowns {
+            let _ = tx.send(());
+        }
+        return Err(format!(
+            "initial heartbeat timeout\n{}",
+            timeline.format_full()
+        ));
     }
 
     // Execute schedule
@@ -69,11 +76,17 @@ async fn run_targeted(
 
     // Post-settle liveness
     state.clear_heartbeats();
-    let liveness_ok = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
-        instance_ids.iter().all(|iid| !state.heartbeats_from(iid).is_empty())
-    }).await;
+    let liveness_ok =
+        sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+            instance_ids
+                .iter()
+                .all(|iid| !state.heartbeats_from(iid).is_empty())
+        })
+        .await;
 
-    for tx in shutdowns { let _ = tx.send(()); }
+    for tx in shutdowns {
+        let _ = tx.send(());
+    }
 
     let total = violations + if liveness_ok { 0 } else { 1 };
     if total > 0 {
@@ -95,12 +108,13 @@ async fn targeted_config_churn() {
     let timeline = Timeline::new();
     let schedule = scenarios::generate_config_churn(seed, 15);
 
-    eprintln!("targeted_config_churn: seed={seed}, {} events", schedule.events.len());
+    eprintln!(
+        "targeted_config_churn: seed={seed}, {} events",
+        schedule.events.len()
+    );
 
     if let Err(msg) = run_targeted(&schedule, &timeline).await {
-        panic!(
-            "Config churn FAILED (CHAOS_SEED={seed})\n{msg}"
-        );
+        panic!("Config churn FAILED (CHAOS_SEED={seed})\n{msg}");
     }
 }
 
@@ -112,12 +126,13 @@ async fn targeted_endpoint_cycling() {
     let timeline = Timeline::new();
     let schedule = scenarios::generate_endpoint_cycling(seed, 10);
 
-    eprintln!("targeted_endpoint_cycling: seed={seed}, {} events", schedule.events.len());
+    eprintln!(
+        "targeted_endpoint_cycling: seed={seed}, {} events",
+        schedule.events.len()
+    );
 
     if let Err(msg) = run_targeted(&schedule, &timeline).await {
-        panic!(
-            "Endpoint cycling FAILED (CHAOS_SEED={seed})\n{msg}"
-        );
+        panic!("Endpoint cycling FAILED (CHAOS_SEED={seed})\n{msg}");
     }
 }
 
@@ -129,11 +144,12 @@ async fn targeted_cascading_failure() {
     let timeline = Timeline::new();
     let schedule = scenarios::generate_cascading_failure(seed);
 
-    eprintln!("targeted_cascading_failure: seed={seed}, {} events", schedule.events.len());
+    eprintln!(
+        "targeted_cascading_failure: seed={seed}, {} events",
+        schedule.events.len()
+    );
 
     if let Err(msg) = run_targeted(&schedule, &timeline).await {
-        panic!(
-            "Cascading failure FAILED (CHAOS_SEED={seed})\n{msg}"
-        );
+        panic!("Cascading failure FAILED (CHAOS_SEED={seed})\n{msg}");
     }
 }

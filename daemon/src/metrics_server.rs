@@ -1,6 +1,6 @@
 use mac_mgmt_common::{ServiceStatus, StatusResponse};
 use rocket::serde::json::Json;
-use rocket::{get, post, routes, State};
+use rocket::{State, get, post, routes};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -63,10 +63,7 @@ fn logs_endpoint(
     // Filter by service if specified
     let lines = if let Some(svc) = service {
         let prefix = format!("[{svc}]");
-        lines
-            .into_iter()
-            .filter(|l| l.contains(&prefix))
-            .collect()
+        lines.into_iter().filter(|l| l.contains(&prefix)).collect()
     } else {
         lines
     };
@@ -104,6 +101,11 @@ pub fn build_rocket(
         .manage(sync_trigger)
         .mount(
             "/",
-            routes![metrics_endpoint, status_endpoint, logs_endpoint, sync_endpoint],
+            routes![
+                metrics_endpoint,
+                status_endpoint,
+                logs_endpoint,
+                sync_endpoint
+            ],
         )
 }

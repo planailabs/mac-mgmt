@@ -33,7 +33,9 @@ async fn get_user(id: String) -> Result<UserInfo, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -44,11 +46,13 @@ async fn get_user(id: String) -> Result<UserInfo, ServerFnError> {
         created_at: DateTime<Utc>,
     }
 
-    let row = sqlx::query_as::<_, Row>("SELECT id, email, name, is_admin, created_at FROM users WHERE id = $1")
-        .bind(uid)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT id, email, name, is_admin, created_at FROM users WHERE id = $1",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(UserInfo {
         id: row.id.to_string(),
@@ -64,7 +68,9 @@ async fn get_user_orgs(user_id: String) -> Result<Vec<UserOrgEntry>, ServerFnErr
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uid: uuid::Uuid = user_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -100,7 +106,9 @@ async fn get_available_orgs_for_user(user_id: String) -> Result<Vec<OrgOption>, 
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uid: uuid::Uuid = user_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -128,15 +136,23 @@ async fn get_available_orgs_for_user(user_id: String) -> Result<Vec<OrgOption>, 
 }
 
 #[server]
-async fn add_user_to_org(user_id: String, org_id: String, role: String) -> Result<(), ServerFnError> {
+async fn add_user_to_org(
+    user_id: String,
+    org_id: String,
+    role: String,
+) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     if !["admin", "write", "read"].contains(&role.as_str()) {
         return Err(ServerFnError::new("invalid role"));
     }
     let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let oid: uuid::Uuid = org_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uid: uuid::Uuid = user_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let oid: uuid::Uuid = org_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     sqlx::query("INSERT INTO organization_members (user_id, organization_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
         .bind(uid)
@@ -154,8 +170,12 @@ async fn remove_user_from_org(user_id: String, org_id: String) -> Result<(), Ser
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = user_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let oid: uuid::Uuid = org_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uid: uuid::Uuid = user_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let oid: uuid::Uuid = org_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     sqlx::query("DELETE FROM organization_members WHERE user_id = $1 AND organization_id = $2")
         .bind(uid)
@@ -173,7 +193,9 @@ async fn toggle_user_admin(user_id: String, is_admin: bool) -> Result<(), Server
     user.require_admin()?;
 
     // Prevent de-admining yourself
-    let uid: uuid::Uuid = user_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uid: uuid::Uuid = user_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     if uid == user.id && !is_admin {
         return Err(ServerFnError::new("cannot remove your own admin status"));
     }
@@ -193,7 +215,9 @@ async fn delete_user(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     // Prevent deleting yourself
     if uid == user.id {

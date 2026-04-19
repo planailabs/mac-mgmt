@@ -23,10 +23,21 @@ pub struct McpBundleItemContext {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GenerateContext {
-    Skill { skill_id: String },
-    Bundle { slug: String, items: Vec<BundleItemContext> },
-    McpServer { slug: String, config_json: String },
-    McpBundle { slug: String, items: Vec<McpBundleItemContext> },
+    Skill {
+        skill_id: String,
+    },
+    Bundle {
+        slug: String,
+        items: Vec<BundleItemContext>,
+    },
+    McpServer {
+        slug: String,
+        config_json: String,
+    },
+    McpBundle {
+        slug: String,
+        items: Vec<McpBundleItemContext>,
+    },
 }
 
 /// Entity kind for the bulk save server function.
@@ -57,7 +68,9 @@ pub async fn generate_name_desc(
     current_desc: String,
 ) -> Result<GeneratedNameDesc, ServerFnError> {
     let cfg = crate::config::config();
-    let anthropic = cfg.anthropic.as_ref()
+    let anthropic = cfg
+        .anthropic
+        .as_ref()
         .ok_or_else(|| ServerFnError::new("Anthropic API key not configured"))?;
 
     let (system_msg, user_msg) = build_prompt(&context, &current_name, &current_desc).await?;
@@ -83,10 +96,14 @@ pub async fn generate_name_desc(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(ServerFnError::new(format!("Anthropic API returned {status}: {text}")));
+        return Err(ServerFnError::new(format!(
+            "Anthropic API returned {status}: {text}"
+        )));
     }
 
-    let api_resp: serde_json::Value = resp.json().await
+    let api_resp: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| ServerFnError::new(format!("Failed to parse Anthropic response: {e}")))?;
 
     let text = api_resp["content"][0]["text"]
@@ -106,8 +123,11 @@ pub async fn generate_name_desc(
         cleaned
     };
 
-    let result: GeneratedNameDesc = serde_json::from_str(json_str)
-        .map_err(|e| ServerFnError::new(format!("Failed to parse generated JSON: {e}. Raw: {json_str}")))?;
+    let result: GeneratedNameDesc = serde_json::from_str(json_str).map_err(|e| {
+        ServerFnError::new(format!(
+            "Failed to parse generated JSON: {e}. Raw: {json_str}"
+        ))
+    })?;
 
     Ok(result)
 }
@@ -172,7 +192,8 @@ async fn build_prompt(
                 None => String::new(),
             };
             let pool = crate::server_pool()?;
-            let uuid: uuid::Uuid = skill_id.parse()
+            let uuid: uuid::Uuid = skill_id
+                .parse()
                 .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
             let slug = sqlx::query_scalar::<_, String>("SELECT slug FROM skills WHERE id = $1")
                 .bind(uuid)
@@ -190,7 +211,8 @@ async fn build_prompt(
             let items_str = if items.is_empty() {
                 "No items yet.".to_string()
             } else {
-                items.iter()
+                items
+                    .iter()
                     .map(|i| format!("  - {} / {}", i.skill_slug, i.channel))
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -221,7 +243,8 @@ async fn build_prompt(
             let items_str = if items.is_empty() {
                 "No items yet.".to_string()
             } else {
-                items.iter()
+                items
+                    .iter()
                     .map(|i| format!("  - {} ({})", i.server_name, i.server_slug))
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -254,9 +277,7 @@ async fn read_skill_md(skill_id: &str) -> Option<String> {
         .flatten()?;
 
     let xzar = cfg.xzar.as_ref()?;
-    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
-        .await
-        .ok()?;
+    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token).await.ok()?;
 
     let prefix = format!("skill/{slug}/");
     for pin in &pins {

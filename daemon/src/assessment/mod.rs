@@ -125,19 +125,15 @@ impl Assessor {
         }
 
         let collected_at = chrono::Utc::now().timestamp();
-        let body = match build_signed_assessment(
-            instance_id,
-            collected_at,
-            inventory,
-            security,
-            host_key,
-        ) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!("failed to sign assessment: {e}");
-                return;
-            }
-        };
+        let body =
+            match build_signed_assessment(instance_id, collected_at, inventory, security, host_key)
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!("failed to sign assessment: {e}");
+                    return;
+                }
+            };
 
         post_assessment(server_url, server_token, body).await;
     }
@@ -212,8 +208,10 @@ impl Assessor {
     ) {
         tracing::info!("assessment: on-demand snapshot requested");
         self.refresh_sample().await;
-        self.send_inventory(server_url, server_token, instance_id, host_key).await;
-        self.run_probes(server_url, server_token, instance_id, host_key).await;
+        self.send_inventory(server_url, server_token, instance_id, host_key)
+            .await;
+        self.run_probes(server_url, server_token, instance_id, host_key)
+            .await;
     }
 }
 
@@ -343,4 +341,3 @@ async fn post_probe(server_url: &str, server_token: &str, body: ProbeReport) {
         Err(_) => tracing::warn!("probe send timed out ({})", body.service),
     }
 }
-

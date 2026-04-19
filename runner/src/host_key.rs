@@ -23,8 +23,7 @@ pub struct HostKey {
 
 pub fn generate() -> Result<HostKey> {
     let mut rng = OsRng;
-    let key = PrivateKey::random(&mut rng, Algorithm::Ed25519)
-        .context("generating ed25519 key")?;
+    let key = PrivateKey::random(&mut rng, Algorithm::Ed25519).context("generating ed25519 key")?;
     let pem = key
         .to_openssh(LineEnding::LF)
         .context("encoding openssh PEM")?
@@ -34,7 +33,10 @@ pub fn generate() -> Result<HostKey> {
         .to_bytes()
         .context("encoding ssh-wire public key")?;
     let instance_id = hex::encode(Sha256::digest(&pub_wire));
-    Ok(HostKey { private_pem: pem, instance_id })
+    Ok(HostKey {
+        private_pem: pem,
+        instance_id,
+    })
 }
 
 #[cfg(test)]
@@ -45,11 +47,10 @@ mod tests {
     // computes via `russh::keys::PublicKeyBase64::public_key_bytes()`.
     #[test]
     fn instance_id_matches_daemon_algorithm() {
-        use russh::keys::{decode_secret_key, PublicKeyBase64};
+        use russh::keys::{PublicKeyBase64, decode_secret_key};
 
         let hk = generate().expect("generate host key");
-        let daemon_key = decode_secret_key(&hk.private_pem, None)
-            .expect("daemon decodes our PEM");
+        let daemon_key = decode_secret_key(&hk.private_pem, None).expect("daemon decodes our PEM");
         let daemon_wire = daemon_key.public_key_bytes();
         let daemon_fp = hex::encode(Sha256::digest(&daemon_wire));
         assert_eq!(

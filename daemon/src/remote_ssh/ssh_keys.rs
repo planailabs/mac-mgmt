@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use russh::keys::{parse_public_key_base64, PublicKey};
+use russh::keys::{PublicKey, parse_public_key_base64};
 
 pub async fn sync(server_url: &str, token: &str) -> Result<Vec<PublicKey>> {
     let client = reqwest::Client::new();

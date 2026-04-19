@@ -10,8 +10,7 @@ pub struct Scripts;
 
 /// Run an embedded script by name (e.g. "setup.sh").
 pub fn run(name: &str) -> Result<()> {
-    let file = Scripts::get(name)
-        .with_context(|| format!("embedded script not found: {name}"))?;
+    let file = Scripts::get(name).with_context(|| format!("embedded script not found: {name}"))?;
 
     let mut tmp = tempfile::NamedTempFile::new().context("failed to create tempfile")?;
     tmp.write_all(&file.data)
@@ -22,7 +21,11 @@ pub fn run(name: &str) -> Result<()> {
     let perms = std::fs::Permissions::from_mode(0o755);
     std::fs::set_permissions(tmp.path(), perms)?;
 
-    tracing::info!("running embedded script '{}' via {}", name, tmp.path().display());
+    tracing::info!(
+        "running embedded script '{}' via {}",
+        name,
+        tmp.path().display()
+    );
 
     let status = Command::new("bash")
         .arg(tmp.path())

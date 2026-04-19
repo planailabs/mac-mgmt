@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use chrono::{DateTime, Utc};
+use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -194,7 +194,12 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
 
     let health_map: std::collections::HashMap<i32, (i64, i64, i64, i64)> = health
         .into_iter()
-        .map(|h| (h.stage_order, (h.healthy, h.total, h.upgraded, h.nixpkgs_upgraded)))
+        .map(|h| {
+            (
+                h.stage_order,
+                (h.healthy, h.total, h.upgraded, h.nixpkgs_upgraded),
+            )
+        })
         .collect();
 
     // Per-stage latest gate evaluation.
@@ -282,7 +287,11 @@ fn parse_eval_report(v: serde_json::Value, at: DateTime<Utc>) -> Option<StageHea
         .and_then(|x| x.as_object())
         .map(|obj| {
             obj.iter()
-                .filter_map(|(k, v)| serde_json::from_value::<ProbeStatsView>(v.clone()).ok().map(|s| (k.clone(), s)))
+                .filter_map(|(k, v)| {
+                    serde_json::from_value::<ProbeStatsView>(v.clone())
+                        .ok()
+                        .map(|s| (k.clone(), s))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -292,9 +301,15 @@ fn parse_eval_report(v: serde_json::Value, at: DateTime<Utc>) -> Option<StageHea
 
     Some(StageHealthInfo {
         passed: v.get("passed").and_then(|x| x.as_bool()).unwrap_or(false),
-        in_grace_period: v.get("in_grace_period").and_then(|x| x.as_bool()).unwrap_or(false),
+        in_grace_period: v
+            .get("in_grace_period")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
         cohort_size: v.get("cohort_size").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-        heartbeat_fresh_pct: v.get("heartbeat_fresh_pct").and_then(|x| x.as_u64()).unwrap_or(0) as u8,
+        heartbeat_fresh_pct: v
+            .get("heartbeat_fresh_pct")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as u8,
         probe_ok_pct: v
             .get("probe_ok_pct")
             .and_then(|x| x.as_object())
@@ -452,10 +467,7 @@ async fn aggregate_health_summary(
             .get("in_grace_period")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let reasons_iter = ev
-            .report
-            .get("reasons")
-            .and_then(|v| v.as_array());
+        let reasons_iter = ev.report.get("reasons").and_then(|v| v.as_array());
         let has_reasons = reasons_iter
             .map(|arr| arr.iter().any(|r| r.is_string()))
             .unwrap_or(false);
@@ -463,8 +475,8 @@ async fn aggregate_health_summary(
             summary.failing_stages += 1;
             summary.state = "fail".into();
             if summary.top_reason.is_empty() {
-                if let Some(first) = reasons_iter
-                    .and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
+                if let Some(first) =
+                    reasons_iter.and_then(|arr| arr.iter().filter_map(|r| r.as_str()).next())
                 {
                     summary.top_reason = first.chars().take(120).collect();
                 }
@@ -477,7 +489,11 @@ async fn aggregate_health_summary(
         if let Some(n) = ev.report.get("cohort_size").and_then(|v| v.as_u64()) {
             summary.total_cohort += n as u32;
         }
-        if let Some(p) = ev.report.get("heartbeat_fresh_pct").and_then(|v| v.as_u64()) {
+        if let Some(p) = ev
+            .report
+            .get("heartbeat_fresh_pct")
+            .and_then(|v| v.as_u64())
+        {
             hb_acc += p as u32;
             hb_count += 1;
         }
@@ -604,22 +620,19 @@ async fn update_stage_gate(
     let gate_json: Option<serde_json::Value> = gate.as_ref().and_then(|g| g.to_json());
 
     if apply_to_all {
-        let rollout_id: Uuid = sqlx::query_scalar(
-            "SELECT rollout_id FROM rollout_stages WHERE id = $1",
-        )
-        .bind(sid)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .ok_or_else(|| ServerFnError::new("stage not found"))?;
-        sqlx::query(
-            "UPDATE rollout_stages SET health_gate = $1 WHERE rollout_id = $2",
-        )
-        .bind(&gate_json)
-        .bind(rollout_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let rollout_id: Uuid =
+            sqlx::query_scalar("SELECT rollout_id FROM rollout_stages WHERE id = $1")
+                .bind(sid)
+                .fetch_optional(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?
+                .ok_or_else(|| ServerFnError::new("stage not found"))?;
+        sqlx::query("UPDATE rollout_stages SET health_gate = $1 WHERE rollout_id = $2")
+            .bind(&gate_json)
+            .bind(rollout_id)
+            .execute(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     } else {
         sqlx::query("UPDATE rollout_stages SET health_gate = $1 WHERE id = $2")
             .bind(&gate_json)
@@ -672,7 +685,10 @@ async fn request_stage_assessment(
             // broadcast::Sender::send returns Err when there are no active
             // receivers — a daemon that connected then closed its SSE.
             // Treat that as "not dispatched" so the UI counter is honest.
-            if tx.send(crate::api::push::PushMessage::RequestAssessment).is_ok() {
+            if tx
+                .send(crate::api::push::PushMessage::RequestAssessment)
+                .is_ok()
+            {
                 dispatched += 1;
             }
         }
@@ -750,9 +766,8 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             // before we start rolling — this is what "rollback" will restore.
             // Skip if baseline is already set (e.g. stopped-then-restarted
             // rollout) to avoid overwriting with post-partial-rollout noise.
-            let (baseline_version, baseline_commit) = cohort_baseline(&pool, rid)
-                .await
-                .unwrap_or((None, None));
+            let (baseline_version, baseline_commit) =
+                cohort_baseline(&pool, rid).await.unwrap_or((None, None));
 
             let mut tx = pool
                 .begin()
@@ -781,8 +796,13 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             // Seed a first evaluation so the Rollout health card renders
             // immediately instead of waiting for the 60s auto-pause tick.
             let _ = evaluate_all_rolling_stages(&pool, rid).await;
-            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
-            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate)
+                .await;
+            crate::api::push::notify_rollout_global(
+                rid,
+                crate::api::push::PushMessage::SyncNixpkgs,
+            )
+            .await;
         }
         "rollback" => {
             // Fetch baseline + cohort ids so we can rewind cluster pins.
@@ -916,8 +936,13 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             // Seed evaluation for the newly-rolling stage.
             let _ = evaluate_all_rolling_stages(&pool, rid).await;
-            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
-            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate)
+                .await;
+            crate::api::push::notify_rollout_global(
+                rid,
+                crate::api::push::PushMessage::SyncNixpkgs,
+            )
+            .await;
         }
         "pause" => {
             let mut tx = pool
@@ -929,13 +954,11 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
-            sqlx::query(
-                "UPDATE rollouts SET status = 'paused', updated_at = now() WHERE id = $1",
-            )
-            .bind(rid)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query("UPDATE rollouts SET status = 'paused', updated_at = now() WHERE id = $1")
+                .bind(rid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -950,30 +973,32 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
-            sqlx::query(
-                "UPDATE rollouts SET status = 'rolling', updated_at = now() WHERE id = $1",
-            )
-            .bind(rid)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            sqlx::query("UPDATE rollouts SET status = 'rolling', updated_at = now() WHERE id = $1")
+                .bind(rid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
             // Seed an evaluation for every stage that's resumed so the
             // health card comes back without waiting for the next tick.
             let _ = evaluate_all_rolling_stages(&pool, rid).await;
-            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
-            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
+            crate::api::push::notify_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate)
+                .await;
+            crate::api::push::notify_rollout_global(
+                rid,
+                crate::api::push::PushMessage::SyncNixpkgs,
+            )
+            .await;
         }
         "complete" => {
-            let (target_version, nixpkgs_commit): (Option<String>, Option<String>) = sqlx::query_as(
-                "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
-            )
-            .bind(rid)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+            let (target_version, nixpkgs_commit): (Option<String>, Option<String>) =
+                sqlx::query_as("SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1")
+                    .bind(rid)
+                    .fetch_one(&pool)
+                    .await
+                    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
             let mut tx = pool
                 .begin()
@@ -1028,9 +1053,17 @@ async fn rollout_action(id: String, action: String) -> Result<(), ServerFnError>
             tx.commit()
                 .await
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
-            crate::api::push::notify_all_rollout_global(rid, crate::api::push::PushMessage::SelfUpdate).await;
+            crate::api::push::notify_all_rollout_global(
+                rid,
+                crate::api::push::PushMessage::SelfUpdate,
+            )
+            .await;
             if nixpkgs_commit.is_some() {
-                crate::api::push::notify_all_rollout_global(rid, crate::api::push::PushMessage::SyncNixpkgs).await;
+                crate::api::push::notify_all_rollout_global(
+                    rid,
+                    crate::api::push::PushMessage::SyncNixpkgs,
+                )
+                .await;
             }
         }
         "delete" => {
@@ -1086,8 +1119,7 @@ pub fn RolloutDetail(id: String) -> Element {
     // Per-stage gate editor: Option<(stage_id, HealthGateInput, apply_to_all)>
     // is None when no editor is open. Only one stage edits at a time — opening
     // another closes the first without prompting (the form has Cancel anyway).
-    let mut edit_gate =
-        use_signal(|| Option::<(String, HealthGateInput, bool)>::None);
+    let mut edit_gate = use_signal(|| Option::<(String, HealthGateInput, bool)>::None);
     let mut edit_gate_error = use_signal(|| Option::<String>::None);
 
     match &*detail.read() {
@@ -1101,7 +1133,9 @@ pub fn RolloutDetail(id: String) -> Element {
                 "completed" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
                 "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
                 "failed" => "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-                "rolled_back" => "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200",
+                "rolled_back" => {
+                    "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200"
+                }
                 _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
             };
 

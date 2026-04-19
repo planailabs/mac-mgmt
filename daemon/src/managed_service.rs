@@ -125,8 +125,7 @@ pub struct FileValidator {
 /// Run a built-in validator on a file. Returns Ok(()) if valid,
 /// Err(message) if invalid.
 pub fn run_builtin_validator(name: &str, path: &std::path::Path) -> Result<(), String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read file: {e}"))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read file: {e}"))?;
     match name {
         "json" => {
             serde_json::from_str::<serde_json::Value>(&content)
@@ -134,7 +133,8 @@ pub fn run_builtin_validator(name: &str, path: &std::path::Path) -> Result<(), S
             Ok(())
         }
         "toml" => {
-            content.parse::<toml::Value>()
+            content
+                .parse::<toml::Value>()
                 .map_err(|e| format!("invalid TOML: {e}"))?;
             Ok(())
         }
@@ -243,9 +243,9 @@ pub trait ManagedService: Send + Sync {
     /// `block_in_place` so it doesn't stall the tokio runtime.
     /// Override for truly async checks (e.g. reqwest HTTP).
     fn check_health_async(&self) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        Box::pin(std::future::ready(
-            tokio::task::block_in_place(|| self.check_health()),
-        ))
+        Box::pin(std::future::ready(tokio::task::block_in_place(|| {
+            self.check_health()
+        })))
     }
 
     /// Attempt to auto-repair an unhealthy service.

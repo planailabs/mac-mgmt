@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 
+use super::bundle_detail::SkillChannelDisplay;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
-use super::bundle_detail::SkillChannelDisplay;
 
 /// Direct skill assignment display.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -32,11 +32,19 @@ pub struct ClusterBundleDisplay {
 }
 
 #[server]
-async fn list_cluster_skills(cluster_id: String) -> Result<Vec<ClusterSkillDisplay>, ServerFnError> {
+async fn list_cluster_skills(
+    cluster_id: String,
+) -> Result<Vec<ClusterSkillDisplay>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -57,11 +65,19 @@ async fn list_cluster_skills(cluster_id: String) -> Result<Vec<ClusterSkillDispl
 }
 
 #[server]
-async fn list_cluster_bundles(cluster_id: String) -> Result<Vec<ClusterBundleDisplay>, ServerFnError> {
+async fn list_cluster_bundles(
+    cluster_id: String,
+) -> Result<Vec<ClusterBundleDisplay>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -84,8 +100,14 @@ async fn list_cluster_bundles(cluster_id: String) -> Result<Vec<ClusterBundleDis
 async fn list_bundle_skills(cluster_id: String) -> Result<Vec<BundleSkillDisplay>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -168,26 +190,36 @@ pub struct BundleOption {
 async fn list_all_bundles() -> Result<Vec<BundleOption>, ServerFnError> {
     let _user = current_user().await?;
     let pool = crate::server_pool()?;
-    let bundles = sqlx::query_as::<_, BundleOption>(
-        "SELECT id, slug, name FROM bundles ORDER BY slug",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let bundles =
+        sqlx::query_as::<_, BundleOption>("SELECT id, slug, name FROM bundles ORDER BY slug")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(bundles)
 }
 
 #[server]
-async fn add_cluster_skill(cluster_id: String, skill_channel_id: String) -> Result<(), ServerFnError> {
+async fn add_cluster_skill(
+    cluster_id: String,
+    skill_channel_id: String,
+) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&cid) {
             return Err(ServerFnError::new("access denied"));
         }
     }
-    let scid: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let scid: uuid::Uuid = skill_channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("INSERT INTO cluster_skills (cluster_id, skill_channel_id) VALUES ($1, $2)")
         .bind(cid)
         .bind(scid)
@@ -202,17 +234,22 @@ async fn add_cluster_skill(cluster_id: String, skill_channel_id: String) -> Resu
 async fn remove_cluster_skill(cluster_skill_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_skill_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Check access before deleting
-    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT cluster_id FROM cluster_skills WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let owner_cid =
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT cluster_id FROM cluster_skills WHERE id = $1")
+            .bind(uuid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if let Some(ids) = user
+            .writable_cluster_ids(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+        {
             if !ids.contains(&owner_cid) {
                 return Err(ServerFnError::new("access denied"));
             }
@@ -235,13 +272,21 @@ async fn remove_cluster_skill(cluster_skill_id: String) -> Result<(), ServerFnEr
 async fn add_cluster_bundle(cluster_id: String, bundle_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&cid) {
             return Err(ServerFnError::new("access denied"));
         }
     }
-    let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let bid: uuid::Uuid = bundle_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     // Check for overlap: does the new bundle share any skill_channel_id with
     // any bundle already assigned to this cluster?
@@ -281,17 +326,22 @@ async fn add_cluster_bundle(cluster_id: String, bundle_id: String) -> Result<(),
 async fn remove_cluster_bundle(cluster_bundle_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = cluster_bundle_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Check access before deleting
-    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT cluster_id FROM cluster_bundles WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let owner_cid =
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT cluster_id FROM cluster_bundles WHERE id = $1")
+            .bind(uuid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if let Some(ids) = user
+            .writable_cluster_ids(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+        {
             if !ids.contains(&owner_cid) {
                 return Err(ServerFnError::new("access denied"));
             }

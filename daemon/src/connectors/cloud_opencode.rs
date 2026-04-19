@@ -19,7 +19,10 @@ impl Connector for CloudOpencode {
         &["opencode"]
     }
 
-    fn connect(&self, _configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+    fn connect(
+        &self,
+        _configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
         let provider = self.config.provider.as_str();
         let model = if self.config.default_model.is_empty()
             || !self.config.default_model.starts_with(provider)
@@ -33,7 +36,11 @@ impl Connector for CloudOpencode {
         sentry_ext::breadcrumb(
             "connector",
             &format!("cloud→opencode provider={provider} model={model}"),
-            &[("connector", "cloud→opencode"), ("provider", provider), ("model", &model)],
+            &[
+                ("connector", "cloud→opencode"),
+                ("provider", provider),
+                ("model", &model),
+            ],
         );
 
         let path = config_path()?;

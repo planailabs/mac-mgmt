@@ -64,7 +64,10 @@ pub struct ApiConfig {
 
 impl Default for ApiConfig {
     fn default() -> Self {
-        Self { port: default_api_port(), external_url: default_api_external_url() }
+        Self {
+            port: default_api_port(),
+            external_url: default_api_external_url(),
+        }
     }
 }
 
@@ -85,7 +88,9 @@ pub struct WebConfig {
 
 impl Default for WebConfig {
     fn default() -> Self {
-        Self { port: default_web_port() }
+        Self {
+            port: default_web_port(),
+        }
     }
 }
 
@@ -145,7 +150,9 @@ pub fn load() -> &'static ServerConfig {
             && config.oidc.is_none()
             && std::env::var("DEV_ONLY_NO_AUTH").as_deref() != Ok("1")
         {
-            panic!("[oidc] section is required in release builds (set DEV_ONLY_NO_AUTH=1 to bypass)");
+            panic!(
+                "[oidc] section is required in release builds (set DEV_ONLY_NO_AUTH=1 to bypass)"
+            );
         }
 
         config
@@ -153,5 +160,7 @@ pub fn load() -> &'static ServerConfig {
 }
 
 pub fn config() -> &'static ServerConfig {
-    CONFIG.get().expect("config not loaded — call config::load() first")
+    CONFIG
+        .get()
+        .expect("config not loaded — call config::load() first")
 }

@@ -100,8 +100,8 @@ async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError
     let filename = format!("{slug}.md");
     let file = DocsAssets::get(&filename)
         .ok_or_else(|| ServerFnError::new(format!("Document '{slug}' not found")))?;
-    let markdown = std::str::from_utf8(file.data.as_ref())
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let markdown =
+        std::str::from_utf8(file.data.as_ref()).map_err(|e| ServerFnError::new(e.to_string()))?;
 
     let (frontmatter, body) = parse_frontmatter(markdown);
     let audience = frontmatter
@@ -116,9 +116,8 @@ async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError
         .map(|l| l.trim_start_matches("# ").to_string())
         .unwrap_or_else(|| slug.replace('-', " "));
 
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS;
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(body, options);
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);

@@ -1,9 +1,9 @@
-use dioxus::prelude::*;
 use chrono::{DateTime, Utc};
+use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 use crate::web::app::Route;
+use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -67,7 +67,10 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         services_extended: Option<serde_json::Value>,
     }
 
-    let accessible = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    let accessible = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Optional stage filter — resolves the stage's cohort cluster_ids and
     // a human label ("Stage 1 · canary"). Intersects with accessible
@@ -170,7 +173,10 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         })
         .collect();
 
-    Ok(FleetStatusResult { entries, stage_label })
+    Ok(FleetStatusResult {
+        entries,
+        stage_label,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,7 +259,9 @@ pub async fn create_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
     let cluster_id: Option<uuid::Uuid> = writable.as_ref().and_then(|ids| ids.first().copied());
     if let Some(ref ids) = writable {
         if ids.is_empty() {
-            return Err(ServerFnError::new("write access required to create proxy tokens"));
+            return Err(ServerFnError::new(
+                "write access required to create proxy tokens",
+            ));
         }
     }
 
@@ -305,7 +313,8 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                         data.set(Some(Ok(result.entries)));
                     }
                     Err(e) => {
-                        if data.read().is_none() || data.read().as_ref().is_some_and(|r| r.is_err()) {
+                        if data.read().is_none() || data.read().as_ref().is_some_and(|r| r.is_err())
+                        {
                             data.set(Some(Err(e.to_string())));
                         }
                     }
@@ -321,7 +330,11 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     let refresh_ago = match *last_refreshed.read() {
         Some(t) => {
             let secs = Utc::now().signed_duration_since(t).num_seconds();
-            if secs < 5 { "just now".to_string() } else { format!("{secs}s ago") }
+            if secs < 5 {
+                "just now".to_string()
+            } else {
+                format!("{secs}s ago")
+            }
         }
         None => "...".to_string(),
     };
@@ -335,7 +348,11 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 if q.is_empty() {
                     entries_clone.clone()
                 } else {
-                    entries_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+                    entries_clone
+                        .iter()
+                        .filter(|e| e.matches_search(&q))
+                        .cloned()
+                        .collect()
                 }
             };
 
@@ -343,14 +360,19 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 let (key, asc) = sort.read().clone();
                 // Online threshold matches the Status column's 5-minute rule.
                 let now = Utc::now();
-                let is_online = |e: &FleetEntry| {
-                    now.signed_duration_since(e.reported_at).num_seconds() < 300
-                };
+                let is_online =
+                    |e: &FleetEntry| now.signed_duration_since(e.reported_at).num_seconds() < 300;
                 filtered.sort_by(|a, b| {
                     let ord = match key.as_str() {
-                        "cluster" => a.cluster_name.to_lowercase().cmp(&b.cluster_name.to_lowercase()),
+                        "cluster" => a
+                            .cluster_name
+                            .to_lowercase()
+                            .cmp(&b.cluster_name.to_lowercase()),
                         "hostname" => a.hostname.to_lowercase().cmp(&b.hostname.to_lowercase()),
-                        "env" => a.environment.to_lowercase().cmp(&b.environment.to_lowercase()),
+                        "env" => a
+                            .environment
+                            .to_lowercase()
+                            .cmp(&b.environment.to_lowercase()),
                         "version" => a.version.cmp(&b.version),
                         _ => {
                             // Default "last seen" sort: group online hosts first,
@@ -391,7 +413,13 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                         match (is_online(a), is_online(b)) {
                             (true, false) => std::cmp::Ordering::Less,
                             (false, true) => std::cmp::Ordering::Greater,
-                            _ => if asc { ord } else { ord.reverse() },
+                            _ => {
+                                if asc {
+                                    ord
+                                } else {
+                                    ord.reverse()
+                                }
+                            }
                         }
                     } else {
                         ord

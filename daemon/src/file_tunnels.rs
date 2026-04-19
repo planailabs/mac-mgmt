@@ -3,8 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use mac_mgmt_ws::tungstenite;
 use futures_util::{SinkExt, StreamExt};
+use mac_mgmt_ws::tungstenite;
 
 #[cfg(feature = "services")]
 use crate::managed_service::{FileTunnel, FileTunnelDef};
@@ -29,7 +29,9 @@ pub struct FileTunnelRegistry;
 
 #[cfg(not(feature = "services"))]
 impl FileTunnelRegistry {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[cfg(feature = "services")]
@@ -78,24 +80,24 @@ fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<Path
         .canonicalize()
         .map_err(|e| format!("path not found: {e}"))?;
 
-        match &tunnel.def {
-            FileTunnelDef::File { .. } => {
-                let root_canonical = root
-                    .canonicalize()
-                    .map_err(|e| format!("tunnel root error: {e}"))?;
-                if canonical != root_canonical {
-                    return Err("path does not match tunnel file".into());
-                }
-            }
-            FileTunnelDef::Folder { .. } => {
-                let root_canonical = root
-                    .canonicalize()
-                    .map_err(|e| format!("tunnel root error: {e}"))?;
-                if !canonical.starts_with(&root_canonical) {
-                    return Err("path outside tunnel root".into());
-                }
+    match &tunnel.def {
+        FileTunnelDef::File { .. } => {
+            let root_canonical = root
+                .canonicalize()
+                .map_err(|e| format!("tunnel root error: {e}"))?;
+            if canonical != root_canonical {
+                return Err("path does not match tunnel file".into());
             }
         }
+        FileTunnelDef::Folder { .. } => {
+            let root_canonical = root
+                .canonicalize()
+                .map_err(|e| format!("tunnel root error: {e}"))?;
+            if !canonical.starts_with(&root_canonical) {
+                return Err("path outside tunnel root".into());
+            }
+        }
+    }
 
     Ok(canonical)
 }
@@ -152,10 +154,7 @@ fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<MatchedValida
     let FileTunnelDef::Folder { validators, .. } = &tunnel.def else {
         return None;
     };
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     for v in validators {
         if let Ok(pat) = glob::Pattern::new(&v.glob) {
             if pat.matches(filename) {
@@ -188,10 +187,7 @@ fn mtime_secs(path: &Path) -> Option<i64> {
 
 /// Handle a file list request. Returns `(status, body_json)`.
 #[cfg(feature = "services")]
-pub fn handle_list(
-    tunnel: &FileTunnel,
-    rel_path: Option<&str>,
-) -> (u16, serde_json::Value) {
+pub fn handle_list(tunnel: &FileTunnel, rel_path: Option<&str>) -> (u16, serde_json::Value) {
     let path = match resolve_path(tunnel, rel_path) {
         Ok(p) => p,
         Err(e) => return (400, serde_json::json!({ "error": e })),
@@ -233,11 +229,7 @@ pub fn handle_list(
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
-            let kind = if meta.is_dir() {
-                "directory"
-            } else {
-                "file"
-            };
+            let kind = if meta.is_dir() { "directory" } else { "file" };
             // Apply include filter for files in directory tunnels
             if kind == "file" && !matches_include(tunnel, &name) {
                 continue;
@@ -292,10 +284,7 @@ pub async fn handle_read_session(
 
     // For directory tunnels, verify the file passes the include filter
     if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if !matches_include(tunnel, filename) {
             send_error!(403, "file not included in tunnel filter");
         }
@@ -377,7 +366,9 @@ pub async fn handle_write_session(
 
     macro_rules! send_result {
         ($result:expr) => {{
-            let _ = sink.send(tungstenite::Message::Text($result.to_string().into())).await;
+            let _ = sink
+                .send(tungstenite::Message::Text($result.to_string().into()))
+                .await;
             let _ = sink.send(tungstenite::Message::Close(None)).await;
             return;
         }};
@@ -394,19 +385,20 @@ pub async fn handle_write_session(
     };
 
     // For directory tunnels, verify the file passes the include filter
-    let filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
         if !matches_include(tunnel, filename) {
-            send_result!(serde_json::json!({ "status": 403, "error": "file not included in tunnel filter" }));
+            send_result!(
+                serde_json::json!({ "status": 403, "error": "file not included in tunnel filter" })
+            );
         }
     }
 
     if !matches_allow_write(tunnel, filename) {
-        send_result!(serde_json::json!({ "status": 403, "error": "file not allowed by write filter" }));
+        send_result!(
+            serde_json::json!({ "status": 403, "error": "file not allowed by write filter" })
+        );
     }
 
     // Optimistic concurrency check
@@ -440,7 +432,9 @@ pub async fn handle_write_session(
         let mut tmp_file = match std::fs::File::create(&tmp_path) {
             Ok(f) => f,
             Err(e) => {
-                send_result!(serde_json::json!({ "status": 500, "error": format!("failed to create temp file: {e}") }));
+                send_result!(
+                    serde_json::json!({ "status": 500, "error": format!("failed to create temp file: {e}") })
+                );
             }
         };
 
@@ -450,11 +444,15 @@ pub async fn handle_write_session(
                     total_bytes += data.len() as u64;
                     if total_bytes > MAX_FILE_SIZE {
                         let _ = std::fs::remove_file(&tmp_path);
-                        send_result!(serde_json::json!({ "status": 413, "error": "file too large" }));
+                        send_result!(
+                            serde_json::json!({ "status": 413, "error": "file too large" })
+                        );
                     }
                     if let Err(e) = tmp_file.write_all(&data) {
                         let _ = std::fs::remove_file(&tmp_path);
-                        send_result!(serde_json::json!({ "status": 500, "error": format!("write failed: {e}") }));
+                        send_result!(
+                            serde_json::json!({ "status": 500, "error": format!("write failed: {e}") })
+                        );
                     }
                 }
                 Ok(tungstenite::Message::Text(t)) if &*t == "end_request" => break,
@@ -468,7 +466,9 @@ pub async fn handle_write_session(
 
         if let Err(e) = tmp_file.flush() {
             let _ = std::fs::remove_file(&tmp_path);
-            send_result!(serde_json::json!({ "status": 500, "error": format!("flush failed: {e}") }));
+            send_result!(
+                serde_json::json!({ "status": 500, "error": format!("flush failed: {e}") })
+            );
         }
     }
 
@@ -478,7 +478,9 @@ pub async fn handle_write_session(
     if had_original {
         if let Err(e) = std::fs::copy(&path, &backup_path) {
             let _ = std::fs::remove_file(&tmp_path);
-            send_result!(serde_json::json!({ "status": 500, "error": format!("backup failed: {e}") }));
+            send_result!(
+                serde_json::json!({ "status": 500, "error": format!("backup failed: {e}") })
+            );
         }
     }
 
@@ -501,9 +503,14 @@ pub async fn handle_write_session(
         // 1. Run builtin validator first (if configured)
         if let Some(name) = &validator.builtin {
             if let Err(msg) = crate::managed_service::run_builtin_validator(name, &path) {
-                tracing::warn!("builtin validation ({name}) failed for {}: {msg}", path.display());
+                tracing::warn!(
+                    "builtin validation ({name}) failed for {}: {msg}",
+                    path.display()
+                );
                 rollback();
-                send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {msg}") }));
+                send_result!(
+                    serde_json::json!({ "status": 422, "error": format!("validation failed: {msg}") })
+                );
             }
             tracing::debug!("builtin validation ({name}) passed for {}", path.display());
         }
@@ -520,19 +527,24 @@ pub async fn handle_write_session(
                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                     tracing::warn!("command validation failed for {}: {stderr}", path.display());
                     rollback();
-                    send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") }));
+                    send_result!(
+                        serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") })
+                    );
                 }
                 Err(e) if validator.builtin.is_some() => {
                     // Binary missing but builtin already passed — log and continue
                     tracing::warn!(
                         "validation command {:?} not available ({}), builtin passed — accepting write",
-                        validator.command[0], e
+                        validator.command[0],
+                        e
                     );
                 }
                 Err(e) => {
                     // No builtin fallback — this is fatal
                     rollback();
-                    send_result!(serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") }));
+                    send_result!(
+                        serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") })
+                    );
                 }
                 Ok(_) => {
                     tracing::debug!("command validation passed for {}", path.display());
@@ -545,10 +557,17 @@ pub async fn handle_write_session(
     let _ = std::fs::remove_file(&backup_path);
 
     let new_mtime = mtime_secs(&path).unwrap_or(0);
-    tracing::info!("file write completed: {} ({total_bytes} bytes)", path.display());
+    tracing::info!(
+        "file write completed: {} ({total_bytes} bytes)",
+        path.display()
+    );
     // Success — send result and close (don't use send_result! macro since we don't want to return early)
-    let _ = sink.send(tungstenite::Message::Text(
-        serde_json::json!({ "status": 200, "mtime": new_mtime }).to_string().into(),
-    )).await;
+    let _ = sink
+        .send(tungstenite::Message::Text(
+            serde_json::json!({ "status": 200, "mtime": new_mtime })
+                .to_string()
+                .into(),
+        ))
+        .await;
     let _ = sink.send(tungstenite::Message::Close(None)).await;
 }

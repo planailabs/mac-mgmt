@@ -17,8 +17,8 @@ fn create_fifo(path: &std::path::Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let c_path = CString::new(path.to_str().context("non-UTF8 path")?)
-        .context("path contains null byte")?;
+    let c_path =
+        CString::new(path.to_str().context("non-UTF8 path")?).context("path contains null byte")?;
     let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
     if ret != 0 {
         return Err(std::io::Error::last_os_error())
@@ -51,8 +51,7 @@ pub async fn watch(tx: mpsc::Sender<RemoteSshCommand>) -> Result<()> {
             unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_NONBLOCK) }
         };
         if fd < 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to open FIFO");
+            return Err(std::io::Error::last_os_error()).context("failed to open FIFO");
         }
 
         let std_file = unsafe { std::fs::File::from_raw_fd(fd) };

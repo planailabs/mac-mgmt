@@ -14,11 +14,13 @@ fn inprocess_enabled() -> bool {
     matches!(std::env::var(INPROCESS_ENV).ok().as_deref(), Some("1"))
 }
 
+use crate::config_providers::{ConfigStore, ConnectorSnapshot};
 use crate::connectors::{self, Connector};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
-use crate::config_providers::{ConfigStore, ConnectorSnapshot};
-use crate::managed_service::{FileTunnel, FileTunnelDef, ManagedService, ServiceMode, ShellTunnel, TunnelDef};
+use crate::managed_service::{
+    FileTunnel, FileTunnelDef, ManagedService, ServiceMode, ShellTunnel, TunnelDef,
+};
 use crate::metrics::Metrics;
 use crate::notify::Dispatcher;
 use crate::sentry_ext;
@@ -144,9 +146,7 @@ impl ServiceManager {
     ) -> Result<Self> {
         let inprocess = inprocess_enabled();
         if inprocess {
-            tracing::info!(
-                "{INPROCESS_ENV}=1, launching services supervisor in-process"
-            );
+            tracing::info!("{INPROCESS_ENV}=1, launching services supervisor in-process");
             spawn_inprocess_supervisor();
         }
         // Otherwise the supervisor is expected to be running from a prior
@@ -179,12 +179,15 @@ impl ServiceManager {
             config_store.set("cloud", v);
         }
 
-        let connectors = connectors::build_connectors(
-            &global_cfg, &ollama_cfg, &lms_cfg, &cloud_cfgs,
-        );
+        let connectors =
+            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &cloud_cfgs);
 
         let all_services = connectors::build_services(
-            &global_cfg, openclaw_cfg, opencode_cfg, ollama_cfg, lms_cfg,
+            &global_cfg,
+            openclaw_cfg,
+            opencode_cfg,
+            ollama_cfg,
+            lms_cfg,
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
@@ -301,7 +304,9 @@ impl ServiceManager {
     }
 
     async fn register_service(&mut self, i: usize) {
-        let Some(client) = self.client.as_mut() else { return };
+        let Some(client) = self.client.as_mut() else {
+            return;
+        };
         let state = &mut self.services[i];
         let name = state.name.clone();
         if let Err(e) = state.service.configure() {
@@ -333,7 +338,9 @@ impl ServiceManager {
     /// because for shebang wrapper scripts the latter points at the
     /// interpreter, not the wrapper itself.
     async fn refresh_running_store_paths(&mut self) {
-        let Some(client) = self.client.as_mut() else { return };
+        let Some(client) = self.client.as_mut() else {
+            return;
+        };
         let statuses = match client.list().await {
             Ok(s) => s,
             Err(e) => {
@@ -377,7 +384,9 @@ impl ServiceManager {
     }
 
     fn drain_notifications(&mut self) {
-        let Some(client) = self.client.as_mut() else { return };
+        let Some(client) = self.client.as_mut() else {
+            return;
+        };
         while let Some(notif) = client.try_recv_notification() {
             match notif {
                 Notification::Log { name, line, .. } => {
@@ -488,10 +497,7 @@ impl ServiceManager {
             let busy = state.service.is_busy().unwrap_or(false);
             busy_flags[i] = busy;
 
-            if !state.restart_pending
-                && state.phase.is_healthy()
-                && state.service.needs_restart()
-            {
+            if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
                 tracing::info!("{name} needs restart (external change detected)");
                 state.restart_pending = true;
             }
@@ -526,15 +532,17 @@ impl ServiceManager {
         for i in pending_reregisters {
             let name = self.services[i].name.clone();
             self.reregister_service(i).await;
-            self.dispatcher.dispatch(&DaemonEvent::UpgradeInstalled { service: name });
+            self.dispatcher
+                .dispatch(&DaemonEvent::UpgradeInstalled { service: name });
         }
 
         // Phase 2: concurrent health checks with timeout.
-        use std::pin::Pin;
         use std::future::Future;
+        use std::pin::Pin;
         let check_results: Vec<(usize, ServicePhase, Result<bool>)> = {
-            let mut futs: Vec<Pin<Box<dyn Future<Output = (usize, ServicePhase, Result<bool>)> + Send + '_>>> =
-                Vec::new();
+            let mut futs: Vec<
+                Pin<Box<dyn Future<Output = (usize, ServicePhase, Result<bool>)> + Send + '_>>,
+            > = Vec::new();
             for (i, state) in self.services.iter().enumerate() {
                 if matches!(state.phase, ServicePhase::Healthy | ServicePhase::Unhealthy) {
                     let prev = state.phase;
@@ -561,8 +569,9 @@ impl ServiceManager {
                     state.consecutive_crashes = 0;
                     state.phase = ServicePhase::Healthy;
                     if prev_phase == ServicePhase::Unhealthy {
-                        self.dispatcher
-                            .dispatch(&DaemonEvent::ServiceRecovered { service: name.clone() });
+                        self.dispatcher.dispatch(&DaemonEvent::ServiceRecovered {
+                            service: name.clone(),
+                        });
                     }
                     if !state.post_start_done {
                         if let Err(e) = state.service.post_start() {
@@ -574,8 +583,9 @@ impl ServiceManager {
                 Ok(false) => {
                     state.phase = ServicePhase::Unhealthy;
                     if prev_phase != ServicePhase::Unhealthy {
-                        self.dispatcher
-                            .dispatch(&DaemonEvent::ServiceUnhealthy { service: name.clone() });
+                        self.dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy {
+                            service: name.clone(),
+                        });
                     }
                     if let Err(e) = state.service.repair() {
                         tracing::error!("{name} repair failed: {e}");
@@ -616,10 +626,14 @@ impl ServiceManager {
                     .find(|s| s.name == *dep)
                     .is_some_and(|s| s.post_start_done)
             });
-            if !deps_ready { continue; }
+            if !deps_ready {
+                continue;
+            }
 
             let should_run = !cs.ran || self.config_store.any_changed(deps, &cs.last_snapshot);
-            if !should_run { continue; }
+            if !should_run {
+                continue;
+            }
 
             let name = cs.connector.name();
             let configs = self.config_store.values_for(deps);
@@ -632,10 +646,25 @@ impl ServiceManager {
         }
     }
 
-    fn update_metrics(metrics: &Metrics, name: &str, healthy: bool, upgrade_pending: bool, busy: bool) {
-        metrics.service_healthy.with_label_values(&[name]).set(if healthy { 1 } else { 0 });
-        metrics.service_upgrade_pending.with_label_values(&[name]).set(if upgrade_pending { 1 } else { 0 });
-        metrics.service_busy.with_label_values(&[name]).set(if busy { 1 } else { 0 });
+    fn update_metrics(
+        metrics: &Metrics,
+        name: &str,
+        healthy: bool,
+        upgrade_pending: bool,
+        busy: bool,
+    ) {
+        metrics
+            .service_healthy
+            .with_label_values(&[name])
+            .set(if healthy { 1 } else { 0 });
+        metrics
+            .service_upgrade_pending
+            .with_label_values(&[name])
+            .set(if upgrade_pending { 1 } else { 0 });
+        metrics
+            .service_busy
+            .with_label_values(&[name])
+            .set(if busy { 1 } else { 0 });
     }
 
     // ── Schedule restart ─────────────────────────────────────────────

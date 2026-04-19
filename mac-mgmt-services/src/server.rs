@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::protocol::{Message, Notification, Request, Response, ServiceStatus, SpawnSpec};
@@ -28,8 +28,7 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     tracing::info!("supervisor starting on {}", socket_path.display());
 
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     if socket_path.exists() {
         std::fs::remove_file(socket_path).ok();
@@ -191,10 +190,7 @@ async fn handle_client(
     }
 }
 
-async fn write_msg(
-    writer: &mut tokio::io::WriteHalf<UnixStream>,
-    msg: Message,
-) -> Result<()> {
+async fn write_msg(writer: &mut tokio::io::WriteHalf<UnixStream>, msg: Message) -> Result<()> {
     let mut line = serde_json::to_string(&msg).context("serialize")?;
     line.push('\n');
     writer.write_all(line.as_bytes()).await.context("write")?;
@@ -222,7 +218,9 @@ struct Entry {
 
 impl SupervisorState {
     fn new() -> Self {
-        Self { services: Mutex::new(HashMap::new()) }
+        Self {
+            services: Mutex::new(HashMap::new()),
+        }
     }
 
     async fn handle(
@@ -257,9 +255,9 @@ impl SupervisorState {
                     .collect();
                 Response::services(statuses)
             }
-            Request::Shutdown | Request::UpdateSelf => {
-                Response::Error { message: "handled by main loop".into() }
-            }
+            Request::Shutdown | Request::UpdateSelf => Response::Error {
+                message: "handled by main loop".into(),
+            },
         }
     }
 
@@ -290,10 +288,18 @@ impl SupervisorState {
         let task_name = name.clone();
         let task_spec = spec.clone();
         let task_pid = pid.clone();
-        let task = tokio::spawn(run_service(task_name, task_spec, notif_tx, stop_rx, task_pid));
+        let task = tokio::spawn(run_service(
+            task_name, task_spec, notif_tx, stop_rx, task_pid,
+        ));
         self.services.lock().await.insert(
             name,
-            Entry { spec, supervisor: task, stop_tx, pid, resolved_program },
+            Entry {
+                spec,
+                supervisor: task,
+                stop_tx,
+                pid,
+                resolved_program,
+            },
         );
     }
 
@@ -307,8 +313,7 @@ impl SupervisorState {
     }
 
     async fn shutdown_all(&self) {
-        let drained: Vec<(String, Entry)> =
-            self.services.lock().await.drain().collect();
+        let drained: Vec<(String, Entry)> = self.services.lock().await.drain().collect();
         for (name, entry) in drained {
             tracing::info!("supervisor: stopping {name}");
             let _ = entry.stop_tx.send(()).await;
@@ -392,10 +397,20 @@ async fn wait_child(
     stop_rx: &mut mpsc::Receiver<()>,
 ) -> ChildExit {
     if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(forward_lines(name.to_string(), stdout, false, notif_tx.clone()));
+        tokio::spawn(forward_lines(
+            name.to_string(),
+            stdout,
+            false,
+            notif_tx.clone(),
+        ));
     }
     if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(forward_lines(name.to_string(), stderr, true, notif_tx.clone()));
+        tokio::spawn(forward_lines(
+            name.to_string(),
+            stderr,
+            true,
+            notif_tx.clone(),
+        ));
     }
 
     tokio::select! {
@@ -415,7 +430,9 @@ async fn wait_child(
 async fn stop_child(child: &mut Child) {
     if let Some(pid) = child.id() {
         // SAFETY: libc::kill is always safe to call with an i32 pid/signum.
-        unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
         let deadline = tokio::time::Instant::now() + STOP_GRACE;
         loop {
             match child.try_wait() {
@@ -510,7 +527,11 @@ fn strip_ansi(input: &str) -> String {
                 while i < bytes.len() && bytes[i] != 0x07 && bytes[i] != 0x1b {
                     i += 1;
                 }
-                if i < bytes.len() && bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                if i < bytes.len()
+                    && bytes[i] == 0x1b
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == b'\\'
+                {
                     i += 2;
                 } else if i < bytes.len() {
                     i += 1;

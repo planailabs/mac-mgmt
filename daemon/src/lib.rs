@@ -1,6 +1,8 @@
 pub mod assessment;
 pub mod cmd;
 pub mod config;
+#[cfg(feature = "services")]
+pub mod config_providers;
 pub mod config_watch;
 #[cfg(feature = "services")]
 pub mod connectors;
@@ -9,14 +11,10 @@ pub mod daemon;
 pub mod events;
 #[cfg(feature = "relay")]
 pub mod file_tunnels;
-#[cfg(feature = "relay")]
-pub mod shell_tunnels;
 pub mod host_keys;
 pub mod log_buffer;
 pub mod log_layer;
 pub mod logs;
-#[cfg(feature = "services")]
-pub mod config_providers;
 #[cfg(feature = "services")]
 pub mod managed_service;
 pub mod mcp_servers;
@@ -37,6 +35,8 @@ pub mod service;
 pub mod service_mgmt;
 #[cfg(feature = "services")]
 pub mod services;
+#[cfg(feature = "relay")]
+pub mod shell_tunnels;
 pub mod skills;
 pub mod status;
 #[cfg(feature = "services")]

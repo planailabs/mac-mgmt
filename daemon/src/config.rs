@@ -33,10 +33,7 @@ fn merge_json(base: &mut serde_json::Value, overlay: &serde_json::Value) {
     match (base, overlay) {
         (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
             for (k, v) in o {
-                merge_json(
-                    b.entry(k).or_insert(serde_json::Value::Null),
-                    v,
-                );
+                merge_json(b.entry(k).or_insert(serde_json::Value::Null), v);
             }
         }
         (b, o) => {
@@ -109,9 +106,9 @@ pub async fn load() -> Result<Config> {
             mac_mgmt_common::config_migrate::migrate(&mut remote_json);
 
             // Convert local TOML to JSON for merging
-            let local_json: serde_json::Value = serde_json::to_value(
-                toml::from_str::<toml::Value>(&contents)?
-            ).context("failed to convert local config to JSON")?;
+            let local_json: serde_json::Value =
+                serde_json::to_value(toml::from_str::<toml::Value>(&contents)?)
+                    .context("failed to convert local config to JSON")?;
             merge_json(&mut remote_json, &local_json);
 
             // Apply migrations again after merge in case local overlay

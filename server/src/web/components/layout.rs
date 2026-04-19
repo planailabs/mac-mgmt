@@ -73,7 +73,12 @@ fn LoadingSpinner() -> Element {
 pub fn Layout() -> Element {
     let user_info = use_server_future(get_current_user_info)?;
     let (is_admin, _real_is_admin, impersonating_email, display_name) = match &*user_info.read() {
-        Some(Ok(info)) => (info.is_admin, info.real_is_admin, info.impersonating_email.clone(), info.display_name.clone()),
+        Some(Ok(info)) => (
+            info.is_admin,
+            info.real_is_admin,
+            info.impersonating_email.clone(),
+            info.display_name.clone(),
+        ),
         _ => (false, false, None, String::new()),
     };
 
@@ -102,7 +107,7 @@ pub fn Layout() -> Element {
             div { class: "flex flex-1 overflow-hidden relative",
                 // Sidebar (Desktop)
                 Sidebar { is_admin }
-                
+
                 // Main content
                 main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-gray-50 dark:bg-gray-900",
                     SuspenseBoundary {

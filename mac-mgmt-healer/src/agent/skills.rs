@@ -94,7 +94,8 @@ pub fn format_skills_for_prompt(error_classes: &[String]) -> String {
     }
 
     if output.is_empty() {
-        output.push_str("No specific remediation procedures matched. Use general troubleshooting.\n");
+        output
+            .push_str("No specific remediation procedures matched. Use general troubleshooting.\n");
     }
 
     output

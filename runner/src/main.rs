@@ -35,7 +35,12 @@ use crate::orchestrator::{Orchestrator, chaos_loop, reconcile_loop, vm_chaos_loo
 #[command(name = "mac-mgmt-runner", version, about = "mac-mgmt fleet runner")]
 struct Opts {
     /// Path to runner config TOML.
-    #[arg(long, short = 'c', default_value = "/etc/mac-mgmt-runner/config.toml", env = "MAC_MGMT_RUNNER_CONFIG")]
+    #[arg(
+        long,
+        short = 'c',
+        default_value = "/etc/mac-mgmt-runner/config.toml",
+        env = "MAC_MGMT_RUNNER_CONFIG"
+    )]
     config: PathBuf,
 
     #[command(subcommand)]
@@ -162,7 +167,11 @@ async fn run_daemon(cfg: RunnerConfig) -> Result<()> {
 }
 
 async fn build_orchestrator(cfg: RunnerConfig) -> Result<Orchestrator> {
-    let mgmt = MgmtClient::new(&cfg.mgmt.url, &cfg.mgmt.admin_token, cfg.mgmt.organization_id)?;
+    let mgmt = MgmtClient::new(
+        &cfg.mgmt.url,
+        &cfg.mgmt.admin_token,
+        cfg.mgmt.organization_id,
+    )?;
 
     let cert = std::fs::read(&cfg.incus.client_cert)
         .with_context(|| format!("reading {}", cfg.incus.client_cert.display()))?;
@@ -173,9 +182,7 @@ async fn build_orchestrator(cfg: RunnerConfig) -> Result<Orchestrator> {
     combined.extend_from_slice(&key);
 
     let ca = match &cfg.incus.server_ca {
-        Some(p) => Some(
-            std::fs::read(p).with_context(|| format!("reading {}", p.display()))?,
-        ),
+        Some(p) => Some(std::fs::read(p).with_context(|| format!("reading {}", p.display()))?),
         None => None,
     };
     let incus = IncusClient::new(&cfg.incus.url, &cfg.incus.project, &combined, ca.as_deref())?;
@@ -206,8 +213,11 @@ async fn cmd_status(cfg: &RunnerConfig, json: bool) -> Result<()> {
             let extra = match &c.cluster_id {
                 Some(cid) if c.instances.is_empty() => format!("  cluster={cid}"),
                 Some(cid) => {
-                    let names: Vec<&str> =
-                        c.instances.iter().map(|i| i.instance_name.as_str()).collect();
+                    let names: Vec<&str> = c
+                        .instances
+                        .iter()
+                        .map(|i| i.instance_name.as_str())
+                        .collect();
                     format!("  cluster={cid}  incus={}", names.join(","))
                 }
                 _ => String::new(),
@@ -245,9 +255,7 @@ async fn cmd_provision(cfg: &RunnerConfig) -> Result<()> {
 
 async fn cmd_teardown(cfg: &RunnerConfig, yes: bool) -> Result<()> {
     if !yes {
-        eprintln!(
-            "teardown will delete every provisioned cell. Re-run with --yes to confirm."
-        );
+        eprintln!("teardown will delete every provisioned cell. Re-run with --yes to confirm.");
         anyhow::bail!("teardown not confirmed");
     }
     let cli = api::Cli::new(&cfg.api.bind, cfg.api.port);

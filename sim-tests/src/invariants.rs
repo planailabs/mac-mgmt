@@ -91,10 +91,7 @@ fn check_heartbeat_version_present(state: &Arc<MockServerState>) -> InvariantRes
         if hb.body.version.is_empty() {
             return InvariantResult::fail(
                 "heartbeat_version_present",
-                format!(
-                    "heartbeat from {} has empty version",
-                    hb.body.instance_id
-                ),
+                format!("heartbeat from {} has empty version", hb.body.instance_id),
             );
         }
     }
@@ -137,7 +134,8 @@ fn check_no_duplicate_instance_ids(state: &Arc<MockServerState>) -> InvariantRes
 /// Heartbeat timestamps should be monotonically increasing per instance.
 fn check_heartbeat_temporal_order(state: &Arc<MockServerState>) -> InvariantResult {
     let hbs = state.get_heartbeats();
-    let mut by_instance: std::collections::HashMap<&str, Vec<i64>> = std::collections::HashMap::new();
+    let mut by_instance: std::collections::HashMap<&str, Vec<i64>> =
+        std::collections::HashMap::new();
     for hb in &hbs {
         by_instance
             .entry(&hb.body.instance_id)

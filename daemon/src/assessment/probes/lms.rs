@@ -12,7 +12,9 @@ use mac_mgmt_common::LmsConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::{digest_hex, response_has_content, snippet, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{
+    Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex, response_has_content, snippet, timed,
+};
 
 pub struct LmsProbe {
     base_url: String,
@@ -21,7 +23,11 @@ pub struct LmsProbe {
 
 impl LmsProbe {
     pub fn from_config(cfg: &LmsConfig) -> Self {
-        let host = if cfg.host.is_empty() { "127.0.0.1" } else { &cfg.host };
+        let host = if cfg.host.is_empty() {
+            "127.0.0.1"
+        } else {
+            &cfg.host
+        };
         let port = if cfg.port == 0 { 1234 } else { cfg.port };
         Self {
             base_url: format!("http://{host}:{port}"),
@@ -70,7 +76,11 @@ impl LmsProbe {
             tokens_out: resp.usage.as_ref().map(|u| u.completion_tokens),
             model: Some(self.default_model.clone()),
             canary_digest: Some(digest_hex(content.trim().as_bytes())),
-            error_class: if ok { None } else { Some("empty_response".into()) },
+            error_class: if ok {
+                None
+            } else {
+                Some("empty_response".into())
+            },
             error_detail: if ok {
                 None
             } else {

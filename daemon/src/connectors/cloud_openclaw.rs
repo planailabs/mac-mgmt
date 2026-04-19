@@ -24,7 +24,10 @@ impl Connector for CloudOpenClaw {
         &["openclaw"]
     }
 
-    fn connect(&self, _configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+    fn connect(
+        &self,
+        _configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
         let provider = self.config.provider.as_str();
         // Use the configured model, but fall back to the provider's default if
         // the configured model doesn't belong to this provider (e.g. user switched
@@ -50,7 +53,11 @@ impl Connector for CloudOpenClaw {
         sentry_ext::breadcrumb(
             "connector",
             &format!("cloud→openclaw provider={provider} model={model}"),
-            &[("connector", "cloud→openclaw"), ("provider", provider), ("model", model)],
+            &[
+                ("connector", "cloud→openclaw"),
+                ("provider", provider),
+                ("model", model),
+            ],
         );
 
         let path = config_path()?;
@@ -66,9 +73,8 @@ impl Connector for CloudOpenClaw {
 
         // Custom provider: needs a models.providers entry when base_url, api, or auth is set.
         // Built-in provider: just set the API key env var.
-        let needs_custom = base_url.is_some()
-            || self.config.api.is_some()
-            || self.config.auth.is_some();
+        let needs_custom =
+            base_url.is_some() || self.config.api.is_some() || self.config.auth.is_some();
 
         if needs_custom {
             let mut provider_cfg = serde_json::json!({});

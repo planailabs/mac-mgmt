@@ -11,7 +11,11 @@ async fn list_tokens(cluster_id: String) -> Result<Vec<Token>, ServerFnError> {
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -42,7 +46,11 @@ async fn create_token(cluster_id: String, label: String) -> Result<String, Serve
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -51,13 +59,15 @@ async fn create_token(cluster_id: String, label: String) -> Result<String, Serve
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
-    sqlx::query("INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')")
-        .bind(uuid)
-        .bind(&hash)
-        .bind(&label)
-        .execute(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES ($1, $2, $3, 'sync')",
+    )
+    .bind(uuid)
+    .bind(&hash)
+    .bind(&label)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     Ok(raw_token)
 }
@@ -70,15 +80,18 @@ async fn revoke_token(token_id: String) -> Result<(), ServerFnError> {
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Check access before revoking
-    let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT cluster_id FROM tokens WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let owner_cid =
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT cluster_id FROM tokens WHERE id = $1")
+            .bind(uuid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(owner_cid) = owner_cid {
-        if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        if let Some(ids) = user
+            .writable_cluster_ids(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+        {
             if !ids.contains(&owner_cid) {
                 return Err(ServerFnError::new("access denied"));
             }

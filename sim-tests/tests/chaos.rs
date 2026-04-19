@@ -13,14 +13,14 @@ use std::time::Duration;
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()),
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()))
         .try_init();
 }
 
 fn get_chaos_seed() -> Option<u64> {
-    std::env::var("CHAOS_SEED").ok().and_then(|s| s.parse().ok())
+    std::env::var("CHAOS_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
 }
 
 fn get_chaos_rounds() -> usize {
@@ -37,11 +37,19 @@ async fn run_chaos_round(seed: u64) -> Option<String> {
 
     // Generate fault schedule
     let schedule = scenarios::generate(seed, 15, 2);
-    timeline.record("test", sim_tests::timeline::EventKind::Custom, format!("schedule: seed={seed}, events={}", schedule.events.len()));
+    timeline.record(
+        "test",
+        sim_tests::timeline::EventKind::Custom,
+        format!("schedule: seed={seed}, events={}", schedule.events.len()),
+    );
 
     // Start mock server
     let (addr, state) = sim_tests::start_mock_server().await;
-    timeline.record("test", sim_tests::timeline::EventKind::Custom, format!("mock server on {addr}"));
+    timeline.record(
+        "test",
+        sim_tests::timeline::EventKind::Custom,
+        format!("mock server on {addr}"),
+    );
 
     // Start daemons
     let mut shutdowns = Vec::new();
@@ -63,12 +71,13 @@ async fn run_chaos_round(seed: u64) -> Option<String> {
     }
 
     // Wait for initial heartbeats from all daemons
-    let init_ok = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        instance_ids
-            .iter()
-            .all(|iid| !state.heartbeats_from(iid).is_empty())
-    })
-    .await;
+    let init_ok =
+        sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
+            instance_ids
+                .iter()
+                .all(|iid| !state.heartbeats_from(iid).is_empty())
+        })
+        .await;
 
     if !init_ok {
         let missing: Vec<_> = instance_ids
@@ -90,13 +99,21 @@ async fn run_chaos_round(seed: u64) -> Option<String> {
         ));
     }
 
-    timeline.record("test", sim_tests::timeline::EventKind::Custom, "all daemons sent initial heartbeat");
+    timeline.record(
+        "test",
+        sim_tests::timeline::EventKind::Custom,
+        "all daemons sent initial heartbeat",
+    );
 
     // Execute fault schedule
     scenarios::execute(&schedule, &state, &timeline).await;
 
     // Settle period: wait for daemons to recover
-    timeline.record("test", sim_tests::timeline::EventKind::Custom, format!("settling for {:?}", schedule.settle_time));
+    timeline.record(
+        "test",
+        sim_tests::timeline::EventKind::Custom,
+        format!("settling for {:?}", schedule.settle_time),
+    );
     tokio::time::sleep(schedule.settle_time).await;
 
     // Record heartbeat counts after settling
@@ -189,7 +206,11 @@ async fn chaos_random_faults() {
     }
 
     if !failures.is_empty() {
-        let mut report = format!("\n{} of {} chaos round(s) failed:\n", failures.len(), rounds);
+        let mut report = format!(
+            "\n{} of {} chaos round(s) failed:\n",
+            failures.len(),
+            rounds
+        );
         for f in &failures {
             report.push_str(f);
             report.push('\n');
@@ -208,10 +229,11 @@ async fn chaos_sse_stress() {
     let (shutdown_tx, instance_id) = sim_tests::start_sim_daemon(addr).await;
 
     // Wait for SSE connection
-    let connected = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        state.request_count("/api/events") > 0
-    })
-    .await;
+    let connected =
+        sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
+            state.request_count("/api/events") > 0
+        })
+        .await;
     assert!(connected, "daemon should connect to SSE");
 
     // Rapid-fire pushes interleaved with faults
@@ -224,11 +246,19 @@ async fn chaos_sse_stress() {
                     ..Default::default()
                 },
             );
-            timeline.record("test", sim_tests::timeline::EventKind::FaultInjected, "/api/skills → 503");
+            timeline.record(
+                "test",
+                sim_tests::timeline::EventKind::FaultInjected,
+                "/api/skills → 503",
+            );
         }
         if i % 5 == 3 {
             state.clear_faults();
-            timeline.record("test", sim_tests::timeline::EventKind::FaultCleared, "all faults cleared");
+            timeline.record(
+                "test",
+                sim_tests::timeline::EventKind::FaultCleared,
+                "all faults cleared",
+            );
         }
 
         state.push(mac_mgmt_common::PushEvent::SyncSkills);
@@ -271,10 +301,11 @@ async fn chaos_sustained_heartbeat_fault() {
     let (shutdown_tx, instance_id) = sim_tests::start_sim_daemon(addr).await;
 
     // Wait for initial heartbeat
-    let got_initial = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        !state.heartbeats_from(&instance_id).is_empty()
-    })
-    .await;
+    let got_initial =
+        sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
+            !state.heartbeats_from(&instance_id).is_empty()
+        })
+        .await;
     assert!(got_initial, "should get initial heartbeat");
 
     // Sustained fault on heartbeat for 5 seconds
@@ -285,7 +316,11 @@ async fn chaos_sustained_heartbeat_fault() {
             ..Default::default()
         },
     );
-    timeline.record("test", sim_tests::timeline::EventKind::FaultInjected, "/api/heartbeat → 500 for 5s");
+    timeline.record(
+        "test",
+        sim_tests::timeline::EventKind::FaultInjected,
+        "/api/heartbeat → 500 for 5s",
+    );
 
     let count_before = state.heartbeats_from(&instance_id).len();
     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -299,14 +334,19 @@ async fn chaos_sustained_heartbeat_fault() {
 
     // Clear fault
     state.clear_faults();
-    timeline.record("test", sim_tests::timeline::EventKind::FaultCleared, "heartbeat fault cleared");
+    timeline.record(
+        "test",
+        sim_tests::timeline::EventKind::FaultCleared,
+        "heartbeat fault cleared",
+    );
 
     // Heartbeats should resume
     state.clear_heartbeats();
-    let recovered = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
-        !state.heartbeats_from(&instance_id).is_empty()
-    })
-    .await;
+    let recovered =
+        sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+            !state.heartbeats_from(&instance_id).is_empty()
+        })
+        .await;
 
     if !recovered {
         panic!(
@@ -316,10 +356,10 @@ async fn chaos_sustained_heartbeat_fault() {
     }
 
     // Check invariants on recovered heartbeats
-    let violations =
-        sim_tests::invariants::check_all(&state, &[instance_id.clone()], &timeline);
+    let violations = sim_tests::invariants::check_all(&state, &[instance_id.clone()], &timeline);
     assert_eq!(
-        violations, 0,
+        violations,
+        0,
         "invariant violations after recovery:\n{}",
         timeline.format_violations()
     );

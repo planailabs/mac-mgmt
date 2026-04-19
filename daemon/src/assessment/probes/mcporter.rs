@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::process::Command;
 
-use super::{timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{Probe, ProbeCtx, ProbeKind, ProbeResult, timed};
 
 pub struct McPorterProbe;
 
@@ -40,7 +40,11 @@ async fn run_impl(ctx: &ProbeCtx) -> Result<ProbeResult> {
 
     Ok(ProbeResult {
         ok: out.status.success(),
-        error_class: if out.status.success() { None } else { Some("error".into()) },
+        error_class: if out.status.success() {
+            None
+        } else {
+            Some("error".into())
+        },
         error_detail: if out.status.success() {
             None
         } else {

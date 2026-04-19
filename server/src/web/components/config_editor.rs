@@ -1,9 +1,9 @@
 use dioxus::prelude::*;
 
+use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 use crate::models::ClusterConfig;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
-use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 
 #[server]
 async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>, ServerFnError> {
@@ -12,7 +12,11 @@ async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>,
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -43,7 +47,11 @@ async fn save_config(cluster_id: String, config_json: String) -> Result<(), Serv
     let uuid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.writable_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -62,8 +70,7 @@ async fn save_config(cluster_id: String, config_json: String) -> Result<(), Serv
 async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
     let _user = current_user().await?;
     let schema = schemars::schema_for!(mac_mgmt_common::ClusterConfig);
-    let value = serde_json::to_value(&schema)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let value = serde_json::to_value(&schema).map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(value)
 }
 
@@ -187,7 +194,8 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
 /// Renders structured form sections from JSON Schema, keeping the JSON signal in sync.
 #[component]
 fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Element {
-    let mut form_values: Signal<serde_json::Value> = use_signal(|| serde_json::Value::Object(Default::default()));
+    let mut form_values: Signal<serde_json::Value> =
+        use_signal(|| serde_json::Value::Object(Default::default()));
     let extra_config_open = use_signal(|| false);
 
     // Keep form_values in sync when json_text changes (e.g. after config loads)
@@ -285,10 +293,7 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
 
 /// Resolve a `$ref` pointer in the schema, including `anyOf` wrappers
 /// from `Option<T>` which schemars generates as `anyOf: [{$ref: ...}, {type: "null"}]`.
-fn resolve_ref(
-    schema: &serde_json::Value,
-    defs: &serde_json::Value,
-) -> serde_json::Value {
+fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_json::Value {
     // Direct $ref
     if let Some(r) = schema.get("$ref").and_then(|r| r.as_str()) {
         if let Some(type_name) = r.strip_prefix("#/$defs/") {
@@ -889,10 +894,7 @@ fn render_object_array_entry(
 }
 
 /// Build a default JSON object from a schema (one level deep, for "add entry").
-fn build_default_object(
-    schema: &serde_json::Value,
-    defs: &serde_json::Value,
-) -> serde_json::Value {
+fn build_default_object(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
     if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
         for (key, prop_schema) in props {
@@ -905,7 +907,9 @@ fn build_default_object(
                     .and_then(|t| t.as_str())
                     .unwrap_or("string");
                 match field_type {
-                    "boolean" => { obj.insert(key.clone(), serde_json::Value::Bool(true)); }
+                    "boolean" => {
+                        obj.insert(key.clone(), serde_json::Value::Bool(true));
+                    }
                     "string" => {}
                     _ => {}
                 }

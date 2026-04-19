@@ -226,8 +226,16 @@ fn render_detail(d: &FleetDetailData) -> Element {
         .map(|t| t.format("%Y-%m-%d %H:%M").to_string());
 
     let sample_rows = d.sample.as_ref().map(build_sample_rows).unwrap_or_default();
-    let inventory_rows = d.inventory.as_ref().map(build_inventory_rows).unwrap_or_default();
-    let security_rows = d.security.as_ref().map(build_security_rows).unwrap_or_default();
+    let inventory_rows = d
+        .inventory
+        .as_ref()
+        .map(build_inventory_rows)
+        .unwrap_or_default();
+    let security_rows = d
+        .security
+        .as_ref()
+        .map(build_security_rows)
+        .unwrap_or_default();
     let disks = d
         .sample
         .as_ref()
@@ -256,9 +264,14 @@ fn render_detail(d: &FleetDetailData) -> Element {
             arr.iter()
                 .map(|s| {
                     (
-                        s.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+                        s.get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                            .to_string(),
                         s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false),
-                        s.get("upgrade_pending").and_then(|v| v.as_bool()).unwrap_or(false),
+                        s.get("upgrade_pending")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
                         s.get("busy").and_then(|v| v.as_bool()).unwrap_or(false),
                     )
                 })
@@ -755,7 +768,10 @@ fn build_inventory_rows(v: &serde_json::Value) -> Vec<(String, String)> {
     let get_s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(String::from);
     if let Some(os_name) = get_s("os_name") {
         let os_ver = get_s("os_version").unwrap_or_default();
-        rows.push(("OS".into(), format!("{os_name} {os_ver}").trim().to_string()));
+        rows.push((
+            "OS".into(),
+            format!("{os_name} {os_ver}").trim().to_string(),
+        ));
     }
     if let Some(k) = get_s("kernel_version") {
         rows.push(("Kernel".into(), k));
@@ -897,7 +913,9 @@ fn merge_gpu_data(
                     .get("vram_total_bytes")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0),
-                vram_used_bytes: s.and_then(|s| s.get("vram_used_bytes")).and_then(|v| v.as_u64()),
+                vram_used_bytes: s
+                    .and_then(|s| s.get("vram_used_bytes"))
+                    .and_then(|v| v.as_u64()),
                 utilization_pct: s
                     .and_then(|s| s.get("utilization_pct"))
                     .and_then(|v| v.as_u64())

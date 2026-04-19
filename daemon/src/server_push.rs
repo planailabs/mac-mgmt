@@ -55,12 +55,10 @@ async fn connect_sse(url: &str, cmd_tx: &mpsc::Sender<PushCommand>) -> anyhow::R
     // for 90s the connection is likely dead.
     let mut buffer = String::new();
 
-    while let Some(chunk) = tokio::time::timeout(
-        Duration::from_secs(90),
-        resp.chunk(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("SSE read timeout (no data for 90s)"))?? {
+    while let Some(chunk) = tokio::time::timeout(Duration::from_secs(90), resp.chunk())
+        .await
+        .map_err(|_| anyhow::anyhow!("SSE read timeout (no data for 90s)"))??
+    {
         let text = String::from_utf8_lossy(&chunk);
         buffer.push_str(&text);
 

@@ -17,9 +17,7 @@ pub struct ShellContext {
 // ── Server function ─────────────────────────────────────────────────────
 
 #[server]
-pub async fn get_shell_context(
-    instance_id: String,
-) -> Result<ShellContext, ServerFnError> {
+pub async fn get_shell_context(instance_id: String) -> Result<ShellContext, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
 
@@ -69,11 +67,7 @@ pub async fn get_shell_context(
         instance_id.clone()
     };
 
-    let commands = hb
-        .shell_tunnels
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let commands = hb.shell_tunnels.as_array().cloned().unwrap_or_default();
 
     Ok(ShellContext {
         relay_url,
@@ -86,7 +80,11 @@ pub async fn get_shell_context(
 // ── Client-side helpers ──────────────────────────────────────────────────
 
 fn build_relay_shell_url(relay_url: &str, instance_prefix: &str, command_name: &str) -> String {
-    let scheme = if relay_url.starts_with("https://") { "https://" } else { "http://" };
+    let scheme = if relay_url.starts_with("https://") {
+        "https://"
+    } else {
+        "http://"
+    };
     let relay_host = relay_url
         .trim_start_matches("https://")
         .trim_start_matches("http://");

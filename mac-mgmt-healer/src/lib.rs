@@ -5,8 +5,8 @@ pub mod session;
 pub mod settings_tools;
 pub mod tools;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -110,8 +110,8 @@ impl HealerState {
         }
 
         // 1. Build initial issues snapshot
-        let initial_issues = serde_json::to_value(&req.services_extended)
-            .unwrap_or_else(|_| json!([]));
+        let initial_issues =
+            serde_json::to_value(&req.services_extended).unwrap_or_else(|_| json!([]));
 
         let state_data = json!({
             "relay_url": req.relay_url,
@@ -200,9 +200,7 @@ impl HealerState {
                 .flatten()
                 .map(|s| s.state.as_str().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            let _ = events_tx.send(HealerEvent::Done {
-                state: final_state,
-            });
+            let _ = events_tx.send(HealerEvent::Done { state: final_state });
         });
 
         Ok(session_id)
@@ -362,9 +360,7 @@ impl HealerState {
                 .flatten()
                 .map(|s| s.state.as_str().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-            let _ = events_tx.send(HealerEvent::Done {
-                state: final_state,
-            });
+            let _ = events_tx.send(HealerEvent::Done { state: final_state });
         });
 
         Ok(())
@@ -561,7 +557,9 @@ async fn run_agent_session(
         .unwrap_or_default();
 
     let resume_context = if restored_history.is_some() {
-        Some("This session has been resumed from a previous checkpoint. The conversation history above contains your previous work. Continue from where you left off.")
+        Some(
+            "This session has been resumed from a previous checkpoint. The conversation history above contains your previous work. Continue from where you left off.",
+        )
     } else {
         None
     };
@@ -587,7 +585,9 @@ async fn run_agent_session(
         let data = data.clone();
         let new_state = new_state.clone();
         async move {
-            session::store::transition_state(&pool, session_id, &new_state, &data).await.ok();
+            session::store::transition_state(&pool, session_id, &new_state, &data)
+                .await
+                .ok();
             let _ = events_tx.send(HealerEvent::State {
                 state: state_str,
                 state_data: data,
@@ -624,30 +624,46 @@ async fn run_agent_session(
 
         // Set LLM provider
         match &llm.provider {
-            connector::LlmProvider::Ollama(o) => { builder.llm(o); }
-            connector::LlmProvider::Anthropic(a) => { builder.llm(a); }
+            connector::LlmProvider::Ollama(o) => {
+                builder.llm(o);
+            }
+            connector::LlmProvider::Anthropic(a) => {
+                builder.llm(a);
+            }
         }
 
         // Extract role/content from ChatMessage enum for persistence
         /// Extract role/content from ChatMessage. Returns None for ToolOutput
         /// (handled by before_tool/after_tool hooks to avoid duplicates).
-        fn extract_role_content(msg: &swiftide::chat_completion::ChatMessage) -> Option<(String, String)> {
+        fn extract_role_content(
+            msg: &swiftide::chat_completion::ChatMessage,
+        ) -> Option<(String, String)> {
             match msg {
-                swiftide::chat_completion::ChatMessage::System(s) => Some(("system".to_string(), s.clone())),
-                swiftide::chat_completion::ChatMessage::User(s) => Some(("user".to_string(), s.clone())),
+                swiftide::chat_completion::ChatMessage::System(s) => {
+                    Some(("system".to_string(), s.clone()))
+                }
+                swiftide::chat_completion::ChatMessage::User(s) => {
+                    Some(("user".to_string(), s.clone()))
+                }
                 swiftide::chat_completion::ChatMessage::Assistant(s, tool_calls) => {
                     let mut content = s.clone().unwrap_or_default();
                     // Include tool call names in the assistant message for visibility
                     if let Some(calls) = tool_calls {
                         if !calls.is_empty() && content.is_empty() {
-                            content = calls.iter().map(|tc| format!("`{}`", tc.name())).collect::<Vec<_>>().join(", ");
+                            content = calls
+                                .iter()
+                                .map(|tc| format!("`{}`", tc.name()))
+                                .collect::<Vec<_>>()
+                                .join(", ");
                         }
                     }
                     Some(("assistant".to_string(), content))
                 }
                 // Skip ToolOutput — persisted by after_tool hook
                 swiftide::chat_completion::ChatMessage::ToolOutput(_, _) => None,
-                swiftide::chat_completion::ChatMessage::Summary(s) => Some(("summary".to_string(), s.clone())),
+                swiftide::chat_completion::ChatMessage::Summary(s) => {
+                    Some(("summary".to_string(), s.clone()))
+                }
             }
         }
 
@@ -679,15 +695,9 @@ async fn run_agent_session(
                         return Ok(());
                     }
                     // Persist message
-                    session::store::append_message(
-                        &pool,
-                        session_id,
-                        &role,
-                        &content,
-                        None,
-                    )
-                    .await
-                    .ok();
+                    session::store::append_message(&pool, session_id, &role, &content, None)
+                        .await
+                        .ok();
 
                     // Broadcast to SSE subscribers
                     let _ = events_tx.send(HealerEvent::Message {
@@ -747,8 +757,14 @@ async fn run_agent_session(
                         "status": status,
                     });
                     session::store::append_message(
-                        &pool, session_id, "tool_result", &content, Some(&metadata),
-                    ).await.ok();
+                        &pool,
+                        session_id,
+                        "tool_result",
+                        &content,
+                        Some(&metadata),
+                    )
+                    .await
+                    .ok();
                     let _ = events_tx.send(HealerEvent::Message {
                         role: "tool_result".to_string(),
                         content,
@@ -852,7 +868,10 @@ async fn run_agent_session(
     };
 
     // Run the agent
-    agent.query(initial_prompt).await.context("agent query failed")?;
+    agent
+        .query(initial_prompt)
+        .await
+        .context("agent query failed")?;
 
     // Mark completed
     session::store::transition_state(

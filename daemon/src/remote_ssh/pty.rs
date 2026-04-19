@@ -8,15 +8,19 @@ pub struct PtyPair {
     pub child: Child,
 }
 
-pub fn spawn_shell(
-    cols: u32,
-    rows: u32,
-    term: &str,
-) -> Result<PtyPair> {
+pub fn spawn_shell(cols: u32, rows: u32, term: &str) -> Result<PtyPair> {
     let mut master: RawFd = 0;
     let mut slave: RawFd = 0;
 
-    let ret = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+    let ret = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
     if ret != 0 {
         return Err(std::io::Error::last_os_error()).context("openpty failed");
     }
@@ -60,7 +64,10 @@ pub fn spawn_shell(
     // Close slave FD in parent — child owns it now
     unsafe { libc::close(slave) };
 
-    Ok(PtyPair { master_fd: master, child })
+    Ok(PtyPair {
+        master_fd: master,
+        child,
+    })
 }
 
 pub fn resize(master_fd: RawFd, cols: u32, rows: u32) {

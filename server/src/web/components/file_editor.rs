@@ -74,11 +74,7 @@ pub async fn get_file_editor_context(
         instance_id.clone()
     };
 
-    let file_tunnels = hb
-        .file_tunnels
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let file_tunnels = hb.file_tunnels.as_array().cloned().unwrap_or_default();
 
     Ok(FileEditorContext {
         relay_url,
@@ -91,8 +87,17 @@ pub async fn get_file_editor_context(
 
 // ── Client-side relay calls via JS fetch ────────────────────────────────
 
-fn build_relay_file_url(relay_url: &str, instance_prefix: &str, tunnel_name: &str, suffix: &str) -> String {
-    let scheme = if relay_url.starts_with("https://") { "https://" } else { "http://" };
+fn build_relay_file_url(
+    relay_url: &str,
+    instance_prefix: &str,
+    tunnel_name: &str,
+    suffix: &str,
+) -> String {
+    let scheme = if relay_url.starts_with("https://") {
+        "https://"
+    } else {
+        "http://"
+    };
     let relay_host = relay_url
         .trim_start_matches("https://")
         .trim_start_matches("http://");
@@ -200,7 +205,10 @@ async fn relay_file_write(
     if !query_parts.is_empty() {
         url = format!("{url}?{}", query_parts.join("&"));
     }
-    let escaped = content.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+    let escaped = content
+        .replace('\\', "\\\\")
+        .replace('`', "\\`")
+        .replace('$', "\\$");
     let js = format!(
         r#"
         const resp = await fetch("{url}", {{
@@ -288,9 +296,16 @@ pub fn FleetFiles(instance_id: String) -> Element {
                 editor_loading.set(true);
                 save_status.set(None);
                 match relay_file_write(
-                    &ru, &tok, &prefix, &tunnel_name,
-                    path.as_deref(), &content, Some(mtime),
-                ).await {
+                    &ru,
+                    &tok,
+                    &prefix,
+                    &tunnel_name,
+                    path.as_deref(),
+                    &content,
+                    Some(mtime),
+                )
+                .await
+                {
                     Ok(result) => {
                         let status = result["status"].as_u64().unwrap_or(500);
                         if status == 200 {
@@ -300,7 +315,9 @@ pub fn FleetFiles(instance_id: String) -> Element {
                             editor_dirty.set(false);
                             save_status.set(Some("Saved".into()));
                         } else if status == 409 {
-                            save_status.set(Some("Conflict: file changed on disk. Reload and retry.".into()));
+                            save_status.set(Some(
+                                "Conflict: file changed on disk. Reload and retry.".into(),
+                            ));
                         } else {
                             let err = result["error"].as_str().unwrap_or("Save failed");
                             save_status.set(Some(err.to_string()));

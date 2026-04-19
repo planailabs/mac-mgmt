@@ -15,10 +15,11 @@ async fn list_mcp_bundles() -> Result<Vec<McpServerBundle>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let bundles = sqlx::query_as::<_, McpServerBundle>("SELECT * FROM mcp_server_bundles ORDER BY slug")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let bundles =
+        sqlx::query_as::<_, McpServerBundle>("SELECT * FROM mcp_server_bundles ORDER BY slug")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(bundles)
 }
 

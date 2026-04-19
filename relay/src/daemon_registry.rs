@@ -75,7 +75,10 @@ pub enum ControlMsg {
 #[derive(Debug)]
 pub enum ProxyStreamEvent {
     /// Response headers (first event).
-    Headers { status: u16, headers: Vec<(String, String)> },
+    Headers {
+        status: u16,
+        headers: Vec<(String, String)>,
+    },
     /// Body chunk (base64-decoded by the relay).
     BodyChunk(Vec<u8>),
     /// Response complete.
@@ -166,14 +169,18 @@ pub struct DaemonRegistry {
 }
 
 impl DaemonRegistry {
-    pub fn new(port_min: u16, port_max: u16, max_daemons: usize, data_dir: &std::path::Path) -> Self {
+    pub fn new(
+        port_min: u16,
+        port_max: u16,
+        max_daemons: usize,
+        data_dir: &std::path::Path,
+    ) -> Self {
         let reservations_path = data_dir.join("port_reservations.json");
 
         // Load existing reservations from disk.
         let (reservations, used_ports) = match std::fs::read_to_string(&reservations_path) {
             Ok(contents) => {
-                let file: ReservationsFile =
-                    serde_json::from_str(&contents).unwrap_or_default();
+                let file: ReservationsFile = serde_json::from_str(&contents).unwrap_or_default();
                 let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
                 let valid: HashMap<String, PortReservation> = file
                     .reservations
@@ -284,7 +291,9 @@ impl DaemonRegistry {
                 reserved_at: Utc::now(),
             },
         );
-        tracing::info!("reserved port {port} for {instance_id} (up to {RESERVATION_TTL_DAYS} days)");
+        tracing::info!(
+            "reserved port {port} for {instance_id} (up to {RESERVATION_TTL_DAYS} days)"
+        );
         self.save_reservations();
     }
 
@@ -295,7 +304,15 @@ impl DaemonRegistry {
         let file = ReservationsFile {
             reservations: reservations
                 .iter()
-                .map(|(k, v)| (k.clone(), PortReservation { port: v.port, reserved_at: v.reserved_at }))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        PortReservation {
+                            port: v.port,
+                            reserved_at: v.reserved_at,
+                        },
+                    )
+                })
                 .collect(),
         };
         match serde_json::to_string_pretty(&file) {
@@ -354,7 +371,10 @@ impl DaemonRegistry {
         // Save/refresh the reservation so the port survives future disconnects.
         self.reserve_port(&id, port);
         daemons.insert(id.clone(), conn);
-        tracing::info!("registered daemon {id} on port {port} (total: {})", daemons.len());
+        tracing::info!(
+            "registered daemon {id} on port {port} (total: {})",
+            daemons.len()
+        );
     }
 
     pub fn unregister(&self, instance_id: &str) {
@@ -363,7 +383,10 @@ impl DaemonRegistry {
             conn.listener_handle.abort();
             // Reserve the port instead of releasing it.
             self.reserve_port(instance_id, conn.ssh_port);
-            tracing::info!("unregistered daemon {instance_id} (remaining: {})", daemons.len());
+            tracing::info!(
+                "unregistered daemon {instance_id} (remaining: {})",
+                daemons.len()
+            );
         } else {
             tracing::debug!("unregister called for unknown daemon {instance_id}");
         }
@@ -403,7 +426,10 @@ impl DaemonRegistry {
         if let Some(d) = daemons.get_mut(instance_id) {
             let count = tunnels.len().min(100);
             if tunnels.len() > 100 {
-                tracing::warn!("daemon {instance_id} advertised {} tunnels, capping to 100", tunnels.len());
+                tracing::warn!(
+                    "daemon {instance_id} advertised {} tunnels, capping to 100",
+                    tunnels.len()
+                );
             }
             tracing::info!("daemon {instance_id} advertised {count} tunnel(s)");
             d.tunnels = tunnels.into_iter().take(100).collect();

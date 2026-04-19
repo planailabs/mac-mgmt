@@ -53,9 +53,7 @@ impl ManagedService for RocmSmi {
                 );
             }
             Ok(false) => {
-                tracing::info!(
-                    "rocm-smi: no AMD hardware detected (via lspci), skipping install"
-                );
+                tracing::info!("rocm-smi: no AMD hardware detected (via lspci), skipping install");
                 return Ok(());
             }
             Err(e) => {

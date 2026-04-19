@@ -161,7 +161,10 @@ fn nvidia_inventory() -> Vec<GpuInfo> {
                     "nvidia-smi",
                     "inventory/memory-total",
                     &stdout,
-                    &format!("line {lineno}: can't parse memory.total {:?}: {e}", parts[1]),
+                    &format!(
+                        "line {lineno}: can't parse memory.total {:?}: {e}",
+                        parts[1]
+                    ),
                 );
                 continue;
             }
@@ -223,7 +226,11 @@ fn nvidia_sample() -> Vec<GpuSample> {
         samples.push(GpuSample {
             index: 0,
             utilization_pct: parts.first().copied().and_then(parse_u8),
-            vram_used_bytes: parts.get(1).copied().and_then(parse_u64).map(|m| m * 1024 * 1024),
+            vram_used_bytes: parts
+                .get(1)
+                .copied()
+                .and_then(parse_u64)
+                .map(|m| m * 1024 * 1024),
             temperature_c: parts.get(2).copied().and_then(parse_i32),
             power_watts: parts.get(3).copied().and_then(parse_f32),
         });
@@ -284,8 +291,8 @@ fn parse_rocm_json_inventory(json: &str) -> Vec<GpuInfo> {
 }
 
 fn parse_rocm_json_inventory_checked(json: &str) -> Result<Vec<GpuInfo>, String> {
-    let v: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| format!("invalid JSON: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("invalid JSON: {e}"))?;
     let obj = v
         .as_object()
         .ok_or_else(|| format!("expected JSON object, got {:?}", type_of(&v)))?;
@@ -310,7 +317,10 @@ fn parse_rocm_json_inventory_checked(json: &str) -> Result<Vec<GpuInfo>, String>
             .get("Driver version")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let pci_bus_id = fields.get("PCI Bus").and_then(|v| v.as_str()).map(String::from);
+        let pci_bus_id = fields
+            .get("PCI Bus")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         tracing::debug!("rocm-smi parsed {card}: vram={vram_total}B driver={driver_version:?}");
         out.push(GpuInfo {
             index: 0,
@@ -351,8 +361,8 @@ fn parse_rocm_json_sample(json: &str) -> Vec<GpuSample> {
 }
 
 fn parse_rocm_json_sample_checked(json: &str) -> Result<Vec<GpuSample>, String> {
-    let v: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| format!("invalid JSON: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("invalid JSON: {e}"))?;
     let obj = v
         .as_object()
         .ok_or_else(|| format!("expected JSON object, got {:?}", type_of(&v)))?;
@@ -367,11 +377,8 @@ fn parse_rocm_json_sample_checked(json: &str) -> Result<Vec<GpuSample>, String> 
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<u64>().ok());
         // rocm-smi emits "Temperature (Sensor edge) (C)" etc; pick the first temp field.
-        let temperature_c = fields
-            .as_object()
-            .into_iter()
-            .flatten()
-            .find_map(|(k, v): (&String, &serde_json::Value)| {
+        let temperature_c = fields.as_object().into_iter().flatten().find_map(
+            |(k, v): (&String, &serde_json::Value)| {
                 if k.starts_with("Temperature (Sensor") && k.ends_with("(C)") {
                     v.as_str()
                         .and_then(|s| s.parse::<f32>().ok())
@@ -379,7 +386,8 @@ fn parse_rocm_json_sample_checked(json: &str) -> Result<Vec<GpuSample>, String> 
                 } else {
                     None
                 }
-            });
+            },
+        );
         let power_watts = fields
             .get("Average Graphics Package Power (W)")
             .or_else(|| fields.get("Current Socket Graphics Package Power (W)"))
@@ -458,11 +466,7 @@ fn apple_inventory() -> Vec<GpuInfo> {
                 Err(e) => {
                     sentry_ext::capture_error(
                         "gpu: unrecognised macOS VRAM format",
-                        &[
-                            ("raw", raw),
-                            ("detail", &e),
-                            ("gpu_name", name.as_str()),
-                        ],
+                        &[("raw", raw), ("detail", &e), ("gpu_name", name.as_str())],
                     );
                     0
                 }

@@ -59,7 +59,9 @@ pub struct ServiceStatus {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
     Ok,
-    Error { message: String },
+    Error {
+        message: String,
+    },
     Services {
         #[serde(default)]
         statuses: Vec<ServiceStatus>,
@@ -85,9 +87,16 @@ impl Response {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Notification {
     /// A managed child exited; the supervisor will respawn it.
-    Crashed { name: String, exit_code: Option<i32> },
+    Crashed {
+        name: String,
+        exit_code: Option<i32>,
+    },
     /// A line of stdout/stderr from a managed child.
-    Log { name: String, line: String, is_stderr: bool },
+    Log {
+        name: String,
+        line: String,
+        is_stderr: bool,
+    },
 }
 
 /// Wire envelope — every line on the socket is one of these.

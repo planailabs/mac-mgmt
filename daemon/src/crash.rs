@@ -19,7 +19,9 @@ pub fn init(environment: &'static str) -> sentry::ClientInitGuard {
     panic::set_hook(Box::new(move |info| {
         // Report to Sentry
         sentry::integrations::panic::panic_handler(info);
-        sentry::Hub::current().client().map(|c| c.flush(Some(std::time::Duration::from_secs(5))));
+        sentry::Hub::current()
+            .client()
+            .map(|c| c.flush(Some(std::time::Duration::from_secs(5))));
 
         #[cfg(feature = "self-update")]
         {

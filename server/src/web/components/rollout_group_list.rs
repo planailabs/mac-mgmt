@@ -17,8 +17,7 @@ struct GroupEntry {
 
 impl Searchable for GroupEntry {
     fn matches_search(&self, query: &str) -> bool {
-        self.name.to_lowercase().contains(query)
-            || self.description.to_lowercase().contains(query)
+        self.name.to_lowercase().contains(query) || self.description.to_lowercase().contains(query)
     }
 }
 
@@ -29,21 +28,32 @@ async fn get_rollout_groups() -> Result<Vec<GroupEntry>, ServerFnError> {
     let pool = crate::server_pool()?;
 
     #[derive(sqlx::FromRow)]
-    struct Row { id: Uuid, name: String, description: String, member_count: i64 }
+    struct Row {
+        id: Uuid,
+        name: String,
+        description: String,
+        member_count: i64,
+    }
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT rg.id, rg.name, rg.description, COUNT(rgm.id) AS member_count \
          FROM rollout_groups rg LEFT JOIN rollout_group_members rgm ON rgm.group_id = rg.id \
          WHERE rg.id != '00000000-0000-0000-0000-000000000000'::uuid \
-         GROUP BY rg.id ORDER BY rg.name"
+         GROUP BY rg.id ORDER BY rg.name",
     )
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|r| GroupEntry {
-        id: r.id, name: r.name, description: r.description, member_count: r.member_count,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| GroupEntry {
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            member_count: r.member_count,
+        })
+        .collect())
 }
 
 #[server]
@@ -173,7 +183,9 @@ pub fn RolloutGroupList() -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+        Some(Err(e)) => {
+            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } }
+        }
         None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
     }
 }

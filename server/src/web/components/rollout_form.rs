@@ -96,9 +96,7 @@ async fn create_rollout(
     if let Some(c) = &nixpkgs_commit {
         let valid = (7..=40).contains(&c.len()) && c.chars().all(|ch| ch.is_ascii_hexdigit());
         if !valid {
-            return Err(ServerFnError::new(
-                "nixpkgs commit must be 7-40 hex chars",
-            ));
+            return Err(ServerFnError::new("nixpkgs commit must be 7-40 hex chars"));
         }
     }
 

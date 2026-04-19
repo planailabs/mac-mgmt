@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 
@@ -156,12 +156,10 @@ async fn check_ollama(url: &str, model: &str) -> OllamaStatus {
                 // Model names can be "qwen3:latest" or just "qwen3" — match the base name
                 let base = model.split(':').next().unwrap_or(model);
                 models.iter().any(|m| {
-                    m.get("name")
-                        .and_then(|n| n.as_str())
-                        .is_some_and(|n| {
-                            let n_base = n.split(':').next().unwrap_or(n);
-                            n_base == base || n == model
-                        })
+                    m.get("name").and_then(|n| n.as_str()).is_some_and(|n| {
+                        let n_base = n.split(':').next().unwrap_or(n);
+                        n_base == base || n == model
+                    })
                 })
             } else {
                 false

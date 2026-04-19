@@ -39,7 +39,9 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
     let pool = crate::server_pool()?;
     let cfg = crate::config::config();
 
-    let xzar = cfg.xzar.as_ref()
+    let xzar = cfg
+        .xzar
+        .as_ref()
         .ok_or_else(|| ServerFnError::new("xzar not configured".to_string()))?;
     let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
@@ -78,13 +80,11 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
         }
 
         // Get the skill id
-        let skill_id = sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT id FROM skills WHERE slug = $1",
-        )
-        .bind(slug)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let skill_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM skills WHERE slug = $1")
+            .bind(slug)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         // Upsert channel
         let ch_inserted = sqlx::query_scalar::<_, bool>(
@@ -104,7 +104,8 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
     }
 
     // Collect the set of valid (slug, channel) pairs from xzar
-    let mut valid_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut valid_pairs: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     for pin in &pins {
         if pin.abandoned || pin.roots.is_empty() {
             continue;

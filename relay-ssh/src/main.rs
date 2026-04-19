@@ -1,11 +1,15 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "relay-ssh", version, about = "SSH into mac-mgmt managed machines via relay")]
+#[command(
+    name = "relay-ssh",
+    version,
+    about = "SSH into mac-mgmt managed machines via relay"
+)]
 struct Cli {
     /// Instance ID or prefix to connect to
     instance_id: Option<String>,

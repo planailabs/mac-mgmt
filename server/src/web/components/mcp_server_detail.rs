@@ -16,7 +16,9 @@ async fn get_mcp_server(id: String) -> Result<McpServer, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query_as::<_, McpServer>("SELECT * FROM mcp_servers WHERE id = $1")
         .bind(uuid)
         .fetch_one(&pool)
@@ -42,7 +44,9 @@ async fn upsert_mcp_server(
         .map_err(|e| ServerFnError::new(format!("schema validation failed: {e}")))?;
 
     if let Some(id) = id {
-        let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+        let uuid: uuid::Uuid = id
+            .parse()
+            .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
         sqlx::query_as::<_, McpServer>(
             "UPDATE mcp_servers SET name = $1, description = $2, config_json = $3, hide_from_public_catalog = $4 WHERE id = $5 RETURNING *",
         )
@@ -74,7 +78,9 @@ async fn add_nix_package(id: String, package: String) -> Result<(), ServerFnErro
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let pkg = package.trim().to_string();
     if pkg.is_empty() {
         return Err(ServerFnError::new("package name cannot be empty"));
@@ -96,7 +102,9 @@ async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnE
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query(
         "UPDATE mcp_servers SET nix_packages = array_remove(nix_packages, $1) WHERE id = $2",
     )
@@ -113,7 +121,9 @@ async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Resolve affected clusters BEFORE the delete — the cascade will wipe
     // both direct assignments and bundle memberships, so a post-delete query
     // would find nothing.
@@ -138,7 +148,9 @@ async fn list_dependent_skills(mcp_server_id: String) -> Result<Vec<SkillDepRow>
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = mcp_server_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -160,11 +172,14 @@ async fn list_dependent_skills(mcp_server_id: String) -> Result<Vec<SkillDepRow>
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|r| SkillDepRow {
-        skill_slug: r.skill_slug,
-        channel: r.channel,
-        skill_id: r.skill_id.to_string(),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| SkillDepRow {
+            skill_slug: r.skill_slug,
+            channel: r.channel,
+            skill_id: r.skill_id.to_string(),
+        })
+        .collect())
 }
 
 // ── Shared form fields component ─────────────────────────────────────

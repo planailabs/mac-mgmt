@@ -27,10 +27,7 @@ impl Default for HealthGateInput {
             min_heartbeat_fresh_pct: 95,
             heartbeat_freshness_secs: 180,
             grace_period_secs: 600,
-            probe_thresholds: vec![
-                ("openclaw".into(), 90),
-                ("ollama".into(), 90),
-            ],
+            probe_thresholds: vec![("openclaw".into(), 90), ("ollama".into(), 90)],
         }
     }
 }

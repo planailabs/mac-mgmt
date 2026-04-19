@@ -363,10 +363,7 @@ impl HistogramAcc {
         if let Some(sum) = self.sample_sum {
             histogram.set_sample_sum(sum);
         }
-        let count = self
-            .sample_count
-            .or(inf_count)
-            .unwrap_or(max_count);
+        let count = self.sample_count.or(inf_count).unwrap_or(max_count);
         histogram.set_sample_count(count);
 
         let mut metric = Metric::from_label(label_pairs(&self.labels));
@@ -502,7 +499,10 @@ rpc_duration_seconds_count 2693
         assert!(out.contains("quantile=\"0.99\""));
         assert!(out.contains("rpc_duration_seconds_sum{"));
         assert!(out.contains("rpc_duration_seconds_count{"));
-        for line in out.lines().filter(|l| l.starts_with("rpc_duration_seconds")) {
+        for line in out
+            .lines()
+            .filter(|l| l.starts_with("rpc_duration_seconds"))
+        {
             assert!(line.contains("instance_id=\"i\""));
             assert!(line.contains("cluster_id=\"c\""));
         }
@@ -528,15 +528,11 @@ rpc_duration_seconds_count 2693
             ],
             1.0,
         );
-        push_gauge_strs(
-            &mut families,
-            "mac_mgmt_relay_scrape_targets",
-            &[],
-            3.0,
-        );
-        let out =
-            String::from_utf8(encode_families(&families.into_values().collect::<Vec<_>>()).unwrap())
-                .unwrap();
+        push_gauge_strs(&mut families, "mac_mgmt_relay_scrape_targets", &[], 3.0);
+        let out = String::from_utf8(
+            encode_families(&families.into_values().collect::<Vec<_>>()).unwrap(),
+        )
+        .unwrap();
         assert!(out.contains("mac_mgmt_relay_scrape_up{"));
         assert!(out.contains("instance_id=\"abc\""));
         assert!(out.contains("mac_mgmt_relay_scrape_targets 3"));

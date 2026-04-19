@@ -506,16 +506,22 @@ fn default_log_level() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonSettings {
-    #[schemars(description = "How often to check for updates, sync skills and MCP servers (e.g. \"30s\", \"5m\", \"1h\")")]
+    #[schemars(
+        description = "How often to check for updates, sync skills and MCP servers (e.g. \"30s\", \"5m\", \"1h\")"
+    )]
     #[serde(default = "default_update_interval")]
     pub update_interval: String,
-    #[schemars(description = "How often to run health checks on managed services (e.g. \"1m\", \"30s\")")]
+    #[schemars(
+        description = "How often to run health checks on managed services (e.g. \"1m\", \"30s\")"
+    )]
     #[serde(default = "default_health_interval")]
     pub health_interval: String,
     #[schemars(description = "Log verbosity: error, warn, info, debug, or trace")]
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    #[schemars(description = "Time window for upgrades in HH:MM-HH:MM format (e.g. \"02:00-05:00\"). Omit to allow anytime.")]
+    #[schemars(
+        description = "Time window for upgrades in HH:MM-HH:MM format (e.g. \"02:00-05:00\"). Omit to allow anytime."
+    )]
     #[serde(default)]
     pub upgrade_window: Option<String>,
 }
@@ -536,10 +542,14 @@ impl Default for DaemonSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
-    #[schemars(description = "Apprise notification URLs (e.g. tgram://bot/chat, ntfy://host/topic)")]
+    #[schemars(
+        description = "Apprise notification URLs (e.g. tgram://bot/chat, ntfy://host/topic)"
+    )]
     #[serde(default)]
     pub urls: Vec<String>,
-    #[schemars(description = "Which events trigger notifications (omit for all). Options: daemon_started, daemon_stopped, service_crashed, service_unhealthy, service_recovered, upgrade_installed, upgrade_failed")]
+    #[schemars(
+        description = "Which events trigger notifications (omit for all). Options: daemon_started, daemon_stopped, service_crashed, service_unhealthy, service_recovered, upgrade_installed, upgrade_failed"
+    )]
     #[serde(default)]
     pub events: Option<Vec<String>>,
 }
@@ -609,8 +619,6 @@ impl Default for OllamaConfig {
         }
     }
 }
-
-
 
 // ── LM Studio (lms) ────────────────────────────────────────────────────
 
@@ -779,7 +787,9 @@ pub struct OpenClawConfig {
     #[schemars(description = "Telegram bot integration")]
     #[serde(default)]
     pub telegram: Option<OpenClawTelegramConfig>,
-    #[schemars(description = "Arbitrary key-value pairs merged into openclaw.json after typed fields")]
+    #[schemars(
+        description = "Arbitrary key-value pairs merged into openclaw.json after typed fields"
+    )]
     #[serde(default)]
     pub extra_config: Option<serde_json::Value>,
 }
@@ -814,7 +824,9 @@ pub struct OpencodeConfig {
     #[schemars(description = "OpenCode server listen address")]
     #[serde(default = "default_host")]
     pub host: String,
-    #[schemars(description = "Arbitrary key-value pairs merged into the opencode config after typed fields")]
+    #[schemars(
+        description = "Arbitrary key-value pairs merged into the opencode config after typed fields"
+    )]
     #[serde(default)]
     pub extra_config: Option<serde_json::Value>,
 }
@@ -1017,7 +1029,9 @@ impl ClusterConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct RelayConfig {
-    #[schemars(description = "Relay server URL for remote SSH access (e.g. wss://relay.example.com)")]
+    #[schemars(
+        description = "Relay server URL for remote SSH access (e.g. wss://relay.example.com)"
+    )]
     pub url: Option<String>,
     #[schemars(description = "Whether remote SSH access is enabled on startup")]
     #[serde(default)]
@@ -1586,9 +1600,18 @@ upgrade_window = "bogus"
         let schema = schemars::schema_for!(ClusterConfig);
         let json = serde_json::to_string(&schema).unwrap();
         // Spot-check that descriptions made it into the schema
-        assert!(json.contains("Package flavour"), "schema missing flavour description");
-        assert!(json.contains("Models to pull"), "schema missing models description");
-        assert!(json.contains("Default LLM backend"), "schema missing default_llm description");
+        assert!(
+            json.contains("Package flavour"),
+            "schema missing flavour description"
+        );
+        assert!(
+            json.contains("Models to pull"),
+            "schema missing models description"
+        );
+        assert!(
+            json.contains("Default LLM backend"),
+            "schema missing default_llm description"
+        );
     }
 }
 

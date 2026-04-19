@@ -8,7 +8,11 @@ use crate::web::components::generate_button::GenerateButton;
 use crate::web::user::current_user;
 
 #[server]
-async fn create_bundle(slug: String, name: String, description: String) -> Result<Bundle, ServerFnError> {
+async fn create_bundle(
+    slug: String,
+    name: String,
+    description: String,
+) -> Result<Bundle, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
@@ -41,7 +45,9 @@ pub fn BundleForm() -> Element {
         spawn(async move {
             match create_bundle(slug_val, name_val, desc_val).await {
                 Ok(bundle) => {
-                    nav.push(Route::BundleDetail { id: bundle.id.to_string() });
+                    nav.push(Route::BundleDetail {
+                        id: bundle.id.to_string(),
+                    });
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));

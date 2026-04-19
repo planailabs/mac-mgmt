@@ -96,15 +96,16 @@ pub struct NavGroup {
 }
 
 pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGroup> {
-    let mut groups = vec![
-        NavGroup {
-            title: "Overview".to_string(),
-            links: vec![
-                NavLink::Internal(Route::ClusterList {}, "Clusters".to_string()),
-                NavLink::Internal(Route::FleetDashboard { stage_id: None }, "Fleet".to_string()),
-            ]
-        },
-    ];
+    let mut groups = vec![NavGroup {
+        title: "Overview".to_string(),
+        links: vec![
+            NavLink::Internal(Route::ClusterList {}, "Clusters".to_string()),
+            NavLink::Internal(
+                Route::FleetDashboard { stage_id: None },
+                "Fleet".to_string(),
+            ),
+        ],
+    }];
 
     if is_admin {
         groups.push(NavGroup {
@@ -114,7 +115,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
                 NavLink::Internal(Route::McpServerList {}, "MCP Servers".to_string()),
                 NavLink::Internal(Route::McpBundleList {}, "MCP Bundles".to_string()),
                 NavLink::Internal(Route::BundleList {}, "Bundles".to_string()),
-            ]
+            ],
         });
 
         groups.push(NavGroup {
@@ -124,7 +125,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
                 NavLink::Internal(Route::StaffPings {}, "Staff Pings".to_string()),
                 NavLink::Internal(Route::OrganizationList {}, "Organizations".to_string()),
                 NavLink::Internal(Route::UserList {}, "Users".to_string()),
-            ]
+            ],
         });
 
         groups.push(NavGroup {
@@ -132,13 +133,11 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             links: vec![
                 NavLink::Internal(Route::RolloutList {}, "Rollouts".to_string()),
                 NavLink::Internal(Route::DaemonVersionList {}, "Daemon Versions".to_string()),
-            ]
+            ],
         });
     }
 
-    let mut resources_links = vec![
-        NavLink::Internal(Route::DocList {}, "Docs".to_string()),
-    ];
+    let mut resources_links = vec![NavLink::Internal(Route::DocList {}, "Docs".to_string())];
     if let Some(url) = swagger_url {
         resources_links.push(NavLink::External(url, "API Docs".to_string()));
     }
@@ -217,14 +216,17 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
 
     use_effect(move || {
         spawn(async move {
-            let result = document::eval(r#"
+            let result = document::eval(
+                r#"
                 try {
                     var t = localStorage.getItem('theme');
                     if (t === 'dark') return 'dark';
                     if (t === 'light') return 'light';
                     return 'system';
                 } catch(e) { return 'system'; }
-            "#).await;
+            "#,
+            )
+            .await;
             if let Ok(val) = result {
                 if let Some(s) = val.as_str() {
                     match s {
@@ -241,7 +243,8 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
         let next = theme().next();
         theme.set(next);
         let js = match next {
-            ThemeMode::System => r#"
+            ThemeMode::System => {
+                r#"
                 localStorage.removeItem('theme');
                 var d = document.documentElement;
                 if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
@@ -253,21 +256,26 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                     d.style.colorScheme = 'light';
                     d.style.backgroundColor = '#f9fafb';
                 }
-            "#,
-            ThemeMode::Light => r#"
+            "#
+            }
+            ThemeMode::Light => {
+                r#"
                 localStorage.setItem('theme', 'light');
                 var d = document.documentElement;
                 d.classList.remove('dark');
                 d.style.colorScheme = 'light';
                 d.style.backgroundColor = '#f9fafb';
-            "#,
-            ThemeMode::Dark => r#"
+            "#
+            }
+            ThemeMode::Dark => {
+                r#"
                 localStorage.setItem('theme', 'dark');
                 var d = document.documentElement;
                 d.classList.add('dark');
                 d.style.colorScheme = 'dark';
                 d.style.backgroundColor = '#111827';
-            "#,
+            "#
+            }
         };
         document::eval(js);
     };
@@ -286,7 +294,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
 
                     // Right side: Profile & Theme (Desktop & Mobile share some parts)
                     div { class: "flex space-x-1 items-center",
-                        
+
                         // Desktop user icon
                         if !display_name.is_empty() {
                             div { class: "hidden xl:flex items-center",
@@ -310,7 +318,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                 }
                             }
                         }
-                        
+
                         // Theme Toggle
                         button {
                             onclick: toggle_theme,
@@ -319,7 +327,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                             title: "{current_aria}",
                             ThemeIcon { mode: current_theme }
                         }
-                        
+
                         // Hamburger button (Mobile)
                         button {
                             onclick: move |_| is_open.set(!is_open()),
@@ -347,7 +355,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
             div {
                 id: "mobile-drawer-container",
                 class: "xl:hidden relative z-50",
-                
+
                 // Backdrop
                 div {
                     class: if *is_open.read() {
@@ -358,7 +366,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                     "aria-hidden": "true",
                     onclick: move |_| is_open.set(false),
                 }
-                
+
                 // Drawer
                 div {
                     class: if *is_open.read() {
@@ -366,7 +374,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                     } else {
                         "fixed inset-y-0 right-0 max-w-xs w-full bg-white dark:bg-gray-800 shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 translate-x-full pointer-events-none"
                     },
-                    
+
                     // Header Area with User & Close Button
                     div { class: "p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-between items-center",
                         div { class: "flex-1 mr-4 overflow-hidden",
@@ -390,7 +398,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
 
                             }
                         }
-                        
+
                         button {
                             onclick: move |_| is_open.set(false),
                             class: "flex-shrink-0 p-2 -mr-2 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none transition-colors",
@@ -404,7 +412,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                             }
                         }
                     }
-                    
+
                     // Navigation Groups
                     nav { class: "flex-1 px-4 py-6 space-y-8",
                         for group in get_nav_groups(is_admin, swagger_url.clone()) {
@@ -444,4 +452,3 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
         }
     }
 }
-

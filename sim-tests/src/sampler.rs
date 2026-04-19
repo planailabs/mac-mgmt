@@ -35,7 +35,11 @@ impl std::fmt::Display for FailureCase {
             writeln!(f, "│  Minimized seed: {min}")?;
         }
         writeln!(f, "│  Violation: {}", self.violation)?;
-        writeln!(f, "│  Reproduce: CHAOS_SEED={} cargo test -p sim-tests chaos_random_faults", self.seed)?;
+        writeln!(
+            f,
+            "│  Reproduce: CHAOS_SEED={} cargo test -p sim-tests chaos_random_faults",
+            self.seed
+        )?;
         writeln!(f, "└─")?;
         Ok(())
     }
@@ -65,18 +69,17 @@ impl std::fmt::Display for SamplingReport {
 }
 
 /// Run a single round and return the failure info if invariants are violated.
-pub async fn run_round(
-    seed: u64,
-    num_events: usize,
-    num_daemons: usize,
-) -> Option<FailureCase> {
+pub async fn run_round(seed: u64, num_events: usize, num_daemons: usize) -> Option<FailureCase> {
     let timeline = Timeline::new();
     let schedule = scenarios::generate(seed, num_events, num_daemons);
 
     timeline.record(
         "sampler",
         EventKind::Custom,
-        format!("seed={seed} events={} daemons={num_daemons}", schedule.events.len()),
+        format!(
+            "seed={seed} events={} daemons={num_daemons}",
+            schedule.events.len()
+        ),
     );
 
     let (addr, state) = crate::mock_server::start().await;
@@ -102,11 +105,16 @@ pub async fn run_round(
 
     // Wait for initial heartbeats
     let init_ok = crate::wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
-        instance_ids.iter().all(|iid| !state.heartbeats_from(iid).is_empty())
-    }).await;
+        instance_ids
+            .iter()
+            .all(|iid| !state.heartbeats_from(iid).is_empty())
+    })
+    .await;
 
     if !init_ok {
-        for tx in shutdowns { let _ = tx.send(()); }
+        for tx in shutdowns {
+            let _ = tx.send(());
+        }
         return Some(FailureCase {
             seed,
             violation: "initial heartbeat timeout".to_string(),
@@ -127,17 +135,24 @@ pub async fn run_round(
 
     // Post-settle liveness
     state.clear_heartbeats();
-    let liveness_ok = crate::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
-        instance_ids.iter().all(|iid| !state.heartbeats_from(iid).is_empty())
-    }).await;
+    let liveness_ok =
+        crate::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+            instance_ids
+                .iter()
+                .all(|iid| !state.heartbeats_from(iid).is_empty())
+        })
+        .await;
 
-    for tx in shutdowns { let _ = tx.send(()); }
+    for tx in shutdowns {
+        let _ = tx.send(());
+    }
 
     let total_violations = violations + if liveness_ok { 0 } else { 1 };
 
     if total_violations > 0 {
         let violation_text = if !liveness_ok {
-            let stalled: Vec<_> = instance_ids.iter()
+            let stalled: Vec<_> = instance_ids
+                .iter()
                 .filter(|iid| state.heartbeats_from(iid).is_empty())
                 .map(|iid| &iid[..12])
                 .collect();

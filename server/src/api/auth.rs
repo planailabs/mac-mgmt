@@ -64,12 +64,10 @@ impl<'r> FromRequest<'r> for SyncAuth {
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         match AuthenticatedToken::from_request(req).await {
-            Outcome::Success(auth) if auth.token_kind == "sync" => {
-                match auth.cluster_id {
-                    Some(cid) => Outcome::Success(SyncAuth { cluster_id: cid }),
-                    None => Outcome::Error((Status::Forbidden, "sync token requires a cluster")),
-                }
-            }
+            Outcome::Success(auth) if auth.token_kind == "sync" => match auth.cluster_id {
+                Some(cid) => Outcome::Success(SyncAuth { cluster_id: cid }),
+                None => Outcome::Error((Status::Forbidden, "sync token requires a cluster")),
+            },
             Outcome::Success(_) => Outcome::Error((Status::Forbidden, "sync token required")),
             Outcome::Error(e) => Outcome::Error(e),
             Outcome::Forward(f) => Outcome::Forward(f),
@@ -119,14 +117,28 @@ impl<'r> FromRequest<'r> for SettingAuth {
                     .await;
 
                     match exists {
-                        Ok(true) => return Outcome::Success(SettingAuth { cluster_id: header_cid }),
-                        Ok(false) => return Outcome::Error((Status::Forbidden, "cluster not in organization")),
-                        Err(_) => return Outcome::Error((Status::InternalServerError, "database error")),
+                        Ok(true) => {
+                            return Outcome::Success(SettingAuth {
+                                cluster_id: header_cid,
+                            });
+                        }
+                        Ok(false) => {
+                            return Outcome::Error((
+                                Status::Forbidden,
+                                "cluster not in organization",
+                            ));
+                        }
+                        Err(_) => {
+                            return Outcome::Error((Status::InternalServerError, "database error"));
+                        }
                     }
                 }
 
                 // Setting token with neither cluster_id nor organization_id — invalid
-                Outcome::Error((Status::Forbidden, "setting token requires a cluster or organization"))
+                Outcome::Error((
+                    Status::Forbidden,
+                    "setting token requires a cluster or organization",
+                ))
             }
             Outcome::Success(auth) if auth.token_kind == "admin" => {
                 // Admin token: resolve from X-Cluster-Id header
@@ -144,7 +156,9 @@ impl<'r> FromRequest<'r> for SettingAuth {
                 .await;
 
                 match exists {
-                    Ok(true) => Outcome::Success(SettingAuth { cluster_id: header_cid }),
+                    Ok(true) => Outcome::Success(SettingAuth {
+                        cluster_id: header_cid,
+                    }),
                     Ok(false) => Outcome::Error((Status::NotFound, "cluster not found")),
                     Err(_) => Outcome::Error((Status::InternalServerError, "database error")),
                 }
@@ -158,10 +172,10 @@ impl<'r> FromRequest<'r> for SettingAuth {
 
 /// Parse the `X-Cluster-Id` header as a UUID.
 fn parse_cluster_id_header(req: &Request<'_>) -> Result<Uuid, (Status, &'static str)> {
-    let header = req
-        .headers()
-        .get_one("X-Cluster-Id")
-        .ok_or((Status::BadRequest, "X-Cluster-Id header required for org/admin tokens"))?;
+    let header = req.headers().get_one("X-Cluster-Id").ok_or((
+        Status::BadRequest,
+        "X-Cluster-Id header required for org/admin tokens",
+    ))?;
     header
         .parse::<Uuid>()
         .map_err(|_| (Status::BadRequest, "X-Cluster-Id must be a valid UUID"))
@@ -176,9 +190,7 @@ impl<'r> FromRequest<'r> for AdminAuth {
 
     async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
         match AuthenticatedToken::from_request(req).await {
-            Outcome::Success(auth) if auth.token_kind == "admin" => {
-                Outcome::Success(AdminAuth)
-            }
+            Outcome::Success(auth) if auth.token_kind == "admin" => Outcome::Success(AdminAuth),
             Outcome::Success(_) => Outcome::Error((Status::Forbidden, "admin token required")),
             Outcome::Error(e) => Outcome::Error(e),
             Outcome::Forward(f) => Outcome::Forward(f),

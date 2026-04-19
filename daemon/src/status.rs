@@ -103,9 +103,6 @@ mod tests {
     async fn connection_refused_gives_helpful_error() {
         let result = print_status(Some(19999)).await; // unlikely to be in use
         let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("daemon not running"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("daemon not running"), "got: {err}");
     }
 }

@@ -3,8 +3,8 @@ pub(crate) mod healer_routes;
 pub mod push;
 pub(crate) mod routes;
 
-use rocket::config::Shutdown;
 use rocket::Config;
+use rocket::config::Shutdown;
 use sqlx::PgPool;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -167,7 +167,12 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
-pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels, healer_state: mac_mgmt_healer::HealerState) -> rocket::Rocket<rocket::Build> {
+pub fn build_rocket(
+    pool: PgPool,
+    port: u16,
+    push_channels: push::PushChannels,
+    healer_state: mac_mgmt_healer::HealerState,
+) -> rocket::Rocket<rocket::Build> {
     let config = Config {
         port,
         address: std::net::Ipv4Addr::UNSPECIFIED.into(),
@@ -290,7 +295,6 @@ pub fn build_rocket(pool: PgPool, port: u16, push_channels: push::PushChannels, 
         )
         .mount(
             "/",
-            SwaggerUi::new("/api/swagger-ui/<_..>")
-                .url("/api/openapi.json", ApiDoc::openapi()),
+            SwaggerUi::new("/api/swagger-ui/<_..>").url("/api/openapi.json", ApiDoc::openapi()),
         )
 }

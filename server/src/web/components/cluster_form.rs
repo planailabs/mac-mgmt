@@ -10,13 +10,12 @@ async fn create_cluster(name: String) -> Result<Cluster, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let cluster = sqlx::query_as::<_, Cluster>(
-        "INSERT INTO clusters (name) VALUES ($1) RETURNING *",
-    )
-    .bind(&name)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cluster =
+        sqlx::query_as::<_, Cluster>("INSERT INTO clusters (name) VALUES ($1) RETURNING *")
+            .bind(&name)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(cluster)
 }
 
@@ -33,7 +32,9 @@ pub fn ClusterForm() -> Element {
         spawn(async move {
             match create_cluster(name_val).await {
                 Ok(cluster) => {
-                    nav.push(Route::ClusterDetail { id: cluster.id.to_string() });
+                    nav.push(Route::ClusterDetail {
+                        id: cluster.id.to_string(),
+                    });
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));

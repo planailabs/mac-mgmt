@@ -26,8 +26,7 @@ impl Client {
                 Ok(s) => break s,
                 Err(e) => {
                     if tokio::time::Instant::now() + delay > deadline {
-                        return Err(e)
-                            .with_context(|| format!("connect to {}", path.display()));
+                        return Err(e).with_context(|| format!("connect to {}", path.display()));
                     }
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(Duration::from_secs(5));
@@ -78,13 +77,20 @@ impl Client {
             }
         });
 
-        Ok(Self { writer, notif_rx, resp_rx })
+        Ok(Self {
+            writer,
+            notif_rx,
+            resp_rx,
+        })
     }
 
     async fn send(&mut self, req: Request) -> Result<Response> {
         let mut line = serde_json::to_string(&Message::Request(req)).context("serialize")?;
         line.push('\n');
-        self.writer.write_all(line.as_bytes()).await.context("write")?;
+        self.writer
+            .write_all(line.as_bytes())
+            .await
+            .context("write")?;
         self.writer.flush().await.context("flush")?;
         self.resp_rx
             .recv()
@@ -94,7 +100,10 @@ impl Client {
 
     pub async fn register(&mut self, name: &str, spec: SpawnSpec) -> Result<()> {
         match self
-            .send(Request::Register { name: name.to_string(), spec })
+            .send(Request::Register {
+                name: name.to_string(),
+                spec,
+            })
             .await?
         {
             Response::Ok => Ok(()),
@@ -105,7 +114,9 @@ impl Client {
 
     pub async fn unregister(&mut self, name: &str) -> Result<()> {
         match self
-            .send(Request::Unregister { name: name.to_string() })
+            .send(Request::Unregister {
+                name: name.to_string(),
+            })
             .await?
         {
             Response::Ok => Ok(()),
@@ -128,7 +139,12 @@ impl Client {
                 } else {
                     Ok(names
                         .into_iter()
-                        .map(|name| ServiceStatus { name, pid: None, exe: None, resolved_program: None })
+                        .map(|name| ServiceStatus {
+                            name,
+                            pid: None,
+                            exe: None,
+                            resolved_program: None,
+                        })
                         .collect())
                 }
             }

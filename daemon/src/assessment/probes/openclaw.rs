@@ -20,7 +20,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use super::{digest_hex, response_has_content, snippet, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{
+    Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex, response_has_content, snippet, timed,
+};
 
 /// Loopback is unauthenticated in openclaw's gateway (see net.ts:53,
 /// auth.ts:557), so no bearer-token handling is needed here.
@@ -33,7 +35,11 @@ pub struct OpenClawProbe {
 impl OpenClawProbe {
     pub fn from_config(cfg: &OpenClawConfig) -> Self {
         let gateway_url = cfg.gateway.as_ref().map(|g| {
-            let host = if g.host.is_empty() { "127.0.0.1" } else { &g.host };
+            let host = if g.host.is_empty() {
+                "127.0.0.1"
+            } else {
+                &g.host
+            };
             format!("http://{host}:{}", g.port)
         });
         Self { gateway_url }
@@ -108,7 +114,11 @@ async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
         first_token_ms: Some(first_token_ms),
         model: Some(resp.model),
         canary_digest: Some(digest_hex(content.trim().as_bytes())),
-        error_class: if ok { None } else { Some("empty_response".into()) },
+        error_class: if ok {
+            None
+        } else {
+            Some("empty_response".into())
+        },
         error_detail: if ok {
             None
         } else {
@@ -155,7 +165,11 @@ async fn run_health_fallback(ctx: &ProbeCtx) -> Result<ProbeResult> {
     Ok(ProbeResult {
         ok,
         canary_digest: Some(digest_hex(stdout.trim().as_bytes())),
-        error_class: if ok { None } else { Some("bad_response".into()) },
+        error_class: if ok {
+            None
+        } else {
+            Some("bad_response".into())
+        },
         error_detail: if ok {
             None
         } else {

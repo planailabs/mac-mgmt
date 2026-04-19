@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
+use rocket::State;
 use rocket::http::{ContentType, Header, Status};
 use rocket::serde::json::Json;
-use rocket::State;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use base64::Engine;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 use super::auth::{AdminAuth, AuthenticatedToken, SettingAuth, SyncAuth};
 use super::push::{self, PushChannels, PushMessage};
@@ -46,13 +46,11 @@ pub async fn get_self(
 ) -> Result<Json<SelfInfo>, Status> {
     let name = match auth.cluster_id {
         Some(cid) => {
-            let n = sqlx::query_scalar::<_, String>(
-                "SELECT name FROM clusters WHERE id = $1",
-            )
-            .bind(cid)
-            .fetch_one(pool.inner())
-            .await
-            .map_err(|_| Status::InternalServerError)?;
+            let n = sqlx::query_scalar::<_, String>("SELECT name FROM clusters WHERE id = $1")
+                .bind(cid)
+                .fetch_one(pool.inner())
+                .await
+                .map_err(|_| Status::InternalServerError)?;
             Some(n)
         }
         None => None,
@@ -145,10 +143,13 @@ pub async fn get_mcp_servers(
             _ => {
                 result.insert(
                     row.slug.clone(),
-                    (McpServerEntry {
-                        config: row.config_json.clone(),
-                        nix_packages: row.nix_packages.clone(),
-                    }, prec),
+                    (
+                        McpServerEntry {
+                            config: row.config_json.clone(),
+                            nix_packages: row.nix_packages.clone(),
+                        },
+                        prec,
+                    ),
                 );
             }
         }
@@ -175,10 +176,13 @@ pub async fn get_mcp_servers(
             if !result.contains_key(&row.slug) {
                 result.insert(
                     row.slug.clone(),
-                    (McpServerEntry {
-                        config: row.config_json.clone(),
-                        nix_packages: row.nix_packages.clone(),
-                    }, 0),
+                    (
+                        McpServerEntry {
+                            config: row.config_json.clone(),
+                            nix_packages: row.nix_packages.clone(),
+                        },
+                        0,
+                    ),
                 );
             }
         }
@@ -356,7 +360,9 @@ pub async fn get_nixpkgs_pin(
     .map_err(|_| Status::InternalServerError)?;
 
     if let Some(Some(commit)) = rollout_commit {
-        return Ok(Json(NixpkgsPin { commit: Some(commit) }));
+        return Ok(Json(NixpkgsPin {
+            commit: Some(commit),
+        }));
     }
 
     // Fall back to cluster's persistent pin.
@@ -409,15 +415,15 @@ async fn resolve_winning_skill_channels(
         match winners.get(&row.slug) {
             Some((_, true)) => {}
             _ => {
-                winners.insert(
-                    row.slug.clone(),
-                    (row.skill_channel_id, row.is_direct),
-                );
+                winners.insert(row.slug.clone(), (row.skill_channel_id, row.is_direct));
             }
         }
     }
 
-    Ok(winners.into_iter().map(|(slug, (id, _))| (slug, id)).collect())
+    Ok(winners
+        .into_iter()
+        .map(|(slug, (id, _))| (slug, id))
+        .collect())
 }
 
 #[utoipa::path(
@@ -469,10 +475,7 @@ pub async fn get_skills(
         match slug_channel.get(&row.slug) {
             Some((_, true)) => {}
             _ => {
-                slug_channel.insert(
-                    row.slug.clone(),
-                    (row.channel.clone(), row.is_direct),
-                );
+                slug_channel.insert(row.slug.clone(), (row.channel.clone(), row.is_direct));
             }
         }
     }
@@ -514,9 +517,7 @@ pub async fn get_skills(
     ),
 )]
 #[rocket::get("/setting/config/schema")]
-pub async fn setting_config_schema(
-    _auth: SettingAuth,
-) -> (rocket::http::ContentType, String) {
+pub async fn setting_config_schema(_auth: SettingAuth) -> (rocket::http::ContentType, String) {
     let schema = schemars::schema_for!(mac_mgmt_common::ClusterConfig);
     (
         rocket::http::ContentType::JSON,
@@ -589,8 +590,8 @@ pub async fn setting_set_config(
     mac_mgmt_common::config_migrate::migrate(&mut config);
 
     // Validate by deserializing into ClusterConfig
-    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(config.clone())
-        .map_err(|e| {
+    let _: mac_mgmt_common::ClusterConfig =
+        serde_json::from_value(config.clone()).map_err(|e| {
             tracing::error!(
                 "setting_set_config: rejecting cluster={} config: {e}; body={}",
                 auth.cluster_id,
@@ -671,8 +672,8 @@ pub async fn setting_patch_config(
     section_map.insert(body.key.clone(), body.value.clone());
 
     // Validate
-    let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(config.clone())
-        .map_err(|_| Status::UnprocessableEntity)?;
+    let _: mac_mgmt_common::ClusterConfig =
+        serde_json::from_value(config.clone()).map_err(|_| Status::UnprocessableEntity)?;
 
     sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
         .bind(auth.cluster_id)
@@ -811,7 +812,11 @@ pub async fn setting_batch_skills(
     channels: &State<PushChannels>,
     body: Json<BatchSkillsBody>,
 ) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
         sqlx::query("DELETE FROM cluster_skills WHERE id = $1 AND cluster_id = $2")
             .bind(id)
@@ -972,7 +977,11 @@ pub async fn setting_batch_bundles(
     channels: &State<PushChannels>,
     body: Json<BatchBundlesBody>,
 ) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
         sqlx::query("DELETE FROM cluster_bundles WHERE id = $1 AND cluster_id = $2")
             .bind(id)
@@ -1120,7 +1129,11 @@ pub async fn setting_batch_mcp_servers(
     channels: &State<PushChannels>,
     body: Json<BatchMcpServersBody>,
 ) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
         sqlx::query("DELETE FROM cluster_mcp_servers WHERE id = $1 AND cluster_id = $2")
             .bind(id)
@@ -1281,7 +1294,11 @@ pub async fn setting_batch_mcp_bundles(
     channels: &State<PushChannels>,
     body: Json<BatchMcpBundlesBody>,
 ) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
     for id in &body.remove {
         sqlx::query("DELETE FROM cluster_mcp_bundles WHERE id = $1 AND cluster_id = $2")
             .bind(id)
@@ -1359,7 +1376,9 @@ pub async fn setting_available_skill_channels(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<SkillChannelRow>>, Status> {
-    Ok(Json(build_skill_channel_rows(auth.cluster_id, pool.inner()).await?))
+    Ok(Json(
+        build_skill_channel_rows(auth.cluster_id, pool.inner()).await?,
+    ))
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -1384,10 +1403,7 @@ pub(crate) struct McpServerOptionRow {
     cluster_mcp_server_id: Option<Uuid>,
 }
 
-async fn build_bundle_rows(
-    cluster_id: Uuid,
-    pool: &PgPool,
-) -> Result<Vec<OptionRow>, Status> {
+async fn build_bundle_rows(cluster_id: Uuid, pool: &PgPool) -> Result<Vec<OptionRow>, Status> {
     sqlx::query_as::<_, OptionRow>(
         "SELECT b.id, b.slug, b.name, b.description, \
                 (cb.id IS NOT NULL) as installed \
@@ -1420,7 +1436,9 @@ pub async fn setting_available_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
-    Ok(Json(build_bundle_rows(auth.cluster_id, pool.inner()).await?))
+    Ok(Json(
+        build_bundle_rows(auth.cluster_id, pool.inner()).await?,
+    ))
 }
 
 /// Fetch the set of MCP server IDs transitively required by a cluster's winning skill channels.
@@ -1518,10 +1536,7 @@ pub async fn setting_available_mcp_servers(
     Ok(Json(rows))
 }
 
-async fn build_mcp_bundle_rows(
-    cluster_id: Uuid,
-    pool: &PgPool,
-) -> Result<Vec<OptionRow>, Status> {
+async fn build_mcp_bundle_rows(cluster_id: Uuid, pool: &PgPool) -> Result<Vec<OptionRow>, Status> {
     sqlx::query_as::<_, OptionRow>(
         "SELECT msb.id, msb.slug, msb.name, msb.description, \
                 (cmb.id IS NOT NULL) as installed \
@@ -1554,7 +1569,9 @@ pub async fn setting_available_mcp_bundles(
     auth: SettingAuth,
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<OptionRow>>, Status> {
-    Ok(Json(build_mcp_bundle_rows(auth.cluster_id, pool.inner()).await?))
+    Ok(Json(
+        build_mcp_bundle_rows(auth.cluster_id, pool.inner()).await?,
+    ))
 }
 
 // -- Bundle contents --
@@ -1718,12 +1735,11 @@ pub async fn setting_catalog(
     let mcp_bundle_rows = build_mcp_bundle_rows(cid, p).await?;
 
     // Fetch bundle membership links
-    let skill_links = sqlx::query_as::<_, BundleItemLink>(
-        "SELECT bundle_id, skill_channel_id FROM bundle_items",
-    )
-    .fetch_all(p)
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let skill_links =
+        sqlx::query_as::<_, BundleItemLink>("SELECT bundle_id, skill_channel_id FROM bundle_items")
+            .fetch_all(p)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     let mcp_links = sqlx::query_as::<_, McpBundleItemLink>(
         "SELECT bundle_id, mcp_server_id FROM mcp_server_bundle_items",
@@ -1948,13 +1964,12 @@ pub async fn admin_create_org_token(
     }
 
     // Verify organization exists
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)",
-    )
-    .bind(oid)
-    .fetch_one(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)")
+            .bind(oid)
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     if !exists {
         return Err(Status::NotFound);
@@ -2014,16 +2029,15 @@ pub async fn admin_create_cluster(
         return Err(Status::BadRequest);
     }
 
-    let org_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)",
-    )
-    .bind(oid)
-    .fetch_one(pool.inner())
-    .await
-    .map_err(|e| {
-        tracing::error!("admin_create_cluster: checking organization {oid}: {e}");
-        Status::InternalServerError
-    })?;
+    let org_exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE id = $1)")
+            .bind(oid)
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|e| {
+                tracing::error!("admin_create_cluster: checking organization {oid}: {e}");
+                Status::InternalServerError
+            })?;
     if !org_exists {
         return Err(Status::NotFound);
     }
@@ -2047,20 +2061,18 @@ pub async fn admin_create_cluster(
         tracing::error!("admin_create_cluster: insert cluster {name}: {e}");
         Status::InternalServerError
     })?;
-    sqlx::query(
-        "INSERT INTO organization_clusters (organization_id, cluster_id) VALUES ($1, $2)",
-    )
-    .bind(oid)
-    .bind(row.id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| {
-        tracing::error!(
-            "admin_create_cluster: link org {oid} to cluster {}: {e}",
-            row.id
-        );
-        Status::InternalServerError
-    })?;
+    sqlx::query("INSERT INTO organization_clusters (organization_id, cluster_id) VALUES ($1, $2)")
+        .bind(oid)
+        .bind(row.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "admin_create_cluster: link org {oid} to cluster {}: {e}",
+                row.id
+            );
+            Status::InternalServerError
+        })?;
     tx.commit().await.map_err(|e| {
         tracing::error!("admin_create_cluster: commit: {e}");
         Status::InternalServerError
@@ -2130,7 +2142,16 @@ pub async fn admin_list_cluster_machines(
     cluster_id: &str,
 ) -> Result<Json<Vec<AdminMachineRow>>, Status> {
     let cid: Uuid = cluster_id.parse().map_err(|_| Status::BadRequest)?;
-    let rows = sqlx::query_as::<_, (String, Option<String>, String, DateTime<Utc>, Option<serde_json::Value>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            String,
+            DateTime<Utc>,
+            Option<serde_json::Value>,
+        ),
+    >(
         "SELECT instance_id, hostname, version, reported_at, services_extended \
          FROM daemon_heartbeats WHERE cluster_id = $1 ORDER BY reported_at DESC",
     )
@@ -2138,9 +2159,21 @@ pub async fn admin_list_cluster_machines(
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows.into_iter().map(|(instance_id, hostname, version, reported_at, services_extended)| {
-        AdminMachineRow { instance_id, hostname, version, reported_at, services_extended }
-    }).collect()))
+    Ok(Json(
+        rows.into_iter()
+            .map(
+                |(instance_id, hostname, version, reported_at, services_extended)| {
+                    AdminMachineRow {
+                        instance_id,
+                        hostname,
+                        version,
+                        reported_at,
+                        services_extended,
+                    }
+                },
+            )
+            .collect(),
+    ))
 }
 
 // ── Setting — Cloud-init bootstrap ──────────────────────────────────
@@ -2204,9 +2237,7 @@ pub async fn setting_cloud_init(
     use rand::Rng;
 
     let body = body.into_inner();
-    let system = body
-        .system
-        .unwrap_or_else(|| "x86_64-linux".to_string());
+    let system = body.system.unwrap_or_else(|| "x86_64-linux".to_string());
     let label = body.label.unwrap_or_else(|| {
         let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
         match &body.instance_id {
@@ -2230,14 +2261,13 @@ pub async fn setting_cloud_init(
         .fetch_optional(pool.inner())
         .await
         .map_err(|_| Status::InternalServerError)?;
-        let pinned: Option<String> = sqlx::query_scalar(
-            "SELECT pinned_version FROM clusters WHERE id = $1",
-        )
-        .bind(auth.cluster_id)
-        .fetch_optional(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?
-        .flatten();
+        let pinned: Option<String> =
+            sqlx::query_scalar("SELECT pinned_version FROM clusters WHERE id = $1")
+                .bind(auth.cluster_id)
+                .fetch_optional(pool.inner())
+                .await
+                .map_err(|_| Status::InternalServerError)?
+                .flatten();
         // Final fallback: highest version in daemon_versions (mirrors
         // get_update_target). Operators sync this table from xzar via the
         // admin UI.
@@ -2255,9 +2285,9 @@ pub async fn setting_cloud_init(
             .ok_or(Status::UnprocessableEntity)?
     };
 
-    let server_url = body.server_url.unwrap_or_else(|| {
-        crate::config::config().api.external_url.clone()
-    });
+    let server_url = body
+        .server_url
+        .unwrap_or_else(|| crate::config::config().api.external_url.clone());
     let server_url = server_url.trim_end_matches('/').to_string();
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
@@ -2302,7 +2332,7 @@ pub(crate) fn render_cloud_init(
                 .collect::<Vec<_>>()
                 .join("\n");
             format!(
-"  - path: /root/.config/mac-mgmt/host_ed25519_key
+                "  - path: /root/.config/mac-mgmt/host_ed25519_key
     owner: root:root
     permissions: '0600'
     content: |
@@ -2313,7 +2343,7 @@ pub(crate) fn render_cloud_init(
         None => String::new(),
     };
     format!(
-"#cloud-config
+        "#cloud-config
 packages:
   - curl
   - ca-certificates
@@ -2391,10 +2421,13 @@ pub async fn create_proxy_token(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    Ok((Status::Created, Json(ProxyTokenResponse {
-        proxy_token: raw_token,
-        expires_at,
-    })))
+    Ok((
+        Status::Created,
+        Json(ProxyTokenResponse {
+            proxy_token: raw_token,
+            expires_at,
+        }),
+    ))
 }
 
 // ── Admin — Skill MCP dependencies ───────────────────────────────────
@@ -2464,7 +2497,10 @@ pub struct AddSkillMcpDepBody {
         (status = 409, description = "Dependency already exists"),
     ),
 )]
-#[rocket::post("/admin/skill-channels/<skill_channel_id>/mcp-dependencies", data = "<body>")]
+#[rocket::post(
+    "/admin/skill-channels/<skill_channel_id>/mcp-dependencies",
+    data = "<body>"
+)]
 pub async fn admin_add_skill_mcp_dep(
     _auth: AdminAuth,
     pool: &State<PgPool>,
@@ -2515,14 +2551,13 @@ pub async fn admin_remove_skill_mcp_dep(
 ) -> Result<Status, Status> {
     let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
     let d_id: Uuid = dep_id.parse().map_err(|_| Status::BadRequest)?;
-    let res = sqlx::query(
-        "DELETE FROM skill_mcp_dependencies WHERE id = $1 AND skill_channel_id = $2",
-    )
-    .bind(d_id)
-    .bind(sc_id)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    let res =
+        sqlx::query("DELETE FROM skill_mcp_dependencies WHERE id = $1 AND skill_channel_id = $2")
+            .bind(d_id)
+            .bind(sc_id)
+            .execute(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?;
 
     if res.rows_affected() == 0 {
         Err(Status::NotFound)
@@ -2560,7 +2595,11 @@ pub async fn get_ssh_keys(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    Ok(Json(keys.into_iter().map(|k| SshKeySyncEntry { public_key: k }).collect()))
+    Ok(Json(
+        keys.into_iter()
+            .map(|k| SshKeySyncEntry { public_key: k })
+            .collect(),
+    ))
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -2612,7 +2651,10 @@ fn parse_ssh_public_key(raw: &str) -> Result<(String, String), Status> {
     let b64_data = base64::engine::general_purpose::STANDARD
         .decode(parts[1])
         .map_err(|_| Status::UnprocessableEntity)?;
-    let fingerprint = format!("SHA256:{}", base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&b64_data)));
+    let fingerprint = format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&b64_data))
+    );
     let comment = if parts.len() > 2 {
         parts[2..].join(" ")
     } else {
@@ -2738,7 +2780,10 @@ pub async fn post_heartbeat(
         Status::Forbidden
     })?;
 
-    let sample_json = body.sample.as_ref().and_then(|s| serde_json::to_value(s).ok());
+    let sample_json = body
+        .sample
+        .as_ref()
+        .and_then(|s| serde_json::to_value(s).ok());
     let svc_ext_json = if body.services_extended.is_empty() {
         None
     } else {
@@ -2827,18 +2872,18 @@ fn verify_heartbeat_signature(body: &HeartbeatBody) -> Result<(), &'static str> 
 
     // Extract the raw 32-byte ed25519 public key from the SSH wire format.
     // Format: [4-byte len]["ssh-ed25519"][4-byte len][32-byte key]
-    let raw_pk = extract_ed25519_pubkey(&pk_bytes)
-        .ok_or("invalid SSH ed25519 public key format")?;
+    let raw_pk =
+        extract_ed25519_pubkey(&pk_bytes).ok_or("invalid SSH ed25519 public key format")?;
 
-    let verifying_key = VerifyingKey::from_bytes(raw_pk)
-        .map_err(|_| "invalid ed25519 public key")?;
+    let verifying_key =
+        VerifyingKey::from_bytes(raw_pk).map_err(|_| "invalid ed25519 public key")?;
 
     // Decode signature
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&body.signature)
         .map_err(|_| "invalid base64 in signature")?;
-    let signature = Signature::from_slice(&sig_bytes)
-        .map_err(|_| "invalid ed25519 signature format")?;
+    let signature =
+        Signature::from_slice(&sig_bytes).map_err(|_| "invalid ed25519 signature format")?;
 
     // Verify signature over "{instance_id}:{signed_at}"
     let message = format!("{}:{}", body.instance_id, body.signed_at);
@@ -2883,16 +2928,16 @@ fn verify_assessment_signature(
         return Err("public key fingerprint does not match instance_id");
     }
 
-    let raw_pk = extract_ed25519_pubkey(&pk_bytes)
-        .ok_or("invalid SSH ed25519 public key format")?;
-    let verifying_key = VerifyingKey::from_bytes(raw_pk)
-        .map_err(|_| "invalid ed25519 public key")?;
+    let raw_pk =
+        extract_ed25519_pubkey(&pk_bytes).ok_or("invalid SSH ed25519 public key format")?;
+    let verifying_key =
+        VerifyingKey::from_bytes(raw_pk).map_err(|_| "invalid ed25519 public key")?;
 
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(signature)
         .map_err(|_| "invalid base64 in signature")?;
-    let signature = Signature::from_slice(&sig_bytes)
-        .map_err(|_| "invalid ed25519 signature format")?;
+    let signature =
+        Signature::from_slice(&sig_bytes).map_err(|_| "invalid ed25519 signature format")?;
 
     let message = format!("{instance_id}:{signed_at}");
     use ed25519_dalek::Verifier;
@@ -2937,12 +2982,10 @@ pub async fn post_assessment(
         Status::Forbidden
     })?;
 
-    let inventory_json =
-        serde_json::to_value(&body.inventory).map_err(|_| Status::BadRequest)?;
-    let security_json =
-        serde_json::to_value(&body.security).map_err(|_| Status::BadRequest)?;
-    let collected_at = DateTime::<Utc>::from_timestamp(body.collected_at, 0)
-        .ok_or(Status::BadRequest)?;
+    let inventory_json = serde_json::to_value(&body.inventory).map_err(|_| Status::BadRequest)?;
+    let security_json = serde_json::to_value(&body.security).map_err(|_| Status::BadRequest)?;
+    let collected_at =
+        DateTime::<Utc>::from_timestamp(body.collected_at, 0).ok_or(Status::BadRequest)?;
 
     sqlx::query(
         "INSERT INTO assessments (cluster_id, instance_id, collected_at, inventory, security) \
@@ -2993,8 +3036,8 @@ pub async fn post_assessment_probe(
         Status::Forbidden
     })?;
 
-    let collected_at = DateTime::<Utc>::from_timestamp(body.collected_at, 0)
-        .ok_or(Status::BadRequest)?;
+    let collected_at =
+        DateTime::<Utc>::from_timestamp(body.collected_at, 0).ok_or(Status::BadRequest)?;
 
     sqlx::query(
         "INSERT INTO assessment_probes \
@@ -3099,22 +3142,34 @@ pub async fn admin_list_rollout_groups(
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<RolloutGroupRow>>, Status> {
     #[derive(sqlx::FromRow)]
-    struct Row { id: Uuid, name: String, description: String, member_count: i64 }
+    struct Row {
+        id: Uuid,
+        name: String,
+        description: String,
+        member_count: i64,
+    }
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT rg.id, rg.name, rg.description, COUNT(rgm.id) AS member_count \
          FROM rollout_groups rg \
          LEFT JOIN rollout_group_members rgm ON rgm.group_id = rg.id \
          WHERE rg.id != '00000000-0000-0000-0000-000000000000'::uuid \
-         GROUP BY rg.id ORDER BY rg.name"
+         GROUP BY rg.id ORDER BY rg.name",
     )
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    Ok(Json(rows.into_iter().map(|r| RolloutGroupRow {
-        id: r.id, name: r.name, description: r.description, member_count: r.member_count,
-    }).collect()))
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| RolloutGroupRow {
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                member_count: r.member_count,
+            })
+            .collect(),
+    ))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -3248,8 +3303,8 @@ pub async fn admin_create_rollout(
         .map(|c| c.trim().to_string())
         .filter(|c| !c.is_empty());
     if let Some(commit) = &nixpkgs_commit {
-        let valid = (7..=40).contains(&commit.len())
-            && commit.chars().all(|c| c.is_ascii_hexdigit());
+        let valid =
+            (7..=40).contains(&commit.len()) && commit.chars().all(|c| c.is_ascii_hexdigit());
         if !valid {
             return Err(Status::BadRequest);
         }
@@ -3264,7 +3319,10 @@ pub async fn admin_create_rollout(
     // Only meaningful when a target_version is given.
     let skipped_names: Vec<String> = if let Some(ver) = &target_version {
         #[derive(sqlx::FromRow)]
-        struct SkippedCluster { name: String, pinned_version: String }
+        struct SkippedCluster {
+            name: String,
+            pinned_version: String,
+        }
 
         let skipped = sqlx::query_as::<_, SkippedCluster>(
             "SELECT c.name, c.pinned_version FROM clusters c \
@@ -3281,14 +3339,21 @@ pub async fn admin_create_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-        skipped.iter().map(|s| format!("{} (v{})", s.name, s.pinned_version)).collect()
+        skipped
+            .iter()
+            .map(|s| format!("{} (v{})", s.name, s.pinned_version))
+            .collect()
     } else {
         Vec::new()
     };
 
     let rollout_id = Uuid::new_v4();
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     sqlx::query("INSERT INTO rollouts (id, target_version, nixpkgs_commit) VALUES ($1, $2, $3)")
         .bind(rollout_id)
@@ -3303,13 +3368,15 @@ pub async fn admin_create_rollout(
     }
 
     for (i, group_id) in body.group_ids.iter().enumerate() {
-        sqlx::query("INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)")
-            .bind(rollout_id)
-            .bind(group_id)
-            .bind(i as i32)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| Status::InternalServerError)?;
+        sqlx::query(
+            "INSERT INTO rollout_stages (rollout_id, group_id, stage_order) VALUES ($1, $2, $3)",
+        )
+        .bind(rollout_id)
+        .bind(group_id)
+        .bind(i as i32)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
     }
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
@@ -3346,21 +3413,35 @@ pub async fn admin_list_rollouts(
     pool: &State<PgPool>,
 ) -> Result<Json<Vec<RolloutRow>>, Status> {
     #[derive(sqlx::FromRow)]
-    struct Row { id: Uuid, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc>, stage_count: i64 }
+    struct Row {
+        id: Uuid,
+        status: String,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        stage_count: i64,
+    }
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT r.id, r.status, r.created_at, r.updated_at, COUNT(rs.id) AS stage_count \
          FROM rollouts r \
          LEFT JOIN rollout_stages rs ON rs.rollout_id = r.id \
-         GROUP BY r.id ORDER BY r.created_at DESC"
+         GROUP BY r.id ORDER BY r.created_at DESC",
     )
     .fetch_all(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    Ok(Json(rows.into_iter().map(|r| RolloutRow {
-        id: r.id, status: r.status, created_at: r.created_at, updated_at: r.updated_at, stage_count: r.stage_count,
-    }).collect()))
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| RolloutRow {
+                id: r.id,
+                status: r.status,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                stage_count: r.stage_count,
+            })
+            .collect(),
+    ))
 }
 
 #[derive(Serialize, ToSchema)]
@@ -3404,7 +3485,14 @@ pub async fn admin_get_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct RolloutRow2 { id: Uuid, target_version: Option<String>, nixpkgs_commit: Option<String>, status: String, created_at: DateTime<Utc>, updated_at: DateTime<Utc> }
+    struct RolloutRow2 {
+        id: Uuid,
+        target_version: Option<String>,
+        nixpkgs_commit: Option<String>,
+        status: String,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    }
 
     let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, nixpkgs_commit, status, created_at, updated_at FROM rollouts WHERE id = $1")
         .bind(rid)
@@ -3414,7 +3502,14 @@ pub async fn admin_get_rollout(
         .ok_or(Status::NotFound)?;
 
     #[derive(sqlx::FromRow)]
-    struct StageRow { id: Uuid, group_name: String, stage_order: i32, status: String, started_at: Option<DateTime<Utc>>, completed_at: Option<DateTime<Utc>> }
+    struct StageRow {
+        id: Uuid,
+        group_name: String,
+        stage_order: i32,
+        status: String,
+        started_at: Option<DateTime<Utc>>,
+        completed_at: Option<DateTime<Utc>>,
+    }
 
     let stages = sqlx::query_as::<_, StageRow>(
         "SELECT rs.id, rg.name AS group_name, rs.stage_order, rs.status, rs.started_at, rs.completed_at \
@@ -3433,10 +3528,17 @@ pub async fn admin_get_rollout(
         status: rollout.status,
         created_at: rollout.created_at,
         updated_at: rollout.updated_at,
-        stages: stages.into_iter().map(|s| StageDetail {
-            id: s.id, group_name: s.group_name, stage_order: s.stage_order,
-            status: s.status, started_at: s.started_at, completed_at: s.completed_at,
-        }).collect(),
+        stages: stages
+            .into_iter()
+            .map(|s| StageDetail {
+                id: s.id,
+                group_name: s.group_name,
+                stage_order: s.stage_order,
+                status: s.status,
+                started_at: s.started_at,
+                completed_at: s.completed_at,
+            })
+            .collect(),
     }))
 }
 
@@ -3472,7 +3574,11 @@ pub async fn admin_start_rollout(
         return Err(Status::Conflict);
     }
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     sqlx::query("UPDATE rollouts SET status = 'rolling', updated_at = now() WHERE id = $1")
         .bind(rid)
@@ -3487,8 +3593,20 @@ pub async fn admin_start_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
-    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
+    super::push::notify_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        super::push::PushMessage::SelfUpdate,
+    )
+    .await;
+    super::push::notify_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        super::push::PushMessage::SyncNixpkgs,
+    )
+    .await;
     Ok(Status::Ok)
 }
 
@@ -3515,7 +3633,9 @@ pub async fn admin_advance_rollout(
 
     // Find current rolling stage
     #[derive(sqlx::FromRow)]
-    struct StageInfo { stage_order: i32 }
+    struct StageInfo {
+        stage_order: i32,
+    }
 
     let current = sqlx::query_as::<_, StageInfo>(
         "SELECT stage_order FROM rollout_stages WHERE rollout_id = $1 AND status = 'rolling' LIMIT 1"
@@ -3526,7 +3646,11 @@ pub async fn admin_advance_rollout(
     .map_err(|_| Status::InternalServerError)?
     .ok_or(Status::Conflict)?;
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     // Complete current stage
     sqlx::query("UPDATE rollout_stages SET status = 'completed', completed_at = now() WHERE rollout_id = $1 AND stage_order = $2")
@@ -3561,8 +3685,20 @@ pub async fn admin_advance_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
-    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
+    super::push::notify_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        super::push::PushMessage::SelfUpdate,
+    )
+    .await;
+    super::push::notify_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        super::push::PushMessage::SyncNixpkgs,
+    )
+    .await;
     Ok(Status::Ok)
 }
 
@@ -3585,13 +3721,19 @@ pub async fn admin_pause_rollout(
 ) -> Result<Status, Status> {
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-
-    let updated = sqlx::query("UPDATE rollout_stages SET status = 'paused' WHERE rollout_id = $1 AND status = 'rolling'")
-        .bind(rid)
-        .execute(&mut *tx)
+    let mut tx = pool
+        .inner()
+        .begin()
         .await
         .map_err(|_| Status::InternalServerError)?;
+
+    let updated = sqlx::query(
+        "UPDATE rollout_stages SET status = 'paused' WHERE rollout_id = $1 AND status = 'rolling'",
+    )
+    .bind(rid)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| Status::InternalServerError)?;
 
     if updated.rows_affected() == 0 {
         return Err(Status::Conflict);
@@ -3628,16 +3770,19 @@ pub async fn admin_complete_rollout(
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
     // Get rollout target
-    let (target_version, nixpkgs_commit): (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1",
-    )
-    .bind(rid)
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?
-    .ok_or(Status::NotFound)?;
+    let (target_version, nixpkgs_commit): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT target_version, nixpkgs_commit FROM rollouts WHERE id = $1")
+            .bind(rid)
+            .fetch_optional(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?
+            .ok_or(Status::NotFound)?;
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     // Mark all stages completed
     sqlx::query("UPDATE rollout_stages SET status = 'completed', completed_at = COALESCE(completed_at, now()) WHERE rollout_id = $1")
@@ -3692,9 +3837,21 @@ pub async fn admin_complete_rollout(
     }
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_all_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_all_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        super::push::PushMessage::SelfUpdate,
+    )
+    .await;
     if nixpkgs_commit.is_some() {
-        super::push::notify_all_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SyncNixpkgs).await;
+        super::push::notify_all_rollout_clusters(
+            channels.inner(),
+            pool.inner(),
+            rid,
+            super::push::PushMessage::SyncNixpkgs,
+        )
+        .await;
     }
     Ok(Status::Ok)
 }
@@ -3721,7 +3878,11 @@ pub async fn admin_resume_rollout(
 ) -> Result<Status, Status> {
     let rid: Uuid = rollout_id.parse().map_err(|_| Status::BadRequest)?;
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     let updated = sqlx::query(
         "UPDATE rollout_stages SET status = 'rolling' WHERE rollout_id = $1 AND status = 'paused'",
@@ -3742,7 +3903,13 @@ pub async fn admin_resume_rollout(
         .map_err(|_| Status::InternalServerError)?;
 
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    super::push::notify_rollout_clusters(channels.inner(), pool.inner(), rid, super::push::PushMessage::SelfUpdate).await;
+    super::push::notify_rollout_clusters(
+        channels.inner(),
+        pool.inner(),
+        rid,
+        super::push::PushMessage::SelfUpdate,
+    )
+    .await;
     Ok(Status::Ok)
 }
 
@@ -3852,19 +4019,26 @@ pub async fn admin_get_rollout_group(
     let gid: Uuid = group_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct GRow { id: Uuid, name: String, description: String }
+    struct GRow {
+        id: Uuid,
+        name: String,
+        description: String,
+    }
 
-    let group = sqlx::query_as::<_, GRow>(
-        "SELECT id, name, description FROM rollout_groups WHERE id = $1",
-    )
-    .bind(gid)
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?
-    .ok_or(Status::NotFound)?;
+    let group =
+        sqlx::query_as::<_, GRow>("SELECT id, name, description FROM rollout_groups WHERE id = $1")
+            .bind(gid)
+            .fetch_optional(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?
+            .ok_or(Status::NotFound)?;
 
     #[derive(sqlx::FromRow)]
-    struct MRow { member_id: Uuid, cluster_id: Uuid, cluster_name: String }
+    struct MRow {
+        member_id: Uuid,
+        cluster_id: Uuid,
+        cluster_name: String,
+    }
 
     let members = sqlx::query_as::<_, MRow>(
         "SELECT rgm.id AS member_id, rgm.cluster_id, c.name AS cluster_name \
@@ -3881,11 +4055,14 @@ pub async fn admin_get_rollout_group(
         id: group.id,
         name: group.name,
         description: group.description,
-        members: members.into_iter().map(|m| GroupMemberRow {
-            member_id: m.member_id,
-            cluster_id: m.cluster_id,
-            cluster_name: m.cluster_name,
-        }).collect(),
+        members: members
+            .into_iter()
+            .map(|m| GroupMemberRow {
+                member_id: m.member_id,
+                cluster_id: m.cluster_id,
+                cluster_name: m.cluster_name,
+            })
+            .collect(),
     }))
 }
 
@@ -3928,10 +4105,7 @@ impl<'r> rocket::response::Responder<'r, 'static> for BinaryDownload {
     ),
 )]
 #[rocket::get("/daemon-download/<version>/<system>")]
-pub async fn download_daemon(
-    version: &str,
-    system: &str,
-) -> Result<BinaryDownload, Status> {
+pub async fn download_daemon(version: &str, system: &str) -> Result<BinaryDownload, Status> {
     let cfg = crate::config::config();
     let xzar = cfg.xzar.as_ref().ok_or_else(|| {
         tracing::error!("xzar not configured");
@@ -3966,7 +4140,9 @@ pub async fn download_daemon(
         return Err(Status::InternalServerError);
     }
 
-    let bin_path = std::path::Path::new(&store_path).join("bin").join("mac-mgmt");
+    let bin_path = std::path::Path::new(&store_path)
+        .join("bin")
+        .join("mac-mgmt");
     let body = tokio::fs::read(&bin_path).await.map_err(|e| {
         tracing::error!("failed to read {}: {e}", bin_path.display());
         Status::InternalServerError
@@ -4027,7 +4203,11 @@ pub async fn admin_rollback_rollout(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
     sqlx::query(
         "UPDATE rollout_stages SET status = 'rolled_back' \
          WHERE rollout_id = $1 AND status IN ('rolling', 'paused', 'completed')",
@@ -4036,22 +4216,18 @@ pub async fn admin_rollback_rollout(
     .execute(&mut *tx)
     .await
     .map_err(|_| Status::InternalServerError)?;
-    sqlx::query(
-        "UPDATE rollouts SET status = 'rolled_back', updated_at = now() WHERE id = $1",
-    )
-    .bind(rid)
-    .execute(&mut *tx)
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    sqlx::query(
-        "UPDATE clusters SET pinned_version = $1, nixpkgs_commit = $2 WHERE id = ANY($3)",
-    )
-    .bind(&baseline.baseline_version)
-    .bind(&baseline.baseline_nixpkgs_commit)
-    .bind(&cohort)
-    .execute(&mut *tx)
-    .await
-    .map_err(|_| Status::InternalServerError)?;
+    sqlx::query("UPDATE rollouts SET status = 'rolled_back', updated_at = now() WHERE id = $1")
+        .bind(rid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    sqlx::query("UPDATE clusters SET pinned_version = $1, nixpkgs_commit = $2 WHERE id = ANY($3)")
+        .bind(&baseline.baseline_version)
+        .bind(&baseline.baseline_nixpkgs_commit)
+        .bind(&cohort)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
 
     super::push::notify_all_rollout_clusters(
@@ -4103,7 +4279,9 @@ pub async fn admin_stage_health(
     let sid: Uuid = stage_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct StageRow { has_gate: bool }
+    struct StageRow {
+        has_gate: bool,
+    }
     let stage: StageRow = sqlx::query_as(
         "SELECT (health_gate IS NOT NULL) AS has_gate \
          FROM rollout_stages WHERE id = $1 AND rollout_id = $2",
@@ -4121,7 +4299,10 @@ pub async fn admin_stage_health(
         .map_err(|_| Status::InternalServerError)?;
 
     #[derive(sqlx::FromRow)]
-    struct LastRow { report: serde_json::Value, evaluated_at: DateTime<Utc> }
+    struct LastRow {
+        report: serde_json::Value,
+        evaluated_at: DateTime<Utc>,
+    }
     let last: Option<LastRow> = sqlx::query_as(
         "SELECT report, evaluated_at FROM rollout_stage_health_evaluations \
          WHERE stage_id = $1 ORDER BY evaluated_at DESC LIMIT 1",
@@ -4172,16 +4353,17 @@ pub async fn admin_request_stage_assessment(
     let sid: Uuid = stage_id.parse().map_err(|_| Status::BadRequest)?;
 
     #[derive(sqlx::FromRow)]
-    struct GroupRow { group_id: Uuid }
-    let stage: GroupRow = sqlx::query_as(
-        "SELECT group_id FROM rollout_stages WHERE id = $1 AND rollout_id = $2",
-    )
-    .bind(sid)
-    .bind(rid)
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?
-    .ok_or(Status::NotFound)?;
+    struct GroupRow {
+        group_id: Uuid,
+    }
+    let stage: GroupRow =
+        sqlx::query_as("SELECT group_id FROM rollout_stages WHERE id = $1 AND rollout_id = $2")
+            .bind(sid)
+            .bind(rid)
+            .fetch_optional(pool.inner())
+            .await
+            .map_err(|_| Status::InternalServerError)?
+            .ok_or(Status::NotFound)?;
 
     let cohort: Vec<Uuid> = sqlx::query_scalar(
         "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \

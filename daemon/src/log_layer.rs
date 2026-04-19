@@ -1,7 +1,7 @@
-use tracing::field::{Field, Visit};
 use tracing::Subscriber;
-use tracing_subscriber::layer::Context;
+use tracing::field::{Field, Visit};
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 use crate::log_buffer::LogBuffer;
 

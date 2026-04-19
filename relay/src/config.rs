@@ -72,7 +72,7 @@ fn default_max_daemons() -> usize {
 pub fn load(path: &str) -> Result<RelayConfig> {
     let contents = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read config from {path}"))?;
-    let config: RelayConfig = toml::from_str(&contents)
-        .with_context(|| format!("failed to parse config from {path}"))?;
+    let config: RelayConfig =
+        toml::from_str(&contents).with_context(|| format!("failed to parse config from {path}"))?;
     Ok(config)
 }

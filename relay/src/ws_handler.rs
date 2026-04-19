@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use crate::bridge;
 use crate::daemon_registry::{
-    ControlMsg, DaemonConn, DaemonRegistry, FileResponse, MetricsResponse,
-    ProxyResponse, ProxyStreamEvent, ServiceTunnel,
+    ControlMsg, DaemonConn, DaemonRegistry, FileResponse, MetricsResponse, ProxyResponse,
+    ProxyStreamEvent, ServiceTunnel,
 };
 use crate::metrics_federation::{
     PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
@@ -34,7 +34,12 @@ struct AppState {
     proxy_url: Option<String>,
 }
 
-pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, proxy_hostname: Option<String>, proxy_url: Option<String>) -> Router {
+pub fn router(
+    registry: Arc<DaemonRegistry>,
+    server_api_url: String,
+    proxy_hostname: Option<String>,
+    proxy_url: Option<String>,
+) -> Router {
     let state = AppState {
         registry,
         server_api_url,
@@ -58,10 +63,7 @@ pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, proxy_hostn
 }
 
 /// Add security headers (CSP, X-Content-Type-Options, X-Frame-Options) to all responses.
-async fn security_headers(
-    request: axum::extract::Request,
-    next: Next,
-) -> axum::response::Response {
+async fn security_headers(request: axum::extract::Request, next: Next) -> axum::response::Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(
@@ -184,7 +186,10 @@ async fn ws_daemon_register(
     };
 
     if state.registry.is_full() {
-        tracing::error!("max daemon connections reached, rejecting {}", query.instance_id);
+        tracing::error!(
+            "max daemon connections reached, rejecting {}",
+            query.instance_id
+        );
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
 
@@ -228,11 +233,8 @@ async fn handle_daemon_ws(
 
     let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMsg>(16);
 
-    let listener_handle = ssh_listener::spawn(
-        Arc::clone(&state.registry),
-        instance_id.clone(),
-        port,
-    );
+    let listener_handle =
+        ssh_listener::spawn(Arc::clone(&state.registry), instance_id.clone(), port);
 
     let conn = DaemonConn {
         instance_id: instance_id.clone(),
@@ -530,7 +532,10 @@ async fn handle_data_session(socket: WebSocket, session_id: String, session_secr
 
 /// Allowed characters in a metrics proxy path segment.
 fn is_safe_path(path: &str) -> bool {
-    !path.contains("..") && path.chars().all(|c| c.is_alphanumeric() || "-_/.?&=".contains(c))
+    !path.contains("..")
+        && path
+            .chars()
+            .all(|c| c.is_alphanumeric() || "-_/.?&=".contains(c))
 }
 
 async fn proxy_metrics(
@@ -653,15 +658,14 @@ async fn federated_metrics(
     }
 
     let registry = state.registry.clone();
-    let outcomes: Vec<ScrapeOutcome> = futures_util::stream::iter(tunnels.into_iter().map(
-        move |tunnel| {
+    let outcomes: Vec<ScrapeOutcome> =
+        futures_util::stream::iter(tunnels.into_iter().map(move |tunnel| {
             let registry = registry.clone();
             async move { scrape_one(&registry, tunnel).await }
-        },
-    ))
-    .buffer_unordered(FEDERATION_CONCURRENCY)
-    .collect()
-    .await;
+        }))
+        .buffer_unordered(FEDERATION_CONCURRENCY)
+        .collect()
+        .await;
 
     let target_count = outcomes.len();
 
@@ -723,10 +727,7 @@ async fn scrape_one(
     let started = std::time::Instant::now();
     let instance_id = tunnel.instance_id.clone();
     let hostname = tunnel.hostname.clone().unwrap_or_default();
-    let cluster_id = tunnel
-        .cluster_id
-        .map(|c| c.to_string())
-        .unwrap_or_default();
+    let cluster_id = tunnel.cluster_id.map(|c| c.to_string()).unwrap_or_default();
     let cluster_name = tunnel.cluster_name.clone().unwrap_or_default();
 
     let Some(control_tx) = registry.get_control_tx(&instance_id) else {
@@ -769,7 +770,13 @@ async fn scrape_one(
 
     match result {
         Ok(Ok(resp)) if resp.status == 200 => {
-            match parse_and_relabel(&resp.body, &instance_id, &hostname, &cluster_id, &cluster_name) {
+            match parse_and_relabel(
+                &resp.body,
+                &instance_id,
+                &hostname,
+                &cluster_id,
+                &cluster_name,
+            ) {
                 Ok(families) => ScrapeOutcome {
                     instance_id,
                     hostname,
@@ -865,4 +872,3 @@ fn merge_family(
 
 // ── File tunnel API endpoints (Bearer-authenticated, for programmatic use) ──
 //
-

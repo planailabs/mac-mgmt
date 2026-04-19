@@ -102,11 +102,9 @@ impl AssessmentMetrics {
             "Network bytes transmitted since the sample collector was initialised",
         ))
         .unwrap();
-        let process_count = IntGauge::with_opts(Opts::new(
-            "mac_mgmt_process_count",
-            "Total process count",
-        ))
-        .unwrap();
+        let process_count =
+            IntGauge::with_opts(Opts::new("mac_mgmt_process_count", "Total process count"))
+                .unwrap();
         let thermal_state = IntGaugeVec::new(
             Opts::new(
                 "mac_mgmt_thermal_state",
@@ -121,11 +119,9 @@ impl AssessmentMetrics {
             "Host uptime in seconds at last inventory",
         ))
         .unwrap();
-        let cpu_cores_logical = IntGauge::with_opts(Opts::new(
-            "mac_mgmt_cpu_cores_logical",
-            "Logical CPU cores",
-        ))
-        .unwrap();
+        let cpu_cores_logical =
+            IntGauge::with_opts(Opts::new("mac_mgmt_cpu_cores_logical", "Logical CPU cores"))
+                .unwrap();
         let cpu_cores_physical = IntGauge::with_opts(Opts::new(
             "mac_mgmt_cpu_cores_physical",
             "Physical CPU cores",
@@ -167,11 +163,7 @@ impl AssessmentMetrics {
                 "mac_mgmt_security_info",
                 "Security posture string fields, always 1; values on labels",
             ),
-            &[
-                "xprotect_version",
-                "selinux_mode",
-                "apparmor_profiles",
-            ],
+            &["xprotect_version", "selinux_mode", "apparmor_profiles"],
         )
         .unwrap();
         let security_nftables_rule_count = IntGauge::with_opts(Opts::new(
@@ -210,7 +202,10 @@ impl AssessmentMetrics {
         )
         .unwrap();
         let gpu_temperature_celsius = IntGaugeVec::new(
-            Opts::new("mac_mgmt_gpu_temperature_celsius", "GPU core temperature, °C"),
+            Opts::new(
+                "mac_mgmt_gpu_temperature_celsius",
+                "GPU core temperature, °C",
+            ),
             &["index"],
         )
         .unwrap();
@@ -425,7 +420,8 @@ impl AssessmentMetrics {
         self.uptime_secs.set(inv.uptime_secs as i64);
         self.cpu_cores_logical.set(inv.cpu_cores_logical as i64);
         self.cpu_cores_physical.set(inv.cpu_cores_physical as i64);
-        self.inventory_mem_total_bytes.set(inv.mem_total_bytes as i64);
+        self.inventory_mem_total_bytes
+            .set(inv.mem_total_bytes as i64);
         // Reset — an inventory update may change the label set (e.g. OS upgrade).
         self.inventory_info.reset();
         self.inventory_info
@@ -520,25 +516,38 @@ impl Metrics {
         let registry = Registry::new();
 
         let service_healthy = IntGaugeVec::new(
-            Opts::new("mac_mgmt_service_healthy", "Whether the service is healthy (1) or not (0)"),
+            Opts::new(
+                "mac_mgmt_service_healthy",
+                "Whether the service is healthy (1) or not (0)",
+            ),
             &["service"],
         )
         .unwrap();
 
         let service_upgrade_pending = IntGaugeVec::new(
-            Opts::new("mac_mgmt_service_upgrade_pending", "Whether an upgrade is pending (1) or not (0)"),
+            Opts::new(
+                "mac_mgmt_service_upgrade_pending",
+                "Whether an upgrade is pending (1) or not (0)",
+            ),
             &["service"],
         )
         .unwrap();
 
         let service_busy = IntGaugeVec::new(
-            Opts::new("mac_mgmt_service_busy", "Whether the service is busy (1) or not (0)"),
+            Opts::new(
+                "mac_mgmt_service_busy",
+                "Whether the service is busy (1) or not (0)",
+            ),
             &["service"],
         )
         .unwrap();
 
-        registry.register(Box::new(service_healthy.clone())).unwrap();
-        registry.register(Box::new(service_upgrade_pending.clone())).unwrap();
+        registry
+            .register(Box::new(service_healthy.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(service_upgrade_pending.clone()))
+            .unwrap();
         registry.register(Box::new(service_busy.clone())).unwrap();
 
         let assessment = AssessmentMetrics::new(&registry);
@@ -554,7 +563,10 @@ impl Metrics {
         }
     }
 
-    pub fn register_collector(&self, collector: Box<dyn prometheus::core::Collector>) -> prometheus::Result<()> {
+    pub fn register_collector(
+        &self,
+        collector: Box<dyn prometheus::core::Collector>,
+    ) -> prometheus::Result<()> {
         self.registry.register(collector)
     }
 

@@ -258,7 +258,11 @@ async fn get_available_clusters(org_id: String) -> Result<Vec<ClusterOption>, Se
 }
 
 #[server]
-async fn add_org_member(org_id: String, user_id: String, role: String) -> Result<(), ServerFnError> {
+async fn add_org_member(
+    org_id: String,
+    user_id: String,
+    role: String,
+) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let oid: uuid::Uuid = org_id
         .parse()
@@ -296,14 +300,12 @@ async fn remove_org_member(org_id: String, user_id: String) -> Result<(), Server
     let uid: uuid::Uuid = user_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2",
-    )
-    .bind(oid)
-    .bind(uid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2")
+        .bind(oid)
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 
@@ -370,14 +372,12 @@ async fn remove_org_cluster(org_id: String, cluster_id: String) -> Result<(), Se
     let cid: uuid::Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    sqlx::query(
-        "DELETE FROM organization_clusters WHERE organization_id = $1 AND cluster_id = $2",
-    )
-    .bind(oid)
-    .bind(cid)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    sqlx::query("DELETE FROM organization_clusters WHERE organization_id = $1 AND cluster_id = $2")
+        .bind(oid)
+        .bind(cid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
 }
 
@@ -934,7 +934,9 @@ pub fn OrganizationDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+        Some(Err(e)) => {
+            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } }
+        }
         None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
     }
 }

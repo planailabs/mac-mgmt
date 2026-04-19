@@ -31,7 +31,9 @@ async fn get_bundle(id: String) -> Result<Bundle, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let bundle = sqlx::query_as::<_, Bundle>("SELECT * FROM bundles WHERE id = $1")
         .bind(uuid)
         .fetch_one(&pool)
@@ -45,7 +47,9 @@ async fn delete_bundle(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Notify affected clusters before the cascade removes their assignments.
     crate::api::push::notify_skill_bundle_global(uuid).await;
     sqlx::query("DELETE FROM bundles WHERE id = $1")
@@ -66,7 +70,9 @@ async fn update_bundle(
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("UPDATE bundles SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
         .bind(&name)
         .bind(&description)
@@ -84,7 +90,9 @@ async fn list_bundle_items(bundle_id: String) -> Result<Vec<BundleItemDisplay>, 
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = bundle_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let items = sqlx::query_as::<_, BundleItemDisplay>(
         "SELECT bi.id as bundle_item_id, s.slug as skill_slug, sc.channel \
          FROM bundle_items bi \
@@ -122,8 +130,12 @@ async fn add_bundle_item(bundle_id: String, skill_channel_id: String) -> Result<
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let bid: uuid::Uuid = bundle_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let scid: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let bid: uuid::Uuid = bundle_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let scid: uuid::Uuid = skill_channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("INSERT INTO bundle_items (bundle_id, skill_channel_id) VALUES ($1, $2)")
         .bind(bid)
         .bind(scid)
@@ -139,14 +151,15 @@ async fn remove_bundle_item(bundle_item_id: String) -> Result<(), ServerFnError>
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = bundle_item_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let bundle_id: Option<uuid::Uuid> = sqlx::query_scalar(
-        "SELECT bundle_id FROM bundle_items WHERE id = $1",
-    )
-    .bind(uuid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = bundle_item_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let bundle_id: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT bundle_id FROM bundle_items WHERE id = $1")
+            .bind(uuid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     sqlx::query("DELETE FROM bundle_items WHERE id = $1")
         .bind(uuid)
         .execute(&pool)

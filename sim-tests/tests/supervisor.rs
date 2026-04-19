@@ -9,9 +9,7 @@ use std::time::Duration;
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()),
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()))
         .try_init();
 }
 
@@ -71,9 +69,7 @@ async fn supervisor_mock_service_heartbeat() {
         .any(|v| v.get("name").and_then(|n| n.as_str()) == Some("test-echo"));
     // Note: shell_tunnels may only include system commands if the service isn't healthy yet.
     // The mock service starts as Stopped then transitions to Starting/Healthy.
-    tracing::info!(
-        "shell_tunnels in heartbeat: {shell_arr:?}, has_test_echo: {has_test}"
-    );
+    tracing::info!("shell_tunnels in heartbeat: {shell_arr:?}, has_test_echo: {has_test}");
 
     let _ = shutdown_tx.send(());
 }
@@ -84,8 +80,7 @@ async fn supervisor_multiple_services() {
     init_tracing();
     let (addr, state) = sim_tests::start_mock_server().await;
 
-    let svc_a = MockManagedService::new("svc-alpha")
-        .with_tunnel("alpha-api", "127.0.0.1", 8001);
+    let svc_a = MockManagedService::new("svc-alpha").with_tunnel("alpha-api", "127.0.0.1", 8001);
     let svc_b = MockManagedService::new("svc-beta")
         .with_tunnel("beta-api", "127.0.0.1", 8002)
         .with_shell_command("beta-status", "true", &[]);

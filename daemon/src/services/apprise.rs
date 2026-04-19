@@ -23,10 +23,11 @@ impl ManagedService for Apprise {
         }
 
         tracing::info!("{PKG} not found, installing via nix");
-        sentry_ext::breadcrumb("install", &format!("installing {PKG} via nix"), &[
-            ("service", "apprise"),
-            ("package", PKG),
-        ]);
+        sentry_ext::breadcrumb(
+            "install",
+            &format!("installing {PKG} via nix"),
+            &[("service", "apprise"), ("package", PKG)],
+        );
         crate::nix::profile_install(PKG, false)?;
         Ok(())
     }
@@ -55,10 +56,11 @@ impl ManagedService for Apprise {
         }
 
         tracing::info!("upgrading {PKG} via nix");
-        sentry_ext::breadcrumb("upgrade", &format!("upgrading {PKG} via nix"), &[
-            ("service", "apprise"),
-            ("package", PKG),
-        ]);
+        sentry_ext::breadcrumb(
+            "upgrade",
+            &format!("upgrading {PKG} via nix"),
+            &[("service", "apprise"), ("package", PKG)],
+        );
         crate::nix::profile_install(PKG, true)?;
         tracing::info!("{PKG} upgraded");
         Ok(true)

@@ -45,8 +45,9 @@ struct Daemon {
 
 impl Daemon {
     fn in_upgrade_window(&self) -> bool {
-        self.upgrade_window
-            .map_or(true, |(start, end)| mac_mgmt_common::is_within_window(start, end))
+        self.upgrade_window.map_or(true, |(start, end)| {
+            mac_mgmt_common::is_within_window(start, end)
+        })
     }
 
     /// Spawn a background task to sync skills and MCP servers.
@@ -111,11 +112,8 @@ impl Daemon {
         set_log_level: &(dyn Fn(&str) + Send + Sync),
     ) {
         tracing::info!("config file changed, reloading");
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            crate::config::reload(),
-        )
-        .await
+        match tokio::time::timeout(std::time::Duration::from_secs(10), crate::config::reload())
+            .await
         {
             Err(_) => {
                 tracing::warn!("config reload timed out (10s), keeping old config");
@@ -132,19 +130,27 @@ impl Daemon {
                 if new_cfg.daemon.update_interval != self.current_cfg.daemon.update_interval {
                     if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.update_interval) {
                         *update_tick = time::interval(d);
-                        tracing::info!("update_interval changed to {}", new_cfg.daemon.update_interval);
+                        tracing::info!(
+                            "update_interval changed to {}",
+                            new_cfg.daemon.update_interval
+                        );
                     }
                 }
                 if new_cfg.daemon.health_interval != self.current_cfg.daemon.health_interval {
                     if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.health_interval) {
                         *health_tick = time::interval(d);
-                        tracing::info!("health_interval changed to {}", new_cfg.daemon.health_interval);
+                        tracing::info!(
+                            "health_interval changed to {}",
+                            new_cfg.daemon.health_interval
+                        );
                     }
                 }
 
-                let new_window = new_cfg.daemon.upgrade_window.as_ref().map(|w| {
-                    mac_mgmt_common::parse_time_window(w).expect("already validated")
-                });
+                let new_window = new_cfg
+                    .daemon
+                    .upgrade_window
+                    .as_ref()
+                    .map(|w| mac_mgmt_common::parse_time_window(w).expect("already validated"));
                 if new_window != self.upgrade_window {
                     self.upgrade_window = new_window;
                     tracing::info!("upgrade_window updated");
@@ -156,11 +162,14 @@ impl Daemon {
                 );
 
                 // Schedule service restart for changes that require it.
-                let needs_restart = new_cfg.global.default_llm != self.current_cfg.global.default_llm
+                let needs_restart = new_cfg.global.default_llm
+                    != self.current_cfg.global.default_llm
                     || new_cfg.global.default_agent != self.current_cfg.global.default_agent
                     || format!("{:?}", new_cfg.ollama) != format!("{:?}", self.current_cfg.ollama)
-                    || format!("{:?}", new_cfg.openclaw) != format!("{:?}", self.current_cfg.openclaw)
-                    || format!("{:?}", new_cfg.opencode) != format!("{:?}", self.current_cfg.opencode);
+                    || format!("{:?}", new_cfg.openclaw)
+                        != format!("{:?}", self.current_cfg.openclaw)
+                    || format!("{:?}", new_cfg.opencode)
+                        != format!("{:?}", self.current_cfg.opencode);
 
                 if needs_restart {
                     tracing::info!("service config changed, scheduling restart");
@@ -168,7 +177,9 @@ impl Daemon {
                     self.svc_mgr.schedule_restart().await;
                 }
                 if new_cfg.metrics.port != self.current_cfg.metrics.port {
-                    tracing::warn!("metrics.port changed \u{2014} daemon restart required to apply");
+                    tracing::warn!(
+                        "metrics.port changed \u{2014} daemon restart required to apply"
+                    );
                 }
                 if new_cfg.daemon.log_level != self.current_cfg.daemon.log_level {
                     tracing::info!("log_level changed to {}", new_cfg.daemon.log_level);
@@ -187,7 +198,11 @@ impl Daemon {
         self.dispatcher.dispatch(&DaemonEvent::DaemonStopped);
     }
 
-    fn send_heartbeat(&self, relay_proxy_hostname: Option<String>, relay_proxy_url: Option<String>) {
+    fn send_heartbeat(
+        &self,
+        relay_proxy_hostname: Option<String>,
+        relay_proxy_url: Option<String>,
+    ) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
             #[cfg(feature = "services")]
             let services = self.svc_mgr.collect_statuses();
@@ -218,10 +233,17 @@ impl Daemon {
                         "description": ft.description(),
                     });
                     if let crate::managed_service::FileTunnelDef::Folder { include, .. } = &ft.def {
-                        val.as_object_mut().unwrap().insert("kind".into(), "directory".into());
-                        val.as_object_mut().unwrap().insert("include".into(), serde_json::to_value(include).unwrap_or(serde_json::Value::Null));
+                        val.as_object_mut()
+                            .unwrap()
+                            .insert("kind".into(), "directory".into());
+                        val.as_object_mut().unwrap().insert(
+                            "include".into(),
+                            serde_json::to_value(include).unwrap_or(serde_json::Value::Null),
+                        );
                     } else {
-                        val.as_object_mut().unwrap().insert("kind".into(), "file".into());
+                        val.as_object_mut()
+                            .unwrap()
+                            .insert("kind".into(), "file".into());
                     }
                     val
                 })
@@ -471,8 +493,7 @@ pub async fn run(
     // Acquire lockfile to ensure only one daemon instance runs at a time.
     let lock_path = config::config_dir().join("daemon.lock");
     std::fs::create_dir_all(lock_path.parent().unwrap()).ok();
-    let lock_file =
-        std::fs::File::create(&lock_path).context("failed to create lockfile")?;
+    let lock_file = std::fs::File::create(&lock_path).context("failed to create lockfile")?;
     match lock_file.try_lock() {
         Ok(()) => {}
         Err(std::fs::TryLockError::WouldBlock) => {
@@ -488,11 +509,15 @@ pub async fn run(
 
     sentry_ext::set_tag("environment", ENVIRONMENT);
     sentry_ext::set_tag("target", TARGET);
-    sentry_ext::breadcrumb("daemon", "daemon started", &[
-        ("version", CURRENT_VERSION),
-        ("environment", ENVIRONMENT),
-        ("target", TARGET),
-    ]);
+    sentry_ext::breadcrumb(
+        "daemon",
+        "daemon started",
+        &[
+            ("version", CURRENT_VERSION),
+            ("environment", ENVIRONMENT),
+            ("target", TARGET),
+        ],
+    );
 
     // Migration: remove legacy UUID-based instance-id file.
     let legacy_id_path = config::config_dir().join("instance-id");
@@ -507,14 +532,15 @@ pub async fn run(
     let mut cfg = config::load().await?;
     let current_cfg = cfg.clone();
 
-    let update_interval =
-        humantime::parse_duration(&cfg.daemon.update_interval).context("invalid update_interval")?;
-    let health_interval =
-        humantime::parse_duration(&cfg.daemon.health_interval).context("invalid health_interval")?;
+    let update_interval = humantime::parse_duration(&cfg.daemon.update_interval)
+        .context("invalid update_interval")?;
+    let health_interval = humantime::parse_duration(&cfg.daemon.health_interval)
+        .context("invalid health_interval")?;
 
-    let upgrade_window = cfg.daemon.upgrade_window.as_ref().map(|w| {
-        mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
-    });
+    let upgrade_window =
+        cfg.daemon.upgrade_window.as_ref().map(|w| {
+            mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
+        });
 
     tracing::info!(
         "daemon started, update interval: {:?}, health interval: {:?}",
@@ -565,8 +591,11 @@ pub async fn run(
     }
 
     #[cfg(feature = "services")]
-    let mut svc_mgr =
-        crate::service_mgmt::ServiceManager::init(&mut cfg, Arc::clone(&dispatcher), log_buf.clone())?;
+    let mut svc_mgr = crate::service_mgmt::ServiceManager::init(
+        &mut cfg,
+        Arc::clone(&dispatcher),
+        log_buf.clone(),
+    )?;
 
     #[cfg(not(feature = "services"))]
     tracing::info!("services feature disabled, skipping service management");
@@ -604,8 +633,10 @@ pub async fn run(
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
     let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut assessment_probe_tick =
-        time::interval(assessment::jittered(assessment::DEFAULT_PROBE_INTERVAL, 120));
+    let mut assessment_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_PROBE_INTERVAL,
+        120,
+    ));
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to register SIGTERM handler")?;
@@ -620,17 +651,17 @@ pub async fn run(
     // Set up config file watcher.
     let (config_tx, mut config_rx) = tokio::sync::mpsc::channel(4);
     let _config_tx_keepalive = config_tx.clone();
-    let _config_watcher =
-        match crate::config_watch::watch(&crate::config::config_path(), config_tx) {
-            Ok(w) => {
-                tracing::info!("watching config file for changes");
-                Some(w)
-            }
-            Err(e) => {
-                tracing::warn!("failed to set up config watcher: {e}");
-                None
-            }
-        };
+    let _config_watcher = match crate::config_watch::watch(&crate::config::config_path(), config_tx)
+    {
+        Ok(w) => {
+            tracing::info!("watching config file for changes");
+            Some(w)
+        }
+        Err(e) => {
+            tracing::warn!("failed to set up config watcher: {e}");
+            None
+        }
+    };
 
     // Derive a stable instance ID from the ed25519 host key fingerprint.
     let host_key = Arc::new(
@@ -925,8 +956,8 @@ async fn do_send_heartbeat(
     sample: Option<mac_mgmt_common::DynamicSample>,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
 ) -> bool {
-    use russh::keys::signature::Signer;
     use russh::keys::PublicKeyBase64;
+    use russh::keys::signature::Signer;
 
     let client = reqwest::Client::new();
     let hostname = hostname::get()
@@ -1036,14 +1067,15 @@ pub async fn run_sim(
 ) -> Result<()> {
     let current_cfg = cfg.clone();
 
-    let update_interval =
-        humantime::parse_duration(&cfg.daemon.update_interval).context("invalid update_interval")?;
-    let health_interval =
-        humantime::parse_duration(&cfg.daemon.health_interval).context("invalid health_interval")?;
+    let update_interval = humantime::parse_duration(&cfg.daemon.update_interval)
+        .context("invalid update_interval")?;
+    let health_interval = humantime::parse_duration(&cfg.daemon.health_interval)
+        .context("invalid health_interval")?;
 
-    let upgrade_window = cfg.daemon.upgrade_window.as_ref().map(|w| {
-        mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
-    });
+    let upgrade_window =
+        cfg.daemon.upgrade_window.as_ref().map(|w| {
+            mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
+        });
 
     let metrics_port = cfg.metrics.port;
     let server_url = cfg.server.url.clone();
@@ -1070,8 +1102,10 @@ pub async fn run_sim(
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
     let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut assessment_probe_tick =
-        time::interval(assessment::jittered(assessment::DEFAULT_PROBE_INTERVAL, 120));
+    let mut assessment_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_PROBE_INTERVAL,
+        120,
+    ));
 
     let instance_id = crate::host_keys::fingerprint_hex(&host_key);
     tracing::info!("sim daemon started, instance ID: {instance_id}");
@@ -1134,17 +1168,25 @@ pub async fn run_sim(
     macro_rules! relay_proxy_hostname {
         () => {{
             #[cfg(feature = "relay")]
-            { relay_mgr.relay_proxy_hostname() }
+            {
+                relay_mgr.relay_proxy_hostname()
+            }
             #[cfg(not(feature = "relay"))]
-            { None::<String> }
+            {
+                None::<String>
+            }
         }};
     }
     macro_rules! relay_proxy_url {
         () => {{
             #[cfg(feature = "relay")]
-            { relay_mgr.relay_proxy_url() }
+            {
+                relay_mgr.relay_proxy_url()
+            }
             #[cfg(not(feature = "relay"))]
-            { None::<String> }
+            {
+                None::<String>
+            }
         }};
     }
 
@@ -1258,14 +1300,15 @@ pub async fn run_sim_with_services(
 ) -> Result<()> {
     let current_cfg = cfg.clone();
 
-    let update_interval =
-        humantime::parse_duration(&cfg.daemon.update_interval).context("invalid update_interval")?;
-    let health_interval =
-        humantime::parse_duration(&cfg.daemon.health_interval).context("invalid health_interval")?;
+    let update_interval = humantime::parse_duration(&cfg.daemon.update_interval)
+        .context("invalid update_interval")?;
+    let health_interval = humantime::parse_duration(&cfg.daemon.health_interval)
+        .context("invalid health_interval")?;
 
-    let upgrade_window = cfg.daemon.upgrade_window.as_ref().map(|w| {
-        mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
-    });
+    let upgrade_window =
+        cfg.daemon.upgrade_window.as_ref().map(|w| {
+            mac_mgmt_common::parse_time_window(w).expect("upgrade_window already validated")
+        });
 
     let metrics_port = cfg.metrics.port;
     let server_url = cfg.server.url.clone();
@@ -1293,8 +1336,10 @@ pub async fn run_sim_with_services(
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
     let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut assessment_probe_tick =
-        time::interval(assessment::jittered(assessment::DEFAULT_PROBE_INTERVAL, 120));
+    let mut assessment_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_PROBE_INTERVAL,
+        120,
+    ));
 
     let instance_id = crate::host_keys::fingerprint_hex(&host_key);
     tracing::info!("sim daemon (with supervisor) started, instance ID: {instance_id}");
@@ -1327,17 +1372,25 @@ pub async fn run_sim_with_services(
     macro_rules! relay_proxy_hostname {
         () => {{
             #[cfg(feature = "relay")]
-            { relay_mgr.relay_proxy_hostname() }
+            {
+                relay_mgr.relay_proxy_hostname()
+            }
             #[cfg(not(feature = "relay"))]
-            { None::<String> }
+            {
+                None::<String>
+            }
         }};
     }
     macro_rules! relay_proxy_url {
         () => {{
             #[cfg(feature = "relay")]
-            { relay_mgr.relay_proxy_url() }
+            {
+                relay_mgr.relay_proxy_url()
+            }
             #[cfg(not(feature = "relay"))]
-            { None::<String> }
+            {
+                None::<String>
+            }
         }};
     }
 

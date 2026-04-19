@@ -12,7 +12,9 @@ use mac_mgmt_common::OllamaConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::{digest_hex, response_has_content, snippet, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{
+    Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex, response_has_content, snippet, timed,
+};
 
 pub const CANARY_MODEL: &str = "smollm2:135m";
 
@@ -23,7 +25,11 @@ pub struct OllamaProbe {
 
 impl OllamaProbe {
     pub fn from_config(cfg: &OllamaConfig) -> Self {
-        let host = if cfg.host.is_empty() { "127.0.0.1" } else { &cfg.host };
+        let host = if cfg.host.is_empty() {
+            "127.0.0.1"
+        } else {
+            &cfg.host
+        };
         let port = if cfg.port == 0 { 11434 } else { cfg.port };
         Self {
             base_url: format!("http://{host}:{port}"),
@@ -41,10 +47,9 @@ impl OllamaProbe {
             .await
             .context("failed to parse /api/tags")?;
 
-        let present = tags
-            .models
-            .iter()
-            .any(|m| m.name == self.canary_model || m.name.starts_with(&format!("{}:", self.canary_model)));
+        let present = tags.models.iter().any(|m| {
+            m.name == self.canary_model || m.name.starts_with(&format!("{}:", self.canary_model))
+        });
         if present {
             return Ok(());
         }
@@ -52,7 +57,10 @@ impl OllamaProbe {
         tracing::info!("probe: pulling {} for ollama canary", self.canary_model);
         let resp = client
             .post(format!("{}/api/pull", self.base_url))
-            .json(&PullBody { name: self.canary_model.clone(), stream: false })
+            .json(&PullBody {
+                name: self.canary_model.clone(),
+                stream: false,
+            })
             .send()
             .await
             .context("failed to request ollama pull")?;
@@ -73,7 +81,10 @@ impl OllamaProbe {
                 model: self.canary_model.clone(),
                 prompt: ctx.canary_prompt.clone(),
                 stream: false,
-                options: GenerateOptions { num_predict: 32, temperature: 0.0 },
+                options: GenerateOptions {
+                    num_predict: 32,
+                    temperature: 0.0,
+                },
             })
             .send()
             .await
@@ -94,7 +105,11 @@ impl OllamaProbe {
             first_token_ms: Some(first_token_ms),
             model: Some(self.canary_model.clone()),
             canary_digest: Some(digest_hex(resp.response.trim().as_bytes())),
-            error_class: if ok { None } else { Some("empty_response".into()) },
+            error_class: if ok {
+                None
+            } else {
+                Some("empty_response".into())
+            },
             error_detail: if ok {
                 None
             } else {

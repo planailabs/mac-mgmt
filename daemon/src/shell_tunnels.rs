@@ -17,7 +17,9 @@ pub struct ShellTunnelRegistry;
 
 #[cfg(not(feature = "services"))]
 impl ShellTunnelRegistry {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[cfg(feature = "services")]
@@ -83,7 +85,9 @@ pub async fn handle_exec_session(
                 match regex::Regex::new(pattern) {
                     Ok(re) => {
                         if !re.is_match(arg) {
-                            send_error!(format!("argument does not match required pattern: {pattern}"));
+                            send_error!(format!(
+                                "argument does not match required pattern: {pattern}"
+                            ));
                         }
                     }
                     Err(e) => {
@@ -209,7 +213,13 @@ pub async fn handle_exec_session(
     };
 
     let msg = serde_json::json!({ "exit_code": exit_code });
-    let _ = sink.send(tungstenite::Message::Text(msg.to_string().into())).await;
+    let _ = sink
+        .send(tungstenite::Message::Text(msg.to_string().into()))
+        .await;
     let _ = sink.send(tungstenite::Message::Close(None)).await;
-    tracing::info!("shell exec completed: {} (exit={})", tunnel.def.name, exit_code);
+    tracing::info!(
+        "shell exec completed: {} (exit={})",
+        tunnel.def.name,
+        exit_code
+    );
 }

@@ -18,7 +18,8 @@ fn profile_lock() -> &'static Mutex<()> {
     PROFILE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-const NIX_SOURCE_BASE: &str = "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
+const NIX_SOURCE_BASE: &str =
+    "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
 
 /// In-process pin: when set, all nix profile operations target this commit's
 /// GitLab archive tarball instead of the rolling CI-artifact source.
@@ -39,9 +40,7 @@ pub fn current_nixpkgs_commit() -> Option<String> {
 /// Standard GitLab repo archive tarball for a commit. System-agnostic;
 /// served by git.plan.ai without auth.
 fn nixpkgs_tarball_url(commit: &str) -> String {
-    format!(
-        "https://git.plan.ai/plan-ai/nixpkgs/-/archive/{commit}/nixpkgs-{commit}.tar.bz2"
-    )
+    format!("https://git.plan.ai/plan-ai/nixpkgs/-/archive/{commit}/nixpkgs-{commit}.tar.bz2")
 }
 
 /// Base flake URL (no `#attr`) for the desired state. Honours the per-cluster
@@ -77,9 +76,7 @@ pub fn migrate_to_nixpkgs(pkg: &str) -> Result<bool> {
     if !current_url.contains("git.plan.ai") && !current_url.contains("nixpkgs.tar") {
         return Ok(false);
     }
-    tracing::info!(
-        "migrating {pkg} from custom flake ({current_url}) to nixpkgs#"
-    );
+    tracing::info!("migrating {pkg} from custom flake ({current_url}) to nixpkgs#");
     let desired = nixpkgs_flake_ref(pkg);
     if has_replace_support() {
         run_profile_cmd("nix", "replace", pkg, &["replace", pkg, &desired])?;
@@ -168,8 +165,20 @@ fn probe_nix_capability(
 fn has_replace_support() -> bool {
     probe_nix_capability(
         &REPLACE_SUPPORTED,
-        &["profile", "replace", "__nonexistent_probe__", "__nonexistent_probe__"],
-        &["unknown subcommand", "unrecognised subcommand", "unrecognized subcommand", "unknown command", "is not a recognised command", "is not a recognized command"],
+        &[
+            "profile",
+            "replace",
+            "__nonexistent_probe__",
+            "__nonexistent_probe__",
+        ],
+        &[
+            "unknown subcommand",
+            "unrecognised subcommand",
+            "unrecognized subcommand",
+            "unknown command",
+            "is not a recognised command",
+            "is not a recognized command",
+        ],
         "nix profile replace",
     )
 }
@@ -277,7 +286,11 @@ fn profile_store_paths(profile: Option<&str>) -> Result<HashMap<String, Vec<Stri
             let paths: Vec<String> = element
                 .get("storePaths")
                 .and_then(|p| p.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             result.insert(name.clone(), paths);
         }
@@ -321,8 +334,11 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args([
-            "profile", "upgrade", "--impure",
-            "--profile", tmp_profile.to_str().unwrap(),
+            "profile",
+            "upgrade",
+            "--impure",
+            "--profile",
+            tmp_profile.to_str().unwrap(),
         ])
         .args(packages)
         .output()
@@ -525,7 +541,11 @@ fn run_profile_cmd(nix_bin: &str, action: &str, pkg: &str, args: &[&str]) -> Res
     }
 
     tracing::info!("nix profile {action} {pkg} succeeded");
-    sentry_ext::breadcrumb("nix", &format!("nix profile {action} {pkg} succeeded"), &[("package", pkg)]);
+    sentry_ext::breadcrumb(
+        "nix",
+        &format!("nix profile {action} {pkg} succeeded"),
+        &[("package", pkg)],
+    );
     Ok(())
 }
 
@@ -695,10 +715,7 @@ fn find_nix_in_store() -> Result<PathBuf> {
             .map(|s| s.success())
             .unwrap_or(false);
         if ok {
-            tracing::info!(
-                "found working nix binary in store: {}",
-                candidate.display()
-            );
+            tracing::info!("found working nix binary in store: {}", candidate.display());
             return Ok(candidate.clone());
         }
     }
@@ -762,11 +779,15 @@ pub fn upgrade_nix() -> Result<()> {
 fn upgrade_nix_inner() -> Result<()> {
     // Resolve nix binary path upfront, before any removal
     let nix_bin = resolve_nix_binary()?;
-    let nix_bin_str = nix_bin.to_str().context("nix binary path is not valid UTF-8")?;
+    let nix_bin_str = nix_bin
+        .to_str()
+        .context("nix binary path is not valid UTF-8")?;
 
-    sentry_ext::breadcrumb("nix", "attempting nix self-upgrade", &[
-        ("nix_bin", nix_bin_str),
-    ]);
+    sentry_ext::breadcrumb(
+        "nix",
+        "attempting nix self-upgrade",
+        &[("nix_bin", nix_bin_str)],
+    );
 
     // Stage 1: try nix upgrade-nix
     tracing::info!("trying nix upgrade-nix");
@@ -827,7 +848,12 @@ fn upgrade_nix_inner() -> Result<()> {
 
         let installed = installed_elements()?;
         if installed.iter().any(|name| name == "nix-manual") {
-            run_profile_cmd(nix_bin_str, "remove", "nix-manual", &["remove", "nix-manual"])?;
+            run_profile_cmd(
+                nix_bin_str,
+                "remove",
+                "nix-manual",
+                &["remove", "nix-manual"],
+            )?;
         }
 
         run_profile_cmd(nix_bin_str, "remove", "nix", &["remove", "nix"])?;
@@ -839,7 +865,11 @@ fn upgrade_nix_inner() -> Result<()> {
     }
 
     if !output.status.success() {
-        sentry_ext::capture_cmd_failure("nix profile upgrade nix", output.status.code(), stderr.trim());
+        sentry_ext::capture_cmd_failure(
+            "nix profile upgrade nix",
+            output.status.code(),
+            stderr.trim(),
+        );
         anyhow::bail!("nix profile upgrade nix failed: {}", stderr.trim());
     }
 

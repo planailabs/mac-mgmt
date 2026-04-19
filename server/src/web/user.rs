@@ -127,9 +127,7 @@ impl WebUser {
             .map_err(|e| dioxus::prelude::ServerFnError::new(e.to_string()))?
         {
             if !ids.contains(&cluster_id) {
-                return Err(dioxus::prelude::ServerFnError::new(
-                    "write access denied",
-                ));
+                return Err(dioxus::prelude::ServerFnError::new("write access denied"));
             }
         }
         Ok(())
@@ -160,9 +158,8 @@ impl WebUser {
 #[cfg(feature = "server")]
 pub async fn current_user() -> Result<WebUser, dioxus::prelude::ServerFnError> {
     use dioxus::fullstack::axum::extract::Extension;
-    let Extension(user): Extension<WebUser> =
-        dioxus::fullstack::extract()
-            .await
-            .map_err(|_| dioxus::prelude::ServerFnError::new("not authenticated"))?;
+    let Extension(user): Extension<WebUser> = dioxus::fullstack::extract()
+        .await
+        .map_err(|_| dioxus::prelude::ServerFnError::new("not authenticated"))?;
     Ok(user)
 }

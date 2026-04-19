@@ -9,9 +9,7 @@ use std::time::Duration;
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()),
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()))
         .try_init();
 }
 
@@ -46,7 +44,10 @@ async fn relay_unreachable_daemon_still_works() {
         state.request_count("/api/events") > 0
     })
     .await;
-    assert!(sse_ok, "daemon should connect to SSE even with failed relay");
+    assert!(
+        sse_ok,
+        "daemon should connect to SSE even with failed relay"
+    );
 
     // SSH key sync should be attempted (endpoint hit)
     let ssh_keys_count = state.request_count("/api/ssh-keys");
@@ -113,13 +114,10 @@ async fn relay_crash_heartbeats_continue() {
 
     // Verify heartbeat invariants
     let timeline = sim_tests::timeline::Timeline::new();
-    let violations = sim_tests::invariants::check_all(
-        &state,
-        &[instance_id.clone()],
-        &timeline,
-    );
+    let violations = sim_tests::invariants::check_all(&state, &[instance_id.clone()], &timeline);
     assert_eq!(
-        violations, 0,
+        violations,
+        0,
         "invariant violations with broken relay:\n{}",
         timeline.format_violations()
     );

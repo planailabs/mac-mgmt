@@ -1,9 +1,3 @@
-use dioxus::fullstack::axum::{
-    body::Body,
-    extract::Request,
-    middleware::Next,
-    response::{IntoResponse, Redirect, Response},
-};
 use axum_oidc_client::{
     auth::{AuthLayer, OAuthConfiguration, SESSION_KEY},
     auth_builder::OAuthConfigurationBuilder,
@@ -12,11 +6,17 @@ use axum_oidc_client::{
     logout::handle_default_logout::DefaultLogoutHandler,
     sql_cache::{SqlAuthCache, SqlCacheConfig},
 };
+use dioxus::fullstack::axum::{
+    body::Body,
+    extract::Request,
+    middleware::Next,
+    response::{IntoResponse, Redirect, Response},
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::config;
 use super::user::{OrgMembership, WebUser};
+use crate::config;
 
 /// Extract the email from a JWT ID token's payload (base64url-decoded, no verification needed
 /// since the OIDC client already validated it).
@@ -48,10 +48,10 @@ fn name_from_id_token(id_token: &str) -> Option<String> {
 }
 
 /// Build the OIDC AuthLayer and session cache from config.
-pub async fn build_auth_layer(
-    db_url: &str,
-) -> (AuthLayer, Arc<dyn AuthCache + Send + Sync>) {
-    let cfg = config::config().oidc.as_ref()
+pub async fn build_auth_layer(db_url: &str) -> (AuthLayer, Arc<dyn AuthCache + Send + Sync>) {
+    let cfg = config::config()
+        .oidc
+        .as_ref()
         .expect("build_auth_layer called without OIDC config");
 
     let oauth_config = OAuthConfigurationBuilder::default()
@@ -78,11 +78,8 @@ pub async fn build_auth_layer(
         // Redis L2 with Moka L1
         let redis_cache = axum_oidc_client::redis::AuthCache::new(redis_url, 28800);
         Arc::new(
-            TwoTierAuthCache::new(
-                Some(Arc::new(redis_cache)),
-                TwoTierCacheConfig::default(),
-            )
-            .expect("failed to create two-tier cache with Redis"),
+            TwoTierAuthCache::new(Some(Arc::new(redis_cache)), TwoTierCacheConfig::default())
+                .expect("failed to create two-tier cache with Redis"),
         )
     } else {
         // PostgreSQL L2 with Moka L1
@@ -98,11 +95,8 @@ pub async fn build_auth_layer(
             .await
             .expect("failed to init OIDC cache schema");
         Arc::new(
-            TwoTierAuthCache::new(
-                Some(Arc::new(sql_cache)),
-                TwoTierCacheConfig::default(),
-            )
-            .expect("failed to create two-tier cache with PostgreSQL"),
+            TwoTierAuthCache::new(Some(Arc::new(sql_cache)), TwoTierCacheConfig::default())
+                .expect("failed to create two-tier cache with PostgreSQL"),
         )
     };
 
@@ -235,10 +229,7 @@ async fn try_impersonate(
 /// This middleware reads the session from the cache, decodes the ID token to extract the
 /// email, checks against the allowed_emails list, upserts the user record, and injects
 /// `WebUser` into request extensions.
-pub async fn require_auth(
-    mut request: Request<Body>,
-    next: Next,
-) -> Response {
+pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
     let path = request.uri().path();
 
     // Pass through auth routes and static assets
@@ -286,7 +277,9 @@ pub async fn require_auth(
                     request.extensions_mut().insert(web_user);
                 }
                 Ok(None) => {
-                    tracing::error!("DEV_ONLY_NO_AUTH: dev user not found — was it created at startup?");
+                    tracing::error!(
+                        "DEV_ONLY_NO_AUTH: dev user not found — was it created at startup?"
+                    );
                 }
                 Err(e) => {
                     tracing::error!("DEV_ONLY_NO_AUTH: failed to look up dev user: {e}");
@@ -308,17 +301,21 @@ pub async fn require_auth(
 
     if let (Some(conf), Some(cache)) = (configuration, cache) {
         use axum_extra::extract::cookie::PrivateCookieJar;
-        let jar = PrivateCookieJar::from_headers(
-            request.headers(),
-            conf.private_cookie_key.clone(),
-        );
+        let jar =
+            PrivateCookieJar::from_headers(request.headers(), conf.private_cookie_key.clone());
 
         if let Some(session_cookie) = jar.get(SESSION_KEY) {
             let session_id = session_cookie.value().to_string();
-            if let Ok(Some(session)) = AuthCache::get_auth_session(cache.as_ref(), &session_id).await {
+            if let Ok(Some(session)) =
+                AuthCache::get_auth_session(cache.as_ref(), &session_id).await
+            {
                 if let Some(email) = email_from_id_token(&session.id_token) {
                     let oidc = config::config().oidc.as_ref();
-                    let domain_ok = oidc.is_some_and(|o| o.allowed_domains.iter().any(|d| email.ends_with(&format!("@{d}"))));
+                    let domain_ok = oidc.is_some_and(|o| {
+                        o.allowed_domains
+                            .iter()
+                            .any(|d| email.ends_with(&format!("@{d}")))
+                    });
                     let email_ok = oidc.is_some_and(|o| o.allowed_emails.contains(&email));
                     if domain_ok || email_ok {
                         // Resolve user from database and inject into extensions

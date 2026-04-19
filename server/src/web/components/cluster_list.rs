@@ -1,9 +1,9 @@
-use dioxus::prelude::*;
 use chrono::{DateTime, Utc};
+use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, SortableTh, SortState, TableToolbar};
+use crate::web::components::table_utils::{Searchable, SortState, SortableTh, TableToolbar};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -20,7 +20,10 @@ struct ClusterRow {
 impl Searchable for ClusterRow {
     fn matches_search(&self, query: &str) -> bool {
         self.name.to_lowercase().contains(query)
-            || self.org_names.iter().any(|o| o.to_lowercase().contains(query))
+            || self
+                .org_names
+                .iter()
+                .any(|o| o.to_lowercase().contains(query))
     }
 }
 
@@ -39,7 +42,11 @@ async fn list_clusters() -> Result<Vec<ClusterRow>, ServerFnError> {
         created_at: DateTime<Utc>,
     }
 
-    let rows = if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let rows = if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         sqlx::query_as::<_, Row>(
             "SELECT c.id, c.name, \
              COALESCE(array_agg(DISTINCT o.name) FILTER (WHERE o.name IS NOT NULL), '{}') AS org_names, \
@@ -71,14 +78,17 @@ async fn list_clusters() -> Result<Vec<ClusterRow>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
-    Ok(rows.into_iter().map(|r| ClusterRow {
-        id: r.id.to_string(),
-        name: r.name,
-        org_names: r.org_names,
-        pinned_version: r.pinned_version,
-        nixpkgs_commit: r.nixpkgs_commit,
-        created_at: r.created_at,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ClusterRow {
+            id: r.id.to_string(),
+            name: r.name,
+            org_names: r.org_names,
+            pinned_version: r.pinned_version,
+            nixpkgs_commit: r.nixpkgs_commit,
+            created_at: r.created_at,
+        })
+        .collect())
 }
 
 #[server]

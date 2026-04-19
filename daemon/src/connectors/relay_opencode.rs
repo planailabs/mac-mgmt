@@ -15,7 +15,10 @@ impl Connector for RelayOpencode {
         &["relay", "opencode"]
     }
 
-    fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+    fn connect(
+        &self,
+        configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
         let Some(relay_meta) = configs.get("relay") else {
             tracing::warn!("relay virtual service not found, skipping");
             return Ok(());
@@ -25,7 +28,10 @@ impl Connector for RelayOpencode {
             tracing::warn!("relay virtual service has no proxy_hostname, skipping");
             return Ok(());
         };
-        let Some(instance_prefix) = relay_meta.get("instance_id_prefix").and_then(|v| v.as_str()) else {
+        let Some(instance_prefix) = relay_meta
+            .get("instance_id_prefix")
+            .and_then(|v| v.as_str())
+        else {
             tracing::warn!("relay virtual service has no instance_id_prefix, skipping");
             return Ok(());
         };
@@ -38,20 +44,20 @@ impl Connector for RelayOpencode {
 
         let origin = format!("{instance_prefix}-opencode.{proxy_hostname}");
 
-        let origins_to_add = vec![
-            format!("http://{origin}"),
-            format!("https://{origin}"),
-        ];
+        let origins_to_add = vec![format!("http://{origin}"), format!("https://{origin}")];
 
         // Read current config to check existing CORS origins
         let current = std::fs::read_to_string(&path).unwrap_or_default();
-        let current_json: serde_json::Value =
-            serde_json::from_str(&current).unwrap_or_default();
+        let current_json: serde_json::Value = serde_json::from_str(&current).unwrap_or_default();
 
         let mut existing_cors: Vec<String> = current_json
             .pointer("/server/cors")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let mut added = false;
@@ -74,7 +80,10 @@ impl Connector for RelayOpencode {
         });
 
         merge_and_write(&path, &patch)?;
-        tracing::info!("relay→opencode: added {} to CORS origins", origins_to_add.join(", "));
+        tracing::info!(
+            "relay→opencode: added {} to CORS origins",
+            origins_to_add.join(", ")
+        );
         Ok(())
     }
 }

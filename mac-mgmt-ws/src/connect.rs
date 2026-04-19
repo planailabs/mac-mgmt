@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 
 /// The concrete WebSocket stream type returned by client connections.
-pub type ClientWs = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+pub type ClientWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Builder for WebSocket client connections.
 ///
@@ -85,7 +84,10 @@ mod tests {
 
     #[test]
     fn extract_host_variants() {
-        assert_eq!(extract_host("wss://relay.example.com/path"), "relay.example.com");
+        assert_eq!(
+            extract_host("wss://relay.example.com/path"),
+            "relay.example.com"
+        );
         assert_eq!(extract_host("ws://localhost:8080/ws"), "localhost:8080");
         assert_eq!(extract_host("relay.example.com/path"), "relay.example.com");
     }

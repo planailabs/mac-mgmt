@@ -1,4 +1,5 @@
- //! Axum-based mock management server for simulation testing.
+
+//! Axum-based mock management server for simulation testing.
 //!
 //! Implements the daemon-facing API surface with fully observable and
 //! injectable state. Tests can pre-populate responses, inspect daemon
@@ -6,8 +7,8 @@
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::sse::{Event, Sse};
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use mac_mgmt_common::{HeartbeatBody, NixpkgsPin, PushEvent, UpdateTarget};
@@ -17,8 +18,8 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
 // ── Observable state ────────────────────────────────────────────────
 

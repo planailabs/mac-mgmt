@@ -123,7 +123,11 @@ impl Orchestrator {
                 }
             })
             .collect();
-        if sanitized.len() > 63 { sanitized[..63].to_string() } else { sanitized }
+        if sanitized.len() > 63 {
+            sanitized[..63].to_string()
+        } else {
+            sanitized
+        }
     }
 
     fn cluster_name(&self, key: &str) -> String {
@@ -258,7 +262,10 @@ impl Orchestrator {
             .await
             .with_context(|| format!("creating cluster {name}"))?;
         let now = Utc::now();
-        let stage = CellStage::ClusterCreated { cluster_id: created.id, at: now };
+        let stage = CellStage::ClusterCreated {
+            cluster_id: created.id,
+            at: now,
+        };
         self.persist_cell(self.cell_with_stage(cell, stage.clone(), now).await)
             .await?;
 
@@ -283,27 +290,22 @@ impl Orchestrator {
         Ok(stage)
     }
 
-    async fn enter_config_pushed(
-        &self,
-        cell: &MatrixCell,
-        cluster_id: Uuid,
-    ) -> Result<CellStage> {
+    async fn enter_config_pushed(&self, cell: &MatrixCell, cluster_id: Uuid) -> Result<CellStage> {
         self.mgmt
             .put_config(cluster_id, &cell.config)
             .await
             .with_context(|| format!("putting config for cluster {cluster_id}"))?;
         let now = Utc::now();
-        let stage = CellStage::ConfigPushed { cluster_id, at: now };
+        let stage = CellStage::ConfigPushed {
+            cluster_id,
+            at: now,
+        };
         self.persist_cell(self.cell_with_stage(cell, stage.clone(), now).await)
             .await?;
         Ok(stage)
     }
 
-    async fn enter_launching(
-        &self,
-        cell: &MatrixCell,
-        cluster_id: Uuid,
-    ) -> Result<CellStage> {
+    async fn enter_launching(&self, cell: &MatrixCell, cluster_id: Uuid) -> Result<CellStage> {
         let node_count = cell.node_count.max(1);
 
         // Predict instance names up front so stray leftovers from a crashed
@@ -355,8 +357,7 @@ impl Orchestrator {
         }
 
         let now = Utc::now();
-        let instances: Vec<InstanceSpec> =
-            planned.iter().map(|(i, _)| i.clone()).collect();
+        let instances: Vec<InstanceSpec> = planned.iter().map(|(i, _)| i.clone()).collect();
         let stage = CellStage::Launching {
             cluster_id,
             instances: instances.clone(),
@@ -621,14 +622,14 @@ impl Orchestrator {
             (names, ids)
         };
 
-        let incus_names: std::collections::HashSet<String> =
-            match self.incus.list_instances().await {
-                Ok(v) => v.into_iter().collect(),
-                Err(e) => {
-                    tracing::warn!("gc: listing incus instances: {e:#}");
-                    return Ok(());
-                }
-            };
+        let incus_names: std::collections::HashSet<String> = match self.incus.list_instances().await
+        {
+            Ok(v) => v.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!("gc: listing incus instances: {e:#}");
+                return Ok(());
+            }
+        };
         let server_clusters: Vec<(Uuid, String)> = match self.mgmt.list_clusters().await {
             Ok(rows) => rows.into_iter().map(|r| (r.id, r.name)).collect(),
             Err(e) => {
@@ -829,7 +830,11 @@ impl Orchestrator {
                     if !row.name.starts_with(&prefix) {
                         continue;
                     }
-                    tracing::info!("redeploy: removing orphan cluster {} ({})", row.name, row.id);
+                    tracing::info!(
+                        "redeploy: removing orphan cluster {} ({})",
+                        row.name,
+                        row.id
+                    );
                     if let Err(e) = self.incus.delete_instance(&row.name).await {
                         tracing::warn!("redeploy: deleting incus instance {}: {e}", row.name);
                     }
@@ -915,8 +920,7 @@ impl Orchestrator {
 
     async fn chaos_skill(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_skill_channels(cluster_id).await?;
-        let installable: Vec<Uuid> =
-            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let installable: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
         let uninstallable: Vec<Uuid> = rows
             .iter()
             .filter_map(|r| r.cluster_skill_id.filter(|_| r.installed))
@@ -941,8 +945,7 @@ impl Orchestrator {
 
     async fn chaos_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_bundles(cluster_id).await?;
-        let installable: Vec<Uuid> =
-            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let installable: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
         let installed_count = rows.iter().filter(|r| r.installed).count();
         let Some(install) = Self::roll_install(installed_count, installable.len()) else {
             return Ok(None);
@@ -967,8 +970,7 @@ impl Orchestrator {
 
     async fn chaos_mcp_server(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_mcp_servers(cluster_id).await?;
-        let installable: Vec<Uuid> =
-            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let installable: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
         let uninstallable: Vec<Uuid> = rows
             .iter()
             .filter_map(|r| r.cluster_mcp_server_id.filter(|_| r.installed))
@@ -993,8 +995,7 @@ impl Orchestrator {
 
     async fn chaos_mcp_bundle(&self, cluster_id: Uuid) -> Result<Option<String>> {
         let rows = self.mgmt.list_available_mcp_bundles(cluster_id).await?;
-        let installable: Vec<Uuid> =
-            rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
+        let installable: Vec<Uuid> = rows.iter().filter(|r| !r.installed).map(|r| r.id).collect();
         let installed_count = rows.iter().filter(|r| r.installed).count();
         let Some(install) = Self::roll_install(installed_count, installable.len()) else {
             return Ok(None);
@@ -1056,8 +1057,7 @@ impl Orchestrator {
                 })
                 .collect()
         };
-        let Some((key, instances)) = candidates.choose(&mut rand::thread_rng()).cloned()
-        else {
+        let Some((key, instances)) = candidates.choose(&mut rand::thread_rng()).cloned() else {
             return Ok(None);
         };
 
@@ -1210,11 +1210,12 @@ impl Orchestrator {
 
             let (healthy, detail) = match s.as_ref().map(|c| &c.stage) {
                 None | Some(CellStage::Pending) => (None, None),
-                Some(CellStage::ClusterCreated { .. })
-                | Some(CellStage::ConfigPushed { .. }) => {
+                Some(CellStage::ClusterCreated { .. }) | Some(CellStage::ConfigPushed { .. }) => {
                     (None, Some("provisioning".into()))
                 }
-                Some(CellStage::Launching { instances, since, .. }) => {
+                Some(CellStage::Launching {
+                    instances, since, ..
+                }) => {
                     let waited = (now - *since).num_seconds().max(0);
                     (
                         None,
@@ -1225,7 +1226,11 @@ impl Orchestrator {
                         )),
                     )
                 }
-                Some(CellStage::Running { cluster_id, instances, .. }) => {
+                Some(CellStage::Running {
+                    cluster_id,
+                    instances,
+                    ..
+                }) => {
                     match self.mgmt.list_cluster_machines(*cluster_id).await {
                         Ok(rows) => {
                             // Pick the oldest heartbeat among our known
@@ -1238,8 +1243,7 @@ impl Orchestrator {
                                 .min_by_key(|r| r.reported_at);
                             let heartbeat_fresh = latest
                                 .map(|r| {
-                                    (now - r.reported_at).to_std().unwrap_or_default()
-                                        < stale_after
+                                    (now - r.reported_at).to_std().unwrap_or_default() < stale_after
                                 })
                                 .unwrap_or(false);
                             let probes_ok = latest
@@ -1327,8 +1331,14 @@ fn probes_healthy(v: &serde_json::Value) -> Option<bool> {
     let mut any = false;
     for (_, svc) in map {
         any = true;
-        let h = svc.get("healthy").and_then(|b| b.as_bool()).unwrap_or(false);
-        let probe = svc.get("last_probe_ok").and_then(|b| b.as_bool()).unwrap_or(false);
+        let h = svc
+            .get("healthy")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+        let probe = svc
+            .get("last_probe_ok")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
         if !(h && probe) {
             return Some(false);
         }
@@ -1345,7 +1355,10 @@ fn probe_summary(v: Option<&serde_json::Value>) -> String {
     }
     let mut parts: Vec<String> = Vec::new();
     for (name, svc) in map {
-        let h = svc.get("healthy").and_then(|b| b.as_bool()).unwrap_or(false);
+        let h = svc
+            .get("healthy")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
         let mark = if h { "✔" } else { "✗" };
         parts.push(format!("{name}{mark}"));
     }
@@ -1355,8 +1368,8 @@ fn probe_summary(v: Option<&serde_json::Value>) -> String {
 // ── Background loops ──────────────────────────────────────────────────
 
 pub async fn reconcile_loop(orch: Arc<Orchestrator>) {
-    let interval = parse_duration(&orch.config.fleet.reconcile_interval)
-        .unwrap_or(Duration::from_secs(60));
+    let interval =
+        parse_duration(&orch.config.fleet.reconcile_interval).unwrap_or(Duration::from_secs(60));
     let mut ticker = tokio::time::interval(interval);
     loop {
         ticker.tick().await;
@@ -1407,8 +1420,8 @@ pub async fn chaos_loop(orch: Arc<Orchestrator>) {
 /// op (start / stop / reprovision). Interval is fleet.vm_chaos_interval
 /// (default 30m). No-op if the fleet has no running cells.
 pub async fn vm_chaos_loop(orch: Arc<Orchestrator>) {
-    let interval = parse_duration(&orch.config.fleet.vm_chaos_interval)
-        .unwrap_or(Duration::from_secs(1800));
+    let interval =
+        parse_duration(&orch.config.fleet.vm_chaos_interval).unwrap_or(Duration::from_secs(1800));
     tokio::time::sleep(interval / 2).await;
     let mut ticker = tokio::time::interval(interval);
     ticker.tick().await;

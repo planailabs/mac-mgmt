@@ -19,11 +19,7 @@ pub fn spawn(
     })
 }
 
-async fn listen(
-    registry: Arc<DaemonRegistry>,
-    instance_id: &str,
-    port: u16,
-) -> Result<()> {
+async fn listen(registry: Arc<DaemonRegistry>, instance_id: &str, port: u16) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     tracing::info!("SSH listener started on port {port} for {instance_id}");
 
@@ -36,9 +32,7 @@ async fn listen(
         );
 
         let Some(control_tx) = registry.get_control_tx(instance_id) else {
-            tracing::warn!(
-                "daemon {instance_id} not in registry, dropping client {peer_addr}"
-            );
+            tracing::warn!("daemon {instance_id} not in registry, dropping client {peer_addr}");
             continue;
         };
 
@@ -50,9 +44,7 @@ async fn listen(
             .await
             .is_err()
         {
-            tracing::warn!(
-                "control channel closed for daemon {instance_id}, dropping {peer_addr}"
-            );
+            tracing::warn!("control channel closed for daemon {instance_id}, dropping {peer_addr}");
             continue;
         }
         tracing::debug!("session request {session_id} sent to daemon {instance_id}");

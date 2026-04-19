@@ -118,11 +118,7 @@ fn getenforce_mode() -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    Some(
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .to_lowercase(),
-    )
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_lowercase())
 }
 
 #[cfg(target_os = "linux")]
@@ -177,7 +173,11 @@ fn nftables_rule_count() -> Option<u32> {
     let arr = v.get("nftables")?.as_array()?;
     let count = arr
         .iter()
-        .filter(|entry| entry.as_object().is_some_and(|obj| obj.contains_key("rule")))
+        .filter(|entry| {
+            entry
+                .as_object()
+                .is_some_and(|obj| obj.contains_key("rule"))
+        })
         .count();
     Some(count as u32)
 }
@@ -194,7 +194,9 @@ fn luks_present_on_root() -> Option<bool> {
     let s = String::from_utf8_lossy(&out.stdout);
     for line in s.lines() {
         let mut parts = line.split_whitespace();
-        let (Some(ty), Some(mp)) = (parts.next(), parts.next()) else { continue };
+        let (Some(ty), Some(mp)) = (parts.next(), parts.next()) else {
+            continue;
+        };
         if mp == "/" {
             return Some(ty == "crypt");
         }

@@ -264,11 +264,7 @@ pub async fn list_session_pings(pool: &PgPool, session_id: Uuid) -> Result<Vec<S
 }
 
 /// Resolve a staff ping.
-pub async fn resolve_staff_ping(
-    pool: &PgPool,
-    ping_id: Uuid,
-    resolved_by: &str,
-) -> Result<()> {
+pub async fn resolve_staff_ping(pool: &PgPool, ping_id: Uuid, resolved_by: &str) -> Result<()> {
     sqlx::query(
         "UPDATE healer_staff_pings SET resolved = true, resolved_by = $1, resolved_at = now() \
          WHERE id = $2",

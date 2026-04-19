@@ -52,11 +52,15 @@ fn applied_marker_path() -> Option<std::path::PathBuf> {
 
 fn read_last_store_path() -> Option<String> {
     let p = applied_marker_path()?;
-    std::fs::read_to_string(&p).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(&p)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn write_last_store_path(store_path: &str) {
-    let Some(p) = applied_marker_path() else { return };
+    let Some(p) = applied_marker_path() else {
+        return;
+    };
     if let Some(parent) = p.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             tracing::warn!("failed to create config dir {}: {e}", parent.display());
@@ -121,18 +125,14 @@ pub fn check_and_apply() {
             );
             return;
         }
-        tracing::info!(
-            "store path mismatch: running={current} target={store_path} (v{version})"
-        );
+        tracing::info!("store path mismatch: running={current} target={store_path} (v{version})");
     } else {
         // Binary isn't in the nix store (dev build, manual install, etc).
         // Fall back to the on-disk marker so we don't re-apply every tick.
         if version == CURRENT_VERSION {
             match read_last_store_path() {
                 Some(last) if last == store_path => {
-                    tracing::info!(
-                        "already at target version {CURRENT_VERSION} ({store_path})"
-                    );
+                    tracing::info!("already at target version {CURRENT_VERSION} ({store_path})");
                     return;
                 }
                 Some(last) => {
@@ -150,11 +150,15 @@ pub fn check_and_apply() {
     }
 
     tracing::info!("updating: {CURRENT_VERSION} -> {version} (store {store_path})");
-    sentry_ext::breadcrumb("self-update", "updating", &[
-        ("from", CURRENT_VERSION),
-        ("to", &version),
-        ("store_path", &store_path),
-    ]);
+    sentry_ext::breadcrumb(
+        "self-update",
+        "updating",
+        &[
+            ("from", CURRENT_VERSION),
+            ("to", &version),
+            ("store_path", &store_path),
+        ],
+    );
 
     if let Err(e) = apply_store_path(&version, &store_path) {
         tracing::warn!("update to {version} failed: {e}");
@@ -168,9 +172,7 @@ pub fn check_and_apply() {
 /// Compare a version string against CURRENT_VERSION.
 /// Returns -1 if ver < current, 0 if equal, 1 if ver > current.
 fn version_cmp(ver: &str) -> i32 {
-    let parse = |s: &str| -> Vec<u64> {
-        s.split('.').filter_map(|p| p.parse().ok()).collect()
-    };
+    let parse = |s: &str| -> Vec<u64> { s.split('.').filter_map(|p| p.parse().ok()).collect() };
     let a = parse(ver);
     let b = parse(CURRENT_VERSION);
     a.cmp(&b) as i32
@@ -187,7 +189,9 @@ fn version_cmp(ver: &str) -> i32 {
 /// `check_and_apply` can compare store paths directly.
 fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     let current_exe = std::env::current_exe().context("failed to get current exe path")?;
-    let parent = current_exe.parent().context("current exe has no parent dir")?;
+    let parent = current_exe
+        .parent()
+        .context("current exe has no parent dir")?;
     let gcroot = parent.join(".mac-mgmt.gcroot");
 
     // Remove a prior gcroot so --add-root can create a fresh symlink.
@@ -216,9 +220,8 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     let tmp_link = parent.join(".mac-mgmt.update");
     let _ = std::fs::remove_file(&tmp_link);
 
-    std::os::unix::fs::symlink(&new_bin, &tmp_link).with_context(|| {
-        format!("symlink {} -> {}", tmp_link.display(), new_bin.display())
-    })?;
+    std::os::unix::fs::symlink(&new_bin, &tmp_link)
+        .with_context(|| format!("symlink {} -> {}", tmp_link.display(), new_bin.display()))?;
 
     std::fs::rename(&tmp_link, &current_exe)
         .context("failed to rename new binary link over current")?;
@@ -226,11 +229,15 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     write_last_store_path(store_path);
 
     tracing::info!("binary updated to {version} (symlink → {store_path})");
-    sentry_ext::breadcrumb("self-update", "binary updated", &[
-        ("from", CURRENT_VERSION),
-        ("to", version),
-        ("store_path", store_path),
-    ]);
+    sentry_ext::breadcrumb(
+        "self-update",
+        "binary updated",
+        &[
+            ("from", CURRENT_VERSION),
+            ("to", version),
+            ("store_path", store_path),
+        ],
+    );
     Ok(())
 }
 
@@ -242,16 +249,14 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
 pub fn apply(force: bool) -> Result<()> {
     let t = target();
     let Some(version) = t.version else {
-        println!(
-            "no target version known in this process; updates are driven by the server"
-        );
+        println!("no target version known in this process; updates are driven by the server");
         return Ok(());
     };
 
     if force {
-        let store_path = t.store_path.context(
-            "--force requires a store path; pass --store-path or rely on the server",
-        )?;
+        let store_path = t
+            .store_path
+            .context("--force requires a store path; pass --store-path or rely on the server")?;
         apply_store_path(&version, &store_path)?;
         return Ok(());
     }

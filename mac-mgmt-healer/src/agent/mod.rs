@@ -49,10 +49,7 @@ pub fn build_system_prompt(
     prompt.push('\n');
 
     // Detected issues
-    let unhealthy: Vec<_> = services_extended
-        .iter()
-        .filter(|s| !s.healthy)
-        .collect();
+    let unhealthy: Vec<_> = services_extended.iter().filter(|s| !s.healthy).collect();
     if !unhealthy.is_empty() {
         prompt.push_str("## Detected Issues\n");
         for svc in &unhealthy {
@@ -84,7 +81,10 @@ pub fn build_system_prompt(
         prompt.push_str(&format!("- File tunnels: {}\n", file_tunnels.join(", ")));
     }
     if !shell_commands.is_empty() {
-        prompt.push_str(&format!("- Shell commands: {}\n", shell_commands.join(", ")));
+        prompt.push_str(&format!(
+            "- Shell commands: {}\n",
+            shell_commands.join(", ")
+        ));
     }
     prompt.push_str("- `fetch_logs` — fetch logs, optionally filtered by service\n");
     if !other_instances.is_empty() {
@@ -92,7 +92,9 @@ pub fn build_system_prompt(
     }
     prompt.push_str("\n### Session management\n");
     prompt.push_str("- `pin` — pin key information to the session (three slots):\n");
-    prompt.push_str("  - `diagnosis` slot: pin once you identify the root cause (include affected services)\n");
+    prompt.push_str(
+        "  - `diagnosis` slot: pin once you identify the root cause (include affected services)\n",
+    );
     prompt.push_str("  - `remediation` slot: pin your remediation plan before applying fixes\n");
     prompt.push_str("  - `final_report` slot: pin at the end summarizing what was done and any remaining issues\n");
     prompt.push_str("- `set_phase` — transition between phases: `diagnosing`, `remediating`, `verifying`, `done`, `needs_human_attention`\n");
@@ -100,11 +102,16 @@ pub fn build_system_prompt(
     prompt.push_str("- `check_node_online` — check if the target node is connected to the relay\n");
     prompt.push_str("- `wait_for_node` — wait for the node to reconnect (e.g. after a reboot)\n");
     prompt.push_str("- `get_probe_status` — query fresh health probe results and system resources from the latest heartbeat\n");
-    prompt.push_str("- `wait` — pause for N seconds (1-300). Use after config changes or restarts.\n");
-    prompt.push_str("- `request_assessment` — trigger an immediate health probe run on the instance\n\n");
+    prompt.push_str(
+        "- `wait` — pause for N seconds (1-300). Use after config changes or restarts.\n",
+    );
+    prompt.push_str(
+        "- `request_assessment` — trigger an immediate health probe run on the instance\n\n",
+    );
     prompt.push_str("### Cluster config management\n");
     prompt.push_str("- `get_config` — read the current cluster configuration\n");
-    prompt.push_str("- `patch_config` — merge a JSON patch into the config (only changed fields)\n");
+    prompt
+        .push_str("- `patch_config` — merge a JSON patch into the config (only changed fields)\n");
     prompt.push_str("- `set_config` — replace the entire cluster config\n");
     prompt.push_str("- `list_skills` / `add_skill` / `remove_skill` — manage cluster skills\n");
     prompt.push_str("- `list_mcp_servers` / `add_mcp_server` / `remove_mcp_server` — manage cluster MCP servers\n");
@@ -129,7 +136,8 @@ pub fn build_system_prompt(
         12. NEVER make changes without understanding the root cause first\n\n");
 
     // Staff pings guidance
-    prompt.push_str("## When to use staff_ping\n\
+    prompt.push_str(
+        "## When to use staff_ping\n\
         Use `staff_ping` to create actionable notifications for admin staff:\n\
         - **hardware**: GPU failures, bad RAM, disk errors\n\
         - **network**: DNS issues, firewall blocks, connectivity problems\n\
@@ -151,7 +159,8 @@ pub fn build_system_prompt(
           write — it will fail again until the binary is installed.\n\
         - **502/503/504 errors**: The daemon disconnected from the relay. The tool will \
           automatically wait up to 10 minutes for it to reconnect. If it times out, use \
-          `check_node_online` and consider using `staff_ping` with category `network`.\n\n");
+          `check_node_online` and consider using `staff_ping` with category `network`.\n\n",
+    );
 
     // Remediation procedures
     let error_classes: Vec<String> = services_extended
@@ -192,7 +201,10 @@ pub fn format_sample_summary(sample: &serde_json::Value) -> String {
     }
     if let Some(gpu) = sample.get("gpu").and_then(|v| v.as_array()) {
         for (i, g) in gpu.iter().enumerate() {
-            let util = g.get("utilization_pct").and_then(|v| v.as_u64()).unwrap_or(0);
+            let util = g
+                .get("utilization_pct")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             let vram_used = g.get("vram_used_mb").and_then(|v| v.as_u64()).unwrap_or(0);
             let vram_total = g.get("vram_total_mb").and_then(|v| v.as_u64()).unwrap_or(0);
             let temp = g.get("temperature_c").and_then(|v| v.as_u64()).unwrap_or(0);

@@ -59,8 +59,12 @@ pub async fn tail_logs(
             poll_url.push_str(&format!("&service={svc}"));
         }
 
-        let Ok(r) = client.get(&poll_url).send().await else { continue };
-        let Ok(resp) = r.json::<LogsResponse>().await else { continue };
+        let Ok(r) = client.get(&poll_url).send().await else {
+            continue;
+        };
+        let Ok(resp) = r.json::<LogsResponse>().await else {
+            continue;
+        };
 
         for line in &resp.lines {
             println!("{line}");
@@ -80,17 +84,13 @@ pub async fn trigger_sync(port_override: Option<u16>) -> Result<()> {
 
     let url = format!("http://[::1]:{port}/sync");
 
-    let resp = client
-        .post(&url)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_connect() {
-                anyhow::anyhow!("daemon not running or metrics port differs")
-            } else {
-                anyhow::anyhow!("{e}")
-            }
-        })?;
+    let resp = client.post(&url).send().await.map_err(|e| {
+        if e.is_connect() {
+            anyhow::anyhow!("daemon not running or metrics port differs")
+        } else {
+            anyhow::anyhow!("{e}")
+        }
+    })?;
 
     if !resp.status().is_success() {
         anyhow::bail!("sync request failed: {}", resp.status());

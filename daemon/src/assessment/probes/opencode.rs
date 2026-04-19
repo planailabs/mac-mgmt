@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use mac_mgmt_common::OpencodeConfig;
 use reqwest::Client;
 
-use super::{digest_hex, timed, Probe, ProbeCtx, ProbeKind, ProbeResult};
+use super::{Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex, timed};
 
 pub struct OpencodeProbe {
     base_url: String,
@@ -16,7 +16,11 @@ pub struct OpencodeProbe {
 
 impl OpencodeProbe {
     pub fn from_config(cfg: &OpencodeConfig) -> Self {
-        let host = if cfg.host.is_empty() { "127.0.0.1" } else { &cfg.host };
+        let host = if cfg.host.is_empty() {
+            "127.0.0.1"
+        } else {
+            &cfg.host
+        };
         Self {
             base_url: format!("http://{host}:{}", cfg.port),
         }
@@ -39,7 +43,11 @@ impl OpencodeProbe {
             ok,
             canary_digest: Some(digest_hex(body.trim().as_bytes())),
             error_class: if ok { None } else { Some("bad_status".into()) },
-            error_detail: if ok { None } else { Some(format!("HTTP {status}")) },
+            error_detail: if ok {
+                None
+            } else {
+                Some(format!("HTTP {status}"))
+            },
             ..Default::default()
         })
     }

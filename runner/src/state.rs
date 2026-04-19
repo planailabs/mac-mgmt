@@ -64,15 +64,9 @@ pub enum CellStage {
     /// Nothing has been created anywhere yet.
     Pending,
     /// Cluster row exists on the mgmt server; no config, no VM.
-    ClusterCreated {
-        cluster_id: Uuid,
-        at: DateTime<Utc>,
-    },
+    ClusterCreated { cluster_id: Uuid, at: DateTime<Utc> },
     /// Cluster has a config applied; no VM yet.
-    ConfigPushed {
-        cluster_id: Uuid,
-        at: DateTime<Utc>,
-    },
+    ConfigPushed { cluster_id: Uuid, at: DateTime<Utc> },
     /// Incus instances created and booting. The cell transitions to
     /// `Running` when every `instances[].instance_id` shows up in the
     /// cluster's heartbeats, or back to `ConfigPushed` after the
@@ -163,8 +157,7 @@ impl FleetState {
         }
         let tmp: PathBuf = path.with_extension("json.tmp");
         let s = serde_json::to_string_pretty(self)?;
-        std::fs::write(&tmp, s)
-            .with_context(|| format!("writing state tmp {}", tmp.display()))?;
+        std::fs::write(&tmp, s).with_context(|| format!("writing state tmp {}", tmp.display()))?;
         std::fs::rename(&tmp, path)
             .with_context(|| format!("renaming state file to {}", path.display()))?;
         Ok(())
@@ -209,8 +202,14 @@ mod tests {
         ];
         let stages = vec![
             CellStage::Pending,
-            CellStage::ClusterCreated { cluster_id: cid, at: now },
-            CellStage::ConfigPushed { cluster_id: cid, at: now },
+            CellStage::ClusterCreated {
+                cluster_id: cid,
+                at: now,
+            },
+            CellStage::ConfigPushed {
+                cluster_id: cid,
+                at: now,
+            },
             CellStage::Launching {
                 cluster_id: cid,
                 instances: insts.clone(),

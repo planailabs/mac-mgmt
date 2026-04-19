@@ -41,10 +41,9 @@ fn write_nix_state(pkgs: &HashSet<String>) -> Result<()> {
         v.sort();
         v
     };
-    let json = serde_json::to_string_pretty(&sorted)
-        .context("failed to serialize MCP nix state")?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    let json =
+        serde_json::to_string_pretty(&sorted).context("failed to serialize MCP nix state")?;
+    std::fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
@@ -99,8 +98,8 @@ fn sync_mcporter_config(servers: &HashMap<String, McpServerEntry>) -> Result<()>
     }
 
     let config = serde_json::json!({ "mcpServers": mcp_servers });
-    let output = serde_json::to_string_pretty(&config)
-        .context("failed to serialize mcporter config")?;
+    let output =
+        serde_json::to_string_pretty(&config).context("failed to serialize mcporter config")?;
     std::fs::write(&config_path, &output)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
 
@@ -121,7 +120,9 @@ fn sync_nix_packages(servers: &HashMap<String, McpServerEntry>) {
     let installed: HashSet<String> = match crate::nix::installed_elements() {
         Ok(elems) => elems.into_iter().collect(),
         Err(e) => {
-            tracing::warn!("failed to list installed nix elements, skipping profile verification: {e}");
+            tracing::warn!(
+                "failed to list installed nix elements, skipping profile verification: {e}"
+            );
             HashSet::new()
         }
     };
@@ -133,7 +134,11 @@ fn sync_nix_packages(servers: &HashMap<String, McpServerEntry>) {
             .collect();
         for pkg in &missing {
             tracing::warn!("MCP nix package {pkg} missing from profile, reinstalling");
-            sentry_ext::breadcrumb("mcp-nix", &format!("reinstalling missing {pkg}"), &[("package", pkg)]);
+            sentry_ext::breadcrumb(
+                "mcp-nix",
+                &format!("reinstalling missing {pkg}"),
+                &[("package", pkg)],
+            );
             if let Err(e) = crate::nix::profile_install(pkg, false) {
                 tracing::warn!("failed to reinstall missing MCP nix dependency {pkg}: {e}");
                 sentry_ext::capture_error(

@@ -17,9 +17,7 @@ pub struct LogsContext {
 // ── Server function ─────────────────────────────────────────────────────
 
 #[server]
-pub async fn get_logs_context(
-    instance_id: String,
-) -> Result<LogsContext, ServerFnError> {
+pub async fn get_logs_context(instance_id: String) -> Result<LogsContext, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
 
@@ -90,7 +88,11 @@ pub async fn get_logs_context(
 // ── Client-side helpers ──────────────────────────────────────────────────
 
 fn build_relay_logs_url(relay_url: &str, instance_prefix: &str) -> String {
-    let scheme = if relay_url.starts_with("https://") { "https://" } else { "http://" };
+    let scheme = if relay_url.starts_with("https://") {
+        "https://"
+    } else {
+        "http://"
+    };
     let relay_host = relay_url
         .trim_start_matches("https://")
         .trim_start_matches("http://");

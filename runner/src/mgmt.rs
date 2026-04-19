@@ -184,7 +184,10 @@ impl MgmtClient {
             .to_string();
         let body = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            if body.starts_with("<!doctype") || body.starts_with("<html") || ct.contains("text/html") {
+            if body.starts_with("<!doctype")
+                || body.starts_with("<html")
+                || ct.contains("text/html")
+            {
                 bail!(
                     "mgmt.url ({}) looks like the web UI, not the REST API. \
                      Point it at the server's api.external_url (default port 7378). \
@@ -256,11 +259,7 @@ impl MgmtClient {
         Ok(())
     }
 
-    pub async fn put_config(
-        &self,
-        cluster_id: Uuid,
-        config: &serde_json::Value,
-    ) -> Result<()> {
+    pub async fn put_config(&self, cluster_id: Uuid, config: &serde_json::Value) -> Result<()> {
         // Server-side SetConfigBody uses #[serde(flatten)] so the entire
         // request body IS the ClusterConfig — no envelope.
         let resp = self
@@ -374,11 +373,7 @@ impl MgmtClient {
         Ok(())
     }
 
-    pub async fn add_rollout_group_member(
-        &self,
-        group_id: Uuid,
-        cluster_id: Uuid,
-    ) -> Result<()> {
+    pub async fn add_rollout_group_member(&self, group_id: Uuid, cluster_id: Uuid) -> Result<()> {
         #[derive(Serialize)]
         struct Body {
             cluster_id: Uuid,
@@ -437,7 +432,11 @@ impl MgmtClient {
             .json(&Body { skill_channel_id })
             .send()
             .await?;
-        let _ = read_ok(&format!("add_skill({cluster_id}, {skill_channel_id})"), resp).await?;
+        let _ = read_ok(
+            &format!("add_skill({cluster_id}, {skill_channel_id})"),
+            resp,
+        )
+        .await?;
         Ok(())
     }
 
@@ -465,10 +464,7 @@ impl MgmtClient {
         read_json(&format!("available_bundles({cluster_id})"), resp).await
     }
 
-    pub async fn list_cluster_bundles(
-        &self,
-        cluster_id: Uuid,
-    ) -> Result<Vec<ClusterBundleRow>> {
+    pub async fn list_cluster_bundles(&self, cluster_id: Uuid) -> Result<Vec<ClusterBundleRow>> {
         let resp = self
             .http
             .get(format!("{}/api/setting/bundles", self.base))
@@ -533,7 +529,11 @@ impl MgmtClient {
             .json(&Body { mcp_server_id })
             .send()
             .await?;
-        let _ = read_ok(&format!("add_mcp_server({cluster_id}, {mcp_server_id})"), resp).await?;
+        let _ = read_ok(
+            &format!("add_mcp_server({cluster_id}, {mcp_server_id})"),
+            resp,
+        )
+        .await?;
         Ok(())
     }
 
@@ -555,10 +555,7 @@ impl MgmtClient {
         Ok(())
     }
 
-    pub async fn list_available_mcp_bundles(
-        &self,
-        cluster_id: Uuid,
-    ) -> Result<Vec<OptionRow>> {
+    pub async fn list_available_mcp_bundles(&self, cluster_id: Uuid) -> Result<Vec<OptionRow>> {
         let resp = self
             .http
             .get(format!("{}/api/setting/available/mcp-bundles", self.base))

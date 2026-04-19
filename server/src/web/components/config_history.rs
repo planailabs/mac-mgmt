@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use chrono::{DateTime, Utc};
+use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -25,7 +25,11 @@ async fn get_config_history(cluster_id: String) -> Result<Vec<ConfigVersion>, Se
     let uuid: Uuid = cluster_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -70,12 +74,17 @@ async fn get_config_diff(
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Verify user has access to the cluster that owns these configs
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
-        let cluster_id: Uuid = sqlx::query_scalar("SELECT cluster_id FROM cluster_configs WHERE id = $1")
-            .bind(left_uuid)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        let cluster_id: Uuid =
+            sqlx::query_scalar("SELECT cluster_id FROM cluster_configs WHERE id = $1")
+                .bind(left_uuid)
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
         if !ids.contains(&cluster_id) {
             return Err(ServerFnError::new("access denied"));
         }

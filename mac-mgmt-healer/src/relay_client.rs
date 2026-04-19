@@ -112,25 +112,41 @@ impl RelayClient {
     /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
     pub async fn wait_for_daemon(&self, instance_prefix: &str) -> Result<()> {
         let deadline = tokio::time::Instant::now() + DAEMON_RECONNECT_TIMEOUT;
-        tracing::warn!(instance = instance_prefix, "daemon appears offline, waiting up to 10m for reconnect");
-        self.broadcast_status("Daemon disconnected from relay. Waiting for reconnect (up to 10 minutes)...");
+        tracing::warn!(
+            instance = instance_prefix,
+            "daemon appears offline, waiting up to 10m for reconnect"
+        );
+        self.broadcast_status(
+            "Daemon disconnected from relay. Waiting for reconnect (up to 10 minutes)...",
+        );
         let mut attempt = 0u32;
         loop {
             tokio::time::sleep(DAEMON_POLL_INTERVAL).await;
             attempt += 1;
             if self.is_daemon_online(instance_prefix).await {
                 let secs = attempt * 5;
-                tracing::info!(instance = instance_prefix, wait_secs = secs, "daemon back online");
+                tracing::info!(
+                    instance = instance_prefix,
+                    wait_secs = secs,
+                    "daemon back online"
+                );
                 self.broadcast_status(&format!("Daemon reconnected after {secs}s."));
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
                 self.broadcast_status("Daemon did not reconnect within 10 minutes.");
-                anyhow::bail!("daemon {} did not reconnect within 10 minutes", instance_prefix);
+                anyhow::bail!(
+                    "daemon {} did not reconnect within 10 minutes",
+                    instance_prefix
+                );
             }
             if attempt % 12 == 0 {
                 let elapsed = attempt * 5;
-                tracing::debug!(instance = instance_prefix, elapsed_secs = elapsed, "still waiting...");
+                tracing::debug!(
+                    instance = instance_prefix,
+                    elapsed_secs = elapsed,
+                    "still waiting..."
+                );
                 self.broadcast_status(&format!("Still waiting for daemon... ({elapsed}s elapsed)"));
             }
         }
@@ -153,7 +169,9 @@ impl RelayClient {
             Ok(resp) if is_daemon_offline_status(resp.status()) => {
                 let original = format!("{label} returned {}", resp.status());
                 if self.wait_for_daemon(instance_prefix).await.is_ok() {
-                    make_request().await.context(format!("{label} failed after reconnect"))
+                    make_request()
+                        .await
+                        .context(format!("{label} failed after reconnect"))
                 } else {
                     anyhow::bail!("{original} (daemon did not reconnect)")
                 }
@@ -162,7 +180,9 @@ impl RelayClient {
             Err(e) if is_connection_error(&e) => {
                 let original = e.to_string();
                 if self.wait_for_daemon(instance_prefix).await.is_ok() {
-                    make_request().await.context(format!("{label} failed after reconnect"))
+                    make_request()
+                        .await
+                        .context(format!("{label} failed after reconnect"))
                 } else {
                     anyhow::bail!("{label}: {original} (daemon did not reconnect)")
                 }
@@ -192,7 +212,9 @@ impl RelayClient {
             let body = resp.text().await.unwrap_or_default();
             anyhow::bail!("file_list returned {status}: {body}");
         }
-        resp.json().await.context("file_list: invalid JSON response")
+        resp.json()
+            .await
+            .context("file_list: invalid JSON response")
     }
 
     pub async fn file_read(
@@ -219,8 +241,14 @@ impl RelayClient {
             .get("x-file-mtime")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok());
-        let bytes = resp.bytes().await.context("file_read: failed to read body")?;
-        Ok(FileReadResult { content: bytes.to_vec(), mtime })
+        let bytes = resp
+            .bytes()
+            .await
+            .context("file_read: failed to read body")?;
+        Ok(FileReadResult {
+            content: bytes.to_vec(),
+            mtime,
+        })
     }
 
     pub async fn file_write(
@@ -282,14 +310,21 @@ impl RelayClient {
             anyhow::bail!("shell_exec returned {status}: {text}");
         }
 
-        let text = resp.text().await.context("shell_exec: failed to read body")?;
+        let text = resp
+            .text()
+            .await
+            .context("shell_exec: failed to read body")?;
         let mut lines = Vec::new();
         let mut exit_code = None;
         let mut error = None;
 
         for line in text.lines() {
-            let Some(data) = line.strip_prefix("data: ") else { continue };
-            let Ok(obj) = serde_json::from_str::<serde_json::Value>(data) else { continue };
+            let Some(data) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            let Ok(obj) = serde_json::from_str::<serde_json::Value>(data) else {
+                continue;
+            };
             if let Some(code) = obj.get("exit_code").and_then(|v| v.as_i64()) {
                 exit_code = Some(code as i32);
                 error = obj.get("error").and_then(|v| v.as_str()).map(String::from);
@@ -297,11 +332,18 @@ impl RelayClient {
                 obj.get("stream").and_then(|v| v.as_str()),
                 obj.get("data").and_then(|v| v.as_str()),
             ) {
-                lines.push(ShellLine { stream: stream.to_string(), data: data.to_string() });
+                lines.push(ShellLine {
+                    stream: stream.to_string(),
+                    data: data.to_string(),
+                });
             }
         }
 
-        Ok(ShellOutput { lines, exit_code, error })
+        Ok(ShellOutput {
+            lines,
+            exit_code,
+            error,
+        })
     }
 
     pub async fn log_fetch(
@@ -313,10 +355,20 @@ impl RelayClient {
     ) -> Result<serde_json::Value> {
         let base = self.instance_url(instance_prefix);
         let mut params = Vec::new();
-        if let Some(n) = n { params.push(format!("n={n}")); }
-        if let Some(svc) = service { params.push(format!("service={}", urlencoding::encode(svc))); }
-        if let Some(after) = after { params.push(format!("after={after}")); }
-        let query = if params.is_empty() { String::new() } else { format!("?{}", params.join("&")) };
+        if let Some(n) = n {
+            params.push(format!("n={n}"));
+        }
+        if let Some(svc) = service {
+            params.push(format!("service={}", urlencoding::encode(svc)));
+        }
+        if let Some(after) = after {
+            params.push(format!("after={after}"));
+        }
+        let query = if params.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", params.join("&"))
+        };
         let url = format!("{base}/api/logs{query}");
 
         let resp = self
@@ -327,7 +379,9 @@ impl RelayClient {
             let body = resp.text().await.unwrap_or_default();
             anyhow::bail!("log_fetch returned {status}: {body}");
         }
-        resp.json().await.context("log_fetch: invalid JSON response")
+        resp.json()
+            .await
+            .context("log_fetch: invalid JSON response")
     }
 }
 

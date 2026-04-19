@@ -118,8 +118,14 @@ pub fn StaffPings() -> Element {
     // Load on mount
     use_future(move || async move {
         match list_all_staff_pings().await {
-            Ok(p) => { pings.set(p); loaded.set(true); }
-            Err(e) => { error_msg.set(Some(e.to_string())); loaded.set(true); }
+            Ok(p) => {
+                pings.set(p);
+                loaded.set(true);
+            }
+            Err(e) => {
+                error_msg.set(Some(e.to_string()));
+                loaded.set(true);
+            }
         }
     });
 

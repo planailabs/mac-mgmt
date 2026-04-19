@@ -162,11 +162,15 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
     }
 
     if cfg.openclaw.enabled {
-        probes.push(Box::new(openclaw::OpenClawProbe::from_config(&cfg.openclaw)));
+        probes.push(Box::new(openclaw::OpenClawProbe::from_config(
+            &cfg.openclaw,
+        )));
     }
 
     if cfg.opencode.enabled {
-        probes.push(Box::new(opencode::OpencodeProbe::from_config(&cfg.opencode)));
+        probes.push(Box::new(opencode::OpencodeProbe::from_config(
+            &cfg.opencode,
+        )));
     }
 
     // Always probe apprise + mcporter if configured (cheap liveness checks).

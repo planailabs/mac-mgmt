@@ -66,7 +66,12 @@ pub fn install() -> Result<()> {
         if let Ok(output) = sudo(&["cat", &path.display().to_string()]) {
             if output.status.success() && String::from_utf8_lossy(&output.stdout) == contents {
                 tracing::info!("plist unchanged, ensuring loaded");
-                let _ = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()]);
+                let _ = sudo(&[
+                    "launchctl",
+                    "bootstrap",
+                    DOMAIN_TARGET,
+                    &path.display().to_string(),
+                ]);
                 println!("Service already installed: {}", path.display());
                 return Ok(());
             }
@@ -94,8 +99,13 @@ pub fn install() -> Result<()> {
     }
     tracing::info!("wrote {}", path.display());
 
-    let output = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()])
-        .context("failed to run launchctl bootstrap")?;
+    let output = sudo(&[
+        "launchctl",
+        "bootstrap",
+        DOMAIN_TARGET,
+        &path.display().to_string(),
+    ])
+    .context("failed to run launchctl bootstrap")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -112,8 +122,7 @@ pub fn uninstall() -> Result<()> {
 
     if path.exists() {
         let _ = sudo(&["launchctl", "bootout", &service_target()]);
-        let rm = sudo(&["rm", &path.display().to_string()])
-            .context("failed to remove plist")?;
+        let rm = sudo(&["rm", &path.display().to_string()]).context("failed to remove plist")?;
         if !rm.status.success() {
             anyhow::bail!("failed to remove plist (sudo rm failed)");
         }
@@ -133,8 +142,13 @@ pub fn start() -> Result<()> {
         anyhow::bail!("service not installed");
     }
 
-    let output = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()])
-        .context("failed to run launchctl bootstrap")?;
+    let output = sudo(&[
+        "launchctl",
+        "bootstrap",
+        DOMAIN_TARGET,
+        &path.display().to_string(),
+    ])
+    .context("failed to run launchctl bootstrap")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -179,8 +193,13 @@ pub fn restart() -> Result<()> {
     // before bootstrap will succeed cleanly.
     std::thread::sleep(std::time::Duration::from_secs(10));
 
-    let output = sudo(&["launchctl", "bootstrap", DOMAIN_TARGET, &path.display().to_string()])
-        .context("failed to run launchctl bootstrap")?;
+    let output = sudo(&[
+        "launchctl",
+        "bootstrap",
+        DOMAIN_TARGET,
+        &path.display().to_string(),
+    ])
+    .context("failed to run launchctl bootstrap")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -44,7 +44,10 @@ async fn api_provision(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Sta
         tracing::error!("provision failed: {e:#}");
         Status::InternalServerError
     })?;
-    Ok(Json(Ack { ok: true, detail: None }))
+    Ok(Json(Ack {
+        ok: true,
+        detail: None,
+    }))
 }
 
 #[rocket::post("/teardown")]
@@ -53,7 +56,10 @@ async fn api_teardown(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Stat
         tracing::error!("teardown failed: {e:#}");
         Status::InternalServerError
     })?;
-    Ok(Json(Ack { ok: true, detail: None }))
+    Ok(Json(Ack {
+        ok: true,
+        detail: None,
+    }))
 }
 
 #[rocket::post("/redeploy")]
@@ -62,7 +68,10 @@ async fn api_redeploy(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Stat
         tracing::error!("redeploy failed: {e:#}");
         Status::InternalServerError
     })?;
-    Ok(Json(Ack { ok: true, detail: None }))
+    Ok(Json(Ack {
+        ok: true,
+        detail: None,
+    }))
 }
 
 #[rocket::post("/gc")]
@@ -71,7 +80,10 @@ async fn api_gc(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
         tracing::error!("gc failed: {e:#}");
         Status::InternalServerError
     })?;
-    Ok(Json(Ack { ok: true, detail: None }))
+    Ok(Json(Ack {
+        ok: true,
+        detail: None,
+    }))
 }
 
 #[rocket::post("/chaos")]
@@ -84,14 +96,15 @@ async fn api_chaos(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status>
 }
 
 #[rocket::post("/reprovision")]
-async fn api_reprovision_random(
-    orch: &State<Arc<Orchestrator>>,
-) -> Result<Json<Ack>, Status> {
+async fn api_reprovision_random(orch: &State<Arc<Orchestrator>>) -> Result<Json<Ack>, Status> {
     let k = orch.inner().reprovision_random().await.map_err(|e| {
         tracing::error!("reprovision_random: {e:#}");
         Status::InternalServerError
     })?;
-    Ok(Json(Ack { ok: true, detail: k }))
+    Ok(Json(Ack {
+        ok: true,
+        detail: k,
+    }))
 }
 
 #[rocket::post("/reprovision/<key>")]
@@ -103,13 +116,19 @@ async fn api_reprovision_key(
         tracing::error!("reprovision {key}: {e:#}");
         Status::InternalServerError
     })?;
-    Ok(Json(Ack { ok: true, detail: Some(key.to_string()) }))
+    Ok(Json(Ack {
+        ok: true,
+        detail: Some(key.to_string()),
+    }))
 }
 
 #[rocket::post("/shutdown")]
 async fn api_shutdown(shutdown: Shutdown) -> Json<Ack> {
     shutdown.notify();
-    Json(Ack { ok: true, detail: None })
+    Json(Ack {
+        ok: true,
+        detail: None,
+    })
 }
 
 // ── HTML dashboard ─────────────────────────────────────────────────────
@@ -170,7 +189,11 @@ impl Cli {
     }
 
     pub async fn status(&self) -> Result<StatusSnapshot> {
-        let r = self.http.get(format!("{}/status", self.base)).send().await?;
+        let r = self
+            .http
+            .get(format!("{}/status", self.base))
+            .send()
+            .await?;
         r.error_for_status_ref()?;
         Ok(r.json().await?)
     }
@@ -218,7 +241,11 @@ impl Cli {
     }
 
     pub async fn chaos(&self) -> Result<Ack> {
-        let r = self.http.post(format!("{}/chaos", self.base)).send().await?;
+        let r = self
+            .http
+            .post(format!("{}/chaos", self.base))
+            .send()
+            .await?;
         r.error_for_status_ref()?;
         Ok(r.json().await?)
     }

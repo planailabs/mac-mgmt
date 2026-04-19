@@ -129,7 +129,10 @@ impl Timeline {
             return "No invariant violations.\n".to_string();
         }
         let mut out = String::new();
-        out.push_str(&format!("═══ {} INVARIANT VIOLATION(S) ═══\n", violations.len()));
+        out.push_str(&format!(
+            "═══ {} INVARIANT VIOLATION(S) ═══\n",
+            violations.len()
+        ));
         for v in &violations {
             out.push_str(&format!("{v}\n"));
         }

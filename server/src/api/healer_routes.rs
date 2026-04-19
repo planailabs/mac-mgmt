@@ -1,9 +1,9 @@
-use mac_mgmt_healer::{HealerState, SpawnRequest};
 use mac_mgmt_healer::agent::InstanceInfo;
+use mac_mgmt_healer::{HealerState, SpawnRequest};
 use rocket::http::Status;
 use rocket::response::stream::{Event, EventStream};
 use rocket::serde::json::Json;
-use rocket::{get, post, Shutdown, State};
+use rocket::{Shutdown, State, get, post};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -127,13 +127,10 @@ pub async fn create_session(
         skip_cooldown: false,
     };
 
-    let session_id = healer
-        .spawn_session(req)
-        .await
-        .map_err(|e| {
-            tracing::error!(err = %e, "failed to spawn healer session");
-            Status::InternalServerError
-        })?;
+    let session_id = healer.spawn_session(req).await.map_err(|e| {
+        tracing::error!(err = %e, "failed to spawn healer session");
+        Status::InternalServerError
+    })?;
 
     Ok((
         Status::Created,
@@ -232,13 +229,10 @@ pub async fn resume_session(
     id: &str,
 ) -> Result<Status, Status> {
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    healer
-        .resume_session(session_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(err = %e, "failed to resume healer session");
-            Status::BadRequest
-        })?;
+    healer.resume_session(session_id).await.map_err(|e| {
+        tracing::error!(err = %e, "failed to resume healer session");
+        Status::BadRequest
+    })?;
     Ok(Status::Ok)
 }
 

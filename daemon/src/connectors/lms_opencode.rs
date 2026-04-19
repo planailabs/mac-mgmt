@@ -20,7 +20,10 @@ impl Connector for LmsOpencode {
         &["lms", "opencode"]
     }
 
-    fn connect(&self, _configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+    fn connect(
+        &self,
+        _configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
         tracing::info!(
             "connecting lms to opencode (baseURL={base_url}, model={})",
@@ -29,7 +32,11 @@ impl Connector for LmsOpencode {
         sentry_ext::breadcrumb(
             "connector",
             &format!("lms→opencode baseURL={base_url}"),
-            &[("connector", "lms→opencode"), ("base_url", &base_url), ("model", &self.default_model)],
+            &[
+                ("connector", "lms→opencode"),
+                ("base_url", &base_url),
+                ("model", &self.default_model),
+            ],
         );
 
         let path = config_path()?;

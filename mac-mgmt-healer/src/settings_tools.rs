@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use swiftide::chat_completion::{errors::ToolError, Tool, ToolCall, ToolOutput, ToolSpec};
+use swiftide::chat_completion::{Tool, ToolCall, ToolOutput, ToolSpec, errors::ToolError};
 use swiftide::traits::AgentContext;
 
 use crate::tools::ToolContext;
@@ -21,9 +21,13 @@ macro_rules! settings_tool {
         handler: |$ctx_var:ident, $params_var:ident| $body:expr
     ) => {
         #[derive(Clone)]
-        pub struct $struct_name { ctx: ToolContext }
+        pub struct $struct_name {
+            ctx: ToolContext,
+        }
         impl $struct_name {
-            pub fn new(ctx: ToolContext) -> Box<dyn Tool> { Box::new(Self { ctx }) }
+            pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
+                Box::new(Self { ctx })
+            }
         }
         #[async_trait]
         impl Tool for $struct_name {
@@ -33,14 +37,25 @@ macro_rules! settings_tool {
                     .name($name)
                     .description($desc)
                     .parameters_schema(
-                        serde_json::from_value::<schemars::Schema>(serde_json::to_value(&schema).unwrap()).unwrap(),
+                        serde_json::from_value::<schemars::Schema>(
+                            serde_json::to_value(&schema).unwrap(),
+                        )
+                        .unwrap(),
                     )
                     .build()
                     .unwrap()
             }
-            fn name(&self) -> Cow<'_, str> { Cow::Borrowed($name) }
-            async fn invoke(&self, _agent_context: &dyn AgentContext, tool_call: &ToolCall) -> Result<ToolOutput, ToolError> {
-                let args = tool_call.args().ok_or_else(|| ToolError::MissingArguments("no arguments".into()))?;
+            fn name(&self) -> Cow<'_, str> {
+                Cow::Borrowed($name)
+            }
+            async fn invoke(
+                &self,
+                _agent_context: &dyn AgentContext,
+                tool_call: &ToolCall,
+            ) -> Result<ToolOutput, ToolError> {
+                let args = tool_call
+                    .args()
+                    .ok_or_else(|| ToolError::MissingArguments("no arguments".into()))?;
                 let $params_var: $params_ty = serde_json::from_str(&args)
                     .map_err(|e| ToolError::MissingArguments(e.to_string().into()))?;
                 let $ctx_var = &self.ctx;
@@ -55,17 +70,31 @@ macro_rules! settings_tool {
         handler: |$ctx_var:ident| $body:expr
     ) => {
         #[derive(Clone)]
-        pub struct $struct_name { ctx: ToolContext }
+        pub struct $struct_name {
+            ctx: ToolContext,
+        }
         impl $struct_name {
-            pub fn new(ctx: ToolContext) -> Box<dyn Tool> { Box::new(Self { ctx }) }
+            pub fn new(ctx: ToolContext) -> Box<dyn Tool> {
+                Box::new(Self { ctx })
+            }
         }
         #[async_trait]
         impl Tool for $struct_name {
             fn tool_spec(&self) -> ToolSpec {
-                ToolSpec::builder().name($name).description($desc).build().unwrap()
+                ToolSpec::builder()
+                    .name($name)
+                    .description($desc)
+                    .build()
+                    .unwrap()
             }
-            fn name(&self) -> Cow<'_, str> { Cow::Borrowed($name) }
-            async fn invoke(&self, _agent_context: &dyn AgentContext, _tool_call: &ToolCall) -> Result<ToolOutput, ToolError> {
+            fn name(&self) -> Cow<'_, str> {
+                Cow::Borrowed($name)
+            }
+            async fn invoke(
+                &self,
+                _agent_context: &dyn AgentContext,
+                _tool_call: &ToolCall,
+            ) -> Result<ToolOutput, ToolError> {
                 let $ctx_var = &self.ctx;
                 $body
             }
@@ -444,7 +473,9 @@ fn json_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
                 if value.is_null() {
                     target_obj.remove(key);
                 } else {
-                    let entry = target_obj.entry(key.clone()).or_insert(serde_json::Value::Null);
+                    let entry = target_obj
+                        .entry(key.clone())
+                        .or_insert(serde_json::Value::Null);
                     json_merge_patch(entry, value);
                 }
             }

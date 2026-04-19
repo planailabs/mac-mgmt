@@ -46,10 +46,9 @@ impl Dispatcher {
                 Ok(Ok(o)) if o.status.success() => {
                     tracing::debug!("notification sent: {message}")
                 }
-                Ok(Ok(o)) => tracing::warn!(
-                    "apprise failed: {}",
-                    String::from_utf8_lossy(&o.stderr)
-                ),
+                Ok(Ok(o)) => {
+                    tracing::warn!("apprise failed: {}", String::from_utf8_lossy(&o.stderr))
+                }
                 Ok(Err(e)) => {
                     tracing::warn!("apprise not found or failed to execute: {e}")
                 }

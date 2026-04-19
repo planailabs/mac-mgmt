@@ -15,7 +15,9 @@ async fn get_skill(id: String) -> Result<Skill, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let skill = sqlx::query_as::<_, Skill>("SELECT * FROM skills WHERE id = $1")
         .bind(uuid)
         .fetch_one(&pool)
@@ -34,7 +36,9 @@ async fn update_skill(
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("UPDATE skills SET name = $1, description = $2, hide_from_public_catalog = $3 WHERE id = $4")
         .bind(&name)
         .bind(&description)
@@ -51,7 +55,9 @@ async fn list_channels(skill_id: String) -> Result<Vec<SkillChannel>, ServerFnEr
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = skill_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let channels = sqlx::query_as::<_, SkillChannel>(
         "SELECT * FROM skill_channels WHERE skill_id = $1 ORDER BY channel",
     )
@@ -64,11 +70,15 @@ async fn list_channels(skill_id: String) -> Result<Vec<SkillChannel>, ServerFnEr
 
 /// Resolve store paths for all channels of a skill from xzar.
 #[server]
-async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Vec<(String, String)>>, ServerFnError> {
+async fn resolve_channel_paths(
+    skill_id: String,
+) -> Result<HashMap<String, Vec<(String, String)>>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = skill_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = skill_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     let slug = sqlx::query_scalar::<_, String>("SELECT slug FROM skills WHERE id = $1")
         .bind(uuid)
@@ -76,20 +86,21 @@ async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Vec<(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let channels = sqlx::query_scalar::<_, String>(
-        "SELECT channel FROM skill_channels WHERE skill_id = $1",
-    )
-    .bind(uuid)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let channels =
+        sqlx::query_scalar::<_, String>("SELECT channel FROM skill_channels WHERE skill_id = $1")
+            .bind(uuid)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if channels.is_empty() {
         return Ok(HashMap::new());
     }
 
     let cfg = crate::config::config();
-    let xzar = cfg.xzar.as_ref()
+    let xzar = cfg
+        .xzar
+        .as_ref()
         .ok_or_else(|| ServerFnError::new("xzar not configured".to_string()))?;
     let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
         .await
@@ -108,9 +119,8 @@ async fn resolve_channel_paths(skill_id: String) -> Result<HashMap<String, Vec<(
                 if channels.contains(&channel.to_string()) {
                     let path = crate::xzar::store_path_for_pin(&pins, &pin.name);
                     if let Some(path) = path {
-                        let entry: &mut Vec<(String, String)> = result
-                            .entry(channel.to_string())
-                            .or_insert_with(Vec::new);
+                        let entry: &mut Vec<(String, String)> =
+                            result.entry(channel.to_string()).or_insert_with(Vec::new);
                         entry.push((arch.to_string(), path));
                     }
                 }
@@ -129,11 +139,15 @@ struct ChannelMcpDep {
 }
 
 #[server]
-async fn list_channel_mcp_deps(skill_channel_id: String) -> Result<Vec<ChannelMcpDep>, ServerFnError> {
+async fn list_channel_mcp_deps(
+    skill_channel_id: String,
+) -> Result<Vec<ChannelMcpDep>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = skill_channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -154,11 +168,14 @@ async fn list_channel_mcp_deps(skill_channel_id: String) -> Result<Vec<ChannelMc
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|r| ChannelMcpDep {
-        dep_id: r.dep_id.to_string(),
-        mcp_server_id: r.mcp_server_id.to_string(),
-        mcp_server_slug: r.mcp_server_slug,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ChannelMcpDep {
+            dep_id: r.dep_id.to_string(),
+            mcp_server_id: r.mcp_server_id.to_string(),
+            mcp_server_slug: r.mcp_server_slug,
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,20 +203,30 @@ async fn list_all_mcp_servers() -> Result<Vec<McpServerOption>, ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|r| McpServerOption {
-        id: r.id.to_string(),
-        slug: r.slug,
-        name: r.name,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| McpServerOption {
+            id: r.id.to_string(),
+            slug: r.slug,
+            name: r.name,
+        })
+        .collect())
 }
 
 #[server]
-async fn add_channel_mcp_dep(skill_channel_id: String, mcp_server_id: String) -> Result<(), ServerFnError> {
+async fn add_channel_mcp_dep(
+    skill_channel_id: String,
+    mcp_server_id: String,
+) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let sc_id: uuid::Uuid = skill_channel_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    let ms_id: uuid::Uuid = mcp_server_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let sc_id: uuid::Uuid = skill_channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let ms_id: uuid::Uuid = mcp_server_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("INSERT INTO skill_mcp_dependencies (skill_channel_id, mcp_server_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
         .bind(sc_id)
         .bind(ms_id)
@@ -214,7 +241,9 @@ async fn remove_channel_mcp_dep(dep_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = dep_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = dep_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("DELETE FROM skill_mcp_dependencies WHERE id = $1")
         .bind(uuid)
         .execute(&pool)

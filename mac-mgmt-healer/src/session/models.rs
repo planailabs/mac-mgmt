@@ -60,7 +60,11 @@ impl SessionState {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Completed | Self::Done | Self::Failed | Self::Cancelled | Self::NeedsHumanAttention
+            Self::Completed
+                | Self::Done
+                | Self::Failed
+                | Self::Cancelled
+                | Self::NeedsHumanAttention
         )
     }
 

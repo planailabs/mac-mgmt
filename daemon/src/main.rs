@@ -1,6 +1,6 @@
-use anyhow::Result;
 #[cfg(feature = "self-update")]
 use anyhow::Context;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use mac_mgmt_daemon::{
@@ -147,7 +147,7 @@ async fn main() -> Result<()> {
         Commands::Setup => {
             scripts::run("setup.sh")?;
             service::install()?;
-        },
+        }
         Commands::Run { name } => scripts::run(&name)?,
         Commands::Scripts => {
             for name in scripts::list() {
@@ -181,7 +181,11 @@ async fn main() -> Result<()> {
         }
         Commands::ConfigureOs { dry_run } => os_mgmt::configure_os(dry_run)?,
         #[cfg(feature = "self-update")]
-        Commands::Update { force, version, store_path } => {
+        Commands::Update {
+            force,
+            version,
+            store_path,
+        } => {
             if let Some(v) = version {
                 // Explicit override path — mostly used by integration tests
                 // that exercise the store-path self-replace flow without a
@@ -196,9 +200,7 @@ async fn main() -> Result<()> {
                 let (Some(url), Some(token)) =
                     (cfg.server.url.as_deref(), cfg.server.token.as_deref())
                 else {
-                    anyhow::bail!(
-                        "no [server] url/token configured — can't fetch update target"
-                    );
+                    anyhow::bail!("no [server] url/token configured — can't fetch update target");
                 };
                 let system = nix::current_system().unwrap_or("");
                 let client = reqwest::Client::new();
@@ -209,10 +211,7 @@ async fn main() -> Result<()> {
                     .await
                     .context("failed to fetch /api/update")?;
                 if !resp.status().is_success() {
-                    anyhow::bail!(
-                        "server /api/update returned {}",
-                        resp.status()
-                    );
+                    anyhow::bail!("server /api/update returned {}", resp.status());
                 }
                 let info: mac_mgmt_common::UpdateTarget =
                     resp.json().await.context("failed to parse /api/update")?;
@@ -222,15 +221,18 @@ async fn main() -> Result<()> {
                 };
                 self_update::set_target(ver, info.store_path);
             }
-            tokio::task::spawn_blocking(move || self_update::apply(force))
-                .await??;
+            tokio::task::spawn_blocking(move || self_update::apply(force)).await??;
         }
         #[cfg(not(feature = "self-update"))]
         Commands::Update { .. } => anyhow::bail!("self-update feature is not enabled"),
         Commands::EnableSsh => write_ssh_fifo("enable")?,
         Commands::DisableSsh => write_ssh_fifo("disable")?,
         Commands::Status { port } => status::print_status(port).await?,
-        Commands::Logs { service, lines, follow } => {
+        Commands::Logs {
+            service,
+            lines,
+            follow,
+        } => {
             logs::tail_logs(service.as_deref(), lines, follow, None).await?;
         }
         Commands::Sync => {
@@ -283,7 +285,9 @@ async fn main() -> Result<()> {
 
             let mut failed = false;
             for svc in &services {
-                if let Err(e) = unmanaged::installer::ensure_service(svc, &mut manifest, &manifest_path) {
+                if let Err(e) =
+                    unmanaged::installer::ensure_service(svc, &mut manifest, &manifest_path)
+                {
                     tracing::error!("{}: {e:#}", svc.name());
                     failed = true;
                 }
@@ -292,12 +296,8 @@ async fn main() -> Result<()> {
             // Run connectors after all services are installed.
             if !failed {
                 let cfg = config::load().await?;
-                let connectors = connectors::build_connectors(
-                    &cfg.global,
-                    &cfg.ollama,
-                    &cfg.lms,
-                    &cfg.cloud,
-                );
+                let connectors =
+                    connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.cloud);
 
                 let configs = std::collections::HashMap::new();
                 for c in &connectors {
@@ -323,7 +323,9 @@ async fn main() -> Result<()> {
             let services = unmanaged::build_unmanaged(&mut cfg);
 
             for svc in services.iter().rev() {
-                if let Err(e) = unmanaged::installer::remove_service(svc, &mut manifest, &manifest_path) {
+                if let Err(e) =
+                    unmanaged::installer::remove_service(svc, &mut manifest, &manifest_path)
+                {
                     tracing::warn!("{}: {e:#}", svc.name());
                 }
             }

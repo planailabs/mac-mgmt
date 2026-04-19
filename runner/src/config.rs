@@ -83,7 +83,10 @@ pub struct ApiConfig {
 
 impl Default for ApiConfig {
     fn default() -> Self {
-        Self { bind: default_api_bind(), port: default_api_port() }
+        Self {
+            bind: default_api_bind(),
+            port: default_api_port(),
+        }
     }
 }
 
@@ -195,26 +198,66 @@ impl Default for MatrixConfig {
     }
 }
 
-fn default_system() -> String { "x86_64-linux".into() }
-fn default_project() -> String { "default".into() }
-fn default_image() -> String { "ubuntu/24.04/cloud".into() }
-fn default_image_server() -> String { "https://images.linuxcontainers.org".into() }
-fn default_instance_type() -> String { "container".into() }
-fn default_profiles() -> Vec<String> { vec!["default".into()] }
-fn default_name_prefix() -> String { "mmr-".into() }
-fn default_api_bind() -> String { "127.0.0.1".into() }
-fn default_api_port() -> u16 { 9400 }
-fn default_reconcile() -> String { "1m".into() }
-fn default_vm_chaos() -> String { "30m".into() }
-fn default_state_path() -> PathBuf { PathBuf::from("/var/lib/mac-mgmt-runner/state.json") }
-fn default_grace() -> String { "3m".into() }
-fn default_heartbeat_stale() -> String { "5m".into() }
-fn default_deploy_timeout() -> String { "15m".into() }
-fn default_max_concurrent_launches() -> usize { 3 }
-fn default_chaos_interval() -> String { "5m".into() }
-fn default_ollama_model() -> String { "smollm2:1.7b".into() }
-fn default_lms_model() -> String { "smollm2-1.7b-instruct".into() }
-fn default_cluster_sizes() -> Vec<u32> { vec![1, 2] }
+fn default_system() -> String {
+    "x86_64-linux".into()
+}
+fn default_project() -> String {
+    "default".into()
+}
+fn default_image() -> String {
+    "ubuntu/24.04/cloud".into()
+}
+fn default_image_server() -> String {
+    "https://images.linuxcontainers.org".into()
+}
+fn default_instance_type() -> String {
+    "container".into()
+}
+fn default_profiles() -> Vec<String> {
+    vec!["default".into()]
+}
+fn default_name_prefix() -> String {
+    "mmr-".into()
+}
+fn default_api_bind() -> String {
+    "127.0.0.1".into()
+}
+fn default_api_port() -> u16 {
+    9400
+}
+fn default_reconcile() -> String {
+    "1m".into()
+}
+fn default_vm_chaos() -> String {
+    "30m".into()
+}
+fn default_state_path() -> PathBuf {
+    PathBuf::from("/var/lib/mac-mgmt-runner/state.json")
+}
+fn default_grace() -> String {
+    "3m".into()
+}
+fn default_heartbeat_stale() -> String {
+    "5m".into()
+}
+fn default_deploy_timeout() -> String {
+    "15m".into()
+}
+fn default_max_concurrent_launches() -> usize {
+    3
+}
+fn default_chaos_interval() -> String {
+    "5m".into()
+}
+fn default_ollama_model() -> String {
+    "smollm2:1.7b".into()
+}
+fn default_lms_model() -> String {
+    "smollm2-1.7b-instruct".into()
+}
+fn default_cluster_sizes() -> Vec<u32> {
+    vec![1, 2]
+}
 
 impl RunnerConfig {
     pub fn load(path: &Path) -> Result<Self> {
@@ -276,7 +319,9 @@ fn humantime_parse(s: &str) -> Result<std::time::Duration> {
         s.find(|c: char| !c.is_ascii_digit())
             .with_context(|| format!("invalid duration: {s}"))?,
     );
-    let n: u64 = num.parse().with_context(|| format!("invalid duration number: {num}"))?;
+    let n: u64 = num
+        .parse()
+        .with_context(|| format!("invalid duration number: {num}"))?;
     let d = match unit {
         "s" => std::time::Duration::from_secs(n),
         "m" => std::time::Duration::from_secs(n * 60),

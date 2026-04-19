@@ -10,9 +10,7 @@ use std::time::Duration;
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()),
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_string()))
         .try_init();
 }
 
@@ -42,8 +40,7 @@ async fn hammer_many_daemons() {
     assert!(ok, "all 10 daemons should send heartbeats");
 
     // Verify all unique
-    let unique: std::collections::HashSet<&str> =
-        instance_ids.iter().map(|s| s.as_str()).collect();
+    let unique: std::collections::HashSet<&str> = instance_ids.iter().map(|s| s.as_str()).collect();
     assert_eq!(unique.len(), 10);
 
     // Now hammer with pushes while toggling faults
@@ -68,19 +65,21 @@ async fn hammer_many_daemons() {
 
     // Wait for recovery
     state.clear_heartbeats();
-    let recovered = sim_tests::wait_until(Duration::from_secs(15), Duration::from_millis(200), || {
-        instance_ids
-            .iter()
-            .all(|iid| !state.heartbeats_from(iid).is_empty())
-    })
-    .await;
+    let recovered =
+        sim_tests::wait_until(Duration::from_secs(15), Duration::from_millis(200), || {
+            instance_ids
+                .iter()
+                .all(|iid| !state.heartbeats_from(iid).is_empty())
+        })
+        .await;
     assert!(recovered, "all 10 daemons should recover after hammering");
 
     // Check invariants
     let timeline = Timeline::new();
     let violations = sim_tests::invariants::check_all(&state, &instance_ids, &timeline);
     assert_eq!(
-        violations, 0,
+        violations,
+        0,
         "invariant violations:\n{}",
         timeline.format_violations()
     );
@@ -185,20 +184,18 @@ async fn hammer_rapid_fault_cycling() {
 
     // Daemon should recover
     state.clear_heartbeats();
-    let recovered = sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
-        !state.heartbeats_from(&instance_id).is_empty()
-    })
-    .await;
+    let recovered =
+        sim_tests::wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+            !state.heartbeats_from(&instance_id).is_empty()
+        })
+        .await;
     assert!(recovered, "daemon should recover from rapid fault cycling");
 
     let timeline = Timeline::new();
-    let violations = sim_tests::invariants::check_all(
-        &state,
-        &[instance_id.clone()],
-        &timeline,
-    );
+    let violations = sim_tests::invariants::check_all(&state, &[instance_id.clone()], &timeline);
     assert_eq!(
-        violations, 0,
+        violations,
+        0,
         "invariant violations:\n{}",
         timeline.format_violations()
     );
@@ -237,11 +234,13 @@ async fn hammer_simultaneous_start() {
             .all(|iid| !state.heartbeats_from(iid).is_empty())
     })
     .await;
-    assert!(ok, "all 5 simultaneously-started daemons should send heartbeats");
+    assert!(
+        ok,
+        "all 5 simultaneously-started daemons should send heartbeats"
+    );
 
     // All should be unique
-    let unique: std::collections::HashSet<&str> =
-        instance_ids.iter().map(|s| s.as_str()).collect();
+    let unique: std::collections::HashSet<&str> = instance_ids.iter().map(|s| s.as_str()).collect();
     assert_eq!(unique.len(), 5, "all IDs should be unique");
 
     for tx in shutdowns {

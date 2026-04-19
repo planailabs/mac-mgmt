@@ -5,11 +5,11 @@ use crate::web::app::Route;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
-use super::config_editor::ConfigEditor;
-use super::config_history::ConfigHistory;
 use super::cluster_mcp_servers::ClusterMcpServers;
 use super::cluster_skills::ClusterSkills;
 use super::cluster_ssh_keys::ClusterSshKeys;
+use super::config_editor::ConfigEditor;
+use super::config_history::ConfigHistory;
 use super::setting_token_list::SettingTokenList;
 use super::token_list::SyncTokenList;
 
@@ -63,8 +63,14 @@ async fn can_admin_cluster(cluster_id: String) -> Result<bool, ServerFnError> {
 async fn get_cluster(id: String) -> Result<Cluster, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -98,7 +104,9 @@ async fn rename_cluster(id: String, name: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("UPDATE clusters SET name = $1 WHERE id = $2")
         .bind(&name)
         .bind(uuid)
@@ -112,7 +120,9 @@ async fn rename_cluster(id: String, name: String) -> Result<(), ServerFnError> {
 async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     user.require_cluster_write(&pool, uuid).await?;
     let ver = version.trim().to_string();
     if ver.is_empty() {
@@ -136,7 +146,9 @@ async fn set_pinned_version(id: String, version: String) -> Result<(), ServerFnE
 async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     user.require_cluster_write(&pool, uuid).await?;
     let c = commit.trim().to_string();
     if c.is_empty() {
@@ -166,7 +178,9 @@ async fn delete_cluster(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     sqlx::query("DELETE FROM clusters WHERE id = $1")
         .bind(uuid)
         .execute(&pool)
@@ -217,14 +231,13 @@ async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
     .fetch_optional(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let pinned: Option<String> = sqlx::query_scalar(
-        "SELECT pinned_version FROM clusters WHERE id = $1",
-    )
-    .bind(cid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?
-    .flatten();
+    let pinned: Option<String> =
+        sqlx::query_scalar("SELECT pinned_version FROM clusters WHERE id = $1")
+            .bind(cid)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .flatten();
     let latest: Option<String> = sqlx::query_scalar(
         "SELECT version FROM daemon_versions ORDER BY \
          string_to_array(version, '.')::int[] DESC LIMIT 1",
@@ -279,8 +292,14 @@ async fn get_cloud_init(cluster_id: String) -> Result<String, ServerFnError> {
 async fn get_active_rollouts(cluster_id: String) -> Result<Vec<ActiveRolloutEntry>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&cid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -305,11 +324,14 @@ async fn get_active_rollouts(cluster_id: String) -> Result<Vec<ActiveRolloutEntr
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|r| ActiveRolloutEntry {
-        id: r.id.to_string(),
-        target_version: r.target_version,
-        status: r.status,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ActiveRolloutEntry {
+            id: r.id.to_string(),
+            target_version: r.target_version,
+            status: r.status,
+        })
+        .collect())
 }
 
 #[component]
@@ -532,7 +554,12 @@ fn ActiveRollouts(cluster_id: String) -> Element {
 }
 
 #[component]
-fn PinnedVersion(cluster_id: String, version: Option<String>, read_only: bool, on_change: EventHandler) -> Element {
+fn PinnedVersion(
+    cluster_id: String,
+    version: Option<String>,
+    read_only: bool,
+    on_change: EventHandler,
+) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(String::new);
 
@@ -633,7 +660,12 @@ fn PinnedVersion(cluster_id: String, version: Option<String>, read_only: bool, o
 }
 
 #[component]
-fn NixpkgsCommit(cluster_id: String, commit: Option<String>, read_only: bool, on_change: EventHandler) -> Element {
+fn NixpkgsCommit(
+    cluster_id: String,
+    commit: Option<String>,
+    read_only: bool,
+    on_change: EventHandler,
+) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(String::new);
 
@@ -747,7 +779,11 @@ fn CloudInitModal(cluster_id: String, cluster_name: String, mut open: Signal<boo
         "cloud-init-{}.yaml",
         cluster_name
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            })
             .collect::<String>()
     );
 

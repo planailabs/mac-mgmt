@@ -16,8 +16,14 @@ pub struct SshKeyDisplay {
 async fn list_ssh_keys(cluster_id: String) -> Result<Vec<SshKeyDisplay>, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    if let Some(ids) = user.accessible_cluster_ids(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
         if !ids.contains(&uuid) {
             return Err(ServerFnError::new("access denied"));
         }
@@ -36,11 +42,13 @@ async fn list_ssh_keys(cluster_id: String) -> Result<Vec<SshKeyDisplay>, ServerF
 #[server]
 async fn add_ssh_key(cluster_id: String, public_key: String) -> Result<(), ServerFnError> {
     use base64::Engine;
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     let org_ids = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT organization_id FROM organization_clusters WHERE cluster_id = $1",
     )
@@ -89,7 +97,9 @@ async fn add_ssh_key(cluster_id: String, public_key: String) -> Result<(), Serve
 async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
-    let uuid: uuid::Uuid = ssh_key_id.parse().map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let uuid: uuid::Uuid = ssh_key_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
     // Check access before deleting
     let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT cluster_id FROM cluster_ssh_keys WHERE id = $1",

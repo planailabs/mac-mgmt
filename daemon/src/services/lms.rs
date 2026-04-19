@@ -15,17 +15,24 @@ impl Lms {
     }
 
     fn effective_host(&self) -> &str {
-        if self.config.host.is_empty() { "127.0.0.1" } else { &self.config.host }
+        if self.config.host.is_empty() {
+            "127.0.0.1"
+        } else {
+            &self.config.host
+        }
     }
 
     fn effective_port(&self) -> u16 {
-        if self.config.port == 0 { 1234 } else { self.config.port }
+        if self.config.port == 0 {
+            1234
+        } else {
+            self.config.port
+        }
     }
 
     fn base_url(&self) -> String {
         format!("http://{}:{}", self.effective_host(), self.effective_port())
     }
-
 }
 
 impl ManagedService for Lms {
@@ -40,10 +47,11 @@ impl ManagedService for Lms {
         }
 
         tracing::info!("lmstudio not found, installing via nix");
-        sentry_ext::breadcrumb("install", "installing lmstudio via nix", &[
-            ("service", "lms"),
-            ("package", "lmstudio"),
-        ]);
+        sentry_ext::breadcrumb(
+            "install",
+            "installing lmstudio via nix",
+            &[("service", "lms"), ("package", "lmstudio")],
+        );
         crate::nix::profile_install("lmstudio", false)?;
         Ok(())
     }
@@ -64,9 +72,7 @@ impl ManagedService for Lms {
         // the sleep as the supervised process.
         crate::managed_service::SpawnSpec {
             program: "lms".into(),
-            args: vec![
-                "server".into(), "start".into(), "--foreground".into(),
-            ],
+            args: vec!["server".into(), "start".into(), "--foreground".into()],
             env: Default::default(),
         }
     }
@@ -77,7 +83,8 @@ impl ManagedService for Lms {
         let output = crate::cmd::output_with_timeout(
             Command::new("lms").args(["server", "status", "--json"]),
             crate::cmd::DEFAULT_TIMEOUT,
-        ).context("failed to run `lms server status --json`")?;
+        )
+        .context("failed to run `lms server status --json`")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!("`lms server status --json` failed: {}", stderr.trim());
@@ -85,7 +92,10 @@ impl ManagedService for Lms {
         }
         let json: serde_json::Value = serde_json::from_slice(&output.stdout)
             .context("failed to parse `lms server status --json` output")?;
-        let healthy = json.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
+        let healthy = json
+            .get("running")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if healthy {
             tracing::debug!("lms is healthy at {}", self.base_url());
         } else {
@@ -112,10 +122,11 @@ impl ManagedService for Lms {
             return Ok(false);
         }
         tracing::info!("upgrading lmstudio via nix");
-        sentry_ext::breadcrumb("upgrade", "upgrading lmstudio via nix", &[
-            ("service", "lms"),
-            ("package", "lmstudio"),
-        ]);
+        sentry_ext::breadcrumb(
+            "upgrade",
+            "upgrading lmstudio via nix",
+            &[("service", "lms"), ("package", "lmstudio")],
+        );
         crate::nix::profile_install("lmstudio", true)?;
         tracing::info!("lmstudio upgraded, restart pending");
         Ok(true)
@@ -201,10 +212,11 @@ pub fn load_configured_models(config: &mac_mgmt_common::LmsConfig) -> anyhow::Re
     use std::process::Command;
     for model in &config.models {
         tracing::info!("loading lms model: {model}");
-        crate::sentry_ext::breadcrumb("post_start", &format!("loading model {model}"), &[
-            ("service", "lms"),
-            ("model", model),
-        ]);
+        crate::sentry_ext::breadcrumb(
+            "post_start",
+            &format!("loading model {model}"),
+            &[("service", "lms"), ("model", model)],
+        );
         let output = Command::new("lms")
             .args(["load", model, "-y"])
             .output()

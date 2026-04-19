@@ -211,7 +211,11 @@ fn write_privileged(path: &std::path::Path, contents: &str) -> Result<()> {
         .stdout(std::process::Stdio::null())
         .spawn()
         .context("failed to run sudo tee")?;
-    child.stdin.as_mut().unwrap().write_all(contents.as_bytes())?;
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(contents.as_bytes())?;
     let status = child.wait()?;
     if !status.success() {
         anyhow::bail!("sudo tee {} failed", path.display());

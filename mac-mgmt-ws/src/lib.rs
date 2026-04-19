@@ -1,10 +1,10 @@
+pub mod bridge;
 #[cfg(feature = "client")]
 mod connect;
 #[cfg(feature = "client")]
 mod reconnect;
 #[cfg(feature = "client")]
 mod stream;
-pub mod bridge;
 
 #[cfg(feature = "client")]
 pub use connect::{ClientWs, WsConnect};

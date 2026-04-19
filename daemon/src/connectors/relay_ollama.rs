@@ -38,14 +38,20 @@ impl Connector for RelayOllama {
         &["relay", "ollama"]
     }
 
-    fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>) -> Result<()> {
+    fn connect(
+        &self,
+        configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
         let Some(relay_meta) = configs.get("relay") else {
             return Ok(());
         };
         let Some(proxy_hostname) = relay_meta.get("proxy_hostname").and_then(|v| v.as_str()) else {
             return Ok(());
         };
-        let Some(instance_prefix) = relay_meta.get("instance_id_prefix").and_then(|v| v.as_str()) else {
+        let Some(instance_prefix) = relay_meta
+            .get("instance_id_prefix")
+            .and_then(|v| v.as_str())
+        else {
             return Ok(());
         };
 
@@ -83,8 +89,7 @@ impl Connector for RelayOllama {
             return Ok(());
         }
 
-        std::fs::create_dir_all(path.parent().unwrap())
-            .context("failed to create config dir")?;
+        std::fs::create_dir_all(path.parent().unwrap()).context("failed to create config dir")?;
         std::fs::write(&path, &new_contents)
             .with_context(|| format!("failed to write {}", path.display()))?;
 

@@ -160,7 +160,7 @@ mod tests {
             }
         });
         migrate(&mut cfg);
-        let _: crate::ClusterConfig = serde_json::from_value(cfg)
-            .expect("migrated config must parse as ClusterConfig");
+        let _: crate::ClusterConfig =
+            serde_json::from_value(cfg).expect("migrated config must parse as ClusterConfig");
     }
 }

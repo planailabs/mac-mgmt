@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use swiftide::chat_completion::{errors::ToolError, Tool, ToolCall, ToolOutput, ToolSpec};
+use swiftide::chat_completion::{Tool, ToolCall, ToolOutput, ToolSpec, errors::ToolError};
 use swiftide::traits::AgentContext;
 
 use crate::relay_client::RelayClient;
@@ -53,7 +53,10 @@ macro_rules! healer_tool {
                     .name($name)
                     .description($desc)
                     .parameters_schema(
-                        serde_json::from_value::<schemars::Schema>(serde_json::to_value(&schema).unwrap()).unwrap(),
+                        serde_json::from_value::<schemars::Schema>(
+                            serde_json::to_value(&schema).unwrap(),
+                        )
+                        .unwrap(),
                     )
                     .build()
                     .unwrap()
