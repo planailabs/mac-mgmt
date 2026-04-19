@@ -659,8 +659,8 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     let sid = session_id.clone();
     let iid = instance_id.clone();
 
-    // Connect to SSE on mount
-    use_hook(move || {
+    // Connect to SSE on mount; guard closes EventSource on unmount
+    let _es_guard = use_hook(move || {
         consume_healer_sse(
             sid,
             messages,
@@ -671,7 +671,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
             state,
             state_reason,
             running,
-        );
+        )
     });
 
     let back_url = format!("/fleet/{}/healer", instance_id);
@@ -796,7 +796,19 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 
 // ── SSE stream consumer (WASM client) ─────────────────────────────────
 
+/// Guard that closes the EventSource when dropped (component unmount).
+#[derive(Clone)]
+struct EventSourceGuard(web_sys::EventSource);
+
+impl Drop for EventSourceGuard {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 /// Connect to the axum SSE endpoint and process events into Dioxus signals.
+/// Returns a guard that closes the EventSource on drop — store it in `use_hook`
+/// so the connection is cleaned up when the component unmounts.
 fn consume_healer_sse(
     sid: String,
     mut messages: Signal<Vec<ChatMsg>>,
@@ -807,7 +819,7 @@ fn consume_healer_sse(
     mut state: Signal<String>,
     mut state_reason: Signal<Option<String>>,
     mut running: Signal<bool>,
-) {
+) -> EventSourceGuard {
     use wasm_bindgen::prelude::*;
 
     let url = format!("/web/healer/stream/{sid}");
@@ -815,7 +827,12 @@ fn consume_healer_sse(
 
     // Handle incoming messages (SSE "message" event = unnamed data events)
     let on_message = {
+        let es_ref = es.clone();
         Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
+            // If the EventSource was closed (component unmounted), bail out
+            if es_ref.ready_state() == web_sys::EventSource::CLOSED {
+                return;
+            }
             let data = event.data().as_string().unwrap_or_default();
             let Ok(evt) = serde_json::from_str::<HealerStreamEvent>(&data) else {
                 return;
@@ -858,8 +875,7 @@ fn consume_healer_sse(
                     }
                     state_reason.set(evt.state_reason);
                     running.set(false);
-                    // Close the EventSource — session is done
-                    // (captured in the error handler below via readyState check)
+                    es_ref.close();
                 }
                 "error" => {
                     active_tools.set(Vec::new());
@@ -871,6 +887,7 @@ fn consume_healer_sse(
                     });
                     state.set("failed".to_string());
                     running.set(false);
+                    es_ref.close();
                 }
                 _ => {} // ping, unknown
             }
@@ -882,17 +899,16 @@ fn consume_healer_sse(
     let on_error = {
         let es2 = es.clone();
         Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-            // EventSource fires "error" when the connection closes (including
-            // after the server sends the final "done" event and closes the stream).
-            // Only report as an error if the session is still running.
             if es2.ready_state() == web_sys::EventSource::CLOSED {
-                // Connection closed (normal after done event)
-                running.set(false);
+                // Connection closed — normal after done/error or unmount
+                let _ = running.try_write().map(|mut v| *v = false);
             }
         })
     };
     es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
     on_error.forget();
+
+    EventSourceGuard(es)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
