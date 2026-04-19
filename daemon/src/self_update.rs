@@ -182,17 +182,18 @@ fn version_cmp(ver: &str) -> i32 {
 /// doesn't sweep the derivation out from under us. Then replace the
 /// current executable with a symlink to `{store_path}/bin/mac-mgmt`.
 ///
-/// The GC root lives at `{exe_dir}/.mac-mgmt.gcroot` and is created
-/// via `nix-store --realise --add-root`, which both downloads the path
-/// and registers the root atomically. The binary symlink lets
-/// `current_exe() → canonicalize()` resolve to the store path so
-/// `check_and_apply` can compare store paths directly.
+/// The GC root lives in the config dir (`~/.config/mac-mgmt/.mac-mgmt.gcroot`)
+/// rather than next to the binary, because the binary may live inside
+/// `/nix/store/` where creating GC roots is forbidden.
 fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     let current_exe = std::env::current_exe().context("failed to get current exe path")?;
     let parent = current_exe
         .parent()
         .context("current exe has no parent dir")?;
-    let gcroot = parent.join(".mac-mgmt.gcroot");
+    let gcroot_dir = crate::config::config_dir();
+    std::fs::create_dir_all(&gcroot_dir)
+        .with_context(|| format!("failed to create {}", gcroot_dir.display()))?;
+    let gcroot = gcroot_dir.join(".mac-mgmt.gcroot");
 
     // Remove a prior gcroot so --add-root can create a fresh symlink.
     let _ = std::fs::remove_file(&gcroot);

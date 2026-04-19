@@ -68,6 +68,20 @@ pub async fn reload() -> Result<Config> {
     load().await
 }
 
+/// Load only the local TOML config without fetching remote config.
+/// Used by CLI commands that only need [server] url/token.
+pub fn load_local() -> Result<Config> {
+    let path = config_path();
+    if !path.exists() {
+        return Ok(Config::default());
+    }
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let cfg: Config =
+        toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
+    Ok(cfg)
+}
+
 pub async fn load() -> Result<Config> {
     let path = config_path();
 

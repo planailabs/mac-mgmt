@@ -196,7 +196,9 @@ async fn main() -> Result<()> {
                 // target. Populate it from the server the same way the
                 // daemon's update tick does, otherwise apply() prints
                 // "no target version known" and no-ops.
-                let cfg = config::load().await?;
+                // Only read local config — no need to fetch remote config
+                // just to get the [server] url and token.
+                let cfg = config::load_local()?;
                 let (Some(url), Some(token)) =
                     (cfg.server.url.as_deref(), cfg.server.token.as_deref())
                 else {
