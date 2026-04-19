@@ -659,29 +659,21 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     let sid = session_id.clone();
     let iid = instance_id.clone();
 
-    // Connect to SSE on mount (client-side only — EventSource is a browser API).
-    // use_hook must always be called (hook count must match between SSR and
-    // client), but the EventSource is only created on wasm32.
-    let _es_guard = use_hook(move || -> Option<EventSourceGuard> {
+    // Connect to SSE after hydration (client-side only).
+    // use_effect runs only on the client after the initial render, not during SSR.
+    use_effect(move || {
         #[cfg(target_arch = "wasm32")]
-        {
-            Some(consume_healer_sse(
-                sid,
-                messages,
-                active_tools,
-                pins,
-                staff_pings_sig,
-                status_msg,
-                state,
-                state_reason,
-                running,
-            ))
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let _ = sid;
-            None
-        }
+        consume_healer_sse(
+            sid.clone(),
+            messages,
+            active_tools,
+            pins,
+            staff_pings_sig,
+            status_msg,
+            state,
+            state_reason,
+            running,
+        );
     });
 
     let back_url = format!("/fleet/{}/healer", instance_id);
