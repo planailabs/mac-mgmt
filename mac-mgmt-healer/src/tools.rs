@@ -747,6 +747,62 @@ healer_tool! {
     }
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct MetricsQueryParams {
+    /// Optional substring filter — only return metric lines containing this string.
+    /// Useful for narrowing output (e.g. "ollama", "gpu", "http_request").
+    #[serde(default)]
+    filter: Option<String>,
+}
+
+healer_tool! {
+    name: "get_metrics",
+    struct_name: GetMetricsTool,
+    description: "Fetch Prometheus metrics from the relay's federation endpoint. Returns metrics from all connected daemons (labelled with instance_id/hostname). Use the filter parameter to narrow output to specific metric names or labels.",
+    params: MetricsQueryParams,
+    handler: |ctx, params| {
+        let url = format!("{}/metrics", ctx.relay.relay_base_url());
+        let resp = ctx.relay.http_client()
+            .get(&url)
+            .bearer_auth(ctx.relay.proxy_token())
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let body = r.text().await.unwrap_or_default();
+                match &params.filter {
+                    Some(f) if !f.is_empty() => {
+                        let filtered: String = body
+                            .lines()
+                            .filter(|l| l.contains(f.as_str()) || l.starts_with("# "))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if filtered.lines().all(|l| l.starts_with('#')) {
+                            Ok(ToolOutput::Text(format!("No metrics matching filter '{f}'.")))
+                        } else {
+                            Ok(ToolOutput::Text(filtered))
+                        }
+                    }
+                    _ => {
+                        // Truncate if too large
+                        if body.len() > 50_000 {
+                            Ok(ToolOutput::Text(format!(
+                                "{}\n\n... (output truncated at 50KB, use filter parameter to narrow)",
+                                &body[..50_000]
+                            )))
+                        } else {
+                            Ok(ToolOutput::Text(body))
+                        }
+                    }
+                }
+            }
+            Ok(r) => Ok(ToolOutput::Text(format!("Metrics endpoint returned {}", r.status()))),
+            Err(e) => Ok(ToolOutput::Text(format!("Error fetching metrics: {e}"))),
+        }
+    }
+}
+
 /// Create all healer tools for a session.
 pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
@@ -767,6 +823,7 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         GetProbeStatusTool::new(ctx.clone()),
         GetInventoryTool::new(ctx.clone()),
         GetSystemSampleTool::new(ctx.clone()),
-        GetProbeHistoryTool::new(ctx),
+        GetProbeHistoryTool::new(ctx.clone()),
+        GetMetricsTool::new(ctx),
     ]
 }

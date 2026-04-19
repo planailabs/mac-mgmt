@@ -72,6 +72,21 @@ impl RelayClient {
         }
     }
 
+    /// The relay's base URL (e.g. "https://relay.example.com").
+    pub fn relay_base_url(&self) -> &str {
+        &self.relay_url
+    }
+
+    /// The underlying HTTP client.
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
+    /// The proxy/bearer token.
+    pub fn proxy_token(&self) -> &str {
+        &self.proxy_token
+    }
+
     fn instance_url(&self, instance_prefix: &str) -> String {
         if let Some(rest) = self.relay_url.strip_prefix("https://") {
             format!("https://{instance_prefix}.{rest}")
