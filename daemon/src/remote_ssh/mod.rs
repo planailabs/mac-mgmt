@@ -230,7 +230,7 @@ impl Manager {
         reg.update(defs);
     }
 
-    /// Update the shell tunnel registry. Non-blocking.
+    /// Update the shell tunnel registry and register virtual handlers. Non-blocking.
     #[cfg(feature = "services")]
     pub fn update_shell_tunnel_defs(&self, defs: Vec<crate::managed_service::ShellTunnel>) {
         let Ok(mut reg) = self.shell_tunnel_registry.try_write() else {
@@ -238,6 +238,67 @@ impl Manager {
             return;
         };
         reg.update(defs);
+
+        // service-restart: restart a managed service via the supervisor.
+        // Unregisters the service, then the daemon's health tick re-registers it.
+        reg.register_virtual(
+            "service-restart",
+            std::sync::Arc::new(|user_arg: Option<&str>| {
+                use crate::shell_tunnels::VirtualOutput;
+                let Some(service_name) = user_arg.filter(|s| !s.is_empty()) else {
+                    return VirtualOutput {
+                        lines: vec![("stderr".into(), "Error: service name required".into())],
+                        exit_code: 1,
+                    };
+                };
+                let svc = service_name.to_string();
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let socket_path = mac_mgmt_services::default_socket_path();
+                        let timeout = std::time::Duration::from_secs(5);
+                        let mut client =
+                            mac_mgmt_services::client::Client::connect(&socket_path, timeout)
+                                .await?;
+                        client.unregister(&svc).await?;
+                        anyhow::Ok(())
+                    })
+                });
+                match result {
+                    Ok(()) => VirtualOutput {
+                        lines: vec![(
+                            "stdout".into(),
+                            format!(
+                                "Service '{service_name}' stopped. \
+                                 It will be re-registered on the next health tick."
+                            ),
+                        )],
+                        exit_code: 0,
+                    },
+                    Err(e) => VirtualOutput {
+                        lines: vec![("stderr".into(), format!("Restart failed: {e}"))],
+                        exit_code: 1,
+                    },
+                }
+            }),
+        );
+
+        // restart-daemon: stop the daemon process (service manager restarts it)
+        reg.register_virtual(
+            "restart-daemon",
+            std::sync::Arc::new(|_user_arg: Option<&str>| {
+                use crate::shell_tunnels::VirtualOutput;
+                tracing::info!("restart-daemon: stopping daemon for restart");
+                // Spawn the exit in a background thread so the response is sent first
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    std::process::exit(0);
+                });
+                VirtualOutput {
+                    lines: vec![("stdout".into(), "Daemon stopping for restart...".into())],
+                    exit_code: 0,
+                }
+            }),
+        );
     }
 
     /// Clean up resources (FIFO) on shutdown.

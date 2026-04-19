@@ -1,7 +1,24 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[cfg(feature = "services")]
 use crate::managed_service::ShellTunnel;
+
+// ── Virtual command handler ─────────────────────────────────────────────
+
+/// Return type for virtual shell command handlers.
+#[cfg(feature = "services")]
+pub struct VirtualOutput {
+    pub lines: Vec<(String, String)>, // (stream, data)
+    pub exit_code: i32,
+}
+
+/// A function that handles a virtual shell command instead of spawning a process.
+/// Takes the user arg and returns output synchronously (called from async context
+/// via block_in_place).
+#[cfg(feature = "services")]
+pub type VirtualHandler =
+    Arc<dyn Fn(Option<&str>) -> VirtualOutput + Send + Sync>;
 
 // ── Registry ────────────────────────────────────────────────────────────
 
@@ -9,6 +26,7 @@ use crate::managed_service::ShellTunnel;
 #[cfg(feature = "services")]
 pub struct ShellTunnelRegistry {
     tunnels: HashMap<String, ShellTunnel>,
+    virtual_handlers: HashMap<String, VirtualHandler>,
 }
 
 /// Stub when services feature is disabled — the relay client still needs the type.
@@ -27,6 +45,7 @@ impl ShellTunnelRegistry {
     pub fn new() -> Self {
         Self {
             tunnels: HashMap::new(),
+            virtual_handlers: HashMap::new(),
         }
     }
 
@@ -39,6 +58,17 @@ impl ShellTunnelRegistry {
 
     pub fn get(&self, name: &str) -> Option<&ShellTunnel> {
         self.tunnels.get(name)
+    }
+
+    /// Register a virtual handler for a command name. When this command is
+    /// executed, the handler is called instead of spawning a process.
+    pub fn register_virtual(&mut self, name: &str, handler: VirtualHandler) {
+        self.virtual_handlers.insert(name.to_string(), handler);
+    }
+
+    /// Get the virtual handler for a command, if any.
+    pub fn get_virtual(&self, name: &str) -> Option<&VirtualHandler> {
+        self.virtual_handlers.get(name)
     }
 }
 
@@ -62,6 +92,7 @@ pub async fn handle_exec_session(
     tunnel: &ShellTunnel,
     user_arg: Option<&str>,
     ws: mac_mgmt_ws::ClientWs,
+    virtual_handler: Option<&VirtualHandler>,
 ) {
     use futures_util::{SinkExt, StreamExt};
     use mac_mgmt_ws::tungstenite;
@@ -98,6 +129,32 @@ pub async fn handle_exec_session(
         }
     } else if user_arg.is_some() {
         send_error!("this command does not accept arguments");
+    }
+
+    // Virtual handler — run callback instead of spawning a process
+    if let Some(handler) = virtual_handler {
+        let output = handler(user_arg);
+        for (stream, data) in &output.lines {
+            let msg = serde_json::json!({ "stream": stream, "data": data });
+            if sink
+                .send(tungstenite::Message::Text(msg.to_string().into()))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+        let msg = serde_json::json!({ "exit_code": output.exit_code });
+        let _ = sink
+            .send(tungstenite::Message::Text(msg.to_string().into()))
+            .await;
+        let _ = sink.send(tungstenite::Message::Close(None)).await;
+        tracing::info!(
+            "virtual shell exec completed: {} (exit={})",
+            tunnel.def.name,
+            output.exit_code
+        );
+        return;
     }
 
     // Build the command

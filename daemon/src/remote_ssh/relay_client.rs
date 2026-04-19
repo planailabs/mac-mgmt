@@ -467,6 +467,7 @@ pub async fn run(
                     tracing::info!("shell session {session_id}: {command_name}");
                     let registry = shell_tunnel_registry.read().await;
                     let tunnel = registry.get(&command_name).cloned();
+                    let virtual_handler = registry.get_virtual(&command_name).cloned();
                     drop(registry);
                     let relay = relay_url.to_string();
                     let tok = token.to_string();
@@ -478,6 +479,7 @@ pub async fn run(
                             &session_secret,
                             tunnel,
                             user_arg.as_deref(),
+                            virtual_handler.as_ref(),
                         )
                         .await
                         {
@@ -997,6 +999,7 @@ async fn handle_shell_session(
     session_secret: &str,
     tunnel: Option<crate::managed_service::ShellTunnel>,
     user_arg: Option<&str>,
+    virtual_handler: Option<&crate::shell_tunnels::VirtualHandler>,
 ) -> anyhow::Result<()> {
     let Some(tunnel) = tunnel else {
         anyhow::bail!("shell command not found");
@@ -1015,7 +1018,7 @@ async fn handle_shell_session(
 
     tracing::debug!("shell session {session_id} data WS connected");
 
-    crate::shell_tunnels::handle_exec_session(&tunnel, user_arg, data_ws).await;
+    crate::shell_tunnels::handle_exec_session(&tunnel, user_arg, data_ws, virtual_handler).await;
 
     Ok(())
 }

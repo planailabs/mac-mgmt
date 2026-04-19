@@ -918,17 +918,29 @@ fn daemon_system_shell_tunnels() -> Vec<ShellTunnel> {
             },
             service: "daemon".into(),
         },
+        // Virtual commands — handled by callbacks, not spawned processes.
+        // The actual handlers are registered via register_virtual_handlers().
         ShellTunnel {
             def: ShellCommandDef {
-                name: "systemctl-restart".into(),
-                command: "systemctl".into(),
-                args: vec!["restart".into()],
-                description: "Restart a systemd service unit".into(),
+                name: "service-restart".into(),
+                command: String::new(), // virtual — not spawned
+                args: Vec::new(),
+                description: "Restart a managed service via the supervisor (e.g. ollama, openclaw)".into(),
                 arg_template: Some(ShellArgTemplate {
-                    label: "Service unit name".into(),
+                    label: "Service name".into(),
                     placeholder: "ollama".into(),
-                    validation: Some(r"^[a-zA-Z0-9._@-]+$".into()),
+                    validation: Some(r"^[a-zA-Z0-9._-]+$".into()),
                 }),
+            },
+            service: "daemon".into(),
+        },
+        ShellTunnel {
+            def: ShellCommandDef {
+                name: "restart-daemon".into(),
+                command: String::new(), // virtual — not spawned
+                args: Vec::new(),
+                description: "Stop the mac-mgmt daemon (the service manager will restart it automatically)".into(),
+                arg_template: None,
             },
             service: "daemon".into(),
         },
