@@ -293,8 +293,13 @@ pub async fn stream_session(
 
         // Stream live events if session is running
         if let Some(mut rx) = rx {
+            let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(30));
+            keepalive.tick().await; // consume the immediate first tick
             loop {
                 tokio::select! {
+                    _ = keepalive.tick() => {
+                        yield Event::data("{}").event("ping");
+                    }
                     msg = rx.recv() => {
                         match msg {
                             Ok(event) => {

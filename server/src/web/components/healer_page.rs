@@ -322,8 +322,20 @@ pub async fn view_healer_session(
         if is_active {
             if let Some(mut rx) = healer.subscribe(uuid) {
                 let pool2 = pool.clone();
+                let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(30));
+                keepalive.tick().await; // consume the immediate first tick
                 loop {
-                    match rx.recv().await {
+                    let event = tokio::select! {
+                        msg = rx.recv() => msg,
+                        _ = keepalive.tick() => {
+                            let _ = tx.unbounded_send(HealerStreamEvent {
+                                kind: "ping".to_string(),
+                                ..empty()
+                            });
+                            continue;
+                        }
+                    };
+                    match event {
                         Ok(event) => {
                             // Track latest message timestamp for lag recovery
                             if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } =
@@ -582,8 +594,20 @@ pub async fn start_healer_stream(
             }
         }
 
+        let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(30));
+        keepalive.tick().await; // consume the immediate first tick
         loop {
-            match rx.recv().await {
+            let event = tokio::select! {
+                msg = rx.recv() => msg,
+                _ = keepalive.tick() => {
+                    let _ = tx.unbounded_send(HealerStreamEvent {
+                        kind: "ping".to_string(),
+                        ..empty()
+                    });
+                    continue;
+                }
+            };
+            match event {
                 Ok(event) => {
                     // Skip messages already replayed from DB
                     if let mac_mgmt_healer::HealerEvent::Message { created_at, .. } = &event {
