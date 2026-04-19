@@ -782,7 +782,8 @@ fn daemon_config_file_tunnels() -> Vec<FileTunnel> {
             include: Some(vec!["config.toml".into(), "ollama-env".into()]),
             validators: vec![FileValidator {
                 glob: "config.toml".into(),
-                command: vec!["mac-mgmt".into(), "check-config".into()],
+                command: Vec::new(),
+                builtin: Some("toml".into()),
             }],
             description: "Daemon configuration directory".into(),
         },

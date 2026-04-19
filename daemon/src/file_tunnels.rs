@@ -139,10 +139,16 @@ fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
     false
 }
 
-/// Find the first matching validator for a filename. Returns the command
-/// with `{}` placeholders replaced by the file's absolute path.
+/// Matched validator: either a builtin function or an external command.
 #[cfg(feature = "services")]
-fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<Vec<String>> {
+enum MatchedValidator {
+    Builtin(String),
+    Command(Vec<String>),
+}
+
+/// Find the first matching validator for a filename.
+#[cfg(feature = "services")]
+fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<MatchedValidator> {
     let FileTunnelDef::Folder { validators, .. } = &tunnel.def else {
         return None;
     };
@@ -153,13 +159,19 @@ fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<Vec<String>> 
     for v in validators {
         if let Ok(pat) = glob::Pattern::new(&v.glob) {
             if pat.matches(filename) {
-                let path_str = file_path.to_string_lossy();
-                let cmd: Vec<String> = v
-                    .command
-                    .iter()
-                    .map(|arg| arg.replace("{}", &path_str))
-                    .collect();
-                return Some(cmd);
+                // Prefer builtin over command
+                if let Some(builtin) = &v.builtin {
+                    return Some(MatchedValidator::Builtin(builtin.clone()));
+                }
+                if !v.command.is_empty() {
+                    let path_str = file_path.to_string_lossy();
+                    let cmd: Vec<String> = v
+                        .command
+                        .iter()
+                        .map(|arg| arg.replace("{}", &path_str))
+                        .collect();
+                    return Some(MatchedValidator::Command(cmd));
+                }
             }
         }
     }
@@ -480,34 +492,46 @@ pub async fn handle_write_session(
     }
 
     // Run validator if one matches
-    if let Some(cmd) = find_validator(tunnel, &path) {
-        if cmd.is_empty() {
-            // No command to run
-        } else {
-            let result = std::process::Command::new(&cmd[0])
-                .args(&cmd[1..])
-                .output();
-            match result {
-                Ok(output) if !output.status.success() => {
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    tracing::warn!("file write validation failed for {}: {stderr}", path.display());
-                    if had_original {
-                        let _ = std::fs::rename(&backup_path, &path);
-                    } else {
-                        let _ = std::fs::remove_file(&path);
-                    }
-                    send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") }));
+    if let Some(validator) = find_validator(tunnel, &path) {
+        let rollback = || {
+            if had_original {
+                let _ = std::fs::rename(&backup_path, &path);
+            } else {
+                let _ = std::fs::remove_file(&path);
+            }
+        };
+
+        match validator {
+            MatchedValidator::Builtin(name) => {
+                if let Err(msg) = crate::managed_service::run_builtin_validator(&name, &path) {
+                    tracing::warn!("builtin validation ({name}) failed for {}: {msg}", path.display());
+                    rollback();
+                    send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {msg}") }));
                 }
-                Err(e) => {
-                    if had_original {
-                        let _ = std::fs::rename(&backup_path, &path);
-                    } else {
-                        let _ = std::fs::remove_file(&path);
+                tracing::debug!("builtin validation ({name}) passed for {}", path.display());
+            }
+            MatchedValidator::Command(cmd) => {
+                if cmd.is_empty() {
+                    // No command to run
+                } else {
+                    let result = std::process::Command::new(&cmd[0])
+                        .args(&cmd[1..])
+                        .output();
+                    match result {
+                        Ok(output) if !output.status.success() => {
+                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                            tracing::warn!("file write validation failed for {}: {stderr}", path.display());
+                            rollback();
+                            send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") }));
+                        }
+                        Err(e) => {
+                            rollback();
+                            send_result!(serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") }));
+                        }
+                        Ok(_) => {
+                            tracing::debug!("file write validation passed for {}", path.display());
+                        }
                     }
-                    send_result!(serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") }));
-                }
-                Ok(_) => {
-                    tracing::debug!("file write validation passed for {}", path.display());
                 }
             }
         }
