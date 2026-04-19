@@ -24,9 +24,12 @@ fn event_json(evt: &HealerStreamEvent) -> Event {
 
 /// GET /web/healer/stream/:session_id — SSE stream for an existing session.
 pub async fn view_session_sse(
-    Extension(user): Extension<WebUser>,
+    user: Option<Extension<WebUser>>,
     Path(session_id): Path<String>,
 ) -> Response {
+    let Some(Extension(user)) = user else {
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+    };
     let Some(healer) = server_state::healer_state() else {
         return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
