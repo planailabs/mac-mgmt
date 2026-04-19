@@ -12,6 +12,8 @@ pub struct WsClientConfig {
     pub auth_token: String,
     pub min_backoff: Duration,
     pub max_backoff: Duration,
+    /// Human-readable label for log messages (e.g. "relay", "ws").
+    pub label: String,
 }
 
 impl Default for WsClientConfig {
@@ -21,6 +23,7 @@ impl Default for WsClientConfig {
             auth_token: String::new(),
             min_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(60),
+            label: "ws".to_string(),
         }
     }
 }
@@ -38,18 +41,18 @@ pub fn spawn_reconnecting(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut backoff = config.min_backoff;
+        let label = &config.label;
 
         loop {
-            tracing::info!("ws_reconnect: connecting to {}", config.url);
+            tracing::info!("{label}: connecting to {}", config.url);
             match connect_and_run(&config, &incoming_tx, &mut outgoing_rx).await {
                 Ok(()) => {
-                    // Clean close — reset backoff and reconnect
-                    tracing::info!("ws_reconnect: connection closed cleanly, reconnecting");
+                    tracing::info!("{label}: disconnected, reconnecting");
                     backoff = config.min_backoff;
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "ws_reconnect: connection error: {e:#}, reconnecting in {backoff:?}"
+                        "{label}: connection failed: {e:#}, reconnecting in {backoff:?}"
                     );
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(config.max_backoff);
@@ -69,7 +72,7 @@ async fn connect_and_run(
         .connect()
         .await?;
 
-    tracing::info!("ws_reconnect: connected");
+    tracing::info!("{}: connected", config.label);
 
     let (mut ws_sink, mut ws_stream) = ws.split();
 
@@ -84,12 +87,12 @@ async fn connect_and_run(
                 match msg {
                     Message::Text(text) => {
                         if incoming_tx.send(text.to_string()).await.is_err() {
-                            tracing::info!("ws_reconnect: receiver dropped, stopping");
+                            tracing::info!("{}: receiver dropped, stopping", config.label);
                             return Ok(());
                         }
                     }
                     Message::Close(_) => {
-                        tracing::info!("ws_reconnect: received close frame");
+                        tracing::info!("{}: received close frame", config.label);
                         return Ok(());
                     }
                     _ => {}

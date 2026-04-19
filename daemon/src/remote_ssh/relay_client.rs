@@ -206,6 +206,7 @@ pub async fn run(
     let ws_config = WsClientConfig {
         url: ws_url,
         auth_token: token.to_string(),
+        label: "relay".to_string(),
         ..Default::default()
     };
 
