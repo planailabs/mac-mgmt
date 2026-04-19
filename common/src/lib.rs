@@ -1648,6 +1648,10 @@ pub struct HealerStreamEvent {
     /// Ephemeral status message (e.g. "Waiting for daemon reconnect...")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_message: Option<String>,
+    /// Human-readable reason for the current state (e.g. "manual_pause",
+    /// "token_budget_exceeded"). Sent alongside "state" and "done" events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

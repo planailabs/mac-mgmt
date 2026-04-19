@@ -85,14 +85,21 @@ fn healer_event_to_stream(event: &mac_mgmt_healer::HealerEvent) -> (HealerStream
             },
             false,
         ),
-        HealerEvent::State { state, .. } => (
-            HealerStreamEvent {
-                kind: "state".to_string(),
-                state: Some(state.clone()),
-                ..empty
-            },
-            false,
-        ),
+        HealerEvent::State { state, state_data } => {
+            let reason = state_data
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            (
+                HealerStreamEvent {
+                    kind: "state".to_string(),
+                    state: Some(state.clone()),
+                    state_reason: reason,
+                    ..empty
+                },
+                false,
+            )
+        }
         HealerEvent::Status { message } => (
             HealerStreamEvent {
                 kind: "status".to_string(),
@@ -241,9 +248,14 @@ pub async fn view_healer_session(
 
     let is_active = session.state.is_active();
     let current_state = session.state.as_str().to_string();
+    let current_reason = session
+        .state_data
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let pool = crate::server_pool()?;
-    let cluster_id = session.cluster_id;
+    let _cluster_id = session.cluster_id;
 
     Ok(JsonStream::spawn(move |tx| async move {
         let empty = HealerStreamEvent::default;
@@ -292,6 +304,7 @@ pub async fn view_healer_session(
         let _ = tx.unbounded_send(HealerStreamEvent {
             kind: "state".to_string(),
             state: Some(current_state.clone()),
+            state_reason: current_reason.clone(),
             ..empty()
         });
 
@@ -688,6 +701,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut staff_pings = use_signal::<Vec<StaffPingSummary>>(Vec::new);
     let mut status_msg = use_signal::<Option<String>>(|| None);
     let mut state = use_signal(|| "idle".to_string());
+    let mut state_reason = use_signal::<Option<String>>(|| None);
     let mut user_input = use_signal(String::new);
     let mut running = use_signal(|| false);
 
@@ -743,10 +757,11 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             staff_pings.set(Vec::new());
                             status_msg.set(None);
                             state.set("starting".to_string());
+                            state_reason.set(None);
                             async move {
                                 consume_stream(
                                     start_healer_stream(instance_id, user_msg).await,
-                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state,
+                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state, &mut state_reason,
                                 ).await;
                                 running.set(false);
                             }
@@ -764,8 +779,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     {
                         let st = state.read().clone();
                         let (badge_class, label) = state_badge(&st);
+                        let reason = state_reason.read().clone();
                         rsx! {
                             span { class: "inline-block px-2 py-1 text-xs font-medium rounded {badge_class}", "{label}" }
+                            if let Some(reason) = reason {
+                                span { class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                                    "({reason_display(&reason)})"
+                                }
+                            }
                         }
                     }
 
@@ -823,6 +844,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 staff_pings.set(Vec::new());
                                 status_msg.set(None);
                                 state.set("idle".to_string());
+                                state_reason.set(None);
                             },
                             "Back to sessions"
                         }
@@ -904,11 +926,12 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                             staff_pings.set(Vec::new());
                                             status_msg.set(None);
                                             state.set("loading".to_string());
+                                            state_reason.set(None);
                                             running.set(true);
                                             async move {
                                                 consume_stream(
                                                     view_healer_session(sid).await,
-                                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state,
+                                                    &mut session_id, &mut messages, &mut active_tools, &mut pins, &mut staff_pings, &mut status_msg, &mut state, &mut state_reason,
                                                 ).await;
                                                 running.set(false);
                                             }
@@ -946,6 +969,7 @@ async fn consume_stream(
     staff_pings: &mut Signal<Vec<StaffPingSummary>>,
     status_msg: &mut Signal<Option<String>>,
     state: &mut Signal<String>,
+    state_reason: &mut Signal<Option<String>>,
 ) {
     match result {
         Ok(mut stream) => {
@@ -981,6 +1005,7 @@ async fn consume_stream(
                         if let Some(s) = evt.state {
                             state.set(s);
                         }
+                        state_reason.set(evt.state_reason);
                     }
                     "done" => {
                         active_tools.set(Vec::new());
@@ -988,6 +1013,7 @@ async fn consume_stream(
                         if let Some(s) = evt.state {
                             state.set(s);
                         }
+                        state_reason.set(evt.state_reason);
                         break;
                     }
                     "error" => {
@@ -1024,6 +1050,16 @@ struct ChatMsg {
     content: String,
     #[serde(default)]
     metadata: Option<serde_json::Value>,
+}
+
+fn reason_display(reason: &str) -> &str {
+    match reason {
+        "manual_pause" => "paused by user",
+        "token_budget_exceeded" => "token budget exceeded",
+        "proxy_token_expiring" => "proxy token expiring",
+        "server_shutdown" => "server shutdown",
+        other => other,
+    }
 }
 
 fn state_badge(st: &str) -> (&'static str, &'static str) {
