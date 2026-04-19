@@ -154,9 +154,24 @@ settings_tool! {
     struct_name: WaitTool,
     description: "Wait for a specified number of seconds (1-300). Use this when you need to wait for a service to restart, a config reload to take effect, or probes to run.",
     params: WaitParams,
-    handler: |_ctx, params| {
+    handler: |ctx, params| {
         let secs = params.seconds.min(300).max(1);
-        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+        let mut elapsed = 0u64;
+        while elapsed < secs {
+            let chunk = (secs - elapsed).min(10);
+            tokio::time::sleep(std::time::Duration::from_secs(chunk)).await;
+            elapsed += chunk;
+            if elapsed < secs {
+                let remaining = secs - elapsed;
+                let _ = ctx.events_tx.send(crate::session::HealerEvent::Status {
+                    message: format!("Waiting... {remaining}s remaining"),
+                });
+            }
+        }
+        // Clear status message
+        let _ = ctx.events_tx.send(crate::session::HealerEvent::Status {
+            message: String::new(),
+        });
         Ok(ToolOutput::Text(format!("Waited {secs} seconds.")))
     }
 }

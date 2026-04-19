@@ -576,6 +576,7 @@ async fn run_agent_session(
         cluster_id: req.cluster_id,
         instance_id: req.instance_id.clone(),
         push_fn: state.inner.push_fn.clone(),
+        events_tx: events_tx.clone(),
     };
     let healer_tools = tools::all_tools(tool_ctx.clone());
     let settings_tools = settings_tools::all_settings_tools(tool_ctx);

@@ -29,6 +29,8 @@ pub struct ToolContext {
     pub instance_id: String,
     /// Send a push event to all daemons in a cluster.
     pub push_fn: Option<PushFn>,
+    /// Broadcast healer events (status messages, etc.) to the SSE stream.
+    pub events_tx: tokio::sync::broadcast::Sender<crate::session::HealerEvent>,
 }
 
 macro_rules! healer_tool {
