@@ -110,8 +110,9 @@ impl Daemon {
         update_tick: &mut time::Interval,
         health_tick: &mut time::Interval,
         set_log_level: &(dyn Fn(&str) + Send + Sync),
+        mut config_poll_tick: Option<&mut time::Interval>,
     ) {
-        tracing::info!("config file changed, reloading");
+        tracing::info!("reloading config");
         match tokio::time::timeout(std::time::Duration::from_secs(10), crate::config::reload())
             .await
         {
@@ -130,6 +131,9 @@ impl Daemon {
                 if new_cfg.daemon.update_interval != self.current_cfg.daemon.update_interval {
                     if let Ok(d) = humantime::parse_duration(&new_cfg.daemon.update_interval) {
                         *update_tick = time::interval(d);
+                        if let Some(cpt) = config_poll_tick.as_deref_mut() {
+                            *cpt = time::interval(d);
+                        }
                         tracing::info!(
                             "update_interval changed to {}",
                             new_cfg.daemon.update_interval
@@ -632,6 +636,9 @@ pub async fn run(
     let mut update_tick = time::interval(update_interval);
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
+    // Poll remote config on the same cadence as updates — catches server-side
+    // config changes even when the SSE SyncConfig push is missed or unavailable.
+    let mut config_poll_tick = time::interval(update_interval);
     let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
     let mut assessment_probe_tick = time::interval(assessment::jittered(
         assessment::DEFAULT_PROBE_INTERVAL,
@@ -812,7 +819,11 @@ pub async fn run(
             }
 
             _ = crate::config_watch::recv_debounced(&mut config_rx) => {
-                daemon.handle_config_reload(&mut update_tick, &mut health_tick, &*set_log_level).await;
+                daemon.handle_config_reload(&mut update_tick, &mut health_tick, &*set_log_level, Some(&mut config_poll_tick)).await;
+            }
+
+            _ = config_poll_tick.tick() => {
+                daemon.handle_config_reload(&mut update_tick, &mut health_tick, &*set_log_level, Some(&mut config_poll_tick)).await;
             }
 
             Some(cmd) = async {
@@ -821,7 +832,7 @@ pub async fn run(
                 // SyncConfig needs special handling (needs interval refs).
                 if matches!(cmd, crate::server_push::PushCommand::SyncConfig) {
                     tracing::info!("server push: sync config");
-                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &*set_log_level).await;
+                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &*set_log_level, Some(&mut config_poll_tick)).await;
                 } else {
                     let needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
                     #[cfg(feature = "relay")]
@@ -1240,7 +1251,7 @@ pub async fn run_sim(
             } => {
                 if matches!(cmd, crate::server_push::PushCommand::SyncConfig) {
                     tracing::info!("server push: sync config");
-                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &|_| {}).await;
+                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &|_| {}, None).await;
                 } else {
                     let needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
                     #[cfg(feature = "relay")]
@@ -1460,7 +1471,7 @@ pub async fn run_sim_with_services(
             } => {
                 if matches!(cmd, crate::server_push::PushCommand::SyncConfig) {
                     tracing::info!("server push: sync config");
-                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &|_| {}).await;
+                    daemon.handle_config_reload(&mut update_tick, &mut health_tick, &|_| {}, None).await;
                 } else {
                     let needs_ssh_sync = daemon.handle_push_cmd(cmd).await;
                     #[cfg(feature = "relay")]
