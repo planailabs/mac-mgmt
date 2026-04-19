@@ -615,32 +615,46 @@ async fn file_list(
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
+        tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, "file_list: daemon not found");
         return StatusCode::NOT_FOUND.into_response();
     };
+
+    let path_str = query.path.as_deref().unwrap_or("/");
+    tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_list");
 
     let request_id = Uuid::new_v4().to_string();
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
     if control_tx
         .send(ControlMsg::FileListRequest {
             request_id,
-            tunnel_name,
+            tunnel_name: tunnel_name.clone(),
             path: query.path,
             response_tx,
         })
         .await
         .is_err()
     {
+        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list: control channel closed");
         return StatusCode::BAD_GATEWAY.into_response();
     }
     match tokio::time::timeout(Duration::from_secs(30), response_rx).await {
-        Ok(Ok(resp)) => axum::response::Response::builder()
-            .status(resp.status)
-            .header("content-type", "application/json")
-            .body(Body::from(resp.body.to_string()))
-            .unwrap()
-            .into_response(),
-        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
-        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+        Ok(Ok(resp)) => {
+            tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, status = resp.status, "file_list completed");
+            axum::response::Response::builder()
+                .status(resp.status)
+                .header("content-type", "application/json")
+                .body(Body::from(resp.body.to_string()))
+                .unwrap()
+                .into_response()
+        }
+        Ok(Err(_)) => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list: daemon dropped response");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
+        Err(_) => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list: timeout (30s)");
+            StatusCode::GATEWAY_TIMEOUT.into_response()
+        }
     }
 }
 
@@ -660,8 +674,12 @@ async fn file_read(
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
+        tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, "file_read: daemon not found");
         return StatusCode::NOT_FOUND.into_response();
     };
+
+    let path_str = query.path.as_deref().unwrap_or("?");
+    tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_read");
 
     let session_id = Uuid::new_v4().to_string();
     let session_secret = Uuid::new_v4().to_string();
@@ -672,6 +690,7 @@ async fn file_read(
         session_secret.clone(),
         ws_tx,
     ) {
+        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: too many pending sessions");
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
 
@@ -679,14 +698,15 @@ async fn file_read(
         .send(ControlMsg::FileSessionRequest {
             session_id: session_id.clone(),
             session_secret,
-            tunnel_name,
+            tunnel_name: tunnel_name.clone(),
             mode: "read".to_string(),
-            path: query.path,
+            path: query.path.clone(),
             expected_mtime: None,
         })
         .await
         .is_err()
     {
+        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: control channel closed");
         bridge::remove_pending_proxy_session(&session_id);
         return StatusCode::BAD_GATEWAY.into_response();
     }
@@ -694,6 +714,7 @@ async fn file_read(
     let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
         Ok(Ok(ws)) => ws,
         _ => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: daemon session timeout (60s)");
             bridge::remove_pending_proxy_session(&session_id);
             return StatusCode::GATEWAY_TIMEOUT.into_response();
         }
@@ -724,6 +745,7 @@ async fn file_read(
     let status = header["status"].as_u64().unwrap_or(500) as u16;
     if status != 200 {
         let error = header["error"].as_str().unwrap_or("unknown error");
+        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, status, error, "file_read: daemon error");
         let _ = daemon_sink
             .send(axum::extract::ws::Message::Close(None))
             .await;
@@ -739,6 +761,7 @@ async fn file_read(
 
     let size = header["size"].as_u64().unwrap_or(0);
     let mtime = header["mtime"].as_i64().unwrap_or(0);
+    tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, size, mtime, "file_read: streaming");
 
     let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
         match stream.next().await {
@@ -784,8 +807,12 @@ async fn file_write(
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
+        tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, "file_write: daemon not found");
         return StatusCode::NOT_FOUND.into_response();
     };
+
+    let path_str = query.path.as_deref().unwrap_or("?");
+    tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_write");
 
     let session_id = Uuid::new_v4().to_string();
     let session_secret = Uuid::new_v4().to_string();
@@ -796,6 +823,7 @@ async fn file_write(
         session_secret.clone(),
         ws_tx,
     ) {
+        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: too many pending sessions");
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
 
@@ -803,14 +831,15 @@ async fn file_write(
         .send(ControlMsg::FileSessionRequest {
             session_id: session_id.clone(),
             session_secret,
-            tunnel_name,
+            tunnel_name: tunnel_name.clone(),
             mode: "write".to_string(),
-            path: query.path,
+            path: query.path.clone(),
             expected_mtime: query.expected_mtime,
         })
         .await
         .is_err()
     {
+        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: control channel closed");
         bridge::remove_pending_proxy_session(&session_id);
         return StatusCode::BAD_GATEWAY.into_response();
     }
@@ -818,6 +847,7 @@ async fn file_write(
     let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
         Ok(Ok(ws)) => ws,
         _ => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: daemon session timeout (60s)");
             bridge::remove_pending_proxy_session(&session_id);
             return StatusCode::GATEWAY_TIMEOUT.into_response();
         }
@@ -882,8 +912,13 @@ async fn file_write(
     let result_msg = match tokio::time::timeout(Duration::from_secs(60), daemon_stream.next()).await
     {
         Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
-        _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+        _ => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: result timeout (60s)");
+            return StatusCode::GATEWAY_TIMEOUT.into_response();
+        }
     };
+
+    tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, result = %result_msg, "file_write: completed");
 
     let _ = daemon_sink
         .send(axum::extract::ws::Message::Close(None))
@@ -923,8 +958,12 @@ async fn shell_exec(
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
+        tracing::debug!(instance = %instance_id, command = %command_name, "shell_exec: daemon not found");
         return StatusCode::NOT_FOUND.into_response();
     };
+
+    let arg_str = body.user_arg.as_deref().unwrap_or("");
+    tracing::info!(instance = %instance_id, command = %command_name, arg = %arg_str, "shell_exec");
 
     let session_id = Uuid::new_v4().to_string();
     let session_secret = Uuid::new_v4().to_string();
@@ -935,6 +974,7 @@ async fn shell_exec(
         session_secret.clone(),
         ws_tx,
     ) {
+        tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: too many pending sessions");
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
 
@@ -942,12 +982,13 @@ async fn shell_exec(
         .send(ControlMsg::ShellSessionRequest {
             session_id: session_id.clone(),
             session_secret,
-            command_name,
+            command_name: command_name.clone(),
             user_arg: body.user_arg,
         })
         .await
         .is_err()
     {
+        tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: control channel closed");
         bridge::remove_pending_proxy_session(&session_id);
         return StatusCode::BAD_GATEWAY.into_response();
     }
@@ -955,6 +996,7 @@ async fn shell_exec(
     let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
         Ok(Ok(ws)) => ws,
         _ => {
+            tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: daemon session timeout (60s)");
             bridge::remove_pending_proxy_session(&session_id);
             return StatusCode::GATEWAY_TIMEOUT.into_response();
         }
@@ -1009,7 +1051,9 @@ async fn daemon_ping(
     if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
         return resp;
     }
-    if state.registry.resolve_control_tx(&instance_id).is_some() {
+    let online = state.registry.resolve_control_tx(&instance_id).is_some();
+    tracing::debug!(instance = %instance_id, online, "daemon_ping");
+    if online {
         (StatusCode::OK, "ok").into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()
