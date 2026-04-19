@@ -447,6 +447,133 @@ settings_tool! {
 }
 
 /// Register all settings tools.
+// ── Push / sync tools ─────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct SendPushParams {
+    /// Push event type: sync_config, sync_skills, sync_mcp_servers, sync_ssh_keys,
+    /// self_update, sync_nixpkgs, request_assessment
+    event: String,
+}
+
+settings_tool! {
+    name: "send_push",
+    struct_name: SendPushTool,
+    description: "Send a push event to all daemons in the cluster via SSE. Available events: sync_config (reload config), sync_skills (re-sync skills), sync_mcp_servers (re-sync MCP servers), sync_ssh_keys (re-sync SSH keys), self_update (trigger self-update check), sync_nixpkgs (re-sync nixpkgs pin), request_assessment (trigger immediate probe run).",
+    params: SendPushParams,
+    handler: |ctx, params| {
+        let event = match params.event.as_str() {
+            "sync_config" => mac_mgmt_common::PushEvent::SyncConfig,
+            "sync_skills" => mac_mgmt_common::PushEvent::SyncSkills,
+            "sync_mcp_servers" => mac_mgmt_common::PushEvent::SyncMcpServers,
+            "sync_ssh_keys" => mac_mgmt_common::PushEvent::SyncSshKeys,
+            "self_update" => mac_mgmt_common::PushEvent::SelfUpdate,
+            "sync_nixpkgs" => mac_mgmt_common::PushEvent::SyncNixpkgs,
+            "request_assessment" => mac_mgmt_common::PushEvent::RequestAssessment,
+            other => return Ok(ToolOutput::Text(format!(
+                "Unknown event '{other}'. Valid: sync_config, sync_skills, sync_mcp_servers, sync_ssh_keys, self_update, sync_nixpkgs, request_assessment"
+            ))),
+        };
+        if let Some(push_fn) = &ctx.push_fn {
+            push_fn(ctx.cluster_id, event);
+            Ok(ToolOutput::Text(format!("Push event '{}' sent to cluster.", params.event)))
+        } else {
+            Ok(ToolOutput::Text("Push not available.".to_string()))
+        }
+    }
+}
+
+// ── Version / heartbeat info tools ────────────────────────────────────
+
+settings_tool! {
+    name: "get_version_info",
+    struct_name: GetVersionInfoTool,
+    description: "Get version information for the target instance: running daemon version and git commit from the heartbeat, plus available daemon versions from the server's version table.",
+    handler: |ctx| {
+        #[derive(sqlx::FromRow)]
+        struct HbVersion {
+            version: String,
+            git_sha: Option<String>,
+            reported_at: chrono::DateTime<chrono::Utc>,
+        }
+        let hb = sqlx::query_as::<_, HbVersion>(
+            "SELECT version, git_sha, reported_at FROM daemon_heartbeats \
+             WHERE instance_id = $1 LIMIT 1",
+        )
+        .bind(&ctx.instance_id)
+        .fetch_optional(&ctx.pool)
+        .await;
+
+        let mut out = String::new();
+        match hb {
+            Ok(Some(h)) => {
+                let age = (chrono::Utc::now() - h.reported_at).num_seconds();
+                out.push_str(&format!("Running version: {} (heartbeat {}s ago)\n", h.version, age));
+                if let Some(sha) = &h.git_sha {
+                    out.push_str(&format!("Git commit: {sha}\n"));
+                }
+            }
+            Ok(None) => out.push_str("No heartbeat data found.\n"),
+            Err(e) => out.push_str(&format!("Error querying heartbeat: {e}\n")),
+        }
+
+        // Available daemon versions from the server
+        #[derive(sqlx::FromRow)]
+        struct DvRow {
+            version: String,
+            system: String,
+            store_path: Option<String>,
+            created_at: chrono::DateTime<chrono::Utc>,
+        }
+        match sqlx::query_as::<_, DvRow>(
+            "SELECT version, system, store_path, created_at FROM daemon_versions \
+             ORDER BY created_at DESC LIMIT 10",
+        )
+        .fetch_all(&ctx.pool)
+        .await
+        {
+            Ok(rows) if !rows.is_empty() => {
+                out.push_str("\nAvailable daemon versions:\n");
+                for r in &rows {
+                    out.push_str(&format!(
+                        "  {} ({}) — {}{}\n",
+                        r.version,
+                        r.system,
+                        r.created_at.format("%Y-%m-%d %H:%M"),
+                        r.store_path.as_deref().map(|p| format!(" [{p}]")).unwrap_or_default(),
+                    ));
+                }
+            }
+            Ok(_) => out.push_str("\nNo daemon versions registered on server.\n"),
+            Err(e) => out.push_str(&format!("\nError querying daemon versions: {e}\n")),
+        }
+
+        Ok(ToolOutput::Text(out))
+    }
+}
+
+settings_tool! {
+    name: "get_heartbeat",
+    struct_name: GetHeartbeatTool,
+    description: "Get the full heartbeat data for the target instance: version, hostname, services, tunnels, file tunnels, shell tunnels, sample, services_extended, relay info, and timing.",
+    handler: |ctx| {
+        let row = sqlx::query_as::<_, (serde_json::Value,)>(
+            "SELECT row_to_json(h) FROM daemon_heartbeats h WHERE instance_id = $1 LIMIT 1",
+        )
+        .bind(&ctx.instance_id)
+        .fetch_optional(&ctx.pool)
+        .await;
+
+        match row {
+            Ok(Some((json,))) => {
+                Ok(ToolOutput::Text(serde_json::to_string_pretty(&json).unwrap_or_default()))
+            }
+            Ok(None) => Ok(ToolOutput::Text("No heartbeat data found for this instance.".to_string())),
+            Err(e) => Ok(ToolOutput::Text(format!("Error querying heartbeat: {e}"))),
+        }
+    }
+}
+
 pub fn all_settings_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
     vec![
         WaitTool::new(ctx.clone()),
@@ -459,7 +586,10 @@ pub fn all_settings_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         RemoveSkillTool::new(ctx.clone()),
         ListMcpServersTool::new(ctx.clone()),
         AddMcpServerTool::new(ctx.clone()),
-        RemoveMcpServerTool::new(ctx),
+        RemoveMcpServerTool::new(ctx.clone()),
+        SendPushTool::new(ctx.clone()),
+        GetVersionInfoTool::new(ctx.clone()),
+        GetHeartbeatTool::new(ctx),
     ]
 }
 
