@@ -1,13 +1,12 @@
-//! OpenClaw functional probe.
+//! OpenClaw probes.
 //!
-//! Sends a canary prompt through the OpenAI-compatible `/v1/chat/completions`
-//! endpoint exposed by the openclaw gateway on loopback. Token counts and the
-//! model string come back in the same `usage` + `model` fields a real client
-//! would read, so a passing probe confirms gateway → LLM backend end-to-end.
-//!
-//! Always uses the gateway endpoint (default port 18789) — no fallback to
-//! `openclaw health` since that doesn't exercise the full agent pipeline.
+//! Two probes:
+//! - **Liveness** (`openclaw_health`): runs `openclaw health --json` to check
+//!   subsystem status. Cheap, catches daemon crashes and config errors.
+//! - **Functional** (`openclaw`): sends a canary prompt through the gateway's
+//!   `/v1/chat/completions` endpoint for a full agent round-trip.
 
+use std::process::Stdio;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -15,13 +14,111 @@ use async_trait::async_trait;
 use mac_mgmt_common::OpenClawConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tokio::process::Command;
 
 use super::{
     Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex, response_has_content, snippet, timed,
 };
 
-/// Loopback is unauthenticated in openclaw's gateway (see net.ts:53,
-/// auth.ts:557), so no bearer-token handling is needed here.
+// ── Liveness probe: `openclaw health --json` ─────────────────────────
+
+pub struct OpenClawHealthProbe;
+
+#[async_trait]
+impl Probe for OpenClawHealthProbe {
+    fn name(&self) -> &'static str {
+        "openclaw"
+    }
+
+    fn kind(&self) -> ProbeKind {
+        ProbeKind::Liveness
+    }
+
+    async fn run(&self, ctx: &ProbeCtx) -> ProbeResult {
+        timed(|| run_health(ctx)).await
+    }
+}
+
+async fn run_health(ctx: &ProbeCtx) -> Result<ProbeResult> {
+    let out = tokio::time::timeout(
+        ctx.timeout,
+        Command::new("openclaw")
+            .args(["health", "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output(),
+    )
+    .await
+    .context("openclaw health timed out")?
+    .context("failed to spawn openclaw health")?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() {
+        anyhow::bail!(
+            "openclaw health exited {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).context("failed to parse openclaw health output")?;
+
+    let ok = is_all_healthy(&json);
+
+    Ok(ProbeResult {
+        ok,
+        canary_digest: Some(digest_hex(stdout.trim().as_bytes())),
+        error_class: if ok {
+            None
+        } else {
+            Some("bad_response".into())
+        },
+        error_detail: if ok {
+            None
+        } else {
+            Some(first_unhealthy(&json).unwrap_or_else(|| "degraded".into()))
+        },
+        ..Default::default()
+    })
+}
+
+fn is_all_healthy(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Object(map) => {
+            if let Some(status) = map.get("status").and_then(|s| s.as_str()) {
+                if !matches!(status.to_lowercase().as_str(), "ok" | "healthy" | "ready") {
+                    return false;
+                }
+            }
+            map.values().all(is_all_healthy)
+        }
+        serde_json::Value::Array(arr) => arr.iter().all(is_all_healthy),
+        _ => true,
+    }
+}
+
+fn first_unhealthy(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Object(map) => {
+            if let Some(status) = map.get("status").and_then(|s| s.as_str()) {
+                if !matches!(status.to_lowercase().as_str(), "ok" | "healthy" | "ready") {
+                    let name = map
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("component");
+                    return Some(format!("{name}={status}"));
+                }
+            }
+            map.values().find_map(first_unhealthy)
+        }
+        serde_json::Value::Array(arr) => arr.iter().find_map(first_unhealthy),
+        _ => None,
+    }
+}
+
+// ── Functional probe: gateway chat completions ───────────────────────
+
 pub struct OpenClawProbe {
     gateway_url: String,
 }
@@ -39,10 +136,6 @@ impl OpenClawProbe {
             gateway_url: format!("http://{host}:{port}"),
         }
     }
-
-    async fn run_impl(&self, ctx: &ProbeCtx) -> Result<ProbeResult> {
-        run_gateway(&self.gateway_url, ctx).await
-    }
 }
 
 #[async_trait]
@@ -56,16 +149,13 @@ impl Probe for OpenClawProbe {
     }
 
     async fn run(&self, ctx: &ProbeCtx) -> ProbeResult {
-        timed(|| self.run_impl(ctx)).await
+        timed(|| run_gateway(&self.gateway_url, ctx)).await
     }
 }
 
 async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
     let client = Client::builder().timeout(ctx.timeout).build()?;
     let body = ChatBody {
-        // "openclaw" is the conventional model name the gateway routes to
-        // the configured backend. The real model actually used comes back
-        // in the response `model` field.
         model: "openclaw".into(),
         messages: vec![ChatMessage {
             role: "user".into(),
@@ -97,7 +187,6 @@ async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
         .map(|c| c.message.content)
         .unwrap_or_default();
     let ok = response_has_content(&content);
-    let _ = ctx.canary_expected; // kept for the Regression probe kind
 
     Ok(ProbeResult {
         ok,
@@ -123,6 +212,8 @@ async fn run_gateway(base_url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
         ..Default::default()
     })
 }
+
+// ── Wire types ───────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct ChatBody {
