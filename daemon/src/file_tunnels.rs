@@ -139,11 +139,11 @@ fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
     false
 }
 
-/// Matched validator: either a builtin function or an external command.
+/// Matched validator with resolved command args.
 #[cfg(feature = "services")]
-enum MatchedValidator {
-    Builtin(String),
-    Command(Vec<String>),
+struct MatchedValidator {
+    builtin: Option<String>,
+    command: Vec<String>,
 }
 
 /// Find the first matching validator for a filename.
@@ -159,19 +159,16 @@ fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<MatchedValida
     for v in validators {
         if let Ok(pat) = glob::Pattern::new(&v.glob) {
             if pat.matches(filename) {
-                // Prefer builtin over command
-                if let Some(builtin) = &v.builtin {
-                    return Some(MatchedValidator::Builtin(builtin.clone()));
-                }
-                if !v.command.is_empty() {
-                    let path_str = file_path.to_string_lossy();
-                    let cmd: Vec<String> = v
-                        .command
-                        .iter()
-                        .map(|arg| arg.replace("{}", &path_str))
-                        .collect();
-                    return Some(MatchedValidator::Command(cmd));
-                }
+                let path_str = file_path.to_string_lossy();
+                let cmd: Vec<String> = v
+                    .command
+                    .iter()
+                    .map(|arg| arg.replace("{}", &path_str))
+                    .collect();
+                return Some(MatchedValidator {
+                    builtin: v.builtin.clone(),
+                    command: cmd,
+                });
             }
         }
     }
@@ -501,37 +498,44 @@ pub async fn handle_write_session(
             }
         };
 
-        match validator {
-            MatchedValidator::Builtin(name) => {
-                if let Err(msg) = crate::managed_service::run_builtin_validator(&name, &path) {
-                    tracing::warn!("builtin validation ({name}) failed for {}: {msg}", path.display());
-                    rollback();
-                    send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {msg}") }));
-                }
-                tracing::debug!("builtin validation ({name}) passed for {}", path.display());
+        // 1. Run builtin validator first (if configured)
+        if let Some(name) = &validator.builtin {
+            if let Err(msg) = crate::managed_service::run_builtin_validator(name, &path) {
+                tracing::warn!("builtin validation ({name}) failed for {}: {msg}", path.display());
+                rollback();
+                send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {msg}") }));
             }
-            MatchedValidator::Command(cmd) => {
-                if cmd.is_empty() {
-                    // No command to run
-                } else {
-                    let result = std::process::Command::new(&cmd[0])
-                        .args(&cmd[1..])
-                        .output();
-                    match result {
-                        Ok(output) if !output.status.success() => {
-                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                            tracing::warn!("file write validation failed for {}: {stderr}", path.display());
-                            rollback();
-                            send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") }));
-                        }
-                        Err(e) => {
-                            rollback();
-                            send_result!(serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") }));
-                        }
-                        Ok(_) => {
-                            tracing::debug!("file write validation passed for {}", path.display());
-                        }
-                    }
+            tracing::debug!("builtin validation ({name}) passed for {}", path.display());
+        }
+
+        // 2. Run external command validator (if configured).
+        //    If the binary is missing, log a warning but don't fail — the
+        //    builtin validator (if any) already passed.
+        if !validator.command.is_empty() {
+            let result = std::process::Command::new(&validator.command[0])
+                .args(&validator.command[1..])
+                .output();
+            match result {
+                Ok(output) if !output.status.success() => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    tracing::warn!("command validation failed for {}: {stderr}", path.display());
+                    rollback();
+                    send_result!(serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") }));
+                }
+                Err(e) if validator.builtin.is_some() => {
+                    // Binary missing but builtin already passed — log and continue
+                    tracing::warn!(
+                        "validation command {:?} not available ({}), builtin passed — accepting write",
+                        validator.command[0], e
+                    );
+                }
+                Err(e) => {
+                    // No builtin fallback — this is fatal
+                    rollback();
+                    send_result!(serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") }));
+                }
+                Ok(_) => {
+                    tracing::debug!("command validation passed for {}", path.display());
                 }
             }
         }

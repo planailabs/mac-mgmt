@@ -423,7 +423,7 @@ impl ManagedService for OpenClaw {
             include: Some(vec!["openclaw.json".into()]),
             validators: vec![FileValidator {
                 glob: "*.json".into(),
-                command: Vec::new(),
+                command: vec!["openclaw".into(), "config".into(), "validate".into()],
                 builtin: Some("json".into()),
             }],
             description: "OpenClaw gateway configuration".into(),
