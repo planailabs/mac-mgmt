@@ -711,7 +711,9 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                         if let Some(s) = evt.state {
                             state.set(s);
                         }
-                        state_reason.set(evt.state_reason);
+                        if let Some(r) = evt.state_reason {
+                            state_reason.set(Some(r));
+                        }
                     }
                     "done" => {
                         active_tools.set(Vec::new());
@@ -719,7 +721,9 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                         if let Some(s) = evt.state {
                             state.set(s);
                         }
-                        state_reason.set(evt.state_reason);
+                        if let Some(r) = evt.state_reason {
+                            state_reason.set(Some(r));
+                        }
                         running.set(false);
                         break;
                     }
