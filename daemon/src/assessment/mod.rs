@@ -155,12 +155,7 @@ impl Assessor {
         };
         let ctx = probes::ProbeCtx::default();
         let probes = probes::registry(&cfg);
-        // Use a map so multiple probes for the same service (e.g. openclaw
-        // liveness + functional) are merged into one ServiceExtState.
-        // Health is the AND of all probes; the most recent functional probe
-        // wins for last_probe_* fields.
-        let mut summary_map: std::collections::HashMap<String, ServiceExtState> =
-            std::collections::HashMap::new();
+        let mut summaries: Vec<ServiceExtState> = Vec::with_capacity(probes.len());
 
         let metrics = self.metrics.read().await.clone();
         for probe in probes {
@@ -173,28 +168,14 @@ impl Assessor {
                 m.assessment.update_probe(name, kind, &result);
             }
 
-            let entry = summary_map.entry(name.to_string()).or_insert(ServiceExtState {
+            summaries.push(ServiceExtState {
                 name: name.to_string(),
-                healthy: true,
-                last_probe_ok: None,
-                last_probe_at: None,
-                last_probe_duration_ms: None,
-                last_probe_kind: None,
+                healthy: result.ok,
+                last_probe_ok: Some(result.ok),
+                last_probe_at: Some(collected_at),
+                last_probe_duration_ms: Some(result.duration_ms),
+                last_probe_kind: Some(kind.as_str().to_string()),
             });
-            // Any failing probe makes the service unhealthy
-            if !result.ok {
-                entry.healthy = false;
-            }
-            // Functional probes take priority over liveness for the
-            // last_probe_* display fields
-            let dominated = entry.last_probe_kind.as_deref() == Some("functional")
-                && kind == probes::ProbeKind::Liveness;
-            if !dominated {
-                entry.last_probe_ok = Some(result.ok);
-                entry.last_probe_at = Some(collected_at);
-                entry.last_probe_duration_ms = Some(result.duration_ms);
-                entry.last_probe_kind = Some(kind.as_str().to_string());
-            }
 
             let body = match build_signed_probe(
                 instance_id,
@@ -213,7 +194,7 @@ impl Assessor {
             post_probe(server_url, server_token, body).await;
         }
 
-        *self.latest_probes.write().await = summary_map.into_values().collect();
+        *self.latest_probes.write().await = summaries;
     }
 
     /// Called on `PushCommand::RequestAssessment` — runs both inventory and probes
