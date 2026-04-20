@@ -71,7 +71,13 @@ pub async fn resolve_llm(config: &ConnectorConfig) -> Result<LlmHandle> {
         OllamaStatus::Ready => {
             tracing::info!(url = %ollama_url, model = %model, "using local Ollama for healer agent");
 
+            let mut ollama_config =
+                swiftide::integrations::ollama::config::OllamaConfig::default();
+            ollama_config.with_api_base(&format!("{ollama_url}/v1"));
+            let ollama_client = async_openai::Client::with_config(ollama_config);
+
             let ollama = swiftide::integrations::ollama::Ollama::builder()
+                .client(ollama_client)
                 .default_prompt_model(&model)
                 .build()
                 .context("failed to build Ollama integration")?;
