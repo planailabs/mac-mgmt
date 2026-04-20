@@ -1,10 +1,12 @@
 use mac_mgmt_common::{ServiceStatus, StatusResponse};
+use rocket::http::ContentType;
 use rocket::serde::json::Json;
 use rocket::{State, get, post, routes};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::assessment::Assessor;
 use crate::log_buffer::LogBuffer;
 use crate::metrics::Metrics;
 
@@ -82,10 +84,20 @@ async fn sync_endpoint(trigger: &State<SyncTrigger>) -> Json<SyncResponse> {
     Json(SyncResponse { triggered })
 }
 
+#[get("/dashboard")]
+fn dashboard_endpoint(
+    metrics: &State<Arc<Metrics>>,
+    assessor: &State<Arc<Assessor>>,
+) -> (ContentType, String) {
+    let html = crate::dashboard::render(metrics.inner(), assessor.inner());
+    (ContentType::HTML, html)
+}
+
 pub fn build_rocket(
     metrics: Arc<Metrics>,
     log_buf: LogBuffer,
     sync_trigger: SyncTrigger,
+    assessor: Arc<Assessor>,
     port: u16,
 ) -> rocket::Rocket<rocket::Build> {
     let config = rocket::Config {
@@ -99,13 +111,15 @@ pub fn build_rocket(
         .manage(metrics)
         .manage(log_buf)
         .manage(sync_trigger)
+        .manage(assessor)
         .mount(
             "/",
             routes![
                 metrics_endpoint,
                 status_endpoint,
                 logs_endpoint,
-                sync_endpoint
+                sync_endpoint,
+                dashboard_endpoint
             ],
         )
 }

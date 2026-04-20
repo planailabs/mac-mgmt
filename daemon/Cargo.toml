@@ -59,3 +59,4 @@ strip-ansi-escapes = "0.2"
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network"] }
 regex = "1"
 which = { workspace = true }
+ramhorns = "1"

@@ -7,6 +7,7 @@ pub mod config_watch;
 #[cfg(feature = "services")]
 pub mod connectors;
 pub mod crash;
+pub mod dashboard;
 pub mod daemon;
 pub mod events;
 #[cfg(feature = "relay")]

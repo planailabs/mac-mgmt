@@ -613,15 +613,21 @@ pub async fn run(
     let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel::<()>(4);
     let _sync_tx_keepalive = sync_tx.clone();
 
+    let assessor = Arc::new(Assessor::new());
+    assessor.update_config(current_cfg.clone()).await;
+    assessor.attach_metrics(Arc::clone(&metrics)).await;
+
     // Spawn the metrics server.
     let metrics_clone = Arc::clone(&metrics);
     let log_buf_clone = log_buf.clone();
     let sync_tx_clone = sync_tx.clone();
+    let assessor_clone = Arc::clone(&assessor);
     tokio::spawn(async move {
         if let Err(e) = crate::metrics_server::build_rocket(
             metrics_clone,
             log_buf_clone,
             sync_tx_clone,
+            assessor_clone,
             metrics_port,
         )
         .launch()
@@ -695,10 +701,6 @@ pub async fn run(
     } else {
         None
     };
-
-    let assessor = Arc::new(Assessor::new());
-    assessor.update_config(current_cfg.clone()).await;
-    assessor.attach_metrics(Arc::clone(&metrics)).await;
 
     // Build the Daemon struct with all long-lived state.
     let mut daemon = Daemon {
