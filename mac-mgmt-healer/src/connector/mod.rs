@@ -65,7 +65,7 @@ pub async fn resolve_llm(config: &ConnectorConfig) -> Result<LlmHandle> {
     let model = config
         .ollama_model
         .clone()
-        .unwrap_or_else(|| "qwen3".to_string());
+        .unwrap_or_else(|| "gemma4".to_string());
 
     match check_ollama(&ollama_url, &model).await {
         OllamaStatus::Ready => {
