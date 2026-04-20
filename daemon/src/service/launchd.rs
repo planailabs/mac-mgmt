@@ -23,8 +23,7 @@ pub(crate) fn current_username() -> Result<String> {
     Ok(name.to_string_lossy().into_owned())
 }
 
-fn plist_contents() -> Result<String> {
-    let bin = std::env::current_exe().context("cannot determine binary path")?;
+fn plist_contents(bin: &std::path::Path) -> Result<String> {
     let username = current_username()?;
     Ok(format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -58,9 +57,9 @@ fn plist_contents() -> Result<String> {
     ))
 }
 
-pub fn install() -> Result<()> {
+pub fn install(bin: &std::path::Path) -> Result<()> {
     let path = plist_path();
-    let contents = plist_contents()?;
+    let contents = plist_contents(bin)?;
 
     if path.exists() {
         if let Ok(output) = sudo(&["cat", &path.display().to_string()]) {
@@ -231,8 +230,7 @@ fn supervisor_system_target() -> String {
     format!("system/{SUPERVISOR_LABEL}")
 }
 
-fn supervisor_plist_contents() -> Result<String> {
-    let bin = std::env::current_exe().context("cannot determine binary path")?;
+fn supervisor_plist_contents(bin: &std::path::Path) -> Result<String> {
     let username = current_username()?;
     Ok(format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -266,11 +264,11 @@ fn supervisor_plist_contents() -> Result<String> {
     ))
 }
 
-pub fn install_services_manager() -> Result<()> {
+pub fn install_services_manager(bin: &std::path::Path) -> Result<()> {
     cleanup_legacy_user_agents();
 
     let path = supervisor_plist_path();
-    let contents = supervisor_plist_contents()?;
+    let contents = supervisor_plist_contents(bin)?;
 
     let changed = match sudo(&["cat", &path.display().to_string()]) {
         Ok(output) if output.status.success() => {

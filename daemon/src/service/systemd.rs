@@ -37,8 +37,7 @@ pub(crate) fn service_user() -> String {
         .unwrap_or_else(|_| "root".to_string())
 }
 
-fn unit_contents() -> Result<String> {
-    let bin = std::env::current_exe().context("cannot determine binary path")?;
+fn unit_contents(bin: &std::path::Path) -> Result<String> {
     let user = service_user();
     let home = super::home_dir_for_user(&user);
     Ok(format!(
@@ -63,9 +62,9 @@ WantedBy=multi-user.target
     ))
 }
 
-pub fn install() -> Result<()> {
+pub fn install(bin: &std::path::Path) -> Result<()> {
     let path = unit_path();
-    let contents = unit_contents()?;
+    let contents = unit_contents(bin)?;
 
     if is_root() {
         fs::write(&path, &contents).context("failed to write systemd unit")?;
@@ -172,8 +171,7 @@ fn supervisor_unit_path() -> PathBuf {
     PathBuf::from("/etc/systemd/system").join(SUPERVISOR_UNIT)
 }
 
-fn supervisor_unit_contents() -> Result<String> {
-    let bin = std::env::current_exe().context("cannot determine binary path")?;
+fn supervisor_unit_contents(bin: &std::path::Path) -> Result<String> {
     let user = service_user();
     let home = super::home_dir_for_user(&user);
     Ok(format!(
@@ -223,11 +221,11 @@ fn write_privileged(path: &std::path::Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn install_services_manager() -> Result<()> {
+pub fn install_services_manager(bin: &std::path::Path) -> Result<()> {
     cleanup_legacy_user_units();
 
     let path = supervisor_unit_path();
-    let contents = supervisor_unit_contents()?;
+    let contents = supervisor_unit_contents(bin)?;
 
     let needs_write = match fs::read_to_string(&path) {
         Ok(existing) => existing != contents,

@@ -92,7 +92,7 @@ fn current_binary_store_path() -> Option<String> {
 /// Fallback order:
 /// 1. The original argv[0] path if it's outside /nix/store/ and exists
 /// 2. `~/.local/bin/mac-mgmt`
-fn install_bin_path() -> Result<std::path::PathBuf> {
+pub fn install_bin_path() -> Result<std::path::PathBuf> {
     // Try argv[0]: on most systems this is the path the user typed or
     // the path the service manager used.
     if let Some(arg0) = std::env::args().next() {
@@ -287,6 +287,122 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
         ],
     );
     Ok(())
+}
+
+/// Ensure the running binary is a symlink into the nix store.
+///
+/// On first install the binary is often a plain file (copied manually or
+/// built locally). Overwriting a running binary can fail ("text file
+/// busy"), so we convert it to a symlink immediately:
+///
+/// 1. `nix-store --add <binary>` → `/nix/store/<hash>-mac-mgmt`
+/// 2. Replace the file at `install_bin_path()` with a symlink to the
+///    store copy.
+/// 3. Register a GC root so nix doesn't sweep it.
+///
+/// Returns the stable symlink path (suitable for service unit files).
+/// If the binary is already a symlink into `/nix/store/`, this is a
+/// no-op and returns the existing symlink path.
+pub fn ensure_symlink() -> Result<std::path::PathBuf> {
+    let install_path = install_bin_path().context("failed to determine install path")?;
+
+    // Already a symlink → nothing to do.
+    if install_path.read_link().is_ok() {
+        tracing::debug!(
+            "binary at {} is already a symlink, skipping",
+            install_path.display()
+        );
+        return Ok(install_path);
+    }
+
+    // Resolve the actual binary we're running.
+    let exe = std::env::current_exe().context("cannot determine binary path")?;
+
+    // If the binary is already in the nix store (e.g. invoked directly
+    // from a nix profile), just create the symlink — no --add needed.
+    let store_file = if exe.to_string_lossy().starts_with("/nix/store/") {
+        exe.clone()
+    } else {
+        // Add the binary to the nix store so it has a stable, immutable
+        // path we can symlink to.
+        tracing::info!("adding {} to nix store", exe.display());
+        let output = Command::new("nix-store")
+            .args(["--add", exe.to_str().unwrap_or("mac-mgmt")])
+            .output()
+            .context("failed to run nix-store --add")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("nix-store --add failed: {stderr}");
+        }
+        let store_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if store_path.is_empty() {
+            anyhow::bail!("nix-store --add returned an empty path");
+        }
+        std::path::PathBuf::from(store_path)
+    };
+
+    if !store_file.exists() {
+        anyhow::bail!(
+            "store path {} does not exist after nix-store --add",
+            store_file.display()
+        );
+    }
+
+    // Register a GC root so this store path survives garbage collection.
+    let gcroot_dir = crate::config::config_dir();
+    std::fs::create_dir_all(&gcroot_dir)
+        .with_context(|| format!("failed to create {}", gcroot_dir.display()))?;
+    let gcroot = gcroot_dir.join(".mac-mgmt.gcroot");
+    let _ = std::fs::remove_file(&gcroot);
+    let realise_out = Command::new("nix-store")
+        .args([
+            "--realise",
+            "--add-root",
+            gcroot.to_str().unwrap_or(".mac-mgmt.gcroot"),
+            store_file.to_str().unwrap_or(""),
+        ])
+        .output();
+    if let Ok(out) = &realise_out {
+        if !out.status.success() {
+            tracing::warn!(
+                "nix-store --realise --add-root for initial symlink failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    // Atomic replace: tmp symlink → rename.
+    let install_dir = install_path
+        .parent()
+        .context("install path has no parent dir")?;
+    std::fs::create_dir_all(install_dir)
+        .with_context(|| format!("failed to create {}", install_dir.display()))?;
+    let tmp_link = install_dir.join(".mac-mgmt.update");
+    let _ = std::fs::remove_file(&tmp_link);
+
+    std::os::unix::fs::symlink(&store_file, &tmp_link).with_context(|| {
+        format!(
+            "symlink {} -> {}",
+            tmp_link.display(),
+            store_file.display()
+        )
+    })?;
+
+    std::fs::rename(&tmp_link, &install_path).with_context(|| {
+        format!(
+            "rename {} -> {}",
+            tmp_link.display(),
+            install_path.display()
+        )
+    })?;
+
+    tracing::info!(
+        "binary at {} is now a symlink to {}",
+        install_path.display(),
+        store_file.display()
+    );
+
+    Ok(install_path)
 }
 
 /// CLI entrypoint kept for backwards compatibility. Updates are now
