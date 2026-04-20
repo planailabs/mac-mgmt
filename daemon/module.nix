@@ -165,6 +165,7 @@ in
     systemd.services.mac-mgmt-services = commonUnitAttrs // {
       description = "mac-mgmt managed-services supervisor";
       after = commonUnitAttrs.after ++ [ "mac-mgmt.service" ];
+      restartIfChanged = false;
 
       serviceConfig = commonServiceConfig // {
         ExecStart = "${pkgs.bashInteractive}/bin/bash -lc '${binPath} services'";
