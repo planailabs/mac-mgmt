@@ -30,10 +30,8 @@ pub fn build_system_prompt(
         Diagnose the issue, apply fixes, verify the result, and mark the session done — all on your own.\n\
         Do not ask for confirmation or wait for human input. If you get stuck after exhausting your options, \
         call `staff_ping` and set phase to `needs_human_attention`.\n\n\
-        **CRITICAL: Every response MUST include at least one tool call.** You cannot do anything without tools. \
-        Never describe what you would do — do it by calling the tool. Never output a tool invocation as text — \
-        always use the tool calling format. If you have nothing left to do, call `set_phase` with `done`. \
-        A response with only text and no tool calls is ALWAYS wrong.\n\n");
+        Always take action by calling tools rather than describing what you would do. \
+        When you are finished, call `set_phase` with `done`.\n\n");
 
     // Target info
     prompt.push_str("## Target\n");
