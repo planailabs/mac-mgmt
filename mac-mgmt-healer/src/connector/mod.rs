@@ -79,6 +79,10 @@ pub async fn resolve_llm(config: &ConnectorConfig) -> Result<LlmHandle> {
             let ollama = swiftide::integrations::ollama::Ollama::builder()
                 .client(ollama_client)
                 .default_prompt_model(&model)
+                .default_options(
+                    swiftide::integrations::openai::Options::builder()
+                        .temperature(0.0)
+                )
                 .build()
                 .context("failed to build Ollama integration")?;
 
