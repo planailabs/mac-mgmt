@@ -161,7 +161,7 @@ Tries local Ollama first (zero cost), falls back to Anthropic cloud. Configurabl
 ```toml
 [healer]
 ollama_url = "http://localhost:11434"
-ollama_model = "qwen3"
+ollama_model = "gemma4"
 anthropic_model = "claude-sonnet-4-6"
 token_budget = 200000  # auto-pause per cloud session
 ```

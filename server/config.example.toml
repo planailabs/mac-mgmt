@@ -33,7 +33,7 @@ token = "xzar-api-token-here"
 # Sessions auto-resume on server restart.
 # [healer]
 # ollama_url = "http://localhost:11434"         # default
-# ollama_model = "qwen3"                        # default; must support tool use
+# ollama_model = "gemma4"                        # default; must support tool use
 # anthropic_model = "claude-sonnet-4-6"         # default; used when Ollama is unavailable
 # token_budget = 200000                          # max tokens per cloud session before auto-pause (0 = unlimited)
 # context7_api_key = "c7-..."                   # optional; enables Context7 MCP for documentation lookup
