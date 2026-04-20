@@ -166,11 +166,15 @@ anthropic_model = "claude-sonnet-4-6"
 token_budget = 200000  # auto-pause per cloud session
 ```
 
-### Agent tools (22)
+### Agent tools (40)
 
 **Instance interaction**: list_files, read_file, write_file, run_command, fetch_logs, list_file_tunnels, list_shell_commands, fetch_cluster_logs, run_cluster_command
 
-**Session management**: pin (diagnosis/remediation/final_report), staff_ping, set_phase, check_node_online, wait_for_node, get_probe_status, wait, request_assessment
+**Diagnostics**: get_inventory, get_system_sample, get_probe_status, get_probe_history, get_metrics, get_version_info, get_heartbeat, get_cluster_instances, get_service_state, nix_check_upgrades
+
+**Session management**: pin (diagnosis/remediation/final_report), staff_ping, set_phase, check_node_online, wait_for_node, wait, request_assessment, send_push
+
+**Knowledge**: read_doc, list_docs, list_builtin_skills, use_skill
 
 **Cluster config**: get_config, patch_config, set_config, list_skills, add_skill, remove_skill, list_mcp_servers, add_mcp_server, remove_mcp_server
 
@@ -185,7 +189,27 @@ Created → Initializing → Diagnosing → Remediating → Verifying → Done
                                    (any active) → Cancelled
 ```
 
-Sessions persist in PostgreSQL with full conversation history. Interrupted sessions auto-resume on server restart. Token budget auto-pauses cloud sessions to prevent runaway costs.
+Sessions persist in PostgreSQL with full conversation history. Interrupted sessions auto-resume on server restart. Token budget auto-pauses cloud sessions to prevent runaway costs. Admins can extend budgets for paused sessions via a "More Tokens" button in the UI.
+
+Export session transcripts for analysis:
+
+```bash
+mac-mgmt-server dump-sessions [-o healer-sessions]
+```
+
+### Built-in skills
+
+Seven embedded remediation skills provide step-by-step procedures:
+
+| Skill | Purpose |
+|-------|---------|
+| `ollama_model_swap` | Swap active Ollama model, handle sizing and capabilities |
+| `service_crash_recovery` | Diagnose crashes, crash loops, port conflicts |
+| `resource_triage` | Diagnose thermal, memory, disk, and GPU issues |
+| `openclaw_config_repair` | Repair OpenClaw configuration issues |
+| `connectivity_diagnostics` | Diagnose network and connectivity problems |
+| `cluster_comparison` | Compare configs and logs across cluster instances |
+| `probe_verification` | Verify health probes are working correctly |
 
 ### Staff pings
 
@@ -202,7 +226,9 @@ The relay (`mac-mgmt-relay`) provides:
 - **Reverse SSH tunnels** — daemons connect outbound, relay assigns ports
 - **HTTP proxy** — subdomain-routed TCP tunnel access (`{instance}.relay.example.com`)
 - **File tunnels** — read/write config files on daemons
-- **Shell tunnels** — execute predefined commands on daemons
+- **Shell tunnels** — execute predefined commands on daemons (with per-command timeouts)
+- **Virtual commands** — `service-restart` and `restart-daemon` without spawning processes
+- **System commands** — built-in diagnostics: `df`, `nix-profile-list`, `nix-collect-garbage`, `daemon-status`, `daemon-journal`, `service-journal`, `systemctl-status`
 - **Log proxy** — fetch daemon logs
 - **WebSocket bridging** — SSH, file, and shell sessions over WebSocket
 
