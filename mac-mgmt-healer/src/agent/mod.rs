@@ -83,13 +83,17 @@ pub fn build_system_prompt(
     prompt.push_str("**IMPORTANT: Only use tools that are provided in the tool definitions. Do not invent tool names or parameters that are not in the definitions.**\n\n");
     prompt.push_str("### Instance interaction\n");
     if !file_tunnels.is_empty() {
-        prompt.push_str(&format!("- File tunnels: {}\n", file_tunnels.join(", ")));
+        prompt.push_str(&format!(
+            "- File tunnels (use `read_file`/`write_file` with tunnel name): {}\n",
+            file_tunnels.join(", ")
+        ));
     }
     if !shell_commands.is_empty() {
         prompt.push_str(&format!(
-            "- Shell commands: {}\n",
+            "- Shell commands (use `run_command` with command_name): {}\n",
             shell_commands.join(", ")
         ));
+        prompt.push_str("  Use `list_shell_commands` to see descriptions and accepted arguments.\n");
     }
     prompt.push_str("- `fetch_logs` — fetch logs, optionally filtered by service\n");
     if !other_instances.is_empty() {
@@ -133,24 +137,25 @@ pub fn build_system_prompt(
     prompt.push_str("- Use skills when you encounter a matching situation — they encode proven procedures from past sessions\n\n");
 
     // Guidelines
-    prompt.push_str("## Guidelines\n\
-        1. Start by reading logs for the failing service(s)\n\
-        2. Check current configuration files for obvious issues\n\
-        3. Look for resource exhaustion (CPU, memory, disk, VRAM) in the system resources above\n\
-        4. Once you identify the root cause, call `pin` with slot `diagnosis`\n\
-        5. Call `set_phase` when transitioning between stages of your work\n\
-        6. Before applying fixes, call `pin` with slot `remediation` describing your plan\n\
-        7. Make minimal, targeted fixes — prefer config changes over restarts\n\
-        8. Explain every change you make and why\n\
-        9. After applying a fix, call `set_phase` with `verifying`, then use `get_probe_status` to check if services recovered\n\
-        10. If the fix worked, call `pin` with slot `final_report` summarizing what was done, \
-            then call `set_phase` with `done`\n\
-        11. If you **cannot** fix the issue automatically, call `staff_ping` to notify admins, \
-            call `pin` with slot `final_report` documenting your findings, \
-            then call `set_phase` with `needs_human_attention`\n\
-        12. NEVER make changes without understanding the root cause first\n\
-        13. When a service's configuration format or behavior is unclear, look up its documentation using `read_doc` (for mac-mgmt docs) or Context7 (for third-party service docs) before guessing\n\
-        14. If you need a tool or capability that is not available, use `staff_ping` with category `tool_needed` describing what you need and why — staff can add tools for future sessions\n\n");
+    prompt.push_str("## Guidelines\n\n\
+        You operate in multiple rounds. Each round you should call one or more tools, observe the \
+        results, and decide the next action. Never try to diagnose and fix everything in a single \
+        round — gather information first, then act, then verify.\n\n\
+        ### Workflow\n\
+        1. **Round 1 — Gather**: fetch logs, check probe status, read config. Do NOT skip this.\n\
+        2. **Round 2+ — Diagnose**: analyse the data, pin your `diagnosis`, call `set_phase(\"diagnosing\")`\n\
+        3. **Round 3+ — Remediate**: pin your `remediation` plan, apply fixes, call `set_phase(\"remediating\")`\n\
+        4. **Round 4+ — Verify**: wait for changes to take effect, then call `request_assessment` \
+           and `get_probe_status` to confirm recovery. Call `set_phase(\"verifying\")`\n\
+        5. **Final round — Close**: pin `final_report`, call `set_phase(\"done\")` or `set_phase(\"needs_human_attention\")`\n\n\
+        ### Rules\n\
+        - NEVER make changes without understanding the root cause first\n\
+        - NEVER skip the verification round — always confirm your fix worked before closing\n\
+        - Make minimal, targeted fixes — prefer config changes over restarts\n\
+        - Explain every change you make and why\n\
+        - When a service's configuration format or behavior is unclear, look up its documentation using `read_doc` (for mac-mgmt docs) or Context7 (for third-party service docs) before guessing\n\
+        - If you need a tool or capability that is not available, use `staff_ping` with category `tool_needed` describing what you need and why\n\
+        - If you **cannot** fix the issue after multiple attempts, call `staff_ping`, pin `final_report` documenting your findings, and set phase to `needs_human_attention`\n\n");
 
     // Staff pings guidance
     prompt.push_str(
