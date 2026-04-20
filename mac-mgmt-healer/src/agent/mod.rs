@@ -76,6 +76,7 @@ pub fn build_system_prompt(
 
     // Available tunnels
     prompt.push_str("## Available Tools\n\n");
+    prompt.push_str("**IMPORTANT: Only use tools that are provided in the tool definitions. Do not invent tool names or parameters that are not in the definitions.**\n\n");
     prompt.push_str("### Instance interaction\n");
     if !file_tunnels.is_empty() {
         prompt.push_str(&format!("- File tunnels: {}\n", file_tunnels.join(", ")));
