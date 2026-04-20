@@ -12,6 +12,39 @@ let
   stateDir = "/var/lib/mac-mgmt";
   configDir = "${stateDir}/.config/mac-mgmt";
   binPath = "${stateDir}/mac-mgmt";
+
+  # Shared serviceConfig for both daemon and services-supervisor units.
+  commonServiceConfig = {
+    Restart = "always";
+    RestartSec = 5;
+    User = "mac-mgmt";
+    Group = "mac-mgmt";
+    StateDirectory = "mac-mgmt";
+    WorkingDirectory = stateDir;
+  } // lib.optionalAttrs (cfg.environmentFile != null) {
+    EnvironmentFile = cfg.environmentFile;
+  };
+
+  # Shared unit fields for both daemon and services-supervisor.
+  commonUnitAttrs = {
+    after = [
+      "network-online.target"
+      "mac-mgmt-download.service"
+    ];
+    wants = [ "network-online.target" ];
+    requires = [ "mac-mgmt-download.service" ];
+    wantedBy = [ "multi-user.target" ];
+    restartTriggers = [ configFile cfg.version ];
+
+    path = [
+      config.nix.package
+      pkgs.bashInteractive
+      pkgs.coreutils
+      pkgs.gitMinimal
+    ];
+
+    environment.HOME = stateDir;
+  };
 in
 {
   options.services.mac-mgmt = {
@@ -101,26 +134,8 @@ in
       };
     };
 
-    systemd.services.mac-mgmt = {
+    systemd.services.mac-mgmt = commonUnitAttrs // {
       description = "mac-mgmt daemon";
-      after = [
-        "network-online.target"
-        "mac-mgmt-download.service"
-      ];
-      wants = [ "network-online.target" ];
-      requires = [ "mac-mgmt-download.service" ];
-      wantedBy = [ "multi-user.target" ];
-
-      restartTriggers = [ configFile cfg.version ];
-
-      path = [
-        config.nix.package
-        pkgs.bashInteractive
-        pkgs.coreutils
-        pkgs.gitMinimal
-      ];
-
-      environment.HOME = stateDir;
 
       preStart = ''
         mkdir -p "${configDir}"
@@ -142,17 +157,17 @@ in
         fi
       '';
 
-      serviceConfig = {
+      serviceConfig = commonServiceConfig // {
         ExecStart = "${binPath} daemon";
-        Restart = "always";
-        RestartSec = 5;
+      };
+    };
 
-        User = "mac-mgmt";
-        Group = "mac-mgmt";
-        StateDirectory = "mac-mgmt";
-        WorkingDirectory = stateDir;
-      } // lib.optionalAttrs (cfg.environmentFile != null) {
-        EnvironmentFile = cfg.environmentFile;
+    systemd.services.mac-mgmt-services = commonUnitAttrs // {
+      description = "mac-mgmt managed-services supervisor";
+      after = commonUnitAttrs.after ++ [ "mac-mgmt.service" ];
+
+      serviceConfig = commonServiceConfig // {
+        ExecStart = "${binPath} services";
       };
     };
   };
