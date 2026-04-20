@@ -158,7 +158,7 @@ in
       '';
 
       serviceConfig = commonServiceConfig // {
-        ExecStart = "${binPath} daemon";
+        ExecStart = "${pkgs.bashInteractive}/bin/bash -lc '${binPath} daemon'";
       };
     };
 
@@ -167,7 +167,7 @@ in
       after = commonUnitAttrs.after ++ [ "mac-mgmt.service" ];
 
       serviceConfig = commonServiceConfig // {
-        ExecStart = "${binPath} services";
+        ExecStart = "${pkgs.bashInteractive}/bin/bash -lc '${binPath} services'";
       };
     };
   };
