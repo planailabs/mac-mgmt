@@ -107,15 +107,14 @@ in
       description = "Download mac-mgmt daemon binary";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      wantedBy = [ "multi-user.target" ];
 
-      # Re-download when the version changes.
-      restartTriggers = [ cfg.version ];
+      unitConfig.ConditionPathExists = "!${binPath}";
 
       path = [ pkgs.curl pkgs.coreutils ];
 
       serviceConfig = {
         Type = "oneshot";
-        RemainAfterExit = true;
         User = "mac-mgmt";
         Group = "mac-mgmt";
         StateDirectory = "mac-mgmt";
