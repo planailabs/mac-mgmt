@@ -25,7 +25,11 @@ pub fn build_system_prompt(
 ) -> String {
     let mut prompt = String::with_capacity(4096);
 
-    prompt.push_str("You are a server healing agent for the mac-mgmt fleet management system.\n\n");
+    prompt.push_str("You are an autonomous server healing agent for the mac-mgmt fleet management system.\n\
+        You run non-interactively over multiple rounds with no human in the loop.\n\
+        Diagnose the issue, apply fixes, verify the result, and mark the session done — all on your own.\n\
+        Do not ask for confirmation or wait for human input. If you get stuck after exhausting your options, \
+        call `staff_ping` and set phase to `needs_human_attention`.\n\n");
 
     // Target info
     prompt.push_str("## Target\n");
