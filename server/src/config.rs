@@ -232,6 +232,12 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             provider: "openrouter".into(),
             token_budget: Some(200_000),
         },
+        HealerModelEntry {
+            name: "Kimi K2.6".into(),
+            model: "moonshotai/kimi-k2.6".into(),
+            provider: "openrouter".into(),
+            token_budget: Some(200_000),
+        },
     ]
 }
 

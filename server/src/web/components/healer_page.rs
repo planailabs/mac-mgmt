@@ -554,6 +554,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
             {
                 let ollama_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "ollama").cloned().collect();
                 let anthropic_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "anthropic").cloned().collect();
+                let openrouter_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "openrouter").cloned().collect();
                 // Build option values as "provider:model"
                 let first_key = models.first().map(|m| format!("{}:{}", m.provider, m.model)).unwrap_or_default();
                 rsx! {
@@ -585,6 +586,15 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                         }
                                     }
                                 }
+                                if !openrouter_models.is_empty() {
+                                    optgroup { label: "OpenRouter (cloud)",
+                                        for m in openrouter_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
                             }
                             {
                                 let key = selected_model_key.read().clone();
@@ -594,6 +604,12 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     rsx! {
                                         p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
                                             "Free to run, but local models are less capable than cloud models."
+                                        }
+                                    }
+                                } else if key.starts_with("openrouter:") {
+                                    rsx! {
+                                        p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                                            "Uses OpenRouter API credits. Subject to token budget."
                                         }
                                     }
                                 } else {
@@ -1201,11 +1217,49 @@ fn category_badge(cat: &str) -> &'static str {
     }
 }
 
+/// Render a state_change message as a compact inline badge.
+fn render_state_change(msg: &ChatMsg) -> Element {
+    let (state, reason) = if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
+        (
+            data.get("state").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
+            data.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        )
+    } else {
+        ("unknown".to_string(), String::new())
+    };
+
+    let label = state.replace('_', " ");
+    let (border, badge_bg) = match state.as_str() {
+        "diagnosing" => ("border-blue-300 dark:border-blue-700", "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300"),
+        "remediating" => ("border-orange-300 dark:border-orange-700", "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300"),
+        "verifying" => ("border-cyan-300 dark:border-cyan-700", "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300"),
+        "completed" | "done" => ("border-green-300 dark:border-green-700", "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"),
+        "failed" => ("border-red-300 dark:border-red-700", "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"),
+        "paused" => ("border-yellow-300 dark:border-yellow-700", "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"),
+        "cancelled" => ("border-gray-300 dark:border-gray-700", "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300"),
+        "needs_human_attention" => ("border-red-300 dark:border-red-700", "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"),
+        _ => ("border-gray-300 dark:border-gray-700", "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300"),
+    };
+
+    rsx! {
+        div { class: "flex items-center gap-2 py-1.5 px-3 border-l-4 {border} bg-gray-50/50 dark:bg-gray-800/50 rounded-r",
+            span { class: "text-xs font-semibold px-2 py-0.5 rounded-full {badge_bg} uppercase tracking-wider", "{label}" }
+            if !reason.is_empty() {
+                span { class: "text-xs text-gray-500 dark:text-gray-400", "{reason}" }
+            }
+        }
+    }
+}
+
 /// Render a chat message. Tool calls/results get special UI.
 /// Assistant/system messages are rendered as markdown via dangerous_inner_html.
 fn render_message(msg: &ChatMsg) -> Element {
     if msg.role == "tool_result" {
         return render_tool_result(msg);
+    }
+
+    if msg.role == "state_change" {
+        return render_state_change(msg);
     }
 
     let (bg, icon, label) = match msg.role.as_str() {

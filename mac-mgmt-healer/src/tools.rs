@@ -520,7 +520,23 @@ healer_tool! {
             &new_state,
             &data,
         ).await {
-            Ok(()) => Ok(ToolOutput::Text(format!("Phase set to: {}", params.phase))),
+            Ok(()) => {
+                let content = serde_json::json!({
+                    "state": params.phase,
+                    "reason": params.reason,
+                }).to_string();
+                let _ = ctx.events_tx.send(crate::session::HealerEvent::Message {
+                    role: "state_change".to_string(),
+                    content,
+                    metadata: Some(data.clone()),
+                    created_at: chrono::Utc::now(),
+                });
+                let _ = ctx.events_tx.send(crate::session::HealerEvent::State {
+                    state: params.phase.clone(),
+                    state_data: data,
+                });
+                Ok(ToolOutput::Text(format!("Phase set to: {}", params.phase)))
+            }
             Err(e) => Ok(ToolOutput::Text(format!("Error setting phase: {e}"))),
         }
     }

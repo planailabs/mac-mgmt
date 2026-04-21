@@ -763,9 +763,25 @@ async fn run_agent_session(
         let data = data.clone();
         let new_state = new_state.clone();
         async move {
+            // transition_state also appends a state_change message to the DB
             session::store::transition_state(&pool, session_id, &new_state, &data)
                 .await
                 .ok();
+            let reason = data
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content = serde_json::json!({
+                "state": &state_str,
+                "reason": reason,
+            })
+            .to_string();
+            let _ = events_tx.send(HealerEvent::Message {
+                role: "state_change".to_string(),
+                content,
+                metadata: Some(data.clone()),
+                created_at: chrono::Utc::now(),
+            });
             let _ = events_tx.send(HealerEvent::State {
                 state: state_str,
                 state_data: data,
@@ -1000,37 +1016,52 @@ async fn run_agent_session(
                 let token_usage = token_usage.clone();
                 let state_ref = state_ref.clone();
                 Box::pin(async move {
+                    // Helper: send state_change message event + state event over SSE
+                    let send_state_change = |events_tx: &tokio::sync::broadcast::Sender<HealerEvent>, state: &str, data: &serde_json::Value| {
+                        let reason = data.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                        let content = serde_json::json!({
+                            "state": state,
+                            "reason": reason,
+                        }).to_string();
+                        let _ = events_tx.send(HealerEvent::Message {
+                            role: "state_change".to_string(),
+                            content,
+                            metadata: Some(data.clone()),
+                            created_at: Utc::now(),
+                        });
+                        let _ = events_tx.send(HealerEvent::State {
+                            state: state.to_string(),
+                            state_data: data.clone(),
+                        });
+                    };
+
                     // 1. Check shutdown
                     if state_ref.is_shutting_down() {
+                        let data = json!({"reason": "server_shutdown"});
                         session::store::transition_state(
                             &pool,
                             session_id,
                             &SessionState::AwaitingRetry,
-                            &json!({"reason": "server_shutdown"}),
+                            &data,
                         )
                         .await
                         .ok();
-                        let _ = events_tx.send(HealerEvent::State {
-                            state: "awaiting_retry".to_string(),
-                            state_data: json!({"reason": "server_shutdown"}),
-                        });
+                        send_state_change(&events_tx, "awaiting_retry", &data);
                         return Err(anyhow::anyhow!("server shutting down"));
                     }
 
                     // 2. Check cancellation
                     if cancel.is_cancelled() {
+                        let data = json!({"reason": "cancelled"});
                         session::store::transition_state(
                             &pool,
                             session_id,
                             &SessionState::Cancelled,
-                            &json!({}),
+                            &data,
                         )
                         .await
                         .ok();
-                        let _ = events_tx.send(HealerEvent::State {
-                            state: "cancelled".to_string(),
-                            state_data: json!({}),
-                        });
+                        send_state_change(&events_tx, "cancelled", &data);
                         return Err(anyhow::anyhow!("session cancelled"));
                     }
 
@@ -1045,27 +1076,22 @@ async fn run_agent_session(
                         )
                         .await
                         .ok();
-                        let _ = events_tx.send(HealerEvent::State {
-                            state: "paused".to_string(),
-                            state_data: data,
-                        });
+                        send_state_change(&events_tx, "paused", &data);
                         return Err(anyhow::anyhow!("session paused by user"));
                     }
 
                     // 3. Check proxy token expiry
                     if Utc::now() + chrono::Duration::minutes(30) > proxy_expires {
+                        let data = json!({"reason": "proxy_token_expiring"});
                         session::store::transition_state(
                             &pool,
                             session_id,
                             &SessionState::AwaitingRetry,
-                            &json!({"reason": "proxy_token_expiring"}),
+                            &data,
                         )
                         .await
                         .ok();
-                        let _ = events_tx.send(HealerEvent::State {
-                            state: "awaiting_retry".to_string(),
-                            state_data: json!({"reason": "proxy_token_expiring"}),
-                        });
+                        send_state_change(&events_tx, "awaiting_retry", &data);
                         return Err(anyhow::anyhow!("proxy token expiring"));
                     }
 
@@ -1087,10 +1113,7 @@ async fn run_agent_session(
                             )
                             .await
                             .ok();
-                            let _ = events_tx.send(HealerEvent::State {
-                                state: "paused".to_string(),
-                                state_data: data,
-                            });
+                            send_state_change(&events_tx, "paused", &data);
                             return Err(anyhow::anyhow!(
                                 "token budget exceeded ({used}/{current_budget})"
                             ));
@@ -1112,17 +1135,24 @@ async fn run_agent_session(
         .context("agent query failed")?;
 
     // Mark completed
+    let completed_data = json!({"reason": "agent finished"});
     session::store::transition_state(
         pool,
         session_id,
         &SessionState::Completed,
-        &json!({"summary": "agent finished"}),
+        &completed_data,
     )
     .await?;
 
+    let _ = events_tx.send(HealerEvent::Message {
+        role: "state_change".to_string(),
+        content: serde_json::json!({"state": "completed", "reason": "agent finished"}).to_string(),
+        metadata: Some(completed_data.clone()),
+        created_at: chrono::Utc::now(),
+    });
     let _ = events_tx.send(HealerEvent::State {
         state: "completed".to_string(),
-        state_data: json!({"summary": "agent finished"}),
+        state_data: completed_data,
     });
 
     Ok(())

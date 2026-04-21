@@ -46,6 +46,7 @@ pub async fn set_label(pool: &PgPool, session_id: Uuid, label: &str) -> Result<(
 }
 
 /// Atomically transition a session to a new state.
+/// Also appends a `state_change` message with the reason (if present in state_data).
 pub async fn transition_state(
     pool: &PgPool,
     session_id: Uuid,
@@ -68,6 +69,21 @@ pub async fn transition_state(
     .bind(session_id)
     .execute(pool)
     .await?;
+
+    // Persist a state_change message so the transition is visible in the chat log
+    let reason = state_data
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let content = serde_json::json!({
+        "state": new_state.as_str(),
+        "reason": reason,
+    })
+    .to_string();
+    append_message(pool, session_id, "state_change", &content, Some(state_data))
+        .await
+        .ok();
+
     Ok(())
 }
 
@@ -89,6 +105,16 @@ pub async fn fail_session(
     .bind(session_id)
     .execute(pool)
     .await?;
+
+    let content = serde_json::json!({
+        "state": "failed",
+        "reason": error_message,
+    })
+    .to_string();
+    append_message(pool, session_id, "state_change", &content, Some(state_data))
+        .await
+        .ok();
+
     Ok(())
 }
 
