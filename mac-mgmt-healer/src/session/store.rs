@@ -70,19 +70,7 @@ pub async fn transition_state(
     .execute(pool)
     .await?;
 
-    // Persist a state_change message so the transition is visible in the chat log
-    let reason = state_data
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let content = serde_json::json!({
-        "state": new_state.as_str(),
-        "reason": reason,
-    })
-    .to_string();
-    append_message(pool, session_id, "state_change", &content, Some(state_data))
-        .await
-        .ok();
+    append_state_change(pool, session_id, new_state.as_str(), state_data).await;
 
     Ok(())
 }
@@ -106,16 +94,31 @@ pub async fn fail_session(
     .execute(pool)
     .await?;
 
+    let data = serde_json::json!({"reason": error_message});
+    append_state_change(pool, session_id, "failed", &data).await;
+
+    Ok(())
+}
+
+/// Persist a `state_change` message to the session chat log.
+async fn append_state_change(
+    pool: &PgPool,
+    session_id: Uuid,
+    state: &str,
+    state_data: &serde_json::Value,
+) {
+    let reason = state_data
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let content = serde_json::json!({
-        "state": "failed",
-        "reason": error_message,
+        "state": state,
+        "reason": reason,
     })
     .to_string();
     append_message(pool, session_id, "state_change", &content, Some(state_data))
         .await
         .ok();
-
-    Ok(())
 }
 
 /// Append a message to a session's conversation log.

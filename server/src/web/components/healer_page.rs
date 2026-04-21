@@ -1217,6 +1217,21 @@ fn category_badge(cat: &str) -> &'static str {
     }
 }
 
+/// Derive a left-border color class from a state name, matching `state_badge` hues.
+fn state_border(st: &str) -> &'static str {
+    match st {
+        "starting" | "loading" | "created" | "initializing" | "awaiting_retry" => {
+            "border-blue-300 dark:border-blue-700"
+        }
+        "diagnosing" | "paused" => "border-yellow-300 dark:border-yellow-700",
+        "remediating" => "border-orange-300 dark:border-orange-700",
+        "verifying" => "border-purple-300 dark:border-purple-700",
+        "completed" | "done" => "border-green-300 dark:border-green-700",
+        "failed" | "needs_human_attention" => "border-red-300 dark:border-red-700",
+        "cancelled" | _ => "border-gray-300 dark:border-gray-700",
+    }
+}
+
 /// Render a state_change message as a compact inline badge.
 fn render_state_change(msg: &ChatMsg) -> Element {
     let (state, reason) = if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
@@ -1228,24 +1243,15 @@ fn render_state_change(msg: &ChatMsg) -> Element {
         ("unknown".to_string(), String::new())
     };
 
-    let label = state.replace('_', " ");
-    let (border, badge_bg) = match state.as_str() {
-        "diagnosing" => ("border-blue-300 dark:border-blue-700", "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300"),
-        "remediating" => ("border-orange-300 dark:border-orange-700", "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300"),
-        "verifying" => ("border-cyan-300 dark:border-cyan-700", "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300"),
-        "completed" | "done" => ("border-green-300 dark:border-green-700", "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"),
-        "failed" => ("border-red-300 dark:border-red-700", "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"),
-        "paused" => ("border-yellow-300 dark:border-yellow-700", "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"),
-        "cancelled" => ("border-gray-300 dark:border-gray-700", "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300"),
-        "needs_human_attention" => ("border-red-300 dark:border-red-700", "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"),
-        _ => ("border-gray-300 dark:border-gray-700", "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300"),
-    };
+    let (badge_bg, label) = state_badge(&state);
+    let border = state_border(&state);
+    let reason_text = reason_display(&reason);
 
     rsx! {
         div { class: "flex items-center gap-2 py-1.5 px-3 border-l-4 {border} bg-gray-50/50 dark:bg-gray-800/50 rounded-r",
             span { class: "text-xs font-semibold px-2 py-0.5 rounded-full {badge_bg} uppercase tracking-wider", "{label}" }
             if !reason.is_empty() {
-                span { class: "text-xs text-gray-500 dark:text-gray-400", "{reason}" }
+                span { class: "text-xs text-gray-500 dark:text-gray-400", "{reason_text}" }
             }
         }
     }
