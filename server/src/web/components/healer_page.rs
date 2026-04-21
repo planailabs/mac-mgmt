@@ -1256,7 +1256,7 @@ fn state_border(st: &str) -> &'static str {
     }
 }
 
-/// Render a state_change message as a compact inline badge.
+/// Render a state_change message in the same style as agent/system messages.
 fn render_state_change(msg: &ChatMsg) -> Element {
     let (state, reason) = if let Ok(data) = serde_json::from_str::<serde_json::Value>(&msg.content) {
         (
@@ -1272,10 +1272,16 @@ fn render_state_change(msg: &ChatMsg) -> Element {
     let reason_text = reason_display(&reason);
 
     rsx! {
-        div { class: "flex items-center gap-2 py-1.5 px-3 border-l-4 {border} bg-gray-50/50 dark:bg-gray-800/50 rounded-r",
-            span { class: "text-xs font-semibold px-2 py-0.5 rounded-full {badge_bg} uppercase tracking-wider", "{label}" }
-            if !reason.is_empty() {
-                span { class: "text-xs text-gray-500 dark:text-gray-400", "{reason_text}" }
+        div { class: "p-3 rounded bg-gray-50/50 dark:bg-gray-800/50 border-l-4 {border}",
+            div { class: "flex items-center gap-1.5 mb-1",
+                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300", "S" }
+                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "State Change" }
+            }
+            div { class: "flex items-center gap-2",
+                span { class: "text-xs font-semibold px-2 py-0.5 rounded-full {badge_bg}", "{label}" }
+                if !reason.is_empty() {
+                    span { class: "text-sm text-gray-600 dark:text-gray-300", "{reason_text}" }
+                }
             }
         }
     }

@@ -473,16 +473,24 @@ healer_tool! {
         });
         // Store as a state_data update
         let data = serde_json::json!({ key: pin_data });
+        let pin_content = serde_json::to_string(&serde_json::json!({
+            "slot": slot,
+            "summary": params.summary,
+            "affected_services": params.affected_services,
+        })).unwrap_or_default();
         ctx.store.append_message(
             ctx.session_id,
             "pin",
-            &serde_json::to_string(&serde_json::json!({
-                "slot": slot,
-                "summary": params.summary,
-                "affected_services": params.affected_services,
-            })).unwrap_or_default(),
+            &pin_content,
             Some(&data),
         ).await.ok();
+        // Broadcast so SSE clients update pins live
+        let _ = ctx.events_tx.send(crate::session::HealerEvent::Message {
+            role: "pin".to_string(),
+            content: pin_content,
+            metadata: Some(data),
+            created_at: chrono::Utc::now(),
+        });
         Ok(ToolOutput::Text(format!("Pinned to '{slot}': {}", params.summary)))
     }
 }
