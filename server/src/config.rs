@@ -131,6 +131,27 @@ pub struct HealerConfig {
     /// If empty, built-in defaults are used.
     #[serde(default)]
     pub models: Vec<HealerModelEntry>,
+
+    /// Automatically trigger healer sessions when instances are unhealthy.
+    #[serde(default)]
+    pub auto_trigger: bool,
+    /// Number of consecutive unhealthy heartbeats before auto-triggering.
+    #[serde(default = "default_auto_trigger_threshold")]
+    pub auto_trigger_threshold: u32,
+    /// Provider for auto-triggered sessions. Defaults to "ollama".
+    #[serde(default = "default_auto_trigger_provider")]
+    pub auto_trigger_provider: String,
+    /// Model for auto-triggered sessions. If empty, uses the provider's default.
+    #[serde(default)]
+    pub auto_trigger_model: Option<String>,
+}
+
+fn default_auto_trigger_threshold() -> u32 {
+    10
+}
+
+fn default_auto_trigger_provider() -> String {
+    "ollama".to_string()
 }
 
 /// A model entry for the healer UI model picker.

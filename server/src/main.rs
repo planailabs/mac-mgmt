@@ -11,6 +11,8 @@ mod mcp_schema;
 #[cfg(feature = "webui")]
 mod models;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
+mod healer_auto_trigger;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod rollout_health;
 #[cfg(feature = "webui")]
 mod web;
@@ -157,6 +159,23 @@ async fn init_server() -> (
                 Err(e) => tracing::error!("failed to resume healer sessions: {e}"),
             }
         });
+    }
+
+    // Background task: auto-trigger healer for persistently unhealthy instances
+    if cfg.healer.auto_trigger {
+        let pool = pool.clone();
+        let healer = healer_state.clone();
+        let trigger_config = healer_auto_trigger::AutoTriggerConfig {
+            threshold: cfg.healer.auto_trigger_threshold,
+            provider: cfg.healer.auto_trigger_provider.clone(),
+            model: cfg.healer.auto_trigger_model.clone(),
+        };
+        tokio::spawn(healer_auto_trigger::run_auto_trigger_loop(
+            pool,
+            healer,
+            trigger_config,
+            std::time::Duration::from_secs(60),
+        ));
     }
 
     let api_rocket = api::build_rocket(

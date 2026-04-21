@@ -48,3 +48,9 @@ token = "xzar-api-token-here"
 # name = "Claude Sonnet 4.6"
 # model = "claude-sonnet-4-6"
 # provider = "anthropic"
+#
+# Auto-trigger: automatically start healer sessions for persistently unhealthy instances.
+# auto_trigger = false                            # default: disabled
+# auto_trigger_threshold = 10                     # consecutive unhealthy heartbeats before triggering
+# auto_trigger_provider = "ollama"                # free local model by default; set to "anthropic" to use cloud
+# auto_trigger_model = "qwen3:8b"                 # optional; uses provider default if omitted
