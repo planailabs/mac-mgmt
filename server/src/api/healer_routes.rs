@@ -308,15 +308,14 @@ pub async fn resume_session(
 pub async fn stream_session(
     _auth: SettingAuth,
     healer: &State<HealerState>,
-    pool: &State<PgPool>,
     id: &str,
     mut shutdown: Shutdown,
 ) -> Option<EventStream![]> {
     let session_id: Uuid = id.parse().ok()?;
-    let pool = pool.inner().clone();
+    let store = healer.store().clone();
 
     // Load existing messages first
-    let existing = mac_mgmt_healer::session::store::get_messages(&pool, session_id)
+    let existing = store.get_messages(session_id)
         .await
         .ok()
         .unwrap_or_default();
@@ -368,8 +367,8 @@ pub async fn stream_session(
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 tracing::warn!("healer SSE client lagged, skipped {n} events — replaying from DB");
                                 // Recover dropped messages from the database
-                                if let Ok(missed) = mac_mgmt_healer::session::store::get_messages_after(
-                                    &pool, session_id, last_seen_at,
+                                if let Ok(missed) = store.get_messages_after(
+                                    session_id, last_seen_at,
                                 ).await {
                                     for msg in missed {
                                         if msg.created_at > last_seen_at {
@@ -394,7 +393,7 @@ pub async fn stream_session(
             }
         } else {
             // Session not running — send current state as done
-            if let Ok(Some(sess)) = mac_mgmt_healer::session::store::get_session(&pool, session_id).await {
+            if let Ok(Some(sess)) = store.get_session(session_id).await {
                 let event = mac_mgmt_healer::HealerEvent::Done {
                     state: sess.state.as_str().to_string(),
                 };

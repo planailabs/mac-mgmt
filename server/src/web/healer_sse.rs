@@ -98,7 +98,7 @@ pub async fn view_session_sse(
 
         // Send staff pings
         if let Ok(pings) =
-            mac_mgmt_healer::session::store::list_session_pings(&pool, uuid).await
+            healer.store().list_session_pings(uuid).await
         {
             if !pings.is_empty() {
                 let _ = tx
@@ -196,10 +196,7 @@ pub async fn view_session_sse(
 
                                 if role == "tool_result" && content.starts_with("staff_ping:") {
                                     if let Ok(pings) =
-                                        mac_mgmt_healer::session::store::list_session_pings(
-                                            &pool, uuid,
-                                        )
-                                        .await
+                                        healer.store().list_session_pings(uuid).await
                                     {
                                         let _ = tx
                                             .send(Ok(event_json(&HealerStreamEvent {
@@ -221,12 +218,7 @@ pub async fn view_session_sse(
                                 "healer SSE view lagged, skipped {n} events — replaying from DB"
                             );
                             if let Ok(missed) =
-                                mac_mgmt_healer::session::store::get_messages_after(
-                                    &pool,
-                                    uuid,
-                                    last_seen_at,
-                                )
-                                .await
+                                healer.store().get_messages_after(uuid, last_seen_at).await
                             {
                                 for msg in missed {
                                     if msg.created_at > last_seen_at {

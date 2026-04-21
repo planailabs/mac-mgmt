@@ -25,7 +25,7 @@ pub struct ToolContext {
     pub file_tunnels_full: serde_json::Value,
     pub shell_commands: Vec<String>,
     pub shell_commands_full: serde_json::Value,
-    pub pool: sqlx::PgPool,
+    pub store: crate::store::DynStore,
     pub session_id: uuid::Uuid,
     pub cluster_id: uuid::Uuid,
     pub instance_id: String,
@@ -461,8 +461,7 @@ healer_tool! {
         });
         // Store as a state_data update
         let data = serde_json::json!({ key: pin_data });
-        crate::session::store::append_message(
-            &ctx.pool,
+        ctx.store.append_message(
             ctx.session_id,
             "pin",
             &serde_json::to_string(&serde_json::json!({
@@ -487,8 +486,7 @@ healer_tool! {
         } else {
             "other".to_string()
         };
-        match crate::session::store::create_staff_ping(
-            &ctx.pool,
+        match ctx.store.create_staff_ping(
             ctx.session_id,
             ctx.cluster_id,
             &ctx.instance_id,
@@ -514,8 +512,7 @@ healer_tool! {
             )));
         };
         let data = serde_json::json!({ "reason": params.reason });
-        match crate::session::store::transition_state(
-            &ctx.pool,
+        match ctx.store.transition_state(
             ctx.session_id,
             &new_state,
             &data,
@@ -536,7 +533,7 @@ healer_tool! {
     params: NameSessionParams,
     handler: |ctx, params| {
         let label = params.name.chars().take(120).collect::<String>();
-        match crate::session::store::set_label(&ctx.pool, ctx.session_id, &label).await {
+        match ctx.store.set_label(ctx.session_id, &label).await {
             Ok(()) => Ok(ToolOutput::Text(format!("Session named: {label}"))),
             Err(e) => Ok(ToolOutput::Text(format!("Error naming session: {e}"))),
         }
@@ -596,21 +593,7 @@ healer_tool! {
     struct_name: GetProbeStatusTool,
     description: "Query the current health probe status for all services on the target instance. Returns fresh data from the latest heartbeat — use this after applying a fix to verify whether services recovered.",
     handler: |ctx| {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            services_extended: Option<serde_json::Value>,
-            sample: Option<serde_json::Value>,
-            reported_at: chrono::DateTime<chrono::Utc>,
-        }
-        let row = sqlx::query_as::<_, Row>(
-            "SELECT services_extended, sample, reported_at \
-             FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
-        )
-        .bind(&ctx.instance_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        match row {
+        match ctx.store.get_probe_status(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age_secs = (chrono::Utc::now() - r.reported_at).num_seconds();
                 let services: Vec<serde_json::Value> = r
@@ -711,22 +694,7 @@ healer_tool! {
     struct_name: GetInventoryTool,
     description: "Query the latest hardware/software inventory for the target instance. Returns OS, CPU, memory, disks, GPUs, network interfaces, nix version, and security posture. Data is collected every ~6 hours.",
     handler: |ctx| {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            inventory: serde_json::Value,
-            security: serde_json::Value,
-            collected_at: chrono::DateTime<chrono::Utc>,
-        }
-        let row = sqlx::query_as::<_, Row>(
-            "SELECT inventory, security, collected_at \
-             FROM assessments WHERE instance_id = $1 \
-             ORDER BY collected_at DESC LIMIT 1",
-        )
-        .bind(&ctx.instance_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        match row {
+        match ctx.store.get_inventory(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age = chrono::Utc::now() - r.collected_at;
                 let mut out = format!("Inventory (collected {}h ago):\n", age.num_hours());
@@ -746,20 +714,7 @@ healer_tool! {
     struct_name: GetSystemSampleTool,
     description: "Query the latest dynamic system sample (CPU load, memory, swap, disk free space, network I/O, process count, thermal state, GPU utilization). Updated with every heartbeat (~30s).",
     handler: |ctx| {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            sample: Option<serde_json::Value>,
-            reported_at: chrono::DateTime<chrono::Utc>,
-        }
-        let row = sqlx::query_as::<_, Row>(
-            "SELECT sample, reported_at \
-             FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
-        )
-        .bind(&ctx.instance_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        match row {
+        match ctx.store.get_system_sample(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age_secs = (chrono::Utc::now() - r.reported_at).num_seconds();
                 match r.sample {
@@ -798,47 +753,7 @@ healer_tool! {
     handler: |ctx, params| {
         let limit = params.limit.unwrap_or(20).min(100);
 
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            service: String,
-            kind: String,
-            ok: bool,
-            duration_ms: i64,
-            collected_at: chrono::DateTime<chrono::Utc>,
-            model: Option<String>,
-            error_class: Option<String>,
-            error_detail: Option<String>,
-            tokens_in: Option<i32>,
-            tokens_out: Option<i32>,
-            first_token_ms: Option<i64>,
-        }
-
-        let rows = if let Some(svc) = &params.service {
-            sqlx::query_as::<_, Row>(
-                "SELECT service, kind, ok, duration_ms, collected_at, model, \
-                        error_class, error_detail, tokens_in, tokens_out, first_token_ms \
-                 FROM assessment_probes WHERE instance_id = $1 AND service = $2 \
-                 ORDER BY collected_at DESC LIMIT $3",
-            )
-            .bind(&ctx.instance_id)
-            .bind(svc)
-            .bind(limit)
-            .fetch_all(&ctx.pool)
-            .await
-        } else {
-            sqlx::query_as::<_, Row>(
-                "SELECT service, kind, ok, duration_ms, collected_at, model, \
-                        error_class, error_detail, tokens_in, tokens_out, first_token_ms \
-                 FROM assessment_probes WHERE instance_id = $1 \
-                 ORDER BY collected_at DESC LIMIT $2",
-            )
-            .bind(&ctx.instance_id)
-            .bind(limit)
-            .fetch_all(&ctx.pool)
-            .await
-        };
-
-        match rows {
+        match ctx.store.get_probe_history(&ctx.instance_id, params.service.as_deref(), limit).await {
             Ok(rows) if rows.is_empty() => {
                 Ok(ToolOutput::Text("No probe results found.".to_string()))
             }

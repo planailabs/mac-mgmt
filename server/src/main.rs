@@ -135,7 +135,10 @@ async fn init_server() -> (
         token_budget: cfg.healer.token_budget,
         context7_api_key: cfg.healer.context7_api_key.clone(),
     };
-    let mut healer_state = mac_mgmt_healer::HealerState::new(pool.clone(), healer_connector);
+    let healer_store: mac_mgmt_healer::DynStore = std::sync::Arc::new(
+        mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone()),
+    );
+    let mut healer_state = mac_mgmt_healer::HealerState::new(healer_store, healer_connector);
 
     // Wire push callback so healer tools can send SSE events to daemons
     {

@@ -444,11 +444,12 @@ pub async fn resume_healer_session(session_id: String) -> Result<(), ServerFnErr
 #[server]
 pub async fn resolve_staff_ping(ping_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
-    let pool = crate::server_pool()?;
+    let healer = crate::server_state::healer_state()
+        .ok_or_else(|| ServerFnError::new("healer not initialized"))?;
     let uuid: uuid::Uuid = ping_id
         .parse()
         .map_err(|_| ServerFnError::new("invalid id"))?;
-    mac_mgmt_healer::session::store::resolve_staff_ping(&pool, uuid, &user.email)
+    healer.store().resolve_staff_ping(uuid, &user.email)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

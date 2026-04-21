@@ -200,15 +200,7 @@ settings_tool! {
     struct_name: GetConfigTool,
     description: "Get the current cluster configuration as JSON.",
     handler: |ctx| {
-        let result = sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT config_json FROM cluster_configs \
-             WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
-        )
-        .bind(ctx.cluster_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        match result {
+        match ctx.store.get_config(ctx.cluster_id).await {
             Ok(Some(config)) => Ok(ToolOutput::Text(
                 serde_json::to_string_pretty(&config).unwrap_or_default()
             )),
@@ -225,15 +217,7 @@ settings_tool! {
     params: PatchConfigParams,
     handler: |ctx, params| {
         // Get current config
-        let current = sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT config_json FROM cluster_configs \
-             WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
-        )
-        .bind(ctx.cluster_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        let mut config = match current {
+        let mut config = match ctx.store.get_config(ctx.cluster_id).await {
             Ok(Some(c)) => c,
             Ok(None) => serde_json::json!({}),
             Err(e) => return Ok(ToolOutput::Text(format!("Error reading config: {e}"))),
@@ -243,13 +227,7 @@ settings_tool! {
         json_merge_patch(&mut config, &params.patch);
 
         // Save new config
-        match sqlx::query(
-            "INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)",
-        )
-        .bind(ctx.cluster_id)
-        .bind(&config)
-        .execute(&ctx.pool)
-        .await {
+        match ctx.store.save_config(ctx.cluster_id, &config).await {
             Ok(_) => Ok(ToolOutput::Text("Config patched successfully. The daemon will pick up changes on next sync.".to_string())),
             Err(e) => Ok(ToolOutput::Text(format!("Error saving config: {e}"))),
         }
@@ -262,13 +240,7 @@ settings_tool! {
     description: "Replace the entire cluster configuration with new JSON. Use get_config first to see the current config, then modify and set.",
     params: SetConfigParams,
     handler: |ctx, params| {
-        match sqlx::query(
-            "INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)",
-        )
-        .bind(ctx.cluster_id)
-        .bind(&params.config)
-        .execute(&ctx.pool)
-        .await {
+        match ctx.store.save_config(ctx.cluster_id, &params.config).await {
             Ok(_) => Ok(ToolOutput::Text("Config replaced. The daemon will pick up changes on next sync.".to_string())),
             Err(e) => Ok(ToolOutput::Text(format!("Error saving config: {e}"))),
         }
@@ -280,26 +252,14 @@ settings_tool! {
     struct_name: ListSkillsTool,
     description: "List skills currently assigned to this cluster.",
     handler: |ctx| {
-        let rows = sqlx::query_as::<_, (uuid::Uuid, String, String)>(
-            "SELECT sc.id, s.slug, sc.channel \
-             FROM cluster_skills cs \
-             JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
-             JOIN skills s ON s.id = sc.skill_id \
-             WHERE cs.cluster_id = $1 \
-             ORDER BY s.slug, sc.channel",
-        )
-        .bind(ctx.cluster_id)
-        .fetch_all(&ctx.pool)
-        .await;
-
-        match rows {
+        match ctx.store.list_skills(ctx.cluster_id).await {
             Ok(rows) => {
                 if rows.is_empty() {
                     return Ok(ToolOutput::Text("No skills assigned to this cluster.".to_string()));
                 }
                 let mut out = String::from("Assigned skills:\n");
-                for (id, slug, channel) in &rows {
-                    out.push_str(&format!("  - {slug}/{channel} (channel_id: {id})\n"));
+                for entry in &rows {
+                    out.push_str(&format!("  - {}/{} (channel_id: {})\n", entry.slug, entry.channel, entry.id));
                 }
                 Ok(ToolOutput::Text(out))
             }
@@ -313,25 +273,14 @@ settings_tool! {
     struct_name: ListMcpServersTool,
     description: "List MCP servers currently assigned to this cluster.",
     handler: |ctx| {
-        let rows = sqlx::query_as::<_, (uuid::Uuid, String, String)>(
-            "SELECT m.id, m.slug, m.name \
-             FROM cluster_mcp_servers cms \
-             JOIN mcp_servers m ON m.id = cms.mcp_server_id \
-             WHERE cms.cluster_id = $1 \
-             ORDER BY m.slug",
-        )
-        .bind(ctx.cluster_id)
-        .fetch_all(&ctx.pool)
-        .await;
-
-        match rows {
+        match ctx.store.list_mcp_servers(ctx.cluster_id).await {
             Ok(rows) => {
                 if rows.is_empty() {
                     return Ok(ToolOutput::Text("No MCP servers assigned to this cluster.".to_string()));
                 }
                 let mut out = String::from("Assigned MCP servers:\n");
-                for (id, slug, name) in &rows {
-                    out.push_str(&format!("  - {slug} ({name}) [id: {id}]\n"));
+                for entry in &rows {
+                    out.push_str(&format!("  - {} ({}) [id: {}]\n", entry.slug, entry.name, entry.id));
                 }
                 Ok(ToolOutput::Text(out))
             }
@@ -350,14 +299,7 @@ settings_tool! {
             Ok(id) => id,
             Err(_) => return Ok(ToolOutput::Text("Invalid UUID for skill_channel_id.".to_string())),
         };
-        match sqlx::query(
-            "INSERT INTO cluster_skills (cluster_id, skill_channel_id) VALUES ($1, $2) \
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(ctx.cluster_id)
-        .bind(channel_id)
-        .execute(&ctx.pool)
-        .await {
+        match ctx.store.add_skill(ctx.cluster_id, channel_id).await {
             Ok(_) => Ok(ToolOutput::Text("Skill added to cluster.".to_string())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
@@ -374,20 +316,9 @@ settings_tool! {
             Ok(id) => id,
             Err(_) => return Ok(ToolOutput::Text("Invalid UUID.".to_string())),
         };
-        match sqlx::query(
-            "DELETE FROM cluster_skills WHERE cluster_id = $1 AND skill_channel_id = $2",
-        )
-        .bind(ctx.cluster_id)
-        .bind(channel_id)
-        .execute(&ctx.pool)
-        .await {
-            Ok(r) => {
-                if r.rows_affected() > 0 {
-                    Ok(ToolOutput::Text("Skill removed from cluster.".to_string()))
-                } else {
-                    Ok(ToolOutput::Text("Skill was not assigned to this cluster.".to_string()))
-                }
-            }
+        match ctx.store.remove_skill(ctx.cluster_id, channel_id).await {
+            Ok(true) => Ok(ToolOutput::Text("Skill removed from cluster.".to_string())),
+            Ok(false) => Ok(ToolOutput::Text("Skill was not assigned to this cluster.".to_string())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
     }
@@ -403,14 +334,7 @@ settings_tool! {
             Ok(id) => id,
             Err(_) => return Ok(ToolOutput::Text("Invalid UUID.".to_string())),
         };
-        match sqlx::query(
-            "INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2) \
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(ctx.cluster_id)
-        .bind(server_id)
-        .execute(&ctx.pool)
-        .await {
+        match ctx.store.add_mcp_server(ctx.cluster_id, server_id).await {
             Ok(_) => Ok(ToolOutput::Text("MCP server added to cluster.".to_string())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
@@ -427,20 +351,9 @@ settings_tool! {
             Ok(id) => id,
             Err(_) => return Ok(ToolOutput::Text("Invalid UUID.".to_string())),
         };
-        match sqlx::query(
-            "DELETE FROM cluster_mcp_servers WHERE cluster_id = $1 AND mcp_server_id = $2",
-        )
-        .bind(ctx.cluster_id)
-        .bind(server_id)
-        .execute(&ctx.pool)
-        .await {
-            Ok(r) => {
-                if r.rows_affected() > 0 {
-                    Ok(ToolOutput::Text("MCP server removed from cluster.".to_string()))
-                } else {
-                    Ok(ToolOutput::Text("MCP server was not assigned to this cluster.".to_string()))
-                }
-            }
+        match ctx.store.remove_mcp_server(ctx.cluster_id, server_id).await {
+            Ok(true) => Ok(ToolOutput::Text("MCP server removed from cluster.".to_string())),
+            Ok(false) => Ok(ToolOutput::Text("MCP server was not assigned to this cluster.".to_string())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
     }
@@ -490,65 +403,39 @@ settings_tool! {
     struct_name: GetVersionInfoTool,
     description: "Get version information for the target instance: running daemon version and git commit from the heartbeat, plus available daemon versions from the server's version table.",
     handler: |ctx| {
-        #[derive(sqlx::FromRow)]
-        struct HbVersion {
-            version: String,
-            git_sha: Option<String>,
-            reported_at: chrono::DateTime<chrono::Utc>,
-        }
-        let hb = sqlx::query_as::<_, HbVersion>(
-            "SELECT version, git_sha, reported_at FROM daemon_heartbeats \
-             WHERE instance_id = $1 LIMIT 1",
-        )
-        .bind(&ctx.instance_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        let mut out = String::new();
-        match hb {
-            Ok(Some(h)) => {
-                let age = (chrono::Utc::now() - h.reported_at).num_seconds();
-                out.push_str(&format!("Running version: {} (heartbeat {}s ago)\n", h.version, age));
-                if let Some(sha) = &h.git_sha {
-                    out.push_str(&format!("Git commit: {sha}\n"));
+        match ctx.store.get_version_info(&ctx.instance_id).await {
+            Ok(info) => {
+                let mut out = String::new();
+                match &info.heartbeat {
+                    Some(h) => {
+                        let age = (chrono::Utc::now() - h.reported_at).num_seconds();
+                        out.push_str(&format!("Running version: {} (heartbeat {}s ago)\n", h.version, age));
+                        if let Some(sha) = &h.git_sha {
+                            out.push_str(&format!("Git commit: {sha}\n"));
+                        }
+                    }
+                    None => out.push_str("No heartbeat data found.\n"),
                 }
-            }
-            Ok(None) => out.push_str("No heartbeat data found.\n"),
-            Err(e) => out.push_str(&format!("Error querying heartbeat: {e}\n")),
-        }
 
-        // Available daemon versions from the server
-        #[derive(sqlx::FromRow)]
-        struct DvRow {
-            version: String,
-            system: String,
-            store_path: Option<String>,
-            created_at: chrono::DateTime<chrono::Utc>,
-        }
-        match sqlx::query_as::<_, DvRow>(
-            "SELECT version, system, store_path, created_at FROM daemon_versions \
-             ORDER BY created_at DESC LIMIT 10",
-        )
-        .fetch_all(&ctx.pool)
-        .await
-        {
-            Ok(rows) if !rows.is_empty() => {
-                out.push_str("\nAvailable daemon versions:\n");
-                for r in &rows {
-                    out.push_str(&format!(
-                        "  {} ({}) — {}{}\n",
-                        r.version,
-                        r.system,
-                        r.created_at.format("%Y-%m-%d %H:%M"),
-                        r.store_path.as_deref().map(|p| format!(" [{p}]")).unwrap_or_default(),
-                    ));
+                if info.daemon_versions.is_empty() {
+                    out.push_str("\nNo daemon versions registered on server.\n");
+                } else {
+                    out.push_str("\nAvailable daemon versions:\n");
+                    for r in &info.daemon_versions {
+                        out.push_str(&format!(
+                            "  {} ({}) — {}{}\n",
+                            r.version,
+                            r.system,
+                            r.created_at.format("%Y-%m-%d %H:%M"),
+                            r.store_path.as_deref().map(|p| format!(" [{p}]")).unwrap_or_default(),
+                        ));
+                    }
                 }
-            }
-            Ok(_) => out.push_str("\nNo daemon versions registered on server.\n"),
-            Err(e) => out.push_str(&format!("\nError querying daemon versions: {e}\n")),
-        }
 
-        Ok(ToolOutput::Text(out))
+                Ok(ToolOutput::Text(out))
+            }
+            Err(e) => Ok(ToolOutput::Text(format!("Error querying version info: {e}"))),
+        }
     }
 }
 
@@ -557,15 +444,8 @@ settings_tool! {
     struct_name: GetHeartbeatTool,
     description: "Get the full heartbeat data for the target instance: version, hostname, services, tunnels, file tunnels, shell tunnels, sample, services_extended, relay info, and timing.",
     handler: |ctx| {
-        let row = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT row_to_json(h) FROM daemon_heartbeats h WHERE instance_id = $1 LIMIT 1",
-        )
-        .bind(&ctx.instance_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        match row {
-            Ok(Some((json,))) => {
+        match ctx.store.get_heartbeat_json(&ctx.instance_id).await {
+            Ok(Some(json)) => {
                 Ok(ToolOutput::Text(serde_json::to_string_pretty(&json).unwrap_or_default()))
             }
             Ok(None) => Ok(ToolOutput::Text("No heartbeat data found for this instance.".to_string())),
@@ -581,24 +461,7 @@ settings_tool! {
     struct_name: GetClusterInstancesTool,
     description: "List all instances in the cluster with their status, version, hostname, and last heartbeat time.",
     handler: |ctx| {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            instance_id: String,
-            version: String,
-            hostname: Option<String>,
-            reported_at: chrono::DateTime<chrono::Utc>,
-            services_extended: Option<serde_json::Value>,
-        }
-        let rows = sqlx::query_as::<_, Row>(
-            "SELECT instance_id, version, hostname, reported_at, services_extended \
-             FROM daemon_heartbeats WHERE cluster_id = $1 \
-             ORDER BY reported_at DESC",
-        )
-        .bind(ctx.cluster_id)
-        .fetch_all(&ctx.pool)
-        .await;
-
-        match rows {
+        match ctx.store.get_cluster_instances(ctx.cluster_id).await {
             Ok(rows) if rows.is_empty() => {
                 Ok(ToolOutput::Text("No instances found in this cluster.".to_string()))
             }
@@ -641,21 +504,7 @@ settings_tool! {
     struct_name: GetServiceStateTool,
     description: "Get detailed per-service state from the latest heartbeat: health, probe results, timing. Use this to decide whether to restart, wait, or escalate.",
     handler: |ctx| {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            services: serde_json::Value,
-            services_extended: Option<serde_json::Value>,
-            reported_at: chrono::DateTime<chrono::Utc>,
-        }
-        let row = sqlx::query_as::<_, Row>(
-            "SELECT services, services_extended, reported_at \
-             FROM daemon_heartbeats WHERE instance_id = $1 LIMIT 1",
-        )
-        .bind(&ctx.instance_id)
-        .fetch_optional(&ctx.pool)
-        .await;
-
-        match row {
+        match ctx.store.get_service_state(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age = (chrono::Utc::now() - r.reported_at).num_seconds();
                 let mut out = format!("Heartbeat age: {age}s\n\n");

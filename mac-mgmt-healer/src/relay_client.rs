@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -6,6 +5,7 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 
 use crate::session::HealerEvent;
+use crate::store::DynStore;
 
 const DAEMON_RECONNECT_TIMEOUT: Duration = Duration::from_secs(600);
 const DAEMON_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -24,8 +24,8 @@ pub struct RelayClient {
     relay_url: String,
     proxy_token: String,
     events_tx: Option<broadcast::Sender<HealerEvent>>,
-    /// Pool + full instance_id for heartbeat-based fallback checks.
-    heartbeat_ctx: Option<(sqlx::PgPool, String)>,
+    /// Store + full instance_id for heartbeat-based fallback checks.
+    heartbeat_ctx: Option<(DynStore, String)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,9 +67,9 @@ impl RelayClient {
         self
     }
 
-    /// Attach a pool + instance_id for heartbeat-based connectivity fallback.
-    pub fn with_heartbeat_ctx(mut self, pool: sqlx::PgPool, instance_id: String) -> Self {
-        self.heartbeat_ctx = Some((pool, instance_id));
+    /// Attach a store + instance_id for heartbeat-based connectivity fallback.
+    pub fn with_heartbeat_store(mut self, store: DynStore, instance_id: String) -> Self {
+        self.heartbeat_ctx = Some((store, instance_id));
         self
     }
 
@@ -155,25 +155,18 @@ impl RelayClient {
     /// Check if we've received a recent heartbeat (within 2 minutes).
     /// The daemon may be alive and heartbeating to the server even when
     /// its relay WS connection is down.
-    async fn has_recent_heartbeat(&self, pool: &sqlx::PgPool, instance_id: &str) -> bool {
-        sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM daemon_heartbeats \
-             WHERE instance_id = $1 AND reported_at > now() - interval '2 minutes')",
-        )
-        .bind(instance_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(false)
+    async fn check_recent_heartbeat(&self, store: &dyn crate::store::HealerStore, instance_id: &str) -> bool {
+        store.has_recent_heartbeat(instance_id).await.unwrap_or(false)
     }
 
     /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
-    /// If `pool` and `instance_id` are provided, also checks heartbeat
+    /// If `store` and `instance_id` are provided, also checks heartbeat
     /// freshness — a daemon that's sending heartbeats but not connected
     /// to the relay gets a shorter wait and a more helpful status message.
     pub async fn wait_for_daemon_with_heartbeat(
         &self,
         instance_prefix: &str,
-        pool: Option<&sqlx::PgPool>,
+        store: Option<&dyn crate::store::HealerStore>,
         instance_id: Option<&str>,
     ) -> Result<()> {
         let deadline = tokio::time::Instant::now() + DAEMON_RECONNECT_TIMEOUT;
@@ -200,8 +193,8 @@ impl RelayClient {
             }
 
             // Check heartbeat as secondary signal
-            let heartbeat_alive = match (pool, instance_id) {
-                (Some(p), Some(iid)) => self.has_recent_heartbeat(p, iid).await,
+            let heartbeat_alive = match (store, instance_id) {
+                (Some(s), Some(iid)) => self.check_recent_heartbeat(s, iid).await,
                 _ => false,
             };
 
@@ -245,11 +238,11 @@ impl RelayClient {
     /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
     /// Automatically uses heartbeat context if configured.
     pub async fn wait_for_daemon(&self, instance_prefix: &str) -> Result<()> {
-        let (pool, iid) = match &self.heartbeat_ctx {
-            Some((p, i)) => (Some(p), Some(i.as_str())),
+        let (store, iid): (Option<&dyn crate::store::HealerStore>, _) = match &self.heartbeat_ctx {
+            Some((s, i)) => (Some(s.as_ref()), Some(i.as_str())),
             None => (None, None),
         };
-        self.wait_for_daemon_with_heartbeat(instance_prefix, pool, iid)
+        self.wait_for_daemon_with_heartbeat(instance_prefix, store, iid)
             .await
     }
 

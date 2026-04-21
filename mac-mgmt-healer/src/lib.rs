@@ -3,6 +3,7 @@ pub mod connector;
 pub mod relay_client;
 pub mod session;
 pub mod settings_tools;
+pub mod store;
 pub mod tools;
 
 use std::sync::Arc;
@@ -12,13 +13,13 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde_json::json;
-use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub use connector::ConnectorConfig;
 pub use session::models::{HealerEvent, HealerMessage, HealerSession, SessionState};
+pub use store::{DynStore, HealerStore};
 
 use agent::InstanceInfo;
 use mac_mgmt_common::ServiceExtState;
@@ -31,7 +32,7 @@ pub struct HealerState {
 }
 
 struct HealerStateInner {
-    pool: PgPool,
+    store: DynStore,
     connector_config: ConnectorConfig,
     running: DashMap<Uuid, RunningSession>,
     shutting_down: AtomicBool,
@@ -78,10 +79,10 @@ pub struct SpawnRequest {
 }
 
 impl HealerState {
-    pub fn new(pool: PgPool, connector_config: ConnectorConfig) -> Self {
+    pub fn new(store: DynStore, connector_config: ConnectorConfig) -> Self {
         Self {
             inner: Arc::new(HealerStateInner {
-                pool,
+                store,
                 connector_config,
                 running: DashMap::new(),
                 shutting_down: AtomicBool::new(false),
@@ -89,6 +90,11 @@ impl HealerState {
                 extended_budgets: DashMap::new(),
             }),
         }
+    }
+
+    /// Get the underlying store (for server-side direct access).
+    pub fn store(&self) -> &DynStore {
+        &self.inner.store
     }
 
     /// Set the push callback for sending SSE events to daemons.
@@ -102,37 +108,16 @@ impl HealerState {
     /// Spawn a new healer session. Returns the session ID immediately.
     pub async fn spawn_session(&self, req: SpawnRequest) -> Result<Uuid> {
         // Guard: no concurrent sessions for the same instance
-        let has_running = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM healer_sessions \
-             WHERE instance_id = $1 AND state NOT IN \
-             ('completed', 'done', 'failed', 'cancelled', 'needs_human_attention'))",
-        )
-        .bind(&req.instance_id)
-        .fetch_one(&self.inner.pool)
-        .await
-        .unwrap_or(false);
-
-        if has_running {
+        if self.inner.store.has_running_session(&req.instance_id).await? {
             anyhow::bail!("a healer session is already running for this instance");
         }
 
         // Guard: 1-hour cooldown between sessions (skip in dev mode)
-        if !req.skip_cooldown {
-            let recent = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM healer_sessions \
-                 WHERE instance_id = $1 AND created_at > now() - interval '1 hour')",
-            )
-            .bind(&req.instance_id)
-            .fetch_one(&self.inner.pool)
-            .await
-            .unwrap_or(false);
-
-            if recent {
-                anyhow::bail!(
-                    "a healer session was created for this instance in the last hour — \
-                     please wait before starting another"
-                );
-            }
+        if !req.skip_cooldown && self.inner.store.has_recent_session(&req.instance_id).await? {
+            anyhow::bail!(
+                "a healer session was created for this instance in the last hour — \
+                 please wait before starting another"
+            );
         }
 
         // 1. Build initial issues snapshot
@@ -150,8 +135,7 @@ impl HealerState {
         });
 
         // 2. Create session row
-        let session_id = session::store::create_session(
-            &self.inner.pool,
+        let session_id = self.inner.store.create_session(
             req.cluster_id,
             &req.instance_id,
             &req.created_by,
@@ -165,8 +149,7 @@ impl HealerState {
         .context("failed to create healer session")?;
 
         // 3. Transition to Initializing
-        session::store::transition_state(
-            &self.inner.pool,
+        self.inner.store.transition_state(
             session_id,
             &SessionState::Initializing,
             &state_data,
@@ -175,7 +158,7 @@ impl HealerState {
 
         // 4. Mint proxy token via internal PgPool
         let (proxy_token, proxy_expires) =
-            mint_proxy_token(&self.inner.pool, req.cluster_id, None).await?;
+            self.inner.store.mint_proxy_token(req.cluster_id, None).await?;
 
         // 5. Set up cancellation and event broadcasting
         let cancel = CancellationToken::new();
@@ -220,8 +203,7 @@ impl HealerState {
 
             if let Err(e) = &result {
                 tracing::error!(session_id = %session_id, err = %e, "healer session failed");
-                let _ = session::store::fail_session(
-                    &state.inner.pool,
+                let _ = state.inner.store.fail_session(
                     session_id,
                     &e.to_string(),
                     &json!({}),
@@ -230,7 +212,7 @@ impl HealerState {
             }
 
             // Broadcast done event
-            let final_state = session::store::get_session(&state.inner.pool, session_id)
+            let final_state = state.inner.store.get_session(session_id)
                 .await
                 .ok()
                 .flatten()
@@ -244,7 +226,7 @@ impl HealerState {
 
     /// Resume all interrupted sessions on server startup.
     pub async fn resume_interrupted(&self) -> Result<usize> {
-        let sessions = session::store::find_resumable(&self.inner.pool).await?;
+        let sessions = self.inner.store.find_resumable().await?;
         let count = sessions.len();
 
         for sess in sessions {
@@ -270,7 +252,7 @@ impl HealerState {
     /// to resume unless `extend_budget()` was called first (the extended
     /// budget is stored in `self.extended_budgets`).
     pub async fn resume_session(&self, session_id: Uuid) -> Result<()> {
-        let sess = session::store::get_session(&self.inner.pool, session_id)
+        let sess = self.inner.store.get_session(session_id)
             .await?
             .context("session not found")?;
 
@@ -312,7 +294,7 @@ impl HealerState {
         let session_id = sess.id;
 
         // Load messages for history restoration
-        let messages = session::store::get_messages(&self.inner.pool, session_id).await?;
+        let messages = self.inner.store.get_messages(session_id).await?;
 
         // Extract context from state_data
         let mut relay_url = sess.state_data["relay_url"]
@@ -321,17 +303,11 @@ impl HealerState {
             .to_string();
         // If relay_url is missing from state_data, try the current heartbeat
         if relay_url.is_empty() {
-            relay_url = sqlx::query_scalar(
-                "SELECT relay_proxy_url FROM daemon_heartbeats \
-                 WHERE instance_id = $1 AND relay_proxy_url IS NOT NULL AND relay_proxy_url != '' \
-                 LIMIT 1",
-            )
-            .bind(&sess.instance_id)
-            .fetch_optional(&self.inner.pool)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+            relay_url = self.inner.store.get_relay_proxy_url(&sess.instance_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
             if relay_url.is_empty() {
                 anyhow::bail!(
                     "session {} has no relay_url and daemon has no relay_proxy_url — \
@@ -356,7 +332,7 @@ impl HealerState {
 
         // Mint fresh proxy token
         let (proxy_token, proxy_expires) =
-            mint_proxy_token(&self.inner.pool, sess.cluster_id, None).await?;
+            self.inner.store.mint_proxy_token(sess.cluster_id, None).await?;
 
         // Transition back to a running state
         let resume_state = match sess
@@ -368,8 +344,7 @@ impl HealerState {
             Some(s) if s.is_active() => s,
             _ => SessionState::Diagnosing,
         };
-        session::store::transition_state(
-            &self.inner.pool,
+        self.inner.store.transition_state(
             session_id,
             &resume_state,
             &sess.state_data,
@@ -443,8 +418,7 @@ impl HealerState {
 
             if let Err(e) = &result {
                 tracing::error!(session_id = %session_id, err = %e, "resumed healer session failed");
-                let _ = session::store::fail_session(
-                    &state.inner.pool,
+                let _ = state.inner.store.fail_session(
                     session_id,
                     &e.to_string(),
                     &json!({}),
@@ -452,7 +426,7 @@ impl HealerState {
                 .await;
             }
 
-            let final_state = session::store::get_session(&state.inner.pool, session_id)
+            let final_state = state.inner.store.get_session(session_id)
                 .await
                 .ok()
                 .flatten()
@@ -482,8 +456,7 @@ impl HealerState {
             Ok(())
         } else {
             // Session might not be running — mark it cancelled in DB directly
-            session::store::transition_state(
-                &self.inner.pool,
+            self.inner.store.transition_state(
                 session_id,
                 &SessionState::Cancelled,
                 &json!({}),
@@ -508,7 +481,7 @@ impl HealerState {
 
     /// List sessions for a cluster.
     pub async fn list_sessions(&self, cluster_id: Uuid) -> Result<Vec<HealerSession>> {
-        session::store::list_sessions(&self.inner.pool, cluster_id).await
+        self.inner.store.list_sessions(cluster_id).await
     }
 
     /// Get a session with its messages.
@@ -516,10 +489,10 @@ impl HealerState {
         &self,
         session_id: Uuid,
     ) -> Result<Option<(HealerSession, Vec<HealerMessage>)>> {
-        let Some(sess) = session::store::get_session(&self.inner.pool, session_id).await? else {
+        let Some(sess) = self.inner.store.get_session(session_id).await? else {
             return Ok(None);
         };
-        let msgs = session::store::get_messages(&self.inner.pool, session_id).await?;
+        let msgs = self.inner.store.get_messages(session_id).await?;
         Ok(Some((sess, msgs)))
     }
 
@@ -576,34 +549,6 @@ impl HealerState {
     }
 }
 
-/// Mint a proxy token directly via PgPool.
-async fn mint_proxy_token(
-    pool: &PgPool,
-    cluster_id: Uuid,
-    organization_id: Option<Uuid>,
-) -> Result<(String, DateTime<Utc>)> {
-    use rand::Rng;
-    use sha2::{Digest, Sha256};
-
-    let raw_token = hex::encode(rand::rng().random::<[u8; 32]>());
-    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let expires_at = Utc::now() + chrono::Duration::hours(6);
-
-    sqlx::query(
-        "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at) \
-         VALUES ($1, $2, $3, 'healer', 'proxy', $4)",
-    )
-    .bind(cluster_id)
-    .bind(organization_id)
-    .bind(&hash)
-    .bind(expires_at)
-    .execute(pool)
-    .await
-    .context("failed to mint proxy token")?;
-
-    Ok((raw_token, expires_at))
-}
-
 /// Run the agent session. This is the main async task that drives the LLM agent.
 async fn run_agent_session(
     state: &HealerState,
@@ -619,7 +564,7 @@ async fn run_agent_session(
     connector_config: ConnectorConfig,
     restored_history: Option<Vec<HealerMessage>>,
 ) -> Result<()> {
-    let pool = &state.inner.pool;
+    let store = &state.inner.store;
 
     // 1. Resolve LLM (use forced provider/model if specified in request)
     let llm = connector::resolve_llm(
@@ -632,14 +577,10 @@ async fn run_agent_session(
 
     // Persist the actual resolved provider/model to the session row so we can
     // resume with the same LLM later and display it in the UI.
-    sqlx::query(
-        "UPDATE healer_sessions SET provider = $1, model = $2 WHERE id = $3",
-    )
-    .bind(llm.resolved_provider.as_str())
-    .bind(&llm.resolved_model)
-    .execute(pool)
-    .await
-    .ok();
+    store
+        .update_provider_model(session_id, llm.resolved_provider.as_str(), &llm.resolved_model)
+        .await
+        .ok();
 
     // 2. Build relay client (with event broadcasting for connectivity status)
     //    If relay_url is empty, poll heartbeats until it appears (the daemon
@@ -652,16 +593,11 @@ async fn run_agent_session(
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let url: Option<String> = sqlx::query_scalar(
-                "SELECT relay_proxy_url FROM daemon_heartbeats \
-                 WHERE instance_id = $1 AND relay_proxy_url IS NOT NULL AND relay_proxy_url != '' \
-                 LIMIT 1",
-            )
-            .bind(&req.instance_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
+            let url: Option<String> = store
+                .get_relay_proxy_url(&req.instance_id)
+                .await
+                .ok()
+                .flatten();
             if let Some(url) = url {
                 tracing::info!("relay_url appeared: {url}");
                 req.relay_url = url;
@@ -678,7 +614,7 @@ async fn run_agent_session(
     let relay_client = Arc::new(
         relay_client::RelayClient::new(req.relay_url.clone(), proxy_token)
             .with_events(events_tx.clone())
-            .with_heartbeat_ctx(pool.clone(), req.instance_id.clone()),
+            .with_heartbeat_store(store.clone(), req.instance_id.clone()),
     );
 
     // 3. Extract tunnel names
@@ -717,7 +653,7 @@ async fn run_agent_session(
         file_tunnels_full: req.file_tunnels.clone(),
         shell_commands: shell_command_names.clone(),
         shell_commands_full: req.shell_tunnels.clone(),
-        pool: pool.clone(),
+        store: store.clone(),
         session_id,
         cluster_id: req.cluster_id,
         instance_id: req.instance_id.clone(),
@@ -757,12 +693,13 @@ async fn run_agent_session(
 
     // 7. Transition to Diagnosing
     let transition = |new_state: &SessionState, data: &serde_json::Value| {
-        let pool = pool.clone();
+        let store = store.clone();
         let events_tx = events_tx.clone();
         let data = data.clone();
         let new_state = new_state.clone();
         async move {
-            session::store::transition_state(&pool, session_id, &new_state, &data)
+            store
+                .transition_state(session_id, &new_state, &data)
                 .await
                 .ok();
             session::emit_state_change(&events_tx, new_state.as_str(), &data);
@@ -772,12 +709,12 @@ async fn run_agent_session(
     transition(&SessionState::Diagnosing, &json!({})).await;
 
     // 8. Build and run agent
-    let pool_msg = pool.clone();
+    let store_msg = store.clone();
     let events_tx_msg = events_tx.clone();
     let token_usage = llm.token_usage.clone();
     let is_cloud = llm.is_cloud;
     // state is Clone (inner Arc) — we can pass it into closures for shutdown checks
-    let pool_hook = pool.clone();
+    let store_hook = store.clone();
     let events_tx_hook = events_tx.clone();
 
     // Determine initial prompt
@@ -788,7 +725,7 @@ async fn run_agent_session(
             "Diagnose and fix the detected issues. Start by listing available tools and reading logs.".to_string()
         });
         // Persist the initial user message so it appears in the chat log
-        session::store::append_message(pool, session_id, "user", &msg, None)
+        store.append_message(session_id, "user", &msg, None)
             .await
             .ok();
         let _ = events_tx.send(session::HealerEvent::Message {
@@ -889,7 +826,7 @@ async fn run_agent_session(
 
         let events_tx_before_tool = events_tx.clone();
         let running_tools_before = running_tools.clone();
-        let pool_after_tool = pool.clone();
+        let store_after_tool = store.clone();
         let events_tx_after_tool = events_tx.clone();
         let running_tools_after = running_tools.clone();
 
@@ -897,7 +834,7 @@ async fn run_agent_session(
         builder
             .system_prompt(system_prompt)
             .on_new_message(move |_agent, msg| {
-                let pool = pool_msg.clone();
+                let store = store_msg.clone();
                 let events_tx = events_tx_msg.clone();
                 let extracted = extract_role_content(msg);
                 Box::pin(async move {
@@ -908,7 +845,7 @@ async fn run_agent_session(
                         return Ok(());
                     }
                     // Persist message
-                    session::store::append_message(&pool, session_id, &role, &content, None)
+                    store.append_message(session_id, &role, &content, None)
                         .await
                         .ok();
 
@@ -944,7 +881,7 @@ async fn run_agent_session(
                 })
             })
             .after_tool(move |_agent, tool_call, result| {
-                let pool = pool_after_tool.clone();
+                let store = store_after_tool.clone();
                 let events_tx = events_tx_after_tool.clone();
                 let running_tools = running_tools_after.clone();
                 let name = tool_call.name().to_string();
@@ -969,14 +906,14 @@ async fn run_agent_session(
                         "tool_args": args.as_deref().unwrap_or("{}"),
                         "status": status,
                     });
-                    session::store::append_message(
-                        &pool,
-                        session_id,
-                        "tool_result",
-                        &content,
-                        Some(&metadata),
-                    )
-                    .await
+                    store
+                        .append_message(
+                            session_id,
+                            "tool_result",
+                            &content,
+                            Some(&metadata),
+                        )
+                        .await
                     .ok();
                     let _ = events_tx.send(HealerEvent::Message {
                         role: "tool_result".to_string(),
@@ -991,7 +928,7 @@ async fn run_agent_session(
                 let cancel = cancel.clone();
                 let pause_requested = pause_requested.clone();
                 let budget_limit = budget_limit.clone();
-                let pool = pool_hook.clone();
+                let store = store_hook.clone();
                 let events_tx = events_tx_hook.clone();
                 let token_usage = token_usage.clone();
                 let state_ref = state_ref.clone();
@@ -999,8 +936,7 @@ async fn run_agent_session(
                     // 1. Check shutdown
                     if state_ref.is_shutting_down() {
                         let data = json!({"reason": "server_shutdown"});
-                        session::store::transition_state(
-                            &pool,
+                        store.transition_state(
                             session_id,
                             &SessionState::AwaitingRetry,
                             &data,
@@ -1014,8 +950,7 @@ async fn run_agent_session(
                     // 2. Check cancellation
                     if cancel.is_cancelled() {
                         let data = json!({"reason": "cancelled"});
-                        session::store::transition_state(
-                            &pool,
+                        store.transition_state(
                             session_id,
                             &SessionState::Cancelled,
                             &data,
@@ -1029,8 +964,7 @@ async fn run_agent_session(
                     // 2b. Check manual pause request
                     if pause_requested.swap(false, Ordering::Relaxed) {
                         let data = json!({"reason": "manual_pause"});
-                        session::store::transition_state(
-                            &pool,
+                        store.transition_state(
                             session_id,
                             &SessionState::Paused,
                             &data,
@@ -1044,8 +978,7 @@ async fn run_agent_session(
                     // 3. Check proxy token expiry
                     if Utc::now() + chrono::Duration::minutes(30) > proxy_expires {
                         let data = json!({"reason": "proxy_token_expiring"});
-                        session::store::transition_state(
-                            &pool,
+                        store.transition_state(
                             session_id,
                             &SessionState::AwaitingRetry,
                             &data,
@@ -1066,8 +999,7 @@ async fn run_agent_session(
                                 "tokens_used": used,
                                 "budget_limit": current_budget
                             });
-                            session::store::transition_state(
-                                &pool,
+                            store.transition_state(
                                 session_id,
                                 &SessionState::Paused,
                                 &data,
@@ -1097,8 +1029,7 @@ async fn run_agent_session(
 
     // Mark completed
     let completed_data = json!({"reason": "agent finished"});
-    session::store::transition_state(
-        pool,
+    store.transition_state(
         session_id,
         &SessionState::Completed,
         &completed_data,
