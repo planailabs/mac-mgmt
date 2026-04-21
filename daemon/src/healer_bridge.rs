@@ -23,7 +23,6 @@ use mac_mgmt_healer::{HealerSession, SessionAccess, SessionFactory};
 use crate::assessment::Assessor;
 use crate::file_tunnels::FileTunnelRegistry;
 use crate::log_buffer::LogBuffer;
-use crate::managed_service::FileTunnelDef;
 use crate::shell_tunnels::ShellTunnelRegistry;
 
 // ── LocalInstanceAccess ───────────���────────────────────────────────────
@@ -83,22 +82,8 @@ impl InstanceAccess for LocalInstanceAccess {
                 .ok_or_else(|| anyhow::anyhow!("file tunnel '{tunnel_name}' not found"))?
                 .clone()
         };
-        let resolved = crate::file_tunnels::resolve_path(&tunnel, Some(path))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-        if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
-            let name = resolved.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            anyhow::ensure!(
-                crate::file_tunnels::matches_include(&tunnel, name),
-                "file not included in tunnel filter"
-            );
-        }
-
-        let meta = std::fs::metadata(&resolved)?;
-        anyhow::ensure!(meta.is_file(), "path is not a file");
-
-        let content = std::fs::read(&resolved)?;
-        let mtime = crate::file_tunnels::mtime_secs(&resolved);
+        let (content, mtime) = crate::file_tunnels::read_file(&tunnel, Some(path))
+            .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
         Ok(FileReadResult { content, mtime })
     }
 
@@ -116,97 +101,8 @@ impl InstanceAccess for LocalInstanceAccess {
                 .ok_or_else(|| anyhow::anyhow!("file tunnel '{tunnel_name}' not found"))?
                 .clone()
         };
-        anyhow::ensure!(tunnel.writable(), "tunnel is read-only");
-
-        let resolved = crate::file_tunnels::resolve_path(&tunnel, Some(path))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let filename = resolved
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-
-        if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
-            anyhow::ensure!(
-                crate::file_tunnels::matches_include(&tunnel, filename),
-                "file not included in tunnel filter"
-            );
-        }
-        anyhow::ensure!(
-            crate::file_tunnels::matches_allow_write(&tunnel, filename),
-            "file not allowed by write filter"
-        );
-        anyhow::ensure!(
-            (content.len() as u64) <= crate::file_tunnels::MAX_FILE_SIZE,
-            "file too large"
-        );
-
-        // Optimistic concurrency
-        if let Some(expected) = expected_mtime {
-            if let Some(actual) = crate::file_tunnels::mtime_secs(&resolved) {
-                anyhow::ensure!(
-                    actual == expected,
-                    "file modified since last read (expected mtime {expected}, actual {actual})"
-                );
-            }
-        }
-
-        // Atomic write: tmp → rename, with backup + rollback on validation failure
-        let tmp = resolved.with_extension("tmp.file-tunnel");
-        let backup = resolved.with_extension("bak.file-tunnel");
-        std::fs::write(&tmp, content)?;
-
-        let had_original = resolved.exists();
-        if had_original {
-            if let Err(e) = std::fs::copy(&resolved, &backup) {
-                let _ = std::fs::remove_file(&tmp);
-                anyhow::bail!("backup failed: {e}");
-            }
-        }
-
-        if let Err(e) = std::fs::rename(&tmp, &resolved) {
-            let _ = std::fs::remove_file(&tmp);
-            anyhow::bail!("rename failed: {e}");
-        }
-
-        // Run validators
-        if let Some(v) = crate::file_tunnels::find_validator(&tunnel, &resolved) {
-            let rollback = || {
-                if had_original {
-                    let _ = std::fs::rename(&backup, &resolved);
-                } else {
-                    let _ = std::fs::remove_file(&resolved);
-                }
-            };
-            if let Some(name) = &v.builtin {
-                if let Err(msg) = crate::managed_service::run_builtin_validator(name, &resolved) {
-                    rollback();
-                    anyhow::bail!("validation failed: {msg}");
-                }
-            }
-            if !v.command.is_empty() {
-                match std::process::Command::new(&v.command[0])
-                    .args(&v.command[1..])
-                    .output()
-                {
-                    Ok(out) if !out.status.success() => {
-                        let stderr = String::from_utf8_lossy(&out.stderr);
-                        rollback();
-                        anyhow::bail!("validation failed: {stderr}");
-                    }
-                    Err(e) if v.builtin.is_some() => {
-                        tracing::warn!("validation command not available ({e}), builtin passed");
-                    }
-                    Err(e) => {
-                        rollback();
-                        anyhow::bail!("validation command failed: {e}");
-                    }
-                    Ok(_) => {}
-                }
-            }
-        }
-
-        let _ = std::fs::remove_file(&backup);
-        let mtime = crate::file_tunnels::mtime_secs(&resolved).unwrap_or(0);
+        let mtime = crate::file_tunnels::write_file(&tunnel, Some(path), content, expected_mtime)
+            .map_err(|(_status, msg)| anyhow::anyhow!("{msg}"))?;
         Ok(serde_json::json!({ "status": 200, "mtime": mtime }))
     }
 
@@ -227,21 +123,9 @@ impl InstanceAccess for LocalInstanceAccess {
             (tunnel, vh)
         };
 
-        // Validate user argument
-        if let Some(ref tmpl) = tunnel.def.arg_template {
-            if let Some(arg) = user_arg {
-                if let Some(ref pattern) = tmpl.validation {
-                    let re = regex::Regex::new(pattern)
-                        .map_err(|e| anyhow::anyhow!("invalid validation regex: {e}"))?;
-                    anyhow::ensure!(
-                        re.is_match(arg),
-                        "argument does not match required pattern: {pattern}"
-                    );
-                }
-            }
-        } else if user_arg.is_some() {
-            anyhow::bail!("this command does not accept arguments");
-        }
+        // Validate user argument (shared with WS handler)
+        crate::shell_tunnels::validate_args(&tunnel, user_arg)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         // Virtual handler
         if let Some(handler) = virtual_handler {
@@ -257,17 +141,8 @@ impl InstanceAccess for LocalInstanceAccess {
             });
         }
 
-        // Spawn process
-        let mut cmd = tokio::process::Command::new(&tunnel.def.command);
-        cmd.args(&tunnel.def.args);
-        if let Some(arg) = user_arg {
-            if !arg.is_empty() {
-                cmd.arg(arg);
-            }
-        }
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-        cmd.stdin(std::process::Stdio::null());
+        // Build command (shared with WS handler)
+        let mut cmd = crate::shell_tunnels::build_command(&tunnel, user_arg);
 
         let mut child = cmd.spawn()?;
         let stdout = child.stdout.take().unwrap();

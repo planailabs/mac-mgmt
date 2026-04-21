@@ -78,6 +78,55 @@ impl ShellTunnelRegistry {
 #[cfg(feature = "services")]
 pub(crate) const DEFAULT_EXEC_SECS: u64 = 300;
 
+// ── Shared helpers ─────────────────────────────────────────────────────
+
+/// Validate the user argument against the tunnel's arg_template regex.
+#[cfg(feature = "services")]
+pub(crate) fn validate_args(tunnel: &ShellTunnel, user_arg: Option<&str>) -> Result<(), String> {
+    if let Some(ref tmpl) = tunnel.def.arg_template {
+        if let Some(arg) = user_arg {
+            if let Some(ref pattern) = tmpl.validation {
+                match regex::Regex::new(pattern) {
+                    Ok(re) if !re.is_match(arg) => {
+                        return Err(format!(
+                            "argument does not match required pattern: {pattern}"
+                        ));
+                    }
+                    Err(e) => {
+                        tracing::warn!("invalid validation regex for {}: {e}", tunnel.def.name);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    } else if user_arg.is_some() {
+        return Err("this command does not accept arguments".into());
+    }
+    Ok(())
+}
+
+/// Build a tokio Command from a tunnel definition + optional user arg.
+/// Stdout/stderr are piped, stdin is null.
+#[cfg(feature = "services")]
+pub(crate) fn build_command(
+    tunnel: &ShellTunnel,
+    user_arg: Option<&str>,
+) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(&tunnel.def.command);
+    cmd.args(&tunnel.def.args);
+    if let Some(arg) = user_arg {
+        if !arg.is_empty() {
+            cmd.arg(arg);
+        }
+    }
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::null());
+    cmd
+}
+
+// ── WS-based execution ────────────────────────────────────────────────
+
 /// Handle a shell command execution via a dedicated data WebSocket session.
 ///
 /// Protocol:
@@ -109,26 +158,9 @@ pub async fn handle_exec_session(
         }};
     }
 
-    // Validate user argument against regex if required
-    if let Some(ref tmpl) = tunnel.def.arg_template {
-        if let Some(arg) = user_arg {
-            if let Some(ref pattern) = tmpl.validation {
-                match regex::Regex::new(pattern) {
-                    Ok(re) => {
-                        if !re.is_match(arg) {
-                            send_error!(format!(
-                                "argument does not match required pattern: {pattern}"
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("invalid validation regex for {}: {e}", tunnel.def.name);
-                    }
-                }
-            }
-        }
-    } else if user_arg.is_some() {
-        send_error!("this command does not accept arguments");
+    // Validate user argument
+    if let Err(e) = validate_args(tunnel, user_arg) {
+        send_error!(e);
     }
 
     // Virtual handler — run callback instead of spawning a process
@@ -158,18 +190,7 @@ pub async fn handle_exec_session(
     }
 
     // Build the command
-    let mut cmd = tokio::process::Command::new(&tunnel.def.command);
-    cmd.args(&tunnel.def.args);
-    if let Some(arg) = user_arg {
-        if !arg.is_empty() {
-            cmd.arg(arg);
-        }
-    }
-
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    // Don't inherit stdin
-    cmd.stdin(std::process::Stdio::null());
+    let mut cmd = build_command(tunnel, user_arg);
 
     tracing::info!(
         "shell exec: {} {} {}",

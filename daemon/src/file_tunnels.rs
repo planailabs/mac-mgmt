@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -266,6 +265,170 @@ pub fn handle_list(tunnel: &FileTunnel, rel_path: Option<&str>) -> (u16, serde_j
     (404, serde_json::json!({ "error": "path not found" }))
 }
 
+// ── Core read/write operations ──────────────────────────────────────────
+
+/// Read a file from a tunnel. Returns `(content, mtime)` on success.
+/// Error tuple is `(HTTP status code, error message)`.
+#[cfg(feature = "services")]
+pub(crate) fn read_file(
+    tunnel: &FileTunnel,
+    rel_path: Option<&str>,
+) -> Result<(Vec<u8>, Option<i64>), (u16, String)> {
+    let path = resolve_path(tunnel, rel_path).map_err(|e| (400u16, e))?;
+
+    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !matches_include(tunnel, filename) {
+            return Err((403, "file not included in tunnel filter".into()));
+        }
+    }
+
+    let meta = std::fs::metadata(&path).map_err(|e| (404u16, format!("file not found: {e}")))?;
+    if !meta.is_file() {
+        return Err((400, "path is not a file".into()));
+    }
+
+    let mtime = mtime_secs(&path);
+    let content = std::fs::read(&path).map_err(|e| (500u16, format!("read failed: {e}")))?;
+    Ok((content, mtime))
+}
+
+/// Write content to a file tunnel. Returns new mtime on success.
+/// Performs atomic write with backup + validation + rollback.
+/// Error tuple is `(HTTP status code, error message)`.
+#[cfg(feature = "services")]
+pub(crate) fn write_file(
+    tunnel: &FileTunnel,
+    rel_path: Option<&str>,
+    content: &[u8],
+    expected_mtime: Option<i64>,
+) -> Result<i64, (u16, String)> {
+    if !tunnel.writable() {
+        return Err((403, "tunnel is read-only".into()));
+    }
+
+    let path = resolve_path(tunnel, rel_path).map_err(|e| (400u16, e))?;
+
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
+        if !matches_include(tunnel, filename) {
+            return Err((403, "file not included in tunnel filter".into()));
+        }
+    }
+
+    if !matches_allow_write(tunnel, filename) {
+        return Err((403, "file not allowed by write filter".into()));
+    }
+
+    if content.len() as u64 > MAX_FILE_SIZE {
+        return Err((413, "file too large".into()));
+    }
+
+    // Optimistic concurrency check
+    if let Some(expected) = expected_mtime {
+        if let Some(actual) = mtime_secs(&path) {
+            if actual != expected {
+                return Err((
+                    409,
+                    format!("file modified since last read (expected mtime {expected}, actual {actual})"),
+                ));
+            }
+        }
+    }
+
+    // Write content to temp file
+    let tmp_path = path.with_extension("tmp.file-tunnel");
+    std::fs::write(&tmp_path, content)
+        .map_err(|e| {
+            (500u16, format!("failed to create temp file: {e}"))
+        })?;
+
+    // Back up original file (if it exists)
+    let backup_path = path.with_extension("bak.file-tunnel");
+    let had_original = path.exists();
+    if had_original {
+        if let Err(e) = std::fs::copy(&path, &backup_path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err((500, format!("backup failed: {e}")));
+        }
+    }
+
+    // Atomic rename temp → target
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err((500, format!("rename failed: {e}")));
+    }
+
+    // Run validator if one matches
+    if let Some(validator) = find_validator(tunnel, &path) {
+        let rollback = || {
+            if had_original {
+                let _ = std::fs::rename(&backup_path, &path);
+            } else {
+                let _ = std::fs::remove_file(&path);
+            }
+        };
+
+        // 1. Run builtin validator first (if configured)
+        if let Some(name) = &validator.builtin {
+            if let Err(msg) = crate::managed_service::run_builtin_validator(name, &path) {
+                tracing::warn!(
+                    "builtin validation ({name}) failed for {}: {msg}",
+                    path.display()
+                );
+                rollback();
+                return Err((422, format!("validation failed: {msg}")));
+            }
+            tracing::debug!("builtin validation ({name}) passed for {}", path.display());
+        }
+
+        // 2. Run external command validator (if configured).
+        //    If the binary is missing, log a warning but don't fail — the
+        //    builtin validator (if any) already passed.
+        if !validator.command.is_empty() {
+            let result = std::process::Command::new(&validator.command[0])
+                .args(&validator.command[1..])
+                .output();
+            match result {
+                Ok(output) if !output.status.success() => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    tracing::warn!("command validation failed for {}: {stderr}", path.display());
+                    rollback();
+                    return Err((422, format!("validation failed: {stderr}")));
+                }
+                Err(e) if validator.builtin.is_some() => {
+                    // Binary missing but builtin already passed — log and continue
+                    tracing::warn!(
+                        "validation command {:?} not available ({}), builtin passed — accepting write",
+                        validator.command[0],
+                        e
+                    );
+                }
+                Err(e) => {
+                    // No builtin fallback — this is fatal
+                    rollback();
+                    return Err((500, format!("validation command failed to run: {e}")));
+                }
+                Ok(_) => {
+                    tracing::debug!("command validation passed for {}", path.display());
+                }
+            }
+        }
+    }
+
+    // Clean up backup
+    let _ = std::fs::remove_file(&backup_path);
+
+    let new_mtime = mtime_secs(&path).unwrap_or(0);
+    tracing::info!(
+        "file write completed: {} ({} bytes)",
+        path.display(),
+        content.len()
+    );
+    Ok(new_mtime)
+}
+
 // ── File read (data session) ────────────────────────────────────────────
 
 /// Handle a file read via a dedicated data WebSocket session.
@@ -281,42 +444,18 @@ pub async fn handle_read_session(
 ) {
     let (mut sink, _stream) = ws.split();
 
-    macro_rules! send_error {
-        ($status:expr, $error:expr) => {{
-            let msg = serde_json::json!({ "status": $status, "error": $error });
+    let (content, mtime) = match read_file(tunnel, rel_path) {
+        Ok(result) => result,
+        Err((status, error)) => {
+            let msg = serde_json::json!({ "status": status, "error": error });
             let _ = sink.send(tungstenite::Message::Text(msg.to_string().into())).await;
             let _ = sink.send(tungstenite::Message::Close(None)).await;
             return;
-        }};
-    }
-
-    let path = match resolve_path(tunnel, rel_path) {
-        Ok(p) => p,
-        Err(e) => send_error!(400, e),
-    };
-
-    // For directory tunnels, verify the file passes the include filter
-    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if !matches_include(tunnel, filename) {
-            send_error!(403, "file not included in tunnel filter");
         }
-    }
-
-    let meta = match std::fs::metadata(&path) {
-        Ok(m) => m,
-        Err(e) => send_error!(404, format!("file not found: {e}")),
     };
 
-    if !meta.is_file() {
-        send_error!(400, "path is not a file");
-    }
-
-    let size = meta.len();
-    let mtime = mtime_secs(&path).unwrap_or(0);
-
-    // Send metadata header
-    let header = serde_json::json!({ "status": 200, "size": size, "mtime": mtime });
+    let size = content.len();
+    let header = serde_json::json!({ "status": 200, "size": size, "mtime": mtime.unwrap_or(0) });
     if sink
         .send(tungstenite::Message::Text(header.to_string().into()))
         .await
@@ -325,29 +464,10 @@ pub async fn handle_read_session(
         return;
     }
 
-    // Stream file content in chunks
-    let mut file = match std::fs::File::open(&path) {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!("file read session: open failed: {e}");
-            let _ = sink.send(tungstenite::Message::Close(None)).await;
-            return;
-        }
-    };
-
-    use std::io::Read;
-    let mut buf = vec![0u8; STREAM_CHUNK_SIZE];
-    loop {
-        let n = match file.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!("file read session: read failed: {e}");
-                break;
-            }
-        };
+    // Stream content in chunks
+    for chunk in content.chunks(STREAM_CHUNK_SIZE) {
         if sink
-            .send(tungstenite::Message::Binary(buf[..n].to_vec().into()))
+            .send(tungstenite::Message::Binary(chunk.to_vec().into()))
             .await
             .is_err()
         {
@@ -356,7 +476,7 @@ pub async fn handle_read_session(
     }
 
     let _ = sink.send(tungstenite::Message::Close(None)).await;
-    tracing::debug!("file read session completed: {}", path.display());
+    tracing::debug!("file read session completed");
 }
 
 // ── File write (data session) ───────────────────────────────────────────
@@ -387,46 +507,6 @@ pub async fn handle_write_session(
         }};
     }
 
-    // Pre-flight checks
-    if !tunnel.writable() {
-        send_result!(serde_json::json!({ "status": 403, "error": "tunnel is read-only" }));
-    }
-
-    let path = match resolve_path(tunnel, rel_path) {
-        Ok(p) => p,
-        Err(e) => send_result!(serde_json::json!({ "status": 400, "error": e })),
-    };
-
-    // For directory tunnels, verify the file passes the include filter
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
-        if !matches_include(tunnel, filename) {
-            send_result!(
-                serde_json::json!({ "status": 403, "error": "file not included in tunnel filter" })
-            );
-        }
-    }
-
-    if !matches_allow_write(tunnel, filename) {
-        send_result!(
-            serde_json::json!({ "status": 403, "error": "file not allowed by write filter" })
-        );
-    }
-
-    // Optimistic concurrency check
-    if let Some(expected) = expected_mtime {
-        if let Some(actual) = mtime_secs(&path) {
-            if actual != expected {
-                send_result!(serde_json::json!({
-                    "status": 409,
-                    "error": "file modified since last read",
-                    "conflict_mtime": actual,
-                }));
-            }
-        }
-    }
-
     // Signal readiness
     if sink
         .send(tungstenite::Message::Text(
@@ -438,149 +518,38 @@ pub async fn handle_write_session(
         return;
     }
 
-    // Receive file content into a temp file
-    let tmp_path = path.with_extension("tmp.file-tunnel");
-    let mut total_bytes: u64 = 0;
-    {
-        let mut tmp_file = match std::fs::File::create(&tmp_path) {
-            Ok(f) => f,
-            Err(e) => {
-                send_result!(
-                    serde_json::json!({ "status": 500, "error": format!("failed to create temp file: {e}") })
-                );
-            }
-        };
-
-        while let Some(msg) = stream.next().await {
-            match msg {
-                Ok(tungstenite::Message::Binary(data)) => {
-                    total_bytes += data.len() as u64;
-                    if total_bytes > MAX_FILE_SIZE {
-                        let _ = std::fs::remove_file(&tmp_path);
-                        send_result!(
-                            serde_json::json!({ "status": 413, "error": "file too large" })
-                        );
-                    }
-                    if let Err(e) = tmp_file.write_all(&data) {
-                        let _ = std::fs::remove_file(&tmp_path);
-                        send_result!(
-                            serde_json::json!({ "status": 500, "error": format!("write failed: {e}") })
-                        );
-                    }
-                }
-                Ok(tungstenite::Message::Text(t)) if &*t == "end_request" => break,
-                Ok(tungstenite::Message::Close(_)) | Err(_) => {
-                    let _ = std::fs::remove_file(&tmp_path);
-                    return;
-                }
-                _ => {}
-            }
-        }
-
-        if let Err(e) = tmp_file.flush() {
-            let _ = std::fs::remove_file(&tmp_path);
-            send_result!(
-                serde_json::json!({ "status": 500, "error": format!("flush failed: {e}") })
-            );
-        }
-    }
-
-    // Back up original file (if it exists)
-    let backup_path = path.with_extension("bak.file-tunnel");
-    let had_original = path.exists();
-    if had_original {
-        if let Err(e) = std::fs::copy(&path, &backup_path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            send_result!(
-                serde_json::json!({ "status": 500, "error": format!("backup failed: {e}") })
-            );
-        }
-    }
-
-    // Atomic rename temp → target
-    if let Err(e) = std::fs::rename(&tmp_path, &path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        send_result!(serde_json::json!({ "status": 500, "error": format!("rename failed: {e}") }));
-    }
-
-    // Run validator if one matches
-    if let Some(validator) = find_validator(tunnel, &path) {
-        let rollback = || {
-            if had_original {
-                let _ = std::fs::rename(&backup_path, &path);
-            } else {
-                let _ = std::fs::remove_file(&path);
-            }
-        };
-
-        // 1. Run builtin validator first (if configured)
-        if let Some(name) = &validator.builtin {
-            if let Err(msg) = crate::managed_service::run_builtin_validator(name, &path) {
-                tracing::warn!(
-                    "builtin validation ({name}) failed for {}: {msg}",
-                    path.display()
-                );
-                rollback();
-                send_result!(
-                    serde_json::json!({ "status": 422, "error": format!("validation failed: {msg}") })
-                );
-            }
-            tracing::debug!("builtin validation ({name}) passed for {}", path.display());
-        }
-
-        // 2. Run external command validator (if configured).
-        //    If the binary is missing, log a warning but don't fail — the
-        //    builtin validator (if any) already passed.
-        if !validator.command.is_empty() {
-            let result = std::process::Command::new(&validator.command[0])
-                .args(&validator.command[1..])
-                .output();
-            match result {
-                Ok(output) if !output.status.success() => {
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    tracing::warn!("command validation failed for {}: {stderr}", path.display());
-                    rollback();
+    // Receive file content into memory
+    let mut content = Vec::new();
+    while let Some(msg) = stream.next().await {
+        match msg {
+            Ok(tungstenite::Message::Binary(data)) => {
+                content.extend_from_slice(&data);
+                if content.len() as u64 > MAX_FILE_SIZE {
                     send_result!(
-                        serde_json::json!({ "status": 422, "error": format!("validation failed: {stderr}") })
+                        serde_json::json!({ "status": 413, "error": "file too large" })
                     );
-                }
-                Err(e) if validator.builtin.is_some() => {
-                    // Binary missing but builtin already passed — log and continue
-                    tracing::warn!(
-                        "validation command {:?} not available ({}), builtin passed — accepting write",
-                        validator.command[0],
-                        e
-                    );
-                }
-                Err(e) => {
-                    // No builtin fallback — this is fatal
-                    rollback();
-                    send_result!(
-                        serde_json::json!({ "status": 500, "error": format!("validation command failed to run: {e}") })
-                    );
-                }
-                Ok(_) => {
-                    tracing::debug!("command validation passed for {}", path.display());
                 }
             }
+            Ok(tungstenite::Message::Text(t)) if &*t == "end_request" => break,
+            Ok(tungstenite::Message::Close(_)) | Err(_) => return,
+            _ => {}
         }
     }
 
-    // Clean up backup
-    let _ = std::fs::remove_file(&backup_path);
-
-    let new_mtime = mtime_secs(&path).unwrap_or(0);
-    tracing::info!(
-        "file write completed: {} ({total_bytes} bytes)",
-        path.display()
-    );
-    // Success — send result and close (don't use send_result! macro since we don't want to return early)
-    let _ = sink
-        .send(tungstenite::Message::Text(
-            serde_json::json!({ "status": 200, "mtime": new_mtime })
-                .to_string()
-                .into(),
-        ))
-        .await;
-    let _ = sink.send(tungstenite::Message::Close(None)).await;
+    // Write using shared core
+    match write_file(tunnel, rel_path, &content, expected_mtime) {
+        Ok(mtime) => {
+            let _ = sink
+                .send(tungstenite::Message::Text(
+                    serde_json::json!({ "status": 200, "mtime": mtime })
+                        .to_string()
+                        .into(),
+                ))
+                .await;
+            let _ = sink.send(tungstenite::Message::Close(None)).await;
+        }
+        Err((status, error)) => {
+            send_result!(serde_json::json!({ "status": status, "error": error }));
+        }
+    }
 }
