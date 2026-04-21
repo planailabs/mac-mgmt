@@ -30,6 +30,8 @@ pub struct SessionSummary {
     pub created_by: String,
     pub created_at: String,
     pub error_message: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
 }
 
 // Re-export wire types from common — single source of truth.
@@ -204,9 +206,11 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         created_by: String,
         created_at: chrono::DateTime<chrono::Utc>,
         error_message: Option<String>,
+        provider: Option<String>,
+        model: Option<String>,
     }
     let sessions = sqlx::query_as::<_, SessRow>(
-        "SELECT id, state, created_by, created_at, error_message \
+        "SELECT id, state, created_by, created_at, error_message, provider, model \
          FROM healer_sessions \
          WHERE cluster_id = $1 AND instance_id = $2 \
          ORDER BY created_at DESC LIMIT 20",
@@ -223,6 +227,8 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         created_by: r.created_by,
         created_at: r.created_at.format("%Y-%m-%d %H:%M").to_string(),
         error_message: r.error_message,
+        provider: r.provider,
+        model: r.model,
     })
     .collect();
 
@@ -427,6 +433,30 @@ pub async fn resolve_staff_ping(ping_id: String) -> Result<(), ServerFnError> {
     mac_mgmt_healer::session::store::resolve_staff_ping(&pool, uuid, &user.email)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Get model metadata for a session (provider + model name).
+#[server]
+pub async fn get_session_model(session_id: String) -> Result<(Option<String>, Option<String>), ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = session_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid id"))?;
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        provider: Option<String>,
+        model: Option<String>,
+    }
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT provider, model FROM healer_sessions WHERE id = $1",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("session not found"))?;
+    Ok((row.provider, row.model))
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -724,6 +754,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             let created_at = sess.created_at.clone();
                             let created_by = sess.created_by.clone();
                             let error_msg = sess.error_message.clone();
+                            let model_label = sess.model.clone().unwrap_or_default();
                             let (badge_class, badge_label) = state_badge(&sess_state);
                             let url = format!("/fleet/{}/healer/{}", instance_id, sid);
 
@@ -734,6 +765,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     div { class: "flex items-center gap-3",
                                         span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}", "{badge_label}" }
                                         span { class: "text-sm text-gray-700 dark:text-gray-300", "{created_at}" }
+                                        if !model_label.is_empty() {
+                                            span { class: "px-1.5 py-0.5 text-xs font-mono bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded", "{model_label}" }
+                                        }
                                         span { class: "text-xs text-gray-500 dark:text-gray-400", "{created_by}" }
                                     }
                                     div { class: "flex items-center gap-2",
@@ -766,6 +800,11 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     let mut running = use_signal(|| true);
 
     let iid = instance_id.clone();
+    let sid_for_model = session_id.clone();
+    let model_info = use_server_future(move || {
+        let sid = sid_for_model.clone();
+        async move { get_session_model(sid).await }
+    })?;
     let sid_for_sse = session_id.clone();
 
     // Connect to SSE via JS eval — runs only in the browser, no SSR issues.
@@ -872,10 +911,22 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 
     let back_url = format!("/fleet/{}/healer", instance_id);
 
+    let model_label = model_info
+        .read()
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|(_, m)| m.clone())
+        .unwrap_or_default();
+
     rsx! {
         h2 { class: "text-2xl font-bold mb-4", "Healer Session" }
         p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
             "Instance: {iid} — Session: {session_id}"
+            if !model_label.is_empty() {
+                span { class: "ml-2 px-1.5 py-0.5 text-xs font-mono bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded",
+                    "{model_label}"
+                }
+            }
         }
 
         div { class: "mb-3 flex items-center gap-3 flex-wrap",
