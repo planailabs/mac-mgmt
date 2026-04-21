@@ -235,7 +235,7 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     let models = model_entries
         .into_iter()
         .map(|e| ModelEntry {
-            name: e.name,
+            name: e.display_name(),
             model: e.model,
             provider: e.provider,
         })

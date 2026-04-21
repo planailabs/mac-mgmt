@@ -41,10 +41,10 @@ token = "xzar-api-token-here"
 # Models shown in the UI model picker. If omitted, built-in defaults are used.
 # Each entry has: name (display label), model (provider identifier), provider ("ollama" or "anthropic").
 # [[healer.models]]
-# name = "Gemma 4 (Ollama)"
+# name = "Gemma 4"
 # model = "gemma4"
 # provider = "ollama"
 # [[healer.models]]
-# name = "Claude Sonnet 4.6 (Anthropic)"
+# name = "Claude Sonnet 4.6"
 # model = "claude-sonnet-4-6"
 # provider = "anthropic"

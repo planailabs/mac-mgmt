@@ -148,36 +148,56 @@ pub struct HealerModelEntry {
 pub fn default_healer_models() -> Vec<HealerModelEntry> {
     vec![
         HealerModelEntry {
-            name: "Gemma 4 (Ollama)".into(),
+            name: "Gemma 4".into(),
             model: "gemma4".into(),
             provider: "ollama".into(),
         },
         HealerModelEntry {
-            name: "Qwen 3 (Ollama)".into(),
+            name: "Qwen 3".into(),
             model: "qwen3".into(),
             provider: "ollama".into(),
         },
         HealerModelEntry {
-            name: "Llama 3.3 (Ollama)".into(),
+            name: "Llama 3.3".into(),
             model: "llama3.3".into(),
             provider: "ollama".into(),
         },
         HealerModelEntry {
-            name: "Devstral (Ollama)".into(),
+            name: "Devstral".into(),
             model: "devstral".into(),
             provider: "ollama".into(),
         },
         HealerModelEntry {
-            name: "Claude Sonnet 4.6 (Anthropic)".into(),
+            name: "Claude Sonnet 4.6".into(),
             model: "claude-sonnet-4-6".into(),
             provider: "anthropic".into(),
         },
         HealerModelEntry {
-            name: "Claude Haiku 4.5 (Anthropic)".into(),
+            name: "Claude Haiku 4.5".into(),
             model: "claude-haiku-4-5-20251001".into(),
             provider: "anthropic".into(),
         },
     ]
+}
+
+impl HealerModelEntry {
+    /// Return the display name with an auto-appended provider suffix
+    /// (e.g. "Gemma 4" becomes "Gemma 4 (Ollama)") unless it already
+    /// contains the provider name (case-insensitive).
+    pub fn display_name(&self) -> String {
+        let lower = self.name.to_lowercase();
+        let provider_lower = self.provider.to_lowercase();
+        if lower.contains(&provider_lower) {
+            self.name.clone()
+        } else {
+            let suffix = match self.provider.as_str() {
+                "ollama" => "Ollama",
+                "anthropic" => "Anthropic",
+                other => other,
+            };
+            format!("{} ({})", self.name, suffix)
+        }
+    }
 }
 
 pub fn load() -> &'static ServerConfig {
