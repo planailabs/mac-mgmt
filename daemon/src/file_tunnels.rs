@@ -62,6 +62,9 @@ impl FileTunnelRegistry {
 fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<PathBuf, String> {
     let root = PathBuf::from(tunnel.path());
 
+    // Strip leading slashes — LLMs often hallucinate them in relative paths.
+    let relative_path = relative_path.map(|p| p.trim_start_matches('/'));
+
     let target = match (&tunnel.def, relative_path) {
         (FileTunnelDef::File { .. }, None | Some("")) => root.clone(),
         (FileTunnelDef::File { .. }, Some(name)) => {
