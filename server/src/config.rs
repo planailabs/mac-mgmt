@@ -126,6 +126,58 @@ pub struct HealerConfig {
     /// Context7 API key for documentation lookup MCP server.
     #[serde(default)]
     pub context7_api_key: Option<String>,
+    /// Models available in the UI model picker. Each entry specifies a display
+    /// name, provider ("ollama" or "anthropic"), and the model identifier.
+    /// If empty, built-in defaults are used.
+    #[serde(default)]
+    pub models: Vec<HealerModelEntry>,
+}
+
+/// A model entry for the healer UI model picker.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct HealerModelEntry {
+    /// Human-readable display name shown in the dropdown.
+    pub name: String,
+    /// Model identifier passed to the provider (e.g. "gemma4", "claude-sonnet-4-6").
+    pub model: String,
+    /// Provider: "ollama" or "anthropic".
+    pub provider: String,
+}
+
+/// Built-in default model list used when `[healer] models` is empty.
+pub fn default_healer_models() -> Vec<HealerModelEntry> {
+    vec![
+        HealerModelEntry {
+            name: "Gemma 4 (Ollama)".into(),
+            model: "gemma4".into(),
+            provider: "ollama".into(),
+        },
+        HealerModelEntry {
+            name: "Qwen 3 (Ollama)".into(),
+            model: "qwen3".into(),
+            provider: "ollama".into(),
+        },
+        HealerModelEntry {
+            name: "Llama 3.3 (Ollama)".into(),
+            model: "llama3.3".into(),
+            provider: "ollama".into(),
+        },
+        HealerModelEntry {
+            name: "Devstral (Ollama)".into(),
+            model: "devstral".into(),
+            provider: "ollama".into(),
+        },
+        HealerModelEntry {
+            name: "Claude Sonnet 4.6 (Anthropic)".into(),
+            model: "claude-sonnet-4-6".into(),
+            provider: "anthropic".into(),
+        },
+        HealerModelEntry {
+            name: "Claude Haiku 4.5 (Anthropic)".into(),
+            model: "claude-haiku-4-5-20251001".into(),
+            provider: "anthropic".into(),
+        },
+    ]
 }
 
 pub fn load() -> &'static ServerConfig {

@@ -17,6 +17,12 @@ pub struct CreateSessionBody {
     pub instance_id: String,
     #[serde(default)]
     pub user_message: Option<String>,
+    /// Force a specific LLM provider ("ollama" or "anthropic").
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Force a specific model name (e.g. "gemma4", "claude-sonnet-4-6").
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +40,10 @@ pub struct SessionSummary {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +135,8 @@ pub async fn create_session(
         cluster_name,
         hostname: hb.hostname.unwrap_or_default(),
         skip_cooldown: false,
+        provider: body.provider,
+        model: body.model,
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {
@@ -163,6 +175,8 @@ pub async fn list_sessions(
                 created_at: s.created_at,
                 completed_at: s.completed_at,
                 error_message: s.error_message,
+                provider: s.provider,
+                model: s.model,
             })
             .collect(),
     ))
@@ -192,6 +206,8 @@ pub async fn get_session(
             created_at: session.created_at,
             completed_at: session.completed_at,
             error_message: session.error_message,
+            provider: session.provider,
+            model: session.model,
         },
         messages: messages
             .into_iter()

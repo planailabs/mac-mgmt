@@ -37,3 +37,14 @@ token = "xzar-api-token-here"
 # anthropic_model = "claude-sonnet-4-6"         # default; used when Ollama is unavailable
 # token_budget = 200000                          # max tokens per cloud session before auto-pause (0 = unlimited)
 # context7_api_key = "c7-..."                   # optional; enables Context7 MCP for documentation lookup
+#
+# Models shown in the UI model picker. If omitted, built-in defaults are used.
+# Each entry has: name (display label), model (provider identifier), provider ("ollama" or "anthropic").
+# [[healer.models]]
+# name = "Gemma 4 (Ollama)"
+# model = "gemma4"
+# provider = "ollama"
+# [[healer.models]]
+# name = "Claude Sonnet 4.6 (Anthropic)"
+# model = "claude-sonnet-4-6"
+# provider = "anthropic"

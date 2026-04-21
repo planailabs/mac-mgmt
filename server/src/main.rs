@@ -203,6 +203,9 @@ enum Commands {
         /// Output directory (created if it doesn't exist)
         #[arg(short, long, default_value = "healer-sessions")]
         output: String,
+        /// Filter sessions by model name (e.g. "gemma4", "claude-sonnet-4-6")
+        #[arg(short, long)]
+        model: Option<String>,
     },
 }
 
@@ -213,10 +216,10 @@ fn main() {
     #[cfg(any(feature = "server", feature = "server-api-only"))]
     if let Some(cmd) = &cli.command {
         match cmd {
-            Commands::DumpSessions { output } => {
+            Commands::DumpSessions { output, model } => {
                 let cfg = config::load();
                 let rt = tokio::runtime::Runtime::new().expect("failed to create runtime");
-                rt.block_on(dump_healer_sessions(&cfg.database.url, output));
+                rt.block_on(dump_healer_sessions(&cfg.database.url, output, model.as_deref()));
                 return;
             }
         }
@@ -399,7 +402,7 @@ fn main() {
 /// Each file is named `{session_id}.jsonl` and contains the session metadata
 /// as the first line, followed by one message per line.
 #[cfg(any(feature = "server", feature = "server-api-only"))]
-async fn dump_healer_sessions(database_url: &str, output_dir: &str) {
+async fn dump_healer_sessions(database_url: &str, output_dir: &str, model_filter: Option<&str>) {
     use std::io::Write;
 
     let pool = db::connect(database_url).await;
@@ -417,6 +420,8 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str) {
         completed_at: Option<chrono::DateTime<chrono::Utc>>,
         error_message: Option<String>,
         initial_issues: serde_json::Value,
+        provider: Option<String>,
+        model: Option<String>,
     }
 
     #[derive(sqlx::FromRow, serde::Serialize)]
@@ -429,14 +434,28 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str) {
         created_at: chrono::DateTime<chrono::Utc>,
     }
 
-    let sessions: Vec<SessionRow> = sqlx::query_as(
-        "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
-                created_at, updated_at, completed_at, error_message, initial_issues \
-         FROM healer_sessions ORDER BY created_at ASC",
-    )
-    .fetch_all(&pool)
-    .await
-    .expect("failed to query sessions");
+    let sessions: Vec<SessionRow> = if let Some(model) = model_filter {
+        sqlx::query_as(
+            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
+                    created_at, updated_at, completed_at, error_message, initial_issues, \
+                    provider, model \
+             FROM healer_sessions WHERE model = $1 ORDER BY created_at ASC",
+        )
+        .bind(model)
+        .fetch_all(&pool)
+        .await
+        .expect("failed to query sessions")
+    } else {
+        sqlx::query_as(
+            "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
+                    created_at, updated_at, completed_at, error_message, initial_issues, \
+                    provider, model \
+             FROM healer_sessions ORDER BY created_at ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("failed to query sessions")
+    };
 
     if sessions.is_empty() {
         eprintln!("no healer sessions found");

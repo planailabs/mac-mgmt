@@ -66,6 +66,11 @@ pub struct SpawnRequest {
     pub hostname: String,
     /// Skip the 1-hour cooldown (set when DEV_ONLY_NO_AUTH=1).
     pub skip_cooldown: bool,
+    /// Force a specific LLM provider ("ollama" or "anthropic").
+    /// If None, auto-detect (ollama first, anthropic fallback).
+    pub provider: Option<String>,
+    /// Force a specific model name. If None, use the configured default.
+    pub model: Option<String>,
 }
 
 impl HealerState {
@@ -148,6 +153,8 @@ impl HealerState {
             &req.created_by,
             &initial_issues,
             &state_data,
+            req.provider.as_deref(),
+            req.model.as_deref(),
         )
         .await
         .context("failed to create healer session")?;
@@ -401,6 +408,8 @@ impl HealerState {
             cluster_name,
             hostname,
             skip_cooldown: true, // resuming — cooldown doesn't apply
+            provider: sess.provider.clone(),
+            model: sess.model.clone(),
         };
 
         let state = self.clone();
@@ -606,10 +615,25 @@ async fn run_agent_session(
 ) -> Result<()> {
     let pool = &state.inner.pool;
 
-    // 1. Resolve LLM
-    let llm = connector::resolve_llm(&connector_config)
-        .await
-        .context("failed to resolve LLM")?;
+    // 1. Resolve LLM (use forced provider/model if specified in request)
+    let llm = connector::resolve_llm(
+        &connector_config,
+        req.provider.as_deref(),
+        req.model.as_deref(),
+    )
+    .await
+    .context("failed to resolve LLM")?;
+
+    // Persist the actual resolved provider/model to the session row so we can
+    // resume with the same LLM later and display it in the UI.
+    sqlx::query(
+        "UPDATE healer_sessions SET provider = $1, model = $2 WHERE id = $3",
+    )
+    .bind(llm.resolved_provider.as_str())
+    .bind(&llm.resolved_model)
+    .execute(pool)
+    .await
+    .ok();
 
     // 2. Build relay client (with event broadcasting for connectivity status)
     //    If relay_url is empty, poll heartbeats until it appears (the daemon

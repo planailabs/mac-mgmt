@@ -102,6 +102,10 @@ pub struct HealerSession {
     pub completed_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,
     pub initial_issues: serde_json::Value,
+    /// LLM provider used for this session (e.g. "ollama", "anthropic").
+    pub provider: Option<String>,
+    /// LLM model used for this session (e.g. "gemma4", "claude-sonnet-4-6").
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

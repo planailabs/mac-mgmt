@@ -7,12 +7,20 @@ use crate::web::user::current_user;
 // ── Wire types ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    pub name: String,
+    pub model: String,
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealerContext {
     pub instance_id: String,
     pub hostname: String,
     pub cluster_id: String,
     pub services_extended: Vec<serde_json::Value>,
     pub sessions: Vec<SessionSummary>,
+    pub models: Vec<ModelEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,12 +226,28 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     })
     .collect();
 
+    let healer_cfg = &crate::config::config().healer;
+    let model_entries = if healer_cfg.models.is_empty() {
+        crate::config::default_healer_models()
+    } else {
+        healer_cfg.models.clone()
+    };
+    let models = model_entries
+        .into_iter()
+        .map(|e| ModelEntry {
+            name: e.name,
+            model: e.model,
+            provider: e.provider,
+        })
+        .collect();
+
     Ok(HealerContext {
         instance_id,
         hostname: hb.hostname.unwrap_or_default(),
         cluster_id: hb.cluster_id.to_string(),
         services_extended,
         sessions,
+        models,
     })
 }
 
@@ -236,6 +260,8 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
 pub async fn start_healer_session(
     instance_id: String,
     user_message: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
 ) -> Result<String, ServerFnError> {
     use mac_mgmt_healer::agent::InstanceInfo;
     use mac_mgmt_healer::SpawnRequest;
@@ -322,6 +348,8 @@ pub async fn start_healer_session(
         cluster_name,
         hostname: hb.hostname.unwrap_or_default(),
         skip_cooldown: user.is_admin,
+        provider,
+        model,
     };
 
     let session_id = healer
@@ -429,6 +457,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut state_reason = use_signal::<Option<String>>(|| None);
     let mut user_input = use_signal(String::new);
     let mut running = use_signal(|| false);
+    // Encodes "provider:model" or empty for first entry
+    let mut selected_model_key = use_signal(String::new);
+    let models = ctx.models.clone();
 
     let unhealthy: Vec<String> = ctx
         .services_extended
@@ -456,39 +487,101 @@ fn render_healer(ctx: &HealerContext) -> Element {
 
         // New session controls
         if !*running.read() && session_id.read().is_none() {
-            div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                h3 { class: "text-lg font-semibold mb-3", "New Session" }
-                div { class: "mb-3",
-                    textarea {
-                        class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
-                        rows: "2",
-                        placeholder: "Optional instructions (leave empty for auto-diagnosis)...",
-                        value: "{user_input}",
-                        oninput: move |e| user_input.set(e.value()),
-                    }
-                }
-                button {
-                    class: "px-4 py-2 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700",
-                    onclick: {
-                        let instance_id = instance_id.clone();
-                        move |_| {
-                            let instance_id = instance_id.clone();
-                            let msg = user_input.read().clone();
-                            let user_msg = if msg.is_empty() { None } else { Some(msg) };
-                            async move {
-                                match start_healer_session(instance_id.clone(), user_msg).await {
-                                    Ok(sid) => {
-                                        // Navigate to the session subroute
-                                        navigator().push(format!("/fleet/{}/healer/{}", instance_id, sid));
+            {
+                let ollama_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "ollama").cloned().collect();
+                let anthropic_models: Vec<ModelEntry> = models.iter().filter(|m| m.provider == "anthropic").cloned().collect();
+                // Build option values as "provider:model"
+                let first_key = models.first().map(|m| format!("{}:{}", m.provider, m.model)).unwrap_or_default();
+                rsx! {
+                    div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                        h3 { class: "text-lg font-semibold mb-3", "New Session" }
+
+                        // Model selector
+                        div { class: "mb-3",
+                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Model" }
+                            select {
+                                class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                value: "{selected_model_key}",
+                                onchange: move |e| selected_model_key.set(e.value()),
+                                if !ollama_models.is_empty() {
+                                    optgroup { label: "Ollama (local, free)",
+                                        for m in ollama_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
                                     }
-                                    Err(e) => {
-                                        tracing::error!("failed to start healer session: {e}");
+                                }
+                                if !anthropic_models.is_empty() {
+                                    optgroup { label: "Anthropic (cloud)",
+                                        for m in anthropic_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                            }
+                            {
+                                let key = selected_model_key.read().clone();
+                                let key = if key.is_empty() { first_key.clone() } else { key };
+                                let is_ollama = key.starts_with("ollama:");
+                                if is_ollama {
+                                    rsx! {
+                                        p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                                            "Free to run, but local models are less capable than cloud models."
+                                        }
+                                    }
+                                } else {
+                                    rsx! {
+                                        p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                                            "Uses Anthropic API credits. More capable, subject to token budget."
+                                        }
                                     }
                                 }
                             }
                         }
-                    },
-                    "Start Healing"
+
+                        div { class: "mb-3",
+                            textarea {
+                                class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                rows: "2",
+                                placeholder: "Optional instructions (leave empty for auto-diagnosis)...",
+                                value: "{user_input}",
+                                oninput: move |e| user_input.set(e.value()),
+                            }
+                        }
+                        button {
+                            class: "px-4 py-2 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700",
+                            onclick: {
+                                let instance_id = instance_id.clone();
+                                let first_key = first_key.clone();
+                                move |_| {
+                                    let instance_id = instance_id.clone();
+                                    let msg = user_input.read().clone();
+                                    let user_msg = if msg.is_empty() { None } else { Some(msg) };
+                                    let key = selected_model_key.read().clone();
+                                    let key = if key.is_empty() { first_key.clone() } else { key };
+                                    let (provider, model) = if let Some((p, m)) = key.split_once(':') {
+                                        (Some(p.to_string()), Some(m.to_string()))
+                                    } else {
+                                        (None, None)
+                                    };
+                                    async move {
+                                        match start_healer_session(instance_id.clone(), user_msg, provider, model).await {
+                                            Ok(sid) => {
+                                                navigator().push(format!("/fleet/{}/healer/{}", instance_id, sid));
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("failed to start healer session: {e}");
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "Start Healing"
+                        }
+                    }
                 }
             }
         }

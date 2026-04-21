@@ -41,6 +41,10 @@ pub struct LlmHandle {
     pub token_usage: Arc<AtomicU64>,
     /// Whether this handle uses a cloud provider (subject to token budgets).
     pub is_cloud: bool,
+    /// Which provider was actually selected.
+    pub resolved_provider: ResolvedProvider,
+    /// Which model name was actually used.
+    pub resolved_model: String,
 }
 
 pub enum LlmProvider {
@@ -48,13 +52,40 @@ pub enum LlmProvider {
     Anthropic(swiftide::integrations::anthropic::Anthropic),
 }
 
+/// Which provider was actually resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedProvider {
+    Ollama,
+    Anthropic,
+}
+
+impl ResolvedProvider {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ollama => "ollama",
+            Self::Anthropic => "anthropic",
+        }
+    }
+}
+
 /// Resolve the best available LLM.
 ///
+/// If `forced_provider` is set, only that provider is tried.
+/// If `forced_model` is set, it overrides the configured default for the chosen provider.
+///
+/// Without forcing:
 /// 1. Try local Ollama — check reachable AND model available (pull if missing)
 /// 2. Fall back to Anthropic cloud if API key provided
 /// 3. Error if neither is available
-pub async fn resolve_llm(config: &ConnectorConfig) -> Result<LlmHandle> {
+pub async fn resolve_llm(
+    config: &ConnectorConfig,
+    forced_provider: Option<&str>,
+    forced_model: Option<&str>,
+) -> Result<LlmHandle> {
     let token_usage = Arc::new(AtomicU64::new(0));
+
+    let try_ollama = forced_provider.is_none() || forced_provider == Some("ollama");
+    let try_anthropic = forced_provider.is_none() || forced_provider == Some("anthropic");
 
     let ollama_url = config
         .ollama_url
@@ -62,79 +93,93 @@ pub async fn resolve_llm(config: &ConnectorConfig) -> Result<LlmHandle> {
         .unwrap_or_else(|| "http://localhost:11434".to_string());
     let ollama_url = ollama_url.trim_end_matches('/').to_string();
 
-    let model = config
-        .ollama_model
-        .clone()
-        .unwrap_or_else(|| "gemma4".to_string());
+    if try_ollama {
+        let model = forced_model
+            .map(String::from)
+            .or_else(|| config.ollama_model.clone())
+            .unwrap_or_else(|| "gemma4".to_string());
 
-    match check_ollama(&ollama_url, &model).await {
-        OllamaStatus::Ready => {
-            tracing::info!(url = %ollama_url, model = %model, "using local Ollama for healer agent");
+        match check_ollama(&ollama_url, &model).await {
+            OllamaStatus::Ready => {
+                tracing::info!(url = %ollama_url, model = %model, "using local Ollama for healer agent");
 
-            let mut ollama_config =
-                swiftide::integrations::ollama::config::OllamaConfig::default();
-            ollama_config.with_api_base(&format!("{ollama_url}/v1"));
-            let ollama_client = async_openai::Client::with_config(ollama_config);
+                let mut ollama_config =
+                    swiftide::integrations::ollama::config::OllamaConfig::default();
+                ollama_config.with_api_base(&format!("{ollama_url}/v1"));
+                let ollama_client = async_openai::Client::with_config(ollama_config);
 
-            let ollama = swiftide::integrations::ollama::Ollama::builder()
-                .client(ollama_client)
-                .default_prompt_model(&model)
-                .default_options(
-                    swiftide::integrations::openai::Options::builder()
-                        .temperature(0.0)
-                )
-                .build()
-                .context("failed to build Ollama integration")?;
+                let ollama = swiftide::integrations::ollama::Ollama::builder()
+                    .client(ollama_client)
+                    .default_prompt_model(&model)
+                    .default_options(
+                        swiftide::integrations::openai::Options::builder()
+                            .temperature(0.0)
+                    )
+                    .build()
+                    .context("failed to build Ollama integration")?;
 
-            return Ok(LlmHandle {
-                provider: LlmProvider::Ollama(ollama),
-                token_usage,
-                is_cloud: false,
-            });
-        }
-        OllamaStatus::Unreachable(reason) => {
-            tracing::info!(reason = %reason, "Ollama not available, trying cloud fallback");
-        }
-        OllamaStatus::ModelMissing => {
-            tracing::info!(
-                url = %ollama_url, model = %model,
-                "Ollama online but model not found and pull failed, trying cloud fallback"
-            );
+                return Ok(LlmHandle {
+                    provider: LlmProvider::Ollama(ollama),
+                    token_usage,
+                    is_cloud: false,
+                    resolved_provider: ResolvedProvider::Ollama,
+                    resolved_model: model,
+                });
+            }
+            OllamaStatus::Unreachable(reason) => {
+                if forced_provider == Some("ollama") {
+                    anyhow::bail!("Ollama requested but not available: {reason}");
+                }
+                tracing::info!(reason = %reason, "Ollama not available, trying cloud fallback");
+            }
+            OllamaStatus::ModelMissing => {
+                if forced_provider == Some("ollama") {
+                    anyhow::bail!("Ollama requested but model '{model}' not available");
+                }
+                tracing::info!(
+                    url = %ollama_url, model = %model,
+                    "Ollama online but model not found and pull failed, trying cloud fallback"
+                );
+            }
         }
     }
 
     // 2. Try Anthropic cloud
-    if let Some(api_key) = &config.anthropic_api_key {
-        let model = config
-            .anthropic_model
-            .clone()
-            .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+    if try_anthropic {
+        if let Some(api_key) = &config.anthropic_api_key {
+            let model = forced_model
+                .map(String::from)
+                .or_else(|| config.anthropic_model.clone())
+                .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
 
-        tracing::info!(model = %model, "using Anthropic cloud for healer agent");
+            tracing::info!(model = %model, "using Anthropic cloud for healer agent");
 
-        // SAFETY: called during server startup, before parallel agent tasks.
-        unsafe { std::env::set_var("ANTHROPIC_API_KEY", api_key) };
+            // SAFETY: called during server startup, before parallel agent tasks.
+            unsafe { std::env::set_var("ANTHROPIC_API_KEY", api_key) };
 
-        // Wire usage tracking so the token budget actually works.
-        // input_tokens includes the full context (system prompt, history, tools)
-        // on every call — this is what Anthropic bills for.
-        let usage_counter = token_usage.clone();
-        let anthropic = swiftide::integrations::anthropic::Anthropic::builder()
-            .default_prompt_model(&model)
-            .on_usage(move |usage| {
-                let input = usage.prompt_tokens as u64;
-                let output = usage.completion_tokens as u64;
-                usage_counter.fetch_add(input + output, Ordering::Relaxed);
-                Ok(())
-            })
-            .build()
-            .context("failed to build Anthropic integration")?;
+            // Wire usage tracking so the token budget actually works.
+            let usage_counter = token_usage.clone();
+            let anthropic = swiftide::integrations::anthropic::Anthropic::builder()
+                .default_prompt_model(&model)
+                .on_usage(move |usage| {
+                    let input = usage.prompt_tokens as u64;
+                    let output = usage.completion_tokens as u64;
+                    usage_counter.fetch_add(input + output, Ordering::Relaxed);
+                    Ok(())
+                })
+                .build()
+                .context("failed to build Anthropic integration")?;
 
-        return Ok(LlmHandle {
-            provider: LlmProvider::Anthropic(anthropic),
-            token_usage,
-            is_cloud: true,
-        });
+            return Ok(LlmHandle {
+                provider: LlmProvider::Anthropic(anthropic),
+                token_usage,
+                is_cloud: true,
+                resolved_provider: ResolvedProvider::Anthropic,
+                resolved_model: model,
+            });
+        } else if forced_provider == Some("anthropic") {
+            anyhow::bail!("Anthropic requested but no API key configured");
+        }
     }
 
     anyhow::bail!(
