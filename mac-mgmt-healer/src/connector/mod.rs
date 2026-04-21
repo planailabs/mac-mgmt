@@ -14,6 +14,10 @@ pub struct ConnectorConfig {
     pub anthropic_api_key: Option<String>,
     /// Anthropic model. Defaults to `claude-sonnet-4-6`.
     pub anthropic_model: Option<String>,
+    /// OpenRouter API key.
+    pub openrouter_api_key: Option<String>,
+    /// OpenRouter model. Defaults to `anthropic/claude-sonnet-4`.
+    pub openrouter_model: Option<String>,
     /// Max input+output tokens per session when using a cloud provider.
     /// Session auto-pauses when exceeded. 0 = unlimited.
     pub token_budget: u64,
@@ -28,6 +32,8 @@ impl Default for ConnectorConfig {
             ollama_model: None,
             anthropic_api_key: None,
             anthropic_model: None,
+            openrouter_api_key: None,
+            openrouter_model: None,
             token_budget: 200_000,
             context7_api_key: None,
         }
@@ -50,6 +56,7 @@ pub struct LlmHandle {
 pub enum LlmProvider {
     Ollama(swiftide::integrations::ollama::Ollama),
     Anthropic(swiftide::integrations::anthropic::Anthropic),
+    OpenRouter(swiftide::integrations::openai::OpenAI),
 }
 
 /// Which provider was actually resolved.
@@ -57,6 +64,7 @@ pub enum LlmProvider {
 pub enum ResolvedProvider {
     Ollama,
     Anthropic,
+    OpenRouter,
 }
 
 impl ResolvedProvider {
@@ -64,6 +72,7 @@ impl ResolvedProvider {
         match self {
             Self::Ollama => "ollama",
             Self::Anthropic => "anthropic",
+            Self::OpenRouter => "openrouter",
         }
     }
 }
@@ -86,6 +95,7 @@ pub async fn resolve_llm(
 
     let try_ollama = forced_provider.is_none() || forced_provider == Some("ollama");
     let try_anthropic = forced_provider.is_none() || forced_provider == Some("anthropic");
+    let try_openrouter = forced_provider.is_none() || forced_provider == Some("openrouter");
 
     let ollama_url = config
         .ollama_url
@@ -182,8 +192,49 @@ pub async fn resolve_llm(
         }
     }
 
+    // 3. Try OpenRouter (OpenAI-compatible)
+    if try_openrouter {
+        if let Some(api_key) = &config.openrouter_api_key {
+            let model = forced_model
+                .map(String::from)
+                .or_else(|| config.openrouter_model.clone())
+                .unwrap_or_else(|| "anthropic/claude-sonnet-4".to_string());
+
+            tracing::info!(model = %model, "using OpenRouter for healer agent");
+
+            let openai_config = async_openai::config::OpenAIConfig::default()
+                .with_api_key(api_key)
+                .with_api_base("https://openrouter.ai/api/v1");
+
+            let client = async_openai::Client::with_config(openai_config);
+
+            let usage_counter = token_usage.clone();
+            let openrouter = swiftide::integrations::openai::OpenAI::builder()
+                .client(client)
+                .default_prompt_model(&model)
+                .on_usage(move |usage| {
+                    let input = usage.prompt_tokens as u64;
+                    let output = usage.completion_tokens as u64;
+                    usage_counter.fetch_add(input + output, Ordering::Relaxed);
+                    Ok(())
+                })
+                .build()
+                .context("failed to build OpenRouter integration")?;
+
+            return Ok(LlmHandle {
+                provider: LlmProvider::OpenRouter(openrouter),
+                token_usage,
+                is_cloud: true,
+                resolved_provider: ResolvedProvider::OpenRouter,
+                resolved_model: model,
+            });
+        } else if forced_provider == Some("openrouter") {
+            anyhow::bail!("OpenRouter requested but no API key configured");
+        }
+    }
+
     anyhow::bail!(
-        "no LLM available: Ollama not usable at {ollama_url} and no Anthropic API key configured"
+        "no LLM available: Ollama not usable at {ollama_url} and no Anthropic/OpenRouter API key configured"
     )
 }
 

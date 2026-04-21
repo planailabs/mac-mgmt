@@ -357,9 +357,23 @@ pub async fn start_healer_session(
         cluster_name,
         hostname: hb.hostname.unwrap_or_default(),
         skip_cooldown: user.is_admin,
-        provider,
-        model,
+        provider: provider.clone(),
+        model: model.clone(),
         label: None,
+        token_budget: {
+            if let (Some(p), Some(m)) = (&provider, &model) {
+                let models = if crate::config::load().healer.models.is_empty() {
+                    crate::config::default_healer_models()
+                } else {
+                    crate::config::load().healer.models.clone()
+                };
+                models.iter()
+                    .find(|entry| entry.provider == *p && entry.model == *m)
+                    .and_then(|entry| entry.token_budget)
+            } else {
+                None
+            }
+        },
     };
 
     let session_id = healer

@@ -17,7 +17,7 @@ pub struct CreateSessionBody {
     pub instance_id: String,
     #[serde(default)]
     pub user_message: Option<String>,
-    /// Force a specific LLM provider ("ollama" or "anthropic").
+    /// Force a specific LLM provider ("ollama", "anthropic", or "openrouter").
     #[serde(default)]
     pub provider: Option<String>,
     /// Force a specific model name (e.g. "gemma4", "claude-sonnet-4-6").
@@ -123,6 +123,20 @@ pub async fn create_session(
     let services_extended: Vec<mac_mgmt_common::ServiceExtState> =
         serde_json::from_value(hb.services_extended.unwrap_or_default()).unwrap_or_default();
 
+    // Look up per-model token budget from the configured model list
+    let per_model_budget = if let (Some(provider), Some(model)) = (&body.provider, &body.model) {
+        let models = if crate::config::load().healer.models.is_empty() {
+            crate::config::default_healer_models()
+        } else {
+            crate::config::load().healer.models.clone()
+        };
+        models.iter()
+            .find(|m| m.provider == *provider && m.model == *model)
+            .and_then(|m| m.token_budget)
+    } else {
+        None
+    };
+
     let req = SpawnRequest {
         cluster_id,
         instance_id: body.instance_id,
@@ -140,6 +154,7 @@ pub async fn create_session(
         provider: body.provider,
         model: body.model,
         label: None,
+        token_budget: per_model_budget,
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {

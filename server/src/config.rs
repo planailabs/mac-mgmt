@@ -120,6 +120,12 @@ pub struct HealerConfig {
     /// The API key comes from the [anthropic] section.
     #[serde(default)]
     pub anthropic_model: Option<String>,
+    /// OpenRouter API key.
+    #[serde(default)]
+    pub openrouter_api_key: Option<String>,
+    /// OpenRouter model override (default: anthropic/claude-sonnet-4).
+    #[serde(default)]
+    pub openrouter_model: Option<String>,
     /// Max input+output tokens per cloud session before auto-pause. 0 = unlimited.
     #[serde(default = "default_token_budget")]
     pub token_budget: u64,
@@ -161,8 +167,12 @@ pub struct HealerModelEntry {
     pub name: String,
     /// Model identifier passed to the provider (e.g. "gemma4", "claude-sonnet-4-6").
     pub model: String,
-    /// Provider: "ollama" or "anthropic".
+    /// Provider: "ollama", "anthropic", or "openrouter".
     pub provider: String,
+    /// Per-model token budget override. If set, overrides the global `token_budget`
+    /// when this model is selected. 0 = unlimited.
+    #[serde(default)]
+    pub token_budget: Option<u64>,
 }
 
 /// Built-in default model list used when `[healer] models` is empty.
@@ -172,31 +182,55 @@ pub fn default_healer_models() -> Vec<HealerModelEntry> {
             name: "Gemma 4".into(),
             model: "gemma4".into(),
             provider: "ollama".into(),
+            token_budget: None,
         },
         HealerModelEntry {
             name: "Qwen 3".into(),
             model: "qwen3".into(),
             provider: "ollama".into(),
+            token_budget: None,
         },
         HealerModelEntry {
             name: "Llama 3.3".into(),
             model: "llama3.3".into(),
             provider: "ollama".into(),
+            token_budget: None,
         },
         HealerModelEntry {
             name: "Devstral".into(),
             model: "devstral".into(),
             provider: "ollama".into(),
+            token_budget: None,
         },
         HealerModelEntry {
             name: "Claude Sonnet 4.6".into(),
             model: "claude-sonnet-4-6".into(),
             provider: "anthropic".into(),
+            token_budget: Some(200_000),
         },
         HealerModelEntry {
             name: "Claude Haiku 4.5".into(),
             model: "claude-haiku-4-5-20251001".into(),
             provider: "anthropic".into(),
+            token_budget: Some(400_000),
+        },
+        HealerModelEntry {
+            name: "Claude Sonnet 4".into(),
+            model: "anthropic/claude-sonnet-4".into(),
+            provider: "openrouter".into(),
+            token_budget: Some(200_000),
+        },
+        HealerModelEntry {
+            name: "GPT-4.1".into(),
+            model: "openai/gpt-4.1".into(),
+            provider: "openrouter".into(),
+            token_budget: Some(200_000),
+        },
+        HealerModelEntry {
+            name: "Gemini 2.5 Pro".into(),
+            model: "google/gemini-2.5-pro-preview".into(),
+            provider: "openrouter".into(),
+            token_budget: Some(200_000),
         },
     ]
 }
@@ -214,6 +248,7 @@ impl HealerModelEntry {
             let suffix = match self.provider.as_str() {
                 "ollama" => "Ollama",
                 "anthropic" => "Anthropic",
+                "openrouter" => "OpenRouter",
                 other => other,
             };
             format!("{} ({})", self.name, suffix)

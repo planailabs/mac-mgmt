@@ -29,17 +29,20 @@ token = "xzar-api-token-here"
 # api_key = "sk-ant-xxx"
 
 # Healer agent: self-healing AI agent for diagnosing and fixing customer servers.
-# Tries local Ollama first, falls back to Anthropic (requires [anthropic] key).
+# Tries local Ollama first, falls back to Anthropic, then OpenRouter.
 # Sessions auto-resume on server restart.
 # [healer]
 # ollama_url = "http://localhost:11434"         # default
 # ollama_model = "gemma4"                        # default; must support tool use
 # anthropic_model = "claude-sonnet-4-6"         # default; used when Ollama is unavailable
-# token_budget = 200000                          # max tokens per cloud session before auto-pause (0 = unlimited)
+# openrouter_api_key = "sk-or-xxx"              # optional; enables OpenRouter as a cloud provider
+# openrouter_model = "anthropic/claude-sonnet-4" # default OpenRouter model
+# token_budget = 200000                          # global max tokens per cloud session (0 = unlimited)
 # context7_api_key = "c7-..."                   # optional; enables Context7 MCP for documentation lookup
 #
 # Models shown in the UI model picker. If omitted, built-in defaults are used.
-# Each entry has: name (display label), model (provider identifier), provider ("ollama" or "anthropic").
+# Each entry has: name (display label), model (provider identifier),
+# provider ("ollama", "anthropic", or "openrouter"), and optional token_budget override.
 # [[healer.models]]
 # name = "Gemma 4"
 # model = "gemma4"
@@ -48,9 +51,15 @@ token = "xzar-api-token-here"
 # name = "Claude Sonnet 4.6"
 # model = "claude-sonnet-4-6"
 # provider = "anthropic"
+# token_budget = 200000
+# [[healer.models]]
+# name = "GPT-4.1"
+# model = "openai/gpt-4.1"
+# provider = "openrouter"
+# token_budget = 200000
 #
 # Auto-trigger: automatically start healer sessions for persistently unhealthy instances.
 # auto_trigger = false                            # default: disabled
 # auto_trigger_threshold = 10                     # consecutive unhealthy heartbeats before triggering
-# auto_trigger_provider = "ollama"                # free local model by default; set to "anthropic" to use cloud
+# auto_trigger_provider = "ollama"                # free local model by default; set to "anthropic" or "openrouter"
 # auto_trigger_model = "qwen3:8b"                 # optional; uses provider default if omitted

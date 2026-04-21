@@ -270,5 +270,6 @@ async fn build_spawn_request(
         provider: Some(config.provider.clone()),
         model: config.model.clone(),
         label: Some("auto-triggered".to_string()),
+        token_budget: None,
     })
 }

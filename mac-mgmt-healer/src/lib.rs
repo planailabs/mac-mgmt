@@ -66,13 +66,15 @@ pub struct SpawnRequest {
     pub hostname: String,
     /// Skip the 1-hour cooldown (set when DEV_ONLY_NO_AUTH=1).
     pub skip_cooldown: bool,
-    /// Force a specific LLM provider ("ollama" or "anthropic").
-    /// If None, auto-detect (ollama first, anthropic fallback).
+    /// Force a specific LLM provider ("ollama", "anthropic", or "openrouter").
+    /// If None, auto-detect (ollama first, anthropic fallback, then openrouter).
     pub provider: Option<String>,
     /// Force a specific model name. If None, use the configured default.
     pub model: Option<String>,
     /// Initial label for the session (e.g. "auto-triggered").
     pub label: Option<String>,
+    /// Per-model token budget override. If set, overrides the global `token_budget`.
+    pub token_budget: Option<u64>,
 }
 
 impl HealerState {
@@ -180,9 +182,8 @@ impl HealerState {
         let pause_requested = Arc::new(AtomicBool::new(false));
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(
-            self.inner.connector_config.token_budget,
-        ));
+        let effective_budget = req.token_budget.unwrap_or(self.inner.connector_config.token_budget);
+        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(effective_budget));
         self.inner.running.insert(
             session_id,
             RunningSession {
@@ -414,6 +415,7 @@ impl HealerState {
             provider: sess.provider.clone(),
             model: sess.model.clone(),
             label: sess.label.clone(),
+            token_budget: None, // resume uses the budget from the running session state
         };
 
         let state = self.clone();
@@ -815,6 +817,9 @@ async fn run_agent_session(
             }
             connector::LlmProvider::Anthropic(a) => {
                 builder.llm(a);
+            }
+            connector::LlmProvider::OpenRouter(o) => {
+                builder.llm(o);
             }
         }
 
