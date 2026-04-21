@@ -12,6 +12,8 @@ pub mod daemon;
 pub mod events;
 #[cfg(feature = "relay")]
 pub mod file_tunnels;
+#[cfg(feature = "healer")]
+pub mod healer_bridge;
 pub mod host_keys;
 pub mod local_client;
 pub mod log_buffer;

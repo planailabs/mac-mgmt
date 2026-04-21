@@ -5,13 +5,14 @@ edition = "2024"
 
 [features]
 default = ["postgres"]
-postgres = ["dep:sqlx"]
+postgres = ["dep:sqlx", "sqlx?/postgres"]
+sqlite = ["dep:sqlx", "sqlx?/sqlite"]
 
 [dependencies]
 swiftide = { version = "0.32", features = ["ollama", "anthropic", "openai", "swiftide-agents", "mcp"] }
 rmcp = { version = "0.5", features = ["client", "transport-streamable-http-client", "reqwest"], default-features = false }
 schemars = { version = "1.2", features = ["derive"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"], optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "uuid", "chrono", "json"], optional = true }
 reqwest = { workspace = true }
 tokio = { version = "1", features = ["full", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec", "rt"] }

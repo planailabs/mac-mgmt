@@ -16,6 +16,7 @@ default = ["services", "relay"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:urlencoding"]
+healer = ["dep:mac-mgmt-healer", "services", "relay"]
 sim = []
 
 [dependencies]
@@ -60,3 +61,4 @@ sysinfo = { version = "0.33", default-features = false, features = ["system", "d
 regex = "1"
 which = { workspace = true }
 ramhorns = "1"
+mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, features = ["sqlite"], optional = true }

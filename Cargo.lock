@@ -5961,6 +5961,7 @@ dependencies = [
  "humantime",
  "libc",
  "mac-mgmt-common",
+ "mac-mgmt-healer",
  "mac-mgmt-services",
  "mac-mgmt-ws",
  "notify",
