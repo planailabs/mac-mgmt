@@ -441,6 +441,7 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str, model_filter
         initial_issues: serde_json::Value,
         provider: Option<String>,
         model: Option<String>,
+        label: Option<String>,
     }
 
     #[derive(sqlx::FromRow, serde::Serialize)]
@@ -457,7 +458,7 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str, model_filter
         sqlx::query_as(
             "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
                     created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model \
+                    provider, model, label \
              FROM healer_sessions WHERE model = $1 ORDER BY created_at ASC",
         )
         .bind(model)
@@ -468,7 +469,7 @@ async fn dump_healer_sessions(database_url: &str, output_dir: &str, model_filter
         sqlx::query_as(
             "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
                     created_at, updated_at, completed_at, error_message, initial_issues, \
-                    provider, model \
+                    provider, model, label \
              FROM healer_sessions ORDER BY created_at ASC",
         )
         .fetch_all(&pool)

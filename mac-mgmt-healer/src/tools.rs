@@ -430,6 +430,12 @@ struct StaffPingParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct NameSessionParams {
+    /// Short descriptive name for this session (max ~120 chars)
+    name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct SetPhaseParams {
     /// Phase to transition to: diagnosing, remediating, verifying, done, needs_human_attention
     phase: String,
@@ -516,6 +522,20 @@ healer_tool! {
         ).await {
             Ok(()) => Ok(ToolOutput::Text(format!("Phase set to: {}", params.phase))),
             Err(e) => Ok(ToolOutput::Text(format!("Error setting phase: {e}"))),
+        }
+    }
+}
+
+healer_tool! {
+    name: "name_session",
+    struct_name: NameSessionTool,
+    description: "Give this session a short, descriptive name summarizing what it is about. Call this early — once you understand the issue. Example: \"OOM crash in ollama\", \"GPU driver mismatch\", \"stale nix store\".",
+    params: NameSessionParams,
+    handler: |ctx, params| {
+        let label = params.name.chars().take(120).collect::<String>();
+        match crate::session::store::set_label(&ctx.pool, ctx.session_id, &label).await {
+            Ok(()) => Ok(ToolOutput::Text(format!("Session named: {label}"))),
+            Err(e) => Ok(ToolOutput::Text(format!("Error naming session: {e}"))),
         }
     }
 }
@@ -975,6 +995,7 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         PinTool::new(ctx.clone()),
         StaffPingTool::new(ctx.clone()),
         SetPhaseTool::new(ctx.clone()),
+        NameSessionTool::new(ctx.clone()),
         CheckNodeOnlineTool::new(ctx.clone()),
         WaitForNodeTool::new(ctx.clone()),
         GetProbeStatusTool::new(ctx.clone()),

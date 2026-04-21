@@ -269,5 +269,6 @@ async fn build_spawn_request(
         skip_cooldown: false,
         provider: Some(config.provider.clone()),
         model: config.model.clone(),
+        label: Some("auto-triggered".to_string()),
     })
 }

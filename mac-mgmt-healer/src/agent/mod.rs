@@ -109,6 +109,7 @@ pub fn build_system_prompt(
     prompt.push_str("  - `remediation` slot: pin your remediation plan before applying fixes\n");
     prompt.push_str("  - `final_report` slot: pin at the end summarizing what was done and any remaining issues\n");
     prompt.push_str("- `set_phase` — transition between phases: `diagnosing`, `remediating`, `verifying`, `done`, `needs_human_attention`\n");
+    prompt.push_str("- `name_session` — give this session a short descriptive name once you understand the issue (e.g. \"OOM crash in ollama\"). Call this early, during diagnosis.\n");
     prompt.push_str("- `staff_ping` — notify admins when you need human help or encounter something unexpected\n");
     prompt.push_str("- `check_node_online` — check if the target node is connected to the relay\n");
     prompt.push_str("- `wait_for_node` — wait for the node to reconnect (e.g. after a reboot)\n");

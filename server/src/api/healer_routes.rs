@@ -44,6 +44,8 @@ pub struct SessionSummary {
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,6 +139,7 @@ pub async fn create_session(
         skip_cooldown: false,
         provider: body.provider,
         model: body.model,
+        label: None,
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {
@@ -177,6 +180,7 @@ pub async fn list_sessions(
                 error_message: s.error_message,
                 provider: s.provider,
                 model: s.model,
+                label: s.label,
             })
             .collect(),
     ))
@@ -208,6 +212,7 @@ pub async fn get_session(
             error_message: session.error_message,
             provider: session.provider,
             model: session.model,
+            label: session.label,
         },
         messages: messages
             .into_iter()

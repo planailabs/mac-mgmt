@@ -71,6 +71,8 @@ pub struct SpawnRequest {
     pub provider: Option<String>,
     /// Force a specific model name. If None, use the configured default.
     pub model: Option<String>,
+    /// Initial label for the session (e.g. "auto-triggered").
+    pub label: Option<String>,
 }
 
 impl HealerState {
@@ -155,6 +157,7 @@ impl HealerState {
             &state_data,
             req.provider.as_deref(),
             req.model.as_deref(),
+            req.label.as_deref(),
         )
         .await
         .context("failed to create healer session")?;
@@ -410,6 +413,7 @@ impl HealerState {
             skip_cooldown: true, // resuming — cooldown doesn't apply
             provider: sess.provider.clone(),
             model: sess.model.clone(),
+            label: sess.label.clone(),
         };
 
         let state = self.clone();

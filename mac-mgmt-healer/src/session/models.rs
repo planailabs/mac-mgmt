@@ -106,6 +106,8 @@ pub struct HealerSession {
     pub provider: Option<String>,
     /// LLM model used for this session (e.g. "gemma4", "claude-sonnet-4-6").
     pub model: Option<String>,
+    /// Human-readable label for this session (set by the LLM or auto-trigger).
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

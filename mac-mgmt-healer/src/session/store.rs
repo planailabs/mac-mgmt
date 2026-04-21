@@ -15,10 +15,11 @@ pub async fn create_session(
     state_data: &serde_json::Value,
     provider: Option<&str>,
     model: Option<&str>,
+    label: Option<&str>,
 ) -> Result<Uuid> {
     let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO healer_sessions (cluster_id, instance_id, state, state_data, created_by, initial_issues, provider, model) \
-         VALUES ($1, $2, 'created', $3, $4, $5, $6, $7) \
+        "INSERT INTO healer_sessions (cluster_id, instance_id, state, state_data, created_by, initial_issues, provider, model, label) \
+         VALUES ($1, $2, 'created', $3, $4, $5, $6, $7, $8) \
          RETURNING id",
     )
     .bind(cluster_id)
@@ -28,9 +29,20 @@ pub async fn create_session(
     .bind(initial_issues)
     .bind(provider)
     .bind(model)
+    .bind(label)
     .fetch_one(pool)
     .await?;
     Ok(id)
+}
+
+/// Update the session label.
+pub async fn set_label(pool: &PgPool, session_id: Uuid, label: &str) -> Result<()> {
+    sqlx::query("UPDATE healer_sessions SET label = $1 WHERE id = $2")
+        .bind(label)
+        .bind(session_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Atomically transition a session to a new state.
@@ -106,7 +118,7 @@ pub async fn get_session(pool: &PgPool, session_id: Uuid) -> Result<Option<Heale
     let row = sqlx::query_as::<_, SessionRow>(
         "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
                 created_at, updated_at, completed_at, error_message, initial_issues, \
-                provider, model \
+                provider, model, label \
          FROM healer_sessions WHERE id = $1",
     )
     .bind(session_id)
@@ -120,7 +132,7 @@ pub async fn list_sessions(pool: &PgPool, cluster_id: Uuid) -> Result<Vec<Healer
     let rows = sqlx::query_as::<_, SessionRow>(
         "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
                 created_at, updated_at, completed_at, error_message, initial_issues, \
-                provider, model \
+                provider, model, label \
          FROM healer_sessions WHERE cluster_id = $1 \
          ORDER BY created_at DESC LIMIT 100",
     )
@@ -168,7 +180,7 @@ pub async fn find_resumable(pool: &PgPool) -> Result<Vec<HealerSession>> {
     let rows = sqlx::query_as::<_, SessionRow>(
         "SELECT id, cluster_id, instance_id, state, state_data, created_by, \
                 created_at, updated_at, completed_at, error_message, initial_issues, \
-                provider, model \
+                provider, model, label \
          FROM healer_sessions \
          WHERE state NOT IN ('completed', 'done', 'failed', 'cancelled', 'paused', 'needs_human_attention') \
          ORDER BY created_at ASC",
@@ -195,6 +207,7 @@ struct SessionRow {
     initial_issues: serde_json::Value,
     provider: Option<String>,
     model: Option<String>,
+    label: Option<String>,
 }
 
 impl From<SessionRow> for HealerSession {
@@ -213,6 +226,7 @@ impl From<SessionRow> for HealerSession {
             initial_issues: r.initial_issues,
             provider: r.provider,
             model: r.model,
+            label: r.label,
         }
     }
 }
