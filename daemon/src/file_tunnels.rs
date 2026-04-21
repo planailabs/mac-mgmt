@@ -10,7 +10,7 @@ use mac_mgmt_ws::tungstenite;
 use crate::managed_service::{FileTunnel, FileTunnelDef};
 
 /// Maximum file size for read/write operations (10 MB).
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+pub(crate) const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Chunk size for streaming file content over WebSocket (1 MB).
 const STREAM_CHUNK_SIZE: usize = 1024 * 1024;
@@ -59,7 +59,7 @@ impl FileTunnelRegistry {
 /// Resolve the requested path within a file tunnel, canonicalize it, and
 /// verify it falls within the tunnel's allowed root.
 #[cfg(feature = "services")]
-fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<PathBuf, String> {
     let root = PathBuf::from(tunnel.path());
 
     // Strip leading slashes — LLMs often hallucinate them in relative paths.
@@ -119,7 +119,7 @@ fn resolve_path(tunnel: &FileTunnel, relative_path: Option<&str>) -> Result<Path
 /// Returns `true` if `include` is `None` (all files allowed) or if the
 /// filename matches at least one pattern.
 #[cfg(feature = "services")]
-fn matches_include(tunnel: &FileTunnel, filename: &str) -> bool {
+pub(crate) fn matches_include(tunnel: &FileTunnel, filename: &str) -> bool {
     let FileTunnelDef::Folder { include, .. } = &tunnel.def else {
         return true;
     };
@@ -137,7 +137,7 @@ fn matches_include(tunnel: &FileTunnel, filename: &str) -> bool {
 }
 
 #[cfg(feature = "services")]
-fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
+pub(crate) fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
     let FileTunnelDef::Folder { allow_write, .. } = &tunnel.def else {
         return true;
     };
@@ -156,14 +156,14 @@ fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
 
 /// Matched validator with resolved command args.
 #[cfg(feature = "services")]
-struct MatchedValidator {
-    builtin: Option<String>,
-    command: Vec<String>,
+pub(crate) struct MatchedValidator {
+    pub(crate) builtin: Option<String>,
+    pub(crate) command: Vec<String>,
 }
 
 /// Find the first matching validator for a filename.
 #[cfg(feature = "services")]
-fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<MatchedValidator> {
+pub(crate) fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<MatchedValidator> {
     let FileTunnelDef::Folder { validators, .. } = &tunnel.def else {
         return None;
     };
@@ -188,7 +188,7 @@ fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<MatchedValida
 }
 
 /// Get the mtime of a file as a Unix timestamp (seconds).
-fn mtime_secs(path: &Path) -> Option<i64> {
+pub(crate) fn mtime_secs(path: &Path) -> Option<i64> {
     std::fs::metadata(path)
         .ok()
         .and_then(|m| m.modified().ok())
@@ -583,143 +583,4 @@ pub async fn handle_write_session(
         ))
         .await;
     let _ = sink.send(tungstenite::Message::Close(None)).await;
-}
-
-// ── Direct (non-WebSocket) operations ──────────────────────────────────
-
-/// Read a file directly (no WebSocket). Returns `(content_bytes, mtime)`.
-#[cfg(feature = "services")]
-pub fn read_file_direct(
-    tunnel: &FileTunnel,
-    rel_path: Option<&str>,
-) -> Result<(Vec<u8>, Option<i64>), (u16, String)> {
-    let path = resolve_path(tunnel, rel_path).map_err(|e| (400u16, e))?;
-
-    // Include filter check for directory tunnels
-    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) {
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if !matches_include(tunnel, filename) {
-            return Err((403, "file not included in tunnel filter".to_string()));
-        }
-    }
-
-    let meta =
-        std::fs::metadata(&path).map_err(|e| (404u16, format!("file not found: {e}")))?;
-    if !meta.is_file() {
-        return Err((400, "path is not a file".to_string()));
-    }
-
-    let mtime = mtime_secs(&path);
-    let content = std::fs::read(&path).map_err(|e| (500u16, format!("read failed: {e}")))?;
-
-    Ok((content, mtime))
-}
-
-/// Write a file directly (no WebSocket). Returns the new mtime on success.
-#[cfg(feature = "services")]
-pub fn write_file_direct(
-    tunnel: &FileTunnel,
-    rel_path: Option<&str>,
-    content: &[u8],
-    expected_mtime: Option<i64>,
-) -> Result<serde_json::Value, (u16, String)> {
-    if !tunnel.writable() {
-        return Err((403, "tunnel is read-only".to_string()));
-    }
-
-    let path = resolve_path(tunnel, rel_path).map_err(|e| (400u16, e))?;
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    if matches!(&tunnel.def, FileTunnelDef::Folder { .. }) && !matches_include(tunnel, filename) {
-        return Err((403, "file not included in tunnel filter".to_string()));
-    }
-    if !matches_allow_write(tunnel, filename) {
-        return Err((403, "file not allowed by write filter".to_string()));
-    }
-
-    // Content size check
-    if content.len() as u64 > MAX_FILE_SIZE {
-        return Err((413, "file too large".to_string()));
-    }
-
-    // Optimistic concurrency check
-    if let Some(expected) = expected_mtime {
-        if let Some(actual) = mtime_secs(&path) {
-            if actual != expected {
-                return Err((
-                    409,
-                    format!(
-                        "file modified since last read (expected mtime {expected}, actual {actual})"
-                    ),
-                ));
-            }
-        }
-    }
-
-    // Write to temp file, then atomic rename
-    let tmp_path = path.with_extension("tmp.file-tunnel");
-    std::fs::write(&tmp_path, content).map_err(|e| (500u16, format!("write failed: {e}")))?;
-
-    // Backup
-    let backup_path = path.with_extension("bak.file-tunnel");
-    let had_original = path.exists();
-    if had_original {
-        std::fs::copy(&path, &backup_path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp_path);
-            (500u16, format!("backup failed: {e}"))
-        })?;
-    }
-
-    // Atomic rename
-    if let Err(e) = std::fs::rename(&tmp_path, &path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err((500, format!("rename failed: {e}")));
-    }
-
-    // Validate (same logic as WS handler)
-    if let Some(validator) = find_validator(tunnel, &path) {
-        let rollback = || {
-            if had_original {
-                let _ = std::fs::rename(&backup_path, &path);
-            } else {
-                let _ = std::fs::remove_file(&path);
-            }
-        };
-
-        if let Some(name) = &validator.builtin {
-            if let Err(msg) = crate::managed_service::run_builtin_validator(name, &path) {
-                rollback();
-                return Err((422, format!("validation failed: {msg}")));
-            }
-        }
-
-        if !validator.command.is_empty() {
-            let result = std::process::Command::new(&validator.command[0])
-                .args(&validator.command[1..])
-                .output();
-            match result {
-                Ok(output) if !output.status.success() => {
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    rollback();
-                    return Err((422, format!("validation failed: {stderr}")));
-                }
-                Err(e) if validator.builtin.is_some() => {
-                    tracing::warn!(
-                        "validation command {:?} not available ({}), builtin passed — accepting write",
-                        validator.command[0],
-                        e
-                    );
-                }
-                Err(e) => {
-                    rollback();
-                    return Err((500, format!("validation command failed to run: {e}")));
-                }
-                Ok(_) => {}
-            }
-        }
-    }
-
-    let _ = std::fs::remove_file(&backup_path);
-    let new_mtime = mtime_secs(&path).unwrap_or(0);
-    Ok(serde_json::json!({ "status": 200, "mtime": new_mtime }))
 }
