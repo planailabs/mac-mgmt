@@ -6,7 +6,6 @@ edition = "2024"
 [features]
 default = ["postgres"]
 postgres = ["dep:sqlx", "sqlx?/postgres"]
-sqlite = ["dep:sqlx", "sqlx?/sqlite"]
 
 [dependencies]
 swiftide = { version = "0.32", features = ["ollama", "anthropic", "openai", "swiftide-agents", "mcp"] }

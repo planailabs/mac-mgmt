@@ -61,4 +61,4 @@ sysinfo = { version = "0.33", default-features = false, features = ["system", "d
 regex = "1"
 which = { workspace = true }
 ramhorns = "1"
-mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, features = ["sqlite"], optional = true }
+mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, optional = true }
