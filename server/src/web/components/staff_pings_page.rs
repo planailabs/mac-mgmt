@@ -184,7 +184,7 @@ pub fn StaffPings() -> Element {
 fn render_ping_card(ping: &StaffPingRow, pings: Signal<Vec<StaffPingRow>>) -> Element {
     let cat_badge = category_badge(&ping.category);
     let ping_id = ping.id.clone();
-    let session_url = format!("/fleet/{}/healer", ping.instance_id);
+    let session_url = format!("/fleet/{}/healer/{}", ping.instance_id, ping.session_id);
     let is_resolved = ping.resolved;
     let message = ping.message.clone();
     let category = ping.category.clone();
