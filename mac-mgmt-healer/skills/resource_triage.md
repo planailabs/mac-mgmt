@@ -22,10 +22,17 @@ Diagnose and address system resource issues (thermal, memory, disk, GPU).
 
 3. **Memory pressure**
    - High swap usage relative to total RAM indicates memory pressure.
+   - **Swap > 10 GB is critical** — functional probes will timeout at 60s because
+     model inference becomes extremely slow when paging to/from swap.
    - Check if the loaded model fits in available RAM/VRAM.
    - `run_command("ollama-ps")` to see loaded models and their memory usage.
    - If a model is too large, swap to a smaller one (use `ollama_model_swap` skill).
    - If multiple models are loaded, consider setting `OLLAMA_NUM_PARALLEL=1`.
+   - Consider increasing openclaw's `agents.defaults.timeoutSeconds` as a short-term
+     mitigation while addressing the root cause.
+   - Process count > 5000 combined with high swap indicates the system may be thrashing.
+   - `staff_ping(category: "hardware")` with swap usage, thermal state, and process
+     count — this typically requires human intervention to free resources.
 
 4. **Disk space**
    - `disk_free` below 5 GB is critical — model pulls will fail, logs may fill up.

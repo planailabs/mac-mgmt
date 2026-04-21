@@ -28,6 +28,14 @@ Diagnose and recover from service crashes, including crash loops and port confli
    - If available, run it to kill the stuck process, then wait for the supervisor to restart.
    - If not available, use `staff_ping(category: "service_crash")` to alert admins.
 
+   **Port conflict — openclaw gateway specific (EADDRINUSE on 18789)**:
+   - There is NO `openclaw gateway stop` shell command available to the healer.
+   - **Do NOT use `openclaw-doctor --fix`** — it tries to install as a systemd service
+     and fails with "Permission denied" on D-Bus, leaving the gateway in a worse state.
+   - **Do NOT use `service-restart openclaw`** — it calls doctor --fix internally.
+   - The safest approach is to escalate via `staff_ping(category: "service_crash")`.
+   - Sometimes the stuck process exits naturally. Check back with `fetch_logs` after a wait.
+
    **OOM / resource exhaustion**:
    - Check `get_system_sample` for high memory/swap usage.
    - Check if the model is too large for available RAM/VRAM.

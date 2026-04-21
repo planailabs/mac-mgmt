@@ -65,6 +65,13 @@ replacing for any reason.
   get the fresh mtime before retrying.
 - **Validator rejection**: openclaw config has a JSON schema validator. Don't add unknown
   fields (e.g. `"tools": true` is not a valid openclaw model field).
-- **smollm2:135m and smollm2:360m do NOT support tools** — don't use them when tool
-  calling is required.
+- **smollm2:135m and smollm2:360m do NOT support tools** — only smollm2:1.7b does.
+  All three have native context of only 8192, which is below OpenClaw's 16,000 minimum.
 - **OLLAMA_CONTEXT_LENGTH is global** — it affects all models, not just the one you're swapping.
+- **Updating cluster config via `patch_config` does NOT update openclaw.json** — you must
+  write both separately. `send_push("sync_config")` propagates daemon config, not
+  openclaw's own config file.
+- **ollama-pull can timeout on large models** — always verify with `ollama-list`
+  afterward. If the pull timed out, try a smaller variant or retry.
+- **ollama-env is a FILE tunnel** — read it with `read_file("ollama-env")` (no sub-path).
+  Using `read_file("ollama-env", "ollama-env")` will error.
