@@ -403,7 +403,7 @@ settings_tool! {
     struct_name: GetVersionInfoTool,
     description: "Get version information for the target instance: running daemon version and git commit from the heartbeat, plus available daemon versions from the server's version table.",
     handler: |ctx| {
-        match ctx.store.get_version_info(&ctx.instance_id).await {
+        match ctx.instance_data.get_version_info(&ctx.instance_id).await {
             Ok(info) => {
                 let mut out = String::new();
                 match &info.heartbeat {
@@ -444,7 +444,7 @@ settings_tool! {
     struct_name: GetHeartbeatTool,
     description: "Get the full heartbeat data for the target instance: version, hostname, services, tunnels, file tunnels, shell tunnels, sample, services_extended, relay info, and timing.",
     handler: |ctx| {
-        match ctx.store.get_heartbeat_json(&ctx.instance_id).await {
+        match ctx.instance_data.get_heartbeat_json(&ctx.instance_id).await {
             Ok(Some(json)) => {
                 Ok(ToolOutput::Text(serde_json::to_string_pretty(&json).unwrap_or_default()))
             }
@@ -461,7 +461,7 @@ settings_tool! {
     struct_name: GetClusterInstancesTool,
     description: "List all instances in the cluster with their status, version, hostname, and last heartbeat time.",
     handler: |ctx| {
-        match ctx.store.get_cluster_instances(ctx.cluster_id).await {
+        match ctx.instance_data.get_cluster_instances(ctx.cluster_id).await {
             Ok(rows) if rows.is_empty() => {
                 Ok(ToolOutput::Text("No instances found in this cluster.".to_string()))
             }
@@ -504,7 +504,7 @@ settings_tool! {
     struct_name: GetServiceStateTool,
     description: "Get detailed per-service state from the latest heartbeat: health, probe results, timing. Use this to decide whether to restart, wait, or escalate.",
     handler: |ctx| {
-        match ctx.store.get_service_state(&ctx.instance_id).await {
+        match ctx.instance_data.get_service_state(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age = (chrono::Utc::now() - r.reported_at).num_seconds();
                 let mut out = format!("Heartbeat age: {age}s\n\n");
@@ -530,8 +530,8 @@ settings_tool! {
     struct_name: NixCheckUpgradesTool,
     description: "Check which nix packages have available upgrades by running `nix-profile-list` on the target instance and comparing installed vs available. Returns the raw profile listing.",
     handler: |ctx| {
-        // Use the existing nix-profile-list shell command via the relay
-        match ctx.relay.shell_exec(&ctx.target_instance, "nix-profile-list", None).await {
+        // Use the existing nix-profile-list shell command via the instance access trait
+        match ctx.instance.shell_exec("nix-profile-list", None).await {
             Ok(output) => {
                 let mut text = String::new();
                 for line in &output.lines {

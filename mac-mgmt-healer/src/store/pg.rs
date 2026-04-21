@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::instance_data::InstanceDataSource;
 use crate::session::models::{HealerMessage, HealerSession, SessionState, StaffPing};
 use super::*;
 
@@ -439,59 +440,113 @@ impl HealerStore for PgHealerStore {
         .unwrap_or(false))
     }
 
-    // -- Proxy tokens -----------------------------------------------------
+    // -- Cluster settings -------------------------------------------------
 
-    async fn mint_proxy_token(
-        &self,
-        cluster_id: Uuid,
-        organization_id: Option<Uuid>,
-    ) -> Result<(String, DateTime<Utc>)> {
-        use rand::Rng;
-        use sha2::{Digest, Sha256};
-
-        let raw_token = hex::encode(rand::rng().random::<[u8; 32]>());
-        let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-        let expires_at = Utc::now() + chrono::Duration::hours(6);
-
-        sqlx::query(
-            "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at) \
-             VALUES ($1, $2, $3, 'healer', 'proxy', $4)",
+    async fn get_config(&self, cluster_id: Uuid) -> Result<Option<serde_json::Value>> {
+        Ok(sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT config_json FROM cluster_configs \
+             WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
         )
         .bind(cluster_id)
-        .bind(organization_id)
-        .bind(&hash)
-        .bind(expires_at)
-        .execute(&self.pool)
-        .await
-        .context("failed to mint proxy token")?;
-
-        Ok((raw_token, expires_at))
-    }
-
-    // -- Instance data ----------------------------------------------------
-
-    async fn get_relay_proxy_url(&self, instance_id: &str) -> Result<Option<String>> {
-        Ok(sqlx::query_scalar(
-            "SELECT relay_proxy_url FROM daemon_heartbeats \
-             WHERE instance_id = $1 AND relay_proxy_url IS NOT NULL AND relay_proxy_url != '' \
-             LIMIT 1",
-        )
-        .bind(instance_id)
         .fetch_optional(&self.pool)
         .await?)
     }
 
-    async fn has_recent_heartbeat(&self, instance_id: &str) -> Result<bool> {
-        Ok(sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM daemon_heartbeats \
-             WHERE instance_id = $1 AND reported_at > now() - interval '2 minutes')",
-        )
-        .bind(instance_id)
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or(false))
+    async fn save_config(&self, cluster_id: Uuid, config: &serde_json::Value) -> Result<()> {
+        sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
+            .bind(cluster_id)
+            .bind(config)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
+    async fn list_skills(&self, cluster_id: Uuid) -> Result<Vec<SkillEntry>> {
+        let rows = sqlx::query_as::<_, (Uuid, String, String)>(
+            "SELECT sc.id, s.slug, sc.channel \
+             FROM cluster_skills cs \
+             JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
+             JOIN skills s ON s.id = sc.skill_id \
+             WHERE cs.cluster_id = $1 \
+             ORDER BY s.slug, sc.channel",
+        )
+        .bind(cluster_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, slug, channel)| SkillEntry { id, slug, channel })
+            .collect())
+    }
+
+    async fn add_skill(&self, cluster_id: Uuid, skill_channel_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO cluster_skills (cluster_id, skill_channel_id) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(cluster_id)
+        .bind(skill_channel_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn remove_skill(&self, cluster_id: Uuid, skill_channel_id: Uuid) -> Result<bool> {
+        let r = sqlx::query(
+            "DELETE FROM cluster_skills WHERE cluster_id = $1 AND skill_channel_id = $2",
+        )
+        .bind(cluster_id)
+        .bind(skill_channel_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    async fn list_mcp_servers(&self, cluster_id: Uuid) -> Result<Vec<McpServerEntry>> {
+        let rows = sqlx::query_as::<_, (Uuid, String, String)>(
+            "SELECT m.id, m.slug, m.name \
+             FROM cluster_mcp_servers cms \
+             JOIN mcp_servers m ON m.id = cms.mcp_server_id \
+             WHERE cms.cluster_id = $1 \
+             ORDER BY m.slug",
+        )
+        .bind(cluster_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, slug, name)| McpServerEntry { id, slug, name })
+            .collect())
+    }
+
+    async fn add_mcp_server(&self, cluster_id: Uuid, mcp_server_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(cluster_id)
+        .bind(mcp_server_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn remove_mcp_server(&self, cluster_id: Uuid, mcp_server_id: Uuid) -> Result<bool> {
+        let r = sqlx::query(
+            "DELETE FROM cluster_mcp_servers WHERE cluster_id = $1 AND mcp_server_id = $2",
+        )
+        .bind(cluster_id)
+        .bind(mcp_server_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+}
+
+// ── Instance data (InstanceDataSource) ────────────────────────────────
+
+#[async_trait]
+impl InstanceDataSource for PgHealerStore {
     async fn get_probe_status(&self, instance_id: &str) -> Result<Option<ProbeStatus>> {
         #[derive(sqlx::FromRow)]
         struct Row {
@@ -726,105 +781,64 @@ impl HealerStore for PgHealerStore {
         }))
     }
 
-    // -- Cluster settings -------------------------------------------------
+    async fn has_recent_heartbeat(&self, instance_id: &str) -> Result<bool> {
+        PgHealerStore::has_recent_heartbeat(self, instance_id).await
+    }
 
-    async fn get_config(&self, cluster_id: Uuid) -> Result<Option<serde_json::Value>> {
-        Ok(sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT config_json FROM cluster_configs \
-             WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+    async fn get_relay_proxy_url(&self, instance_id: &str) -> Result<Option<String>> {
+        PgHealerStore::get_relay_proxy_url(self, instance_id).await
+    }
+}
+
+// ── Server-only helpers (not trait methods) ────────────────────────────
+
+impl PgHealerStore {
+    pub async fn mint_proxy_token(
+        &self,
+        cluster_id: Uuid,
+        organization_id: Option<Uuid>,
+    ) -> Result<(String, DateTime<Utc>)> {
+        use rand::Rng;
+        use sha2::{Digest, Sha256};
+
+        let raw_token = hex::encode(rand::rng().random::<[u8; 32]>());
+        let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+        let expires_at = Utc::now() + chrono::Duration::hours(6);
+
+        sqlx::query(
+            "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at) \
+             VALUES ($1, $2, $3, 'healer', 'proxy', $4)",
         )
         .bind(cluster_id)
+        .bind(organization_id)
+        .bind(&hash)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .context("failed to mint proxy token")?;
+
+        Ok((raw_token, expires_at))
+    }
+
+    pub async fn get_relay_proxy_url(&self, instance_id: &str) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT relay_proxy_url FROM daemon_heartbeats \
+             WHERE instance_id = $1 AND relay_proxy_url IS NOT NULL AND relay_proxy_url != '' \
+             LIMIT 1",
+        )
+        .bind(instance_id)
         .fetch_optional(&self.pool)
         .await?)
     }
 
-    async fn save_config(&self, cluster_id: Uuid, config: &serde_json::Value) -> Result<()> {
-        sqlx::query("INSERT INTO cluster_configs (cluster_id, config_json) VALUES ($1, $2)")
-            .bind(cluster_id)
-            .bind(config)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn list_skills(&self, cluster_id: Uuid) -> Result<Vec<SkillEntry>> {
-        let rows = sqlx::query_as::<_, (Uuid, String, String)>(
-            "SELECT sc.id, s.slug, sc.channel \
-             FROM cluster_skills cs \
-             JOIN skill_channels sc ON sc.id = cs.skill_channel_id \
-             JOIN skills s ON s.id = sc.skill_id \
-             WHERE cs.cluster_id = $1 \
-             ORDER BY s.slug, sc.channel",
+    pub async fn has_recent_heartbeat(&self, instance_id: &str) -> Result<bool> {
+        Ok(sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM daemon_heartbeats \
+             WHERE instance_id = $1 AND reported_at > now() - interval '2 minutes')",
         )
-        .bind(cluster_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(id, slug, channel)| SkillEntry { id, slug, channel })
-            .collect())
-    }
-
-    async fn add_skill(&self, cluster_id: Uuid, skill_channel_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO cluster_skills (cluster_id, skill_channel_id) VALUES ($1, $2) \
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(cluster_id)
-        .bind(skill_channel_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn remove_skill(&self, cluster_id: Uuid, skill_channel_id: Uuid) -> Result<bool> {
-        let r = sqlx::query(
-            "DELETE FROM cluster_skills WHERE cluster_id = $1 AND skill_channel_id = $2",
-        )
-        .bind(cluster_id)
-        .bind(skill_channel_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(r.rows_affected() > 0)
-    }
-
-    async fn list_mcp_servers(&self, cluster_id: Uuid) -> Result<Vec<McpServerEntry>> {
-        let rows = sqlx::query_as::<_, (Uuid, String, String)>(
-            "SELECT m.id, m.slug, m.name \
-             FROM cluster_mcp_servers cms \
-             JOIN mcp_servers m ON m.id = cms.mcp_server_id \
-             WHERE cms.cluster_id = $1 \
-             ORDER BY m.slug",
-        )
-        .bind(cluster_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(id, slug, name)| McpServerEntry { id, slug, name })
-            .collect())
-    }
-
-    async fn add_mcp_server(&self, cluster_id: Uuid, mcp_server_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO cluster_mcp_servers (cluster_id, mcp_server_id) VALUES ($1, $2) \
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(cluster_id)
-        .bind(mcp_server_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn remove_mcp_server(&self, cluster_id: Uuid, mcp_server_id: Uuid) -> Result<bool> {
-        let r = sqlx::query(
-            "DELETE FROM cluster_mcp_servers WHERE cluster_id = $1 AND mcp_server_id = $2",
-        )
-        .bind(cluster_id)
-        .bind(mcp_server_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(r.rows_affected() > 0)
+        .bind(instance_id)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(false))
     }
 }

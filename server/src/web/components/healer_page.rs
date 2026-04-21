@@ -307,6 +307,26 @@ pub async fn start_healer_session(
         .relay_proxy_url
         .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL"))?;
 
+    let pg_store = crate::server_state::pg_healer_store()?;
+    let (proxy_token, proxy_expires) = pg_store
+        .mint_proxy_token(hb.cluster_id, None)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let relay_client = std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
+    );
+    let instance_prefix: String = instance_id.chars().take(12).collect();
+    let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+            relay_client.clone(),
+            instance_prefix,
+        ),
+    );
+    let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
+    ));
+    let metrics_url = Some(format!("{}/metrics", relay_url));
+
     let cluster_name: String = sqlx::query_scalar("SELECT name FROM clusters WHERE id = $1")
         .bind(hb.cluster_id)
         .fetch_optional(&pool)
@@ -348,7 +368,9 @@ pub async fn start_healer_session(
         instance_id: instance_id.clone(),
         created_by: format!("web:{}", user.email),
         user_message,
-        relay_url,
+        instance_access,
+        cluster_access,
+        metrics_url,
         services_extended,
         sample: hb.sample,
         file_tunnels: hb.file_tunnels.unwrap_or_default(),
@@ -374,6 +396,7 @@ pub async fn start_healer_session(
                 None
             }
         },
+        proxy_expires: Some(proxy_expires),
     };
 
     let session_id = healer

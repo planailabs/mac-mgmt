@@ -1,5 +1,7 @@
 pub mod agent;
 pub mod connector;
+pub mod instance_access;
+pub mod instance_data;
 pub mod relay_client;
 pub mod session;
 pub mod settings_tools;
@@ -18,12 +20,37 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub use connector::ConnectorConfig;
+pub use instance_access::{
+    ClusterAccess, DynClusterAccess, DynInstanceAccess, FileReadResult, InstanceAccess,
+    ShellOutput,
+};
+pub use instance_data::{DynInstanceData, InstanceDataSource};
 pub use session::models::{HealerEvent, HealerMessage, HealerSession, SessionState};
 pub use store::{DynStore, HealerStore};
 
 use agent::InstanceInfo;
 use mac_mgmt_common::ServiceExtState;
 use swiftide::traits::ToolBox as _;
+
+// ── Session factory trait ──────────────────────────────────────────────
+
+/// Data returned by [`SessionFactory::build_access`] for a new or resumed session.
+pub struct SessionAccess {
+    pub instance: DynInstanceAccess,
+    pub cluster: Option<DynClusterAccess>,
+    pub metrics_url: Option<String>,
+    pub proxy_expires: Option<DateTime<Utc>>,
+}
+
+/// Factory that creates instance/cluster access handles for a healer session.
+///
+/// * **Server mode** — mints a proxy token, builds relay-based access.
+/// * **Daemon mode** — returns local access (no token needed).
+#[async_trait::async_trait]
+pub trait SessionFactory: Send + Sync + 'static {
+    /// Build instance access for a session (new or resumed).
+    async fn build_access(&self, session: &HealerSession) -> Result<SessionAccess>;
+}
 
 /// Shared state for the healer subsystem. Clone-friendly (inner Arc).
 #[derive(Clone)]
@@ -33,6 +60,8 @@ pub struct HealerState {
 
 struct HealerStateInner {
     store: DynStore,
+    instance_data: DynInstanceData,
+    session_factory: Arc<dyn SessionFactory>,
     connector_config: ConnectorConfig,
     running: DashMap<Uuid, RunningSession>,
     shutting_down: AtomicBool,
@@ -57,7 +86,10 @@ pub struct SpawnRequest {
     pub instance_id: String,
     pub created_by: String,
     pub user_message: Option<String>,
-    pub relay_url: String,
+    pub instance_access: DynInstanceAccess,
+    pub cluster_access: Option<DynClusterAccess>,
+    /// Optional metrics URL for the `get_metrics` tool (server mode only).
+    pub metrics_url: Option<String>,
     pub services_extended: Vec<ServiceExtState>,
     pub sample: Option<serde_json::Value>,
     pub file_tunnels: serde_json::Value,
@@ -76,13 +108,23 @@ pub struct SpawnRequest {
     pub label: Option<String>,
     /// Per-model token budget override. If set, overrides the global `token_budget`.
     pub token_budget: Option<u64>,
+    /// Optional proxy token expiry time. If set, the session will pause
+    /// when the token is about to expire (server mode only).
+    pub proxy_expires: Option<DateTime<Utc>>,
 }
 
 impl HealerState {
-    pub fn new(store: DynStore, connector_config: ConnectorConfig) -> Self {
+    pub fn new(
+        store: DynStore,
+        instance_data: DynInstanceData,
+        session_factory: Arc<dyn SessionFactory>,
+        connector_config: ConnectorConfig,
+    ) -> Self {
         Self {
             inner: Arc::new(HealerStateInner {
                 store,
+                instance_data,
+                session_factory,
                 connector_config,
                 running: DashMap::new(),
                 shutting_down: AtomicBool::new(false),
@@ -95,6 +137,11 @@ impl HealerState {
     /// Get the underlying store (for server-side direct access).
     pub fn store(&self) -> &DynStore {
         &self.inner.store
+    }
+
+    /// Get the instance data source.
+    pub fn instance_data(&self) -> &DynInstanceData {
+        &self.inner.instance_data
     }
 
     /// Set the push callback for sending SSE events to daemons.
@@ -125,7 +172,6 @@ impl HealerState {
             serde_json::to_value(&req.services_extended).unwrap_or_else(|_| json!([]));
 
         let state_data = json!({
-            "relay_url": req.relay_url,
             "instance_id": req.instance_id,
             "cluster_name": req.cluster_name,
             "hostname": req.hostname,
@@ -156,11 +202,7 @@ impl HealerState {
         )
         .await?;
 
-        // 4. Mint proxy token via internal PgPool
-        let (proxy_token, proxy_expires) =
-            self.inner.store.mint_proxy_token(req.cluster_id, None).await?;
-
-        // 5. Set up cancellation and event broadcasting
+        // 4. Set up cancellation and event broadcasting
         let cancel = CancellationToken::new();
         let pause_requested = Arc::new(AtomicBool::new(false));
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
@@ -178,7 +220,7 @@ impl HealerState {
             },
         );
 
-        // 6. Spawn the agent task
+        // 5. Spawn the agent task
         let state = self.clone();
         let connector_config = self.inner.connector_config.clone();
         tokio::spawn(async move {
@@ -186,8 +228,6 @@ impl HealerState {
                 &state,
                 session_id,
                 req,
-                proxy_token,
-                proxy_expires,
                 cancel.clone(),
                 pause_requested,
                 budget_limit,
@@ -297,26 +337,6 @@ impl HealerState {
         let messages = self.inner.store.get_messages(session_id).await?;
 
         // Extract context from state_data
-        let mut relay_url = sess.state_data["relay_url"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        // If relay_url is missing from state_data, try the current heartbeat
-        if relay_url.is_empty() {
-            relay_url = self.inner.store.get_relay_proxy_url(&sess.instance_id)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            if relay_url.is_empty() {
-                anyhow::bail!(
-                    "session {} has no relay_url and daemon has no relay_proxy_url — \
-                     cannot resume without relay connectivity",
-                    session_id
-                );
-            }
-            tracing::info!("relay_url missing from state_data, using heartbeat value: {relay_url}");
-        }
         let instance_id = sess.instance_id.clone();
         let cluster_name = sess.state_data["cluster_name"]
             .as_str()
@@ -330,9 +350,9 @@ impl HealerState {
         let shell_tunnels = sess.state_data["shell_tunnels"].clone();
         let sample = sess.state_data.get("sample").cloned();
 
-        // Mint fresh proxy token
-        let (proxy_token, proxy_expires) =
-            self.inner.store.mint_proxy_token(sess.cluster_id, None).await?;
+        // Build instance access via the session factory
+        let access = self.inner.session_factory.build_access(&sess).await
+            .context("failed to build instance access for resumed session")?;
 
         // Transition back to a running state
         let resume_state = match sess
@@ -377,7 +397,9 @@ impl HealerState {
             instance_id,
             created_by: sess.created_by,
             user_message: None,
-            relay_url,
+            instance_access: access.instance,
+            cluster_access: access.cluster,
+            metrics_url: access.metrics_url,
             services_extended: serde_json::from_value(sess.initial_issues.clone())
                 .unwrap_or_default(),
             sample,
@@ -391,6 +413,7 @@ impl HealerState {
             model: sess.model.clone(),
             label: sess.label.clone(),
             token_budget: None, // resume uses the budget from the running session state
+            proxy_expires: access.proxy_expires,
         };
 
         let state = self.clone();
@@ -402,8 +425,6 @@ impl HealerState {
                 &state,
                 session_id,
                 req,
-                proxy_token,
-                proxy_expires,
                 cancel,
                 pause_requested,
                 budget_limit,
@@ -553,9 +574,7 @@ impl HealerState {
 async fn run_agent_session(
     state: &HealerState,
     session_id: Uuid,
-    mut req: SpawnRequest,
-    proxy_token: String,
-    proxy_expires: DateTime<Utc>,
+    req: SpawnRequest,
     cancel: CancellationToken,
     pause_requested: Arc<AtomicBool>,
     budget_limit: Arc<std::sync::atomic::AtomicU64>,
@@ -582,42 +601,7 @@ async fn run_agent_session(
         .await
         .ok();
 
-    // 2. Build relay client (with event broadcasting for connectivity status)
-    //    If relay_url is empty, poll heartbeats until it appears (the daemon
-    //    may not have received its proxy_url from the relay yet).
-    if req.relay_url.is_empty() {
-        tracing::warn!("relay_url is empty, waiting for daemon to report one via heartbeat");
-        let _ = events_tx.send(session::HealerEvent::Status {
-            message: "Waiting for daemon to connect to relay...".to_string(),
-        });
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let url: Option<String> = store
-                .get_relay_proxy_url(&req.instance_id)
-                .await
-                .ok()
-                .flatten();
-            if let Some(url) = url {
-                tracing::info!("relay_url appeared: {url}");
-                req.relay_url = url;
-                break;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                anyhow::bail!(
-                    "daemon did not report a relay proxy URL within 2 minutes — \
-                     check that the relay has proxy_url configured"
-                );
-            }
-        }
-    }
-    let relay_client = Arc::new(
-        relay_client::RelayClient::new(req.relay_url.clone(), proxy_token)
-            .with_events(events_tx.clone())
-            .with_heartbeat_store(store.clone(), req.instance_id.clone()),
-    );
-
-    // 3. Extract tunnel names
+    // 2. Extract tunnel names
     let file_tunnel_names: Vec<String> = req
         .file_tunnels
         .as_array()
@@ -644,9 +628,11 @@ async fn run_agent_session(
         .map(|i| i.instance_prefix.clone())
         .collect();
 
-    // 4. Create native swiftide tools (no MCP transport needed)
+    // 3. Create native swiftide tools (no MCP transport needed)
     let tool_ctx = tools::ToolContext {
-        relay: relay_client,
+        instance: req.instance_access.clone(),
+        instance_data: state.inner.instance_data.clone(),
+        cluster: req.cluster_access.clone(),
         target_instance: req.instance_id.chars().take(12).collect(),
         cluster_instances: cluster_instance_prefixes,
         file_tunnels: file_tunnel_names.clone(),
@@ -659,11 +645,12 @@ async fn run_agent_session(
         instance_id: req.instance_id.clone(),
         push_fn: state.inner.push_fn.clone(),
         events_tx: events_tx.clone(),
+        metrics_url: req.metrics_url.clone(),
     };
     let healer_tools = tools::all_tools(tool_ctx.clone());
     let settings_tools = settings_tools::all_settings_tools(tool_ctx);
 
-    // 6. Build system prompt
+    // 4. Build system prompt
     let sample_summary = req
         .sample
         .as_ref()
@@ -691,7 +678,7 @@ async fn run_agent_session(
         resume_context,
     );
 
-    // 7. Transition to Diagnosing
+    // 5. Transition to Diagnosing
     let transition = |new_state: &SessionState, data: &serde_json::Value| {
         let store = store.clone();
         let events_tx = events_tx.clone();
@@ -708,7 +695,7 @@ async fn run_agent_session(
 
     transition(&SessionState::Diagnosing, &json!({})).await;
 
-    // 8. Build and run agent
+    // 6. Build and run agent
     let store_msg = store.clone();
     let events_tx_msg = events_tx.clone();
     let token_usage = llm.token_usage.clone();
@@ -716,6 +703,7 @@ async fn run_agent_session(
     // state is Clone (inner Arc) — we can pass it into closures for shutdown checks
     let store_hook = store.clone();
     let events_tx_hook = events_tx.clone();
+    let proxy_expires = req.proxy_expires;
 
     // Determine initial prompt
     let initial_prompt = if restored_history.is_some() {
@@ -975,18 +963,20 @@ async fn run_agent_session(
                         return Err(anyhow::anyhow!("session paused by user"));
                     }
 
-                    // 3. Check proxy token expiry
-                    if Utc::now() + chrono::Duration::minutes(30) > proxy_expires {
-                        let data = json!({"reason": "proxy_token_expiring"});
-                        store.transition_state(
-                            session_id,
-                            &SessionState::AwaitingRetry,
-                            &data,
-                        )
-                        .await
-                        .ok();
-                        session::emit_state_change(&events_tx, "awaiting_retry", &data);
-                        return Err(anyhow::anyhow!("proxy token expiring"));
+                    // 3. Check proxy token expiry (server mode only)
+                    if let Some(expires) = proxy_expires {
+                        if Utc::now() + chrono::Duration::minutes(30) > expires {
+                            let data = json!({"reason": "proxy_token_expiring"});
+                            store.transition_state(
+                                session_id,
+                                &SessionState::AwaitingRetry,
+                                &data,
+                            )
+                            .await
+                            .ok();
+                            session::emit_state_change(&events_tx, "awaiting_retry", &data);
+                            return Err(anyhow::anyhow!("proxy token expiring"));
+                        }
                     }
 
                     // 4. Check cloud token budget

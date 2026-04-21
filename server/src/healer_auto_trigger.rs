@@ -213,9 +213,31 @@ async fn build_spawn_request(
     .await?
     .ok_or_else(|| anyhow::anyhow!("instance not found"))?;
 
-    let relay_url = hb
-        .relay_proxy_url
-        .unwrap_or_default();
+    let relay_url = hb.relay_proxy_url.unwrap_or_default();
+
+    // Build relay access for the session
+    let pg_store = mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone());
+    let (proxy_token, proxy_expires) = pg_store
+        .mint_proxy_token(cluster_id, None)
+        .await?;
+    let relay_client = std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
+    );
+    let instance_prefix: String = instance_id.chars().take(12).collect();
+    let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+            relay_client.clone(),
+            instance_prefix,
+        ),
+    );
+    let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
+    ));
+    let metrics_url = if relay_url.is_empty() {
+        None
+    } else {
+        Some(format!("{}/metrics", relay_url))
+    };
 
     let cluster_name: String = sqlx::query_scalar("SELECT name FROM clusters WHERE id = $1")
         .bind(cluster_id)
@@ -258,7 +280,9 @@ async fn build_spawn_request(
         instance_id: instance_id.to_string(),
         created_by: "auto:unhealthy".to_string(),
         user_message: None,
-        relay_url,
+        instance_access,
+        cluster_access,
+        metrics_url,
         services_extended,
         sample: hb.sample,
         file_tunnels: hb.file_tunnels.unwrap_or_default(),
@@ -271,5 +295,6 @@ async fn build_spawn_request(
         model: config.model.clone(),
         label: Some("auto-triggered".to_string()),
         token_budget: None,
+        proxy_expires: Some(proxy_expires),
     })
 }

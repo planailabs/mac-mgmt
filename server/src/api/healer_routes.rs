@@ -71,6 +71,7 @@ pub async fn create_session(
     auth: SettingAuth,
     pool: &State<PgPool>,
     healer: &State<HealerState>,
+    pg_store: &State<std::sync::Arc<mac_mgmt_healer::store::pg::PgHealerStore>>,
     body: Json<CreateSessionBody>,
 ) -> Result<(Status, Json<SessionCreated>), Status> {
     let cluster_id = auth.cluster_id;
@@ -90,6 +91,25 @@ pub async fn create_session(
     .ok_or(Status::NotFound)?;
 
     let relay_url = hb.relay_proxy_url.ok_or(Status::BadRequest)?;
+
+    let (proxy_token, proxy_expires) = pg_store
+        .mint_proxy_token(cluster_id, None)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    let relay_client = std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
+    );
+    let instance_prefix: String = body.instance_id.chars().take(12).collect();
+    let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+            relay_client.clone(),
+            instance_prefix,
+        ),
+    );
+    let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
+        mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
+    ));
+    let metrics_url = Some(format!("{}/metrics", relay_url));
 
     // Get all instances in this cluster for cross-instance tools
     let cluster_instances: Vec<InstanceInfo> = sqlx::query_as::<_, InstanceRow>(
@@ -142,7 +162,9 @@ pub async fn create_session(
         instance_id: body.instance_id,
         created_by: format!("api:setting-token"),
         user_message: body.user_message,
-        relay_url,
+        instance_access,
+        cluster_access,
+        metrics_url,
         services_extended,
         sample: hb.sample,
         file_tunnels: hb.file_tunnels.unwrap_or_default(),
@@ -155,6 +177,7 @@ pub async fn create_session(
         model: body.model,
         label: None,
         token_budget: per_model_budget,
+        proxy_expires: Some(proxy_expires),
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {

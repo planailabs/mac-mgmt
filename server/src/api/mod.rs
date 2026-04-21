@@ -172,6 +172,7 @@ pub fn build_rocket(
     port: u16,
     push_channels: push::PushChannels,
     healer_state: mac_mgmt_healer::HealerState,
+    pg_healer_store: std::sync::Arc<mac_mgmt_healer::store::pg::PgHealerStore>,
 ) -> rocket::Rocket<rocket::Build> {
     let config = Config {
         port,
@@ -189,6 +190,7 @@ pub fn build_rocket(
         .manage(pool)
         .manage(push_channels)
         .manage(healer_state)
+        .manage(pg_healer_store)
         .mount(
             "/api",
             rocket::routes![

@@ -1,4 +1,4 @@
-//! Native swiftide tools wrapping the relay client.
+//! Native swiftide tools wrapping instance access traits.
 //! Registered directly on the agent — no MCP transport needed.
 
 use std::borrow::Cow;
@@ -10,15 +10,15 @@ use serde::Deserialize;
 use swiftide::chat_completion::{Tool, ToolCall, ToolOutput, ToolSpec, errors::ToolError};
 use swiftide::traits::AgentContext;
 
-use crate::relay_client::RelayClient;
-
 /// Callback for sending SSE push events to daemons.
 pub type PushFn = Arc<dyn Fn(uuid::Uuid, mac_mgmt_common::PushEvent) + Send + Sync>;
 
 /// Shared context for all healer tools.
 #[derive(Clone)]
 pub struct ToolContext {
-    pub relay: Arc<RelayClient>,
+    pub instance: crate::instance_access::DynInstanceAccess,
+    pub instance_data: crate::instance_data::DynInstanceData,
+    pub cluster: Option<crate::instance_access::DynClusterAccess>,
     pub target_instance: String,
     pub cluster_instances: Vec<String>,
     pub file_tunnels: Vec<String>,
@@ -33,6 +33,8 @@ pub struct ToolContext {
     pub push_fn: Option<PushFn>,
     /// Broadcast healer events (status messages, etc.) to the SSE stream.
     pub events_tx: tokio::sync::broadcast::Sender<crate::session::HealerEvent>,
+    /// Optional metrics URL for the get_metrics tool.
+    pub metrics_url: Option<String>,
 }
 
 macro_rules! healer_tool {
@@ -218,7 +220,7 @@ healer_tool! {
     description: "List files in a file tunnel directory on the target instance",
     params: ListFilesParams,
     handler: |ctx, params| {
-        match ctx.relay.file_list(&ctx.target_instance, &params.tunnel_name, params.path.as_deref()).await {
+        match ctx.instance.file_list(&params.tunnel_name, params.path.as_deref()).await {
             Ok(val) => Ok(ToolOutput::Text(serde_json::to_string_pretty(&val).unwrap_or_default())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
@@ -231,7 +233,7 @@ healer_tool! {
     description: "Read a configuration file from the target instance via a file tunnel",
     params: ReadFileParams,
     handler: |ctx, params| {
-        match ctx.relay.file_read(&ctx.target_instance, &params.tunnel_name, &params.path).await {
+        match ctx.instance.file_read(&params.tunnel_name, &params.path).await {
             Ok(result) => {
                 let text = String::from_utf8_lossy(&result.content);
                 let mut output = text.into_owned();
@@ -251,7 +253,7 @@ healer_tool! {
     description: "Write a configuration file to the target instance via a file tunnel. Include expected_mtime from a previous read to detect concurrent modifications.",
     params: WriteFileParams,
     handler: |ctx, params| {
-        match ctx.relay.file_write(&ctx.target_instance, &params.tunnel_name, &params.path, params.content.as_bytes(), params.expected_mtime).await {
+        match ctx.instance.file_write(&params.tunnel_name, &params.path, params.content.as_bytes(), params.expected_mtime).await {
             Ok(val) => Ok(ToolOutput::Text(serde_json::to_string_pretty(&val).unwrap_or_default())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
@@ -264,7 +266,7 @@ healer_tool! {
     description: "Execute a predefined shell command on the target instance. Returns stdout, stderr, and exit code.",
     params: RunCommandParams,
     handler: |ctx, params| {
-        match ctx.relay.shell_exec(&ctx.target_instance, &params.command_name, params.user_arg.as_deref()).await {
+        match ctx.instance.shell_exec(&params.command_name, params.user_arg.as_deref()).await {
             Ok(output) => {
                 let mut text = String::new();
                 for line in &output.lines {
@@ -289,7 +291,7 @@ healer_tool! {
     description: "Fetch recent logs from the target instance, optionally filtered by service name",
     params: FetchLogsParams,
     handler: |ctx, params| {
-        match ctx.relay.log_fetch(&ctx.target_instance, params.n.or(Some(200)), params.service.as_deref(), None).await {
+        match ctx.instance.log_fetch(params.n.or(Some(200)), params.service.as_deref(), None).await {
             Ok(val) => Ok(ToolOutput::Text(serde_json::to_string_pretty(&val).unwrap_or_default())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
@@ -363,13 +365,18 @@ healer_tool! {
     description: "Fetch logs from a different instance in the same cluster",
     params: ClusterLogsParams,
     handler: |ctx, params| {
+        let Some(cluster) = &ctx.cluster else {
+            return Ok(ToolOutput::Text("Cluster access not available in local mode.".to_string()));
+        };
         if !ctx.cluster_instances.contains(&params.instance_prefix) {
             return Ok(ToolOutput::Text(format!(
                 "Error: instance '{}' is not in this cluster. Available: {:?}",
                 params.instance_prefix, ctx.cluster_instances
             )));
         }
-        match ctx.relay.log_fetch(&params.instance_prefix, params.n.or(Some(200)), params.service.as_deref(), None).await {
+        let peer = cluster.instance_access(&params.instance_prefix).await
+            .map_err(|e| ToolError::execution_failed(anyhow::anyhow!("Failed to get peer access: {e}")))?;
+        match peer.log_fetch(params.n.or(Some(200)), params.service.as_deref(), None).await {
             Ok(val) => Ok(ToolOutput::Text(serde_json::to_string_pretty(&val).unwrap_or_default())),
             Err(e) => Ok(ToolOutput::Text(format!("Error: {e}"))),
         }
@@ -382,13 +389,18 @@ healer_tool! {
     description: "Run a shell command on a different instance in the same cluster",
     params: ClusterCommandParams,
     handler: |ctx, params| {
+        let Some(cluster) = &ctx.cluster else {
+            return Ok(ToolOutput::Text("Cluster access not available in local mode.".to_string()));
+        };
         if !ctx.cluster_instances.contains(&params.instance_prefix) {
             return Ok(ToolOutput::Text(format!(
                 "Error: instance '{}' is not in this cluster. Available: {:?}",
                 params.instance_prefix, ctx.cluster_instances
             )));
         }
-        match ctx.relay.shell_exec(&params.instance_prefix, &params.command_name, params.user_arg.as_deref()).await {
+        let peer = cluster.instance_access(&params.instance_prefix).await
+            .map_err(|e| ToolError::execution_failed(anyhow::anyhow!("Failed to get peer access: {e}")))?;
+        match peer.shell_exec(&params.command_name, params.user_arg.as_deref()).await {
             Ok(output) => {
                 let mut text = String::new();
                 for line in &output.lines {
@@ -545,11 +557,11 @@ healer_tool! {
     struct_name: CheckNodeOnlineTool,
     description: "Check if the target node is currently connected to the relay. Returns online/offline status.",
     handler: |ctx| {
-        let online = ctx.relay.is_daemon_online(&ctx.target_instance).await;
+        let online = ctx.instance.is_online().await;
         Ok(ToolOutput::Text(if online {
-            "Node is online and reachable through the relay.".to_string()
+            "Node is online and reachable.".to_string()
         } else {
-            "Node is OFFLINE — not connected to the relay.".to_string()
+            "Node is OFFLINE — not reachable.".to_string()
         }))
     }
 }
@@ -567,7 +579,7 @@ healer_tool! {
     description: "Wait for the target node to reconnect to the relay. Use this after a reboot or service restart that may cause the daemon to temporarily disconnect. Waits up to the specified time (default 5 minutes, max 10 minutes).",
     params: WaitForNodeParams,
     handler: |ctx, params| {
-        if ctx.relay.is_daemon_online(&ctx.target_instance).await {
+        if ctx.instance.is_online().await {
             return Ok(ToolOutput::Text("Node is already online.".to_string()));
         }
         let max = params.max_seconds.unwrap_or(300).min(600);
@@ -576,7 +588,7 @@ healer_tool! {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             elapsed += 5;
-            if ctx.relay.is_daemon_online(&ctx.target_instance).await {
+            if ctx.instance.is_online().await {
                 return Ok(ToolOutput::Text(format!("Node came back online after {elapsed}s.")));
             }
             if tokio::time::Instant::now() >= deadline {
@@ -593,7 +605,7 @@ healer_tool! {
     struct_name: GetProbeStatusTool,
     description: "Query the current health probe status for all services on the target instance. Returns fresh data from the latest heartbeat — use this after applying a fix to verify whether services recovered.",
     handler: |ctx| {
-        match ctx.store.get_probe_status(&ctx.instance_id).await {
+        match ctx.instance_data.get_probe_status(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age_secs = (chrono::Utc::now() - r.reported_at).num_seconds();
                 let services: Vec<serde_json::Value> = r
@@ -694,7 +706,7 @@ healer_tool! {
     struct_name: GetInventoryTool,
     description: "Query the latest hardware/software inventory for the target instance. Returns OS, CPU, memory, disks, GPUs, network interfaces, nix version, and security posture. Data is collected every ~6 hours.",
     handler: |ctx| {
-        match ctx.store.get_inventory(&ctx.instance_id).await {
+        match ctx.instance_data.get_inventory(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age = chrono::Utc::now() - r.collected_at;
                 let mut out = format!("Inventory (collected {}h ago):\n", age.num_hours());
@@ -714,7 +726,7 @@ healer_tool! {
     struct_name: GetSystemSampleTool,
     description: "Query the latest dynamic system sample (CPU load, memory, swap, disk free space, network I/O, process count, thermal state, GPU utilization). Updated with every heartbeat (~30s).",
     handler: |ctx| {
-        match ctx.store.get_system_sample(&ctx.instance_id).await {
+        match ctx.instance_data.get_system_sample(&ctx.instance_id).await {
             Ok(Some(r)) => {
                 let age_secs = (chrono::Utc::now() - r.reported_at).num_seconds();
                 match r.sample {
@@ -753,7 +765,7 @@ healer_tool! {
     handler: |ctx, params| {
         let limit = params.limit.unwrap_or(20).min(100);
 
-        match ctx.store.get_probe_history(&ctx.instance_id, params.service.as_deref(), limit).await {
+        match ctx.instance_data.get_probe_history(&ctx.instance_id, params.service.as_deref(), limit).await {
             Ok(rows) if rows.is_empty() => {
                 Ok(ToolOutput::Text("No probe results found.".to_string()))
             }
@@ -805,10 +817,12 @@ healer_tool! {
     description: "Fetch Prometheus metrics from the relay's federation endpoint. Returns metrics from all connected daemons (labelled with instance_id/hostname). Use the filter parameter to narrow output to specific metric names or labels.",
     params: MetricsQueryParams,
     handler: |ctx, params| {
-        let url = format!("{}/metrics", ctx.relay.relay_base_url());
-        let resp = ctx.relay.http_client()
-            .get(&url)
-            .bearer_auth(ctx.relay.proxy_token())
+        let Some(metrics_url) = &ctx.metrics_url else {
+            return Ok(ToolOutput::Text("Metrics not available in this mode.".to_string()));
+        };
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(metrics_url)
             .timeout(std::time::Duration::from_secs(15))
             .send()
             .await;
@@ -900,7 +914,10 @@ healer_tool! {
 
 /// Create all healer tools for a session.
 pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
-    vec![
+    let has_cluster = ctx.cluster.is_some();
+    let has_metrics = ctx.metrics_url.is_some();
+
+    let mut tools: Vec<Box<dyn Tool>> = vec![
         ListFilesTool::new(ctx.clone()),
         ReadFileTool::new(ctx.clone()),
         WriteFileTool::new(ctx.clone()),
@@ -908,22 +925,30 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         FetchLogsTool::new(ctx.clone()),
         ListFileTunnelsTool::new(ctx.clone()),
         ListShellCommandsTool::new(ctx.clone()),
-        FetchClusterLogsTool::new(ctx.clone()),
-        RunClusterCommandTool::new(ctx.clone()),
         PinTool::new(ctx.clone()),
         StaffPingTool::new(ctx.clone()),
         SetPhaseTool::new(ctx.clone()),
         NameSessionTool::new(ctx.clone()),
-        CheckNodeOnlineTool::new(ctx.clone()),
-        WaitForNodeTool::new(ctx.clone()),
         GetProbeStatusTool::new(ctx.clone()),
         GetInventoryTool::new(ctx.clone()),
         GetSystemSampleTool::new(ctx.clone()),
         GetProbeHistoryTool::new(ctx.clone()),
-        GetMetricsTool::new(ctx.clone()),
         ReadDocTool::new(ctx.clone()),
         ListDocsTool::new(ctx.clone()),
         UseSkillTool::new(ctx.clone()),
-        ListBuiltinSkillsTool::new(ctx),
-    ]
+        ListBuiltinSkillsTool::new(ctx.clone()),
+    ];
+
+    if has_cluster {
+        tools.push(FetchClusterLogsTool::new(ctx.clone()));
+        tools.push(RunClusterCommandTool::new(ctx.clone()));
+        tools.push(CheckNodeOnlineTool::new(ctx.clone()));
+        tools.push(WaitForNodeTool::new(ctx.clone()));
+    }
+
+    if has_metrics {
+        tools.push(GetMetricsTool::new(ctx));
+    }
+
+    tools
 }

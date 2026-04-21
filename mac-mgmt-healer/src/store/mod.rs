@@ -7,6 +7,9 @@
 #[cfg(feature = "postgres")]
 pub mod pg;
 
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
+
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -19,7 +22,7 @@ use crate::session::models::{HealerMessage, HealerSession, SessionState, StaffPi
 /// Type-erased store shared across the healer subsystem.
 pub type DynStore = Arc<dyn HealerStore>;
 
-// ── Trait ──────────────────────────────────────────────────────────────
+// ── Trait (session persistence only) ──────────────────────────────────
 
 #[async_trait]
 pub trait HealerStore: Send + Sync + 'static {
@@ -107,35 +110,6 @@ pub trait HealerStore: Send + Sync + 'static {
     async fn has_running_session(&self, instance_id: &str) -> Result<bool>;
     async fn has_recent_session(&self, instance_id: &str) -> Result<bool>;
 
-    // -- Proxy tokens -----------------------------------------------------
-
-    /// Mint a short-lived proxy token. Returns `(raw_token, expires_at)`.
-    async fn mint_proxy_token(
-        &self,
-        cluster_id: Uuid,
-        organization_id: Option<Uuid>,
-    ) -> Result<(String, DateTime<Utc>)>;
-
-    // -- Instance data (heartbeats, assessments, probes) ------------------
-
-    async fn get_relay_proxy_url(&self, instance_id: &str) -> Result<Option<String>>;
-    async fn has_recent_heartbeat(&self, instance_id: &str) -> Result<bool>;
-
-    async fn get_probe_status(&self, instance_id: &str) -> Result<Option<ProbeStatus>>;
-    async fn get_system_sample(&self, instance_id: &str) -> Result<Option<SystemSample>>;
-    async fn get_inventory(&self, instance_id: &str) -> Result<Option<Inventory>>;
-    async fn get_probe_history(
-        &self,
-        instance_id: &str,
-        service: Option<&str>,
-        limit: i64,
-    ) -> Result<Vec<ProbeHistoryEntry>>;
-
-    async fn get_heartbeat_json(&self, instance_id: &str) -> Result<Option<serde_json::Value>>;
-    async fn get_version_info(&self, instance_id: &str) -> Result<VersionInfo>;
-    async fn get_cluster_instances(&self, cluster_id: Uuid) -> Result<Vec<ClusterInstance>>;
-    async fn get_service_state(&self, instance_id: &str) -> Result<Option<ServiceState>>;
-
     // -- Cluster settings -------------------------------------------------
 
     async fn get_config(&self, cluster_id: Uuid) -> Result<Option<serde_json::Value>>;
@@ -151,6 +125,7 @@ pub trait HealerStore: Send + Sync + 'static {
 }
 
 // ── Data transfer types ────────────────────────────────────────────────
+// Shared between `HealerStore`, `InstanceDataSource`, and their impls.
 
 pub struct ProbeStatus {
     pub services_extended: Option<serde_json::Value>,

@@ -24,11 +24,13 @@ mod server_state {
     use crate::api::push::PushChannels;
     use mac_mgmt_healer::HealerState;
     use sqlx::PgPool;
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
 
     static POOL: OnceLock<PgPool> = OnceLock::new();
     static PUSH: OnceLock<PushChannels> = OnceLock::new();
     static HEALER: OnceLock<HealerState> = OnceLock::new();
+    static PG_HEALER_STORE: OnceLock<Arc<mac_mgmt_healer::store::pg::PgHealerStore>> =
+        OnceLock::new();
 
     pub fn set_pool(pool: PgPool) {
         POOL.set(pool).expect("pool already initialized");
@@ -41,6 +43,10 @@ mod server_state {
 
     pub fn set_healer_state(state: HealerState) {
         let _ = HEALER.set(state);
+    }
+
+    pub fn set_pg_healer_store(store: Arc<mac_mgmt_healer::store::pg::PgHealerStore>) {
+        let _ = PG_HEALER_STORE.set(store);
     }
 
     pub fn server_pool() -> Result<PgPool, dioxus::prelude::ServerFnError> {
@@ -58,6 +64,15 @@ mod server_state {
     pub fn healer_state() -> Option<HealerState> {
         HEALER.get().cloned()
     }
+
+    pub fn pg_healer_store(
+    ) -> Result<Arc<mac_mgmt_healer::store::pg::PgHealerStore>, dioxus::prelude::ServerFnError>
+    {
+        PG_HEALER_STORE
+            .get()
+            .cloned()
+            .ok_or_else(|| dioxus::prelude::ServerFnError::new("healer store not initialized"))
+    }
 }
 
 #[cfg(all(feature = "server", feature = "webui"))]
@@ -68,6 +83,54 @@ pub fn server_pool() -> Result<sqlx::PgPool, dioxus::prelude::ServerFnError> {
 #[cfg(all(feature = "server", feature = "webui"))]
 pub fn push_channels() -> Result<crate::api::push::PushChannels, dioxus::prelude::ServerFnError> {
     server_state::push_channels()
+}
+
+/// Factory that builds relay-based access for healer sessions (server mode).
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+struct ServerSessionFactory {
+    pg_store: std::sync::Arc<mac_mgmt_healer::store::pg::PgHealerStore>,
+}
+
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+#[async_trait::async_trait]
+impl mac_mgmt_healer::SessionFactory for ServerSessionFactory {
+    async fn build_access(
+        &self,
+        session: &mac_mgmt_healer::HealerSession,
+    ) -> anyhow::Result<mac_mgmt_healer::SessionAccess> {
+        let relay_url = self
+            .pg_store
+            .get_relay_proxy_url(&session.instance_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("no relay URL for instance {}", session.instance_id))?;
+
+        let (proxy_token, proxy_expires) = self
+            .pg_store
+            .mint_proxy_token(session.cluster_id, None)
+            .await?;
+
+        let relay_client = std::sync::Arc::new(
+            mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),
+        );
+
+        let instance_prefix: String = session.instance_id.chars().take(12).collect();
+        let instance_access: mac_mgmt_healer::DynInstanceAccess = std::sync::Arc::new(
+            mac_mgmt_healer::relay_client::RelayInstanceAccess::new(
+                relay_client.clone(),
+                instance_prefix,
+            ),
+        );
+        let cluster_access: Option<mac_mgmt_healer::DynClusterAccess> = Some(std::sync::Arc::new(
+            mac_mgmt_healer::relay_client::RelayClusterAccess::new(relay_client),
+        ));
+
+        Ok(mac_mgmt_healer::SessionAccess {
+            instance: instance_access,
+            cluster: cluster_access,
+            metrics_url: Some(format!("{}/metrics", relay_url)),
+            proxy_expires: Some(proxy_expires),
+        })
+    }
 }
 
 #[cfg(any(feature = "server", feature = "server-api-only"))]
@@ -135,10 +198,21 @@ async fn init_server() -> (
         token_budget: cfg.healer.token_budget,
         context7_api_key: cfg.healer.context7_api_key.clone(),
     };
-    let healer_store: mac_mgmt_healer::DynStore = std::sync::Arc::new(
+    let pg_healer_store = std::sync::Arc::new(
         mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone()),
     );
-    let mut healer_state = mac_mgmt_healer::HealerState::new(healer_store, healer_connector);
+    let healer_store: mac_mgmt_healer::DynStore = pg_healer_store.clone();
+    let healer_instance_data: mac_mgmt_healer::DynInstanceData = pg_healer_store.clone();
+    let session_factory: std::sync::Arc<dyn mac_mgmt_healer::SessionFactory> =
+        std::sync::Arc::new(ServerSessionFactory {
+            pg_store: pg_healer_store.clone(),
+        });
+    let mut healer_state = mac_mgmt_healer::HealerState::new(
+        healer_store,
+        healer_instance_data,
+        session_factory,
+        healer_connector,
+    );
 
     // Wire push callback so healer tools can send SSE events to daemons
     {
@@ -152,7 +226,10 @@ async fn init_server() -> (
     }
 
     #[cfg(feature = "webui")]
-    server_state::set_healer_state(healer_state.clone());
+    {
+        server_state::set_healer_state(healer_state.clone());
+        server_state::set_pg_healer_store(pg_healer_store.clone());
+    }
 
     // Resume healer sessions interrupted by a previous shutdown
     {
@@ -188,6 +265,7 @@ async fn init_server() -> (
         cfg.api.port,
         push_channels,
         healer_state.clone(),
+        pg_healer_store,
     )
     .ignite()
     .await

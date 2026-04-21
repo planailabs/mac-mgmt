@@ -1,11 +1,12 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use tokio::sync::broadcast;
 
+use crate::instance_access::{FileReadResult, ShellLine, ShellOutput};
+use crate::instance_data::DynInstanceData;
 use crate::session::HealerEvent;
-use crate::store::DynStore;
 
 const DAEMON_RECONNECT_TIMEOUT: Duration = Duration::from_secs(600);
 const DAEMON_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -24,26 +25,8 @@ pub struct RelayClient {
     relay_url: String,
     proxy_token: String,
     events_tx: Option<broadcast::Sender<HealerEvent>>,
-    /// Store + full instance_id for heartbeat-based fallback checks.
-    heartbeat_ctx: Option<(DynStore, String)>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ShellOutput {
-    pub lines: Vec<ShellLine>,
-    pub exit_code: Option<i32>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ShellLine {
-    pub stream: String,
-    pub data: String,
-}
-
-pub struct FileReadResult {
-    pub content: Vec<u8>,
-    pub mtime: Option<i64>,
+    /// Instance data source + full instance_id for heartbeat-based fallback checks.
+    heartbeat_ctx: Option<(DynInstanceData, String)>,
 }
 
 impl RelayClient {
@@ -67,9 +50,9 @@ impl RelayClient {
         self
     }
 
-    /// Attach a store + instance_id for heartbeat-based connectivity fallback.
-    pub fn with_heartbeat_store(mut self, store: DynStore, instance_id: String) -> Self {
-        self.heartbeat_ctx = Some((store, instance_id));
+    /// Attach an instance data source + instance_id for heartbeat-based connectivity fallback.
+    pub fn with_heartbeat_ctx(mut self, data: DynInstanceData, instance_id: String) -> Self {
+        self.heartbeat_ctx = Some((data, instance_id));
         self
     }
 
@@ -155,18 +138,18 @@ impl RelayClient {
     /// Check if we've received a recent heartbeat (within 2 minutes).
     /// The daemon may be alive and heartbeating to the server even when
     /// its relay WS connection is down.
-    async fn check_recent_heartbeat(&self, store: &dyn crate::store::HealerStore, instance_id: &str) -> bool {
-        store.has_recent_heartbeat(instance_id).await.unwrap_or(false)
+    async fn check_recent_heartbeat(&self, data: &dyn crate::instance_data::InstanceDataSource, instance_id: &str) -> bool {
+        data.has_recent_heartbeat(instance_id).await.unwrap_or(false)
     }
 
     /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
-    /// If `store` and `instance_id` are provided, also checks heartbeat
+    /// If instance data + instance_id are provided, also checks heartbeat
     /// freshness — a daemon that's sending heartbeats but not connected
     /// to the relay gets a shorter wait and a more helpful status message.
     pub async fn wait_for_daemon_with_heartbeat(
         &self,
         instance_prefix: &str,
-        store: Option<&dyn crate::store::HealerStore>,
+        data: Option<&dyn crate::instance_data::InstanceDataSource>,
         instance_id: Option<&str>,
     ) -> Result<()> {
         let deadline = tokio::time::Instant::now() + DAEMON_RECONNECT_TIMEOUT;
@@ -193,8 +176,8 @@ impl RelayClient {
             }
 
             // Check heartbeat as secondary signal
-            let heartbeat_alive = match (store, instance_id) {
-                (Some(s), Some(iid)) => self.check_recent_heartbeat(s, iid).await,
+            let heartbeat_alive = match (data, instance_id) {
+                (Some(d), Some(iid)) => self.check_recent_heartbeat(d, iid).await,
                 _ => false,
             };
 
@@ -238,11 +221,12 @@ impl RelayClient {
     /// Wait for the daemon to reconnect to the relay (up to 10 minutes).
     /// Automatically uses heartbeat context if configured.
     pub async fn wait_for_daemon(&self, instance_prefix: &str) -> Result<()> {
-        let (store, iid): (Option<&dyn crate::store::HealerStore>, _) = match &self.heartbeat_ctx {
-            Some((s, i)) => (Some(s.as_ref()), Some(i.as_str())),
-            None => (None, None),
-        };
-        self.wait_for_daemon_with_heartbeat(instance_prefix, store, iid)
+        let (data, iid): (Option<&dyn crate::instance_data::InstanceDataSource>, _) =
+            match &self.heartbeat_ctx {
+                Some((d, i)) => (Some(d.as_ref()), Some(i.as_str())),
+                None => (None, None),
+            };
+        self.wait_for_daemon_with_heartbeat(instance_prefix, data, iid)
             .await
     }
 
@@ -522,5 +506,116 @@ fn is_connection_error(e: &reqwest::Error) -> bool {
         msg.contains("connection refused")
             || msg.contains("connection reset")
             || msg.contains("broken pipe")
+    }
+}
+
+// ── InstanceAccess adapter ─────────────────────────────────────────────
+
+/// [`InstanceAccess`] implementation that routes through a relay proxy.
+/// The `instance_prefix` is baked in at construction.
+pub struct RelayInstanceAccess {
+    relay: Arc<RelayClient>,
+    instance_prefix: String,
+}
+
+impl RelayInstanceAccess {
+    pub fn new(relay: Arc<RelayClient>, instance_prefix: String) -> Self {
+        Self {
+            relay,
+            instance_prefix,
+        }
+    }
+
+    /// Access the underlying relay client (e.g. for metrics endpoint).
+    pub fn relay(&self) -> &RelayClient {
+        &self.relay
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::instance_access::InstanceAccess for RelayInstanceAccess {
+    async fn file_list(
+        &self,
+        tunnel_name: &str,
+        path: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        self.relay
+            .file_list(&self.instance_prefix, tunnel_name, path)
+            .await
+    }
+
+    async fn file_read(
+        &self,
+        tunnel_name: &str,
+        path: &str,
+    ) -> Result<FileReadResult> {
+        self.relay
+            .file_read(&self.instance_prefix, tunnel_name, path)
+            .await
+    }
+
+    async fn file_write(
+        &self,
+        tunnel_name: &str,
+        path: &str,
+        content: &[u8],
+        expected_mtime: Option<i64>,
+    ) -> Result<serde_json::Value> {
+        self.relay
+            .file_write(&self.instance_prefix, tunnel_name, path, content, expected_mtime)
+            .await
+    }
+
+    async fn shell_exec(
+        &self,
+        command_name: &str,
+        user_arg: Option<&str>,
+    ) -> Result<ShellOutput> {
+        self.relay
+            .shell_exec(&self.instance_prefix, command_name, user_arg)
+            .await
+    }
+
+    async fn log_fetch(
+        &self,
+        n: Option<usize>,
+        service: Option<&str>,
+        after: Option<usize>,
+    ) -> Result<serde_json::Value> {
+        self.relay
+            .log_fetch(&self.instance_prefix, n, service, after)
+            .await
+    }
+
+    async fn is_online(&self) -> bool {
+        self.relay.is_daemon_online(&self.instance_prefix).await
+    }
+
+    async fn wait_until_online(&self, _max_secs: u64) -> Result<()> {
+        self.relay.wait_for_daemon(&self.instance_prefix).await
+    }
+}
+
+/// [`ClusterAccess`] implementation that creates [`RelayInstanceAccess`] for peer nodes.
+pub struct RelayClusterAccess {
+    relay: Arc<RelayClient>,
+}
+
+impl RelayClusterAccess {
+    pub fn new(relay: Arc<RelayClient>) -> Self {
+        Self { relay }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::instance_access::ClusterAccess for RelayClusterAccess {
+    async fn instance_access(
+        &self,
+        instance_prefix: &str,
+    ) -> Result<crate::instance_access::DynInstanceAccess> {
+        Ok(Arc::new(RelayInstanceAccess::new(
+            self.relay.clone(),
+            instance_prefix.to_string(),
+        )))
     }
 }
