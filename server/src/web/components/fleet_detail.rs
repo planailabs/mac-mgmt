@@ -246,10 +246,10 @@ fn render_detail(d: &FleetDetailData) -> Element {
         .as_ref()
         .map(build_inventory_rows)
         .unwrap_or_default();
-    let security_rows = d
+    let (security_badges, security_rows) = d
         .security
         .as_ref()
-        .map(build_security_rows)
+        .map(build_security_data)
         .unwrap_or_default();
     let disks = d
         .sample
@@ -735,9 +735,17 @@ fn render_detail(d: &FleetDetailData) -> Element {
         // ── Security posture ──
         h3 { class: "text-lg font-semibold mb-2", "Security posture" }
         div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-            if security_rows.is_empty() {
+            if security_rows.is_empty() && security_badges.is_empty() {
                 p { class: "text-sm text-gray-500 dark:text-gray-400",
                     "No posture data yet."
+                }
+            } else if !security_badges.is_empty() {
+                div { class: "flex flex-wrap gap-2",
+                    for (msg, badge_cls) in security_badges.iter() {
+                        span { class: "px-2 py-0.5 rounded text-xs font-mono {badge_cls}",
+                            "{msg}"
+                        }
+                    }
                 }
             } else {
                 KvGrid { rows: security_rows }
@@ -848,18 +856,39 @@ fn build_inventory_rows(v: &serde_json::Value) -> Vec<(String, String)> {
     rows
 }
 
-fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
+/// Returns (badges, legacy_rows). Badges are used for the new SecurityFinding
+/// array format; legacy_rows for the old flat-field SecurityPosture format.
+fn build_security_data(
+    v: &serde_json::Value,
+) -> (Vec<(String, String)>, Vec<(String, String)>) {
     // New format: Vec<SecurityFinding> (array of {id, severity, message, pass})
     if let Some(arr) = v.as_array() {
-        return arr
+        let badges = arr
             .iter()
             .filter_map(|f| {
-                let msg = f.get("message")?.as_str()?;
+                let msg = f.get("message")?.as_str()?.to_string();
                 let pass = f.get("pass")?.as_bool()?;
-                let prefix = if pass { "pass" } else { "FAIL" };
-                Some((format!("{prefix}: {msg}"), String::new()))
+                let severity = f
+                    .get("severity")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("info");
+                let cls = if pass {
+                    "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
+                } else {
+                    match severity {
+                        "critical" | "high" => {
+                            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
+                        }
+                        "medium" => {
+                            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200"
+                        }
+                        _ => "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                    }
+                };
+                Some((msg, cls.to_string()))
             })
             .collect();
+        return (badges, Vec::new());
     }
 
     // Legacy format: SecurityPosture struct ({sip_enabled: bool, ...})
@@ -897,7 +926,7 @@ fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
         };
         rows.push((label, n.to_string()));
     }
-    rows
+    (Vec::new(), rows)
 }
 
 /// Render per-service inventory, samples, and security findings.
