@@ -16,7 +16,7 @@ hex = "0.4"
 mac-mgmt-common = { path = "../common", features = ["observability"] }
 mustache = "0.9"
 rand = "0.8"
-reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
+reqwest = { workspace = true }
 rocket = { version = "0.5", default-features = false, features = ["json"] }
 sentry = { workspace = true, features = ["anyhow"] }
 serde = { version = "1", features = ["derive"] }

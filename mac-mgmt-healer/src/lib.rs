@@ -776,6 +776,21 @@ async fn run_agent_session(
                 swiftide::chat_completion::ChatMessage::Summary(s) => {
                     Some(("summary".to_string(), s.clone()))
                 }
+                swiftide::chat_completion::ChatMessage::UserWithParts(parts) => {
+                    let content = parts
+                        .iter()
+                        .filter_map(|p| {
+                            if let swiftide::chat_completion::ChatMessageContentPart::Text { text } = p {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Some(("user".to_string(), content))
+                }
+                swiftide::chat_completion::ChatMessage::Reasoning(_) => None,
             }
         }
 
@@ -1081,9 +1096,9 @@ async fn connect_context7(
     api_key: &str,
 ) -> Result<swiftide::agents::tools::mcp::McpToolbox> {
     let url = format!("https://mcp.context7.com/mcp?api_key={api_key}");
-    let worker = rmcp::transport::streamable_http_client::StreamableHttpClientWorker::<reqwest::Client>::new_simple(url);
+    let transport = rmcp::transport::StreamableHttpClientTransport::<reqwest::Client>::from_uri(url);
     let mut toolbox =
-        swiftide::agents::tools::mcp::McpToolbox::try_from_transport(worker)
+        swiftide::agents::tools::mcp::McpToolbox::try_from_transport(transport)
             .await
             .context("Context7 MCP handshake failed")?;
     toolbox.with_name("Context7");

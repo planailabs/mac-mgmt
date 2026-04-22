@@ -23,4 +23,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mac-mgmt-daemon = { path = "../daemon", package = "mac-mgmt", default-features = false, features = ["sim", "services", "relay"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
