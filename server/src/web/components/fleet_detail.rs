@@ -956,18 +956,20 @@ fn render_per_service_sections(d: &FleetDetailData) -> Element {
     }
 }
 
-/// Render a list of InventoryEntry values as a key-value grid.
+/// Render a list of InventoryEntry values as a key-value grid (dl/dt/dd).
 fn render_inventory_entries(entries: &[&serde_json::Value]) -> Element {
     rsx! {
-        div { class: "grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm",
+        dl { class: "grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2",
             for entry in entries.iter() {
                 {
                     let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("?").to_string();
                     let value = entry.get("value").cloned().unwrap_or(serde_json::Value::Null);
                     let display = format_inventory_value(&value);
                     rsx! {
-                        span { class: "text-gray-500 dark:text-gray-400", "{name}" }
-                        span { class: "text-gray-900 dark:text-gray-100 font-mono text-xs", "{display}" }
+                        div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
+                            dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{name}" }
+                            dd { class: "text-right font-mono text-xs text-gray-800 dark:text-gray-200 break-all", "{display}" }
+                        }
                     }
                 }
             }
@@ -975,28 +977,29 @@ fn render_inventory_entries(entries: &[&serde_json::Value]) -> Element {
     }
 }
 
-/// Render security findings as a list of pass/fail items.
+/// Render security findings as key-value rows (dl/dt/dd).
 fn render_security_findings(findings: &[&serde_json::Value]) -> Element {
     rsx! {
-        div { class: "space-y-1",
+        dl { class: "grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2",
             for finding in findings.iter() {
                 {
                     let msg = finding.get("message").and_then(|m| m.as_str()).unwrap_or("?").to_string();
                     let pass = finding.get("pass").and_then(|p| p.as_bool()).unwrap_or(false);
                     let severity = finding.get("severity").and_then(|s| s.as_str()).unwrap_or("info").to_string();
-                    let (icon, cls) = if pass {
-                        ("pass", "text-green-700 dark:text-green-400")
+                    let cls = if pass {
+                        "text-green-700 dark:text-green-400"
                     } else {
                         match severity.as_str() {
-                            "critical" | "high" => ("FAIL", "text-red-700 dark:text-red-400 font-semibold"),
-                            "medium" => ("WARN", "text-yellow-700 dark:text-yellow-400"),
-                            _ => ("info", "text-gray-600 dark:text-gray-400"),
+                            "critical" | "high" => "text-red-700 dark:text-red-400 font-semibold",
+                            "medium" => "text-yellow-700 dark:text-yellow-400",
+                            _ => "text-gray-600 dark:text-gray-400",
                         }
                     };
+                    let status = if pass { "pass" } else { "fail" };
                     rsx! {
-                        div { class: "flex items-center gap-2 text-sm",
-                            span { class: "text-xs font-mono w-10 {cls}", "{icon}" }
-                            span { class: "{cls}", "{msg}" }
+                        div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
+                            dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{msg}" }
+                            dd { class: "text-right font-mono text-xs {cls}", "{status}" }
                         }
                     }
                 }
