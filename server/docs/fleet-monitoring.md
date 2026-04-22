@@ -15,6 +15,25 @@ The **Fleet** page gives an overview of all clusters with their latest heartbeat
 - **Services status** — health of managed services (Ollama, OpenClaw, etc.)
 - **Last seen** — when the daemon last checked in
 
+## Instance detail
+
+Clicking an instance on the Fleet dashboard opens its detail page, which shows:
+
+- **System info** — daemon version, hostname, environment, nixpkgs commit
+- **Services** — health status of each managed service with probe results
+- **Inventory** — static system inventory from the latest assessment (OS, hardware, installed packages)
+- **Security posture** — security findings displayed as pass/fail items
+- **GPU details** — GPU inventory combined with live utilization, temperature, power, and VRAM usage from the latest heartbeat sample
+- **Tunnels** — active relay tunnels (SSH, file, shell)
+
+### Per-service details
+
+When services report their own inventory, live status, or security findings, these appear in a collapsible **Per-service details** section below the system-level data. Each service gets its own panel with up to three sub-sections:
+
+- **Inventory** — static per-service data (e.g. installed models, version, configuration)
+- **Live status** — dynamic samples from the latest heartbeat (e.g. loaded models, active sessions)
+- **Security** — per-service security findings (pass/fail items with severity)
+
 ## Daemon heartbeats
 
 Each daemon periodically sends a heartbeat to the server containing:
@@ -23,6 +42,7 @@ Each daemon periodically sends a heartbeat to the server containing:
 - Current daemon version
 - Hostname and environment
 - Service health status
+- Dynamic per-service samples (model load status, active sessions, etc.)
 
 The heartbeat interval is controlled by `daemon.health_interval` in the cluster config (default: `"1m"`).
 

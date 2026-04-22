@@ -64,7 +64,7 @@ Settings for LM Studio. Installed and started when `enabled` is `true`.
 
 ## `cloud`
 
-A list of cloud LLM provider entries. When `global.default_llm` is `"cloud"`, the first enabled entry is used. Multiple entries allow configuring several cloud providers at once.
+A list of cloud LLM provider entries. When `global.default_llm` is `"cloud"`, **all** enabled entries are configured simultaneously in the agent (OpenClaw or OpenCode). The first enabled entry's model is used as the default. This lets you set up multiple providers and switch between them from within the agent without reconfiguring the daemon.
 
 Each entry has these fields:
 
@@ -105,7 +105,7 @@ Settings for the OpenClaw agent. Installed and started when `enabled` is `true`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `port` | `8080` | Gateway listen port |
+| `port` | `18789` | Gateway listen port |
 | `host` | `"127.0.0.1"` | Gateway listen address |
 
 ### `openclaw.skills`
@@ -183,6 +183,12 @@ Settings for the relay server used for remote SSH access.
       "provider": "anthropic",
       "api_key": "sk-ant-...",
       "default_model": "anthropic/claude-sonnet-4-6"
+    },
+    {
+      "enabled": true,
+      "provider": "openai",
+      "api_key": "sk-...",
+      "default_model": "openai/gpt-5.4"
     }
   ],
   "notifications": {
