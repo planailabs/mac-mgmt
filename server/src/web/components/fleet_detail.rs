@@ -330,33 +330,29 @@ fn render_detail(d: &FleetDetailData) -> Element {
 
         // ── Services ──
         if !service_badges.is_empty() {
-            div { class: "mb-4",
-                h3 { class: "text-lg font-semibold mb-2", "Services" }
-                div { class: "flex flex-wrap gap-2",
+            h3 { class: "text-lg font-semibold mb-2", "Services" }
+            div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
+                dl { class: "grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2",
                     for (name, healthy, upgrade_pending, busy) in service_badges.iter() {
                         {
-                            let cls = if *healthy {
-                                "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
+                            let status = if *healthy { "healthy" } else { "unhealthy" };
+                            let status_cls = if *healthy {
+                                "text-green-700 dark:text-green-400"
                             } else {
-                                "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
+                                "text-red-700 dark:text-red-400"
                             };
-                            let title = match (*healthy, *upgrade_pending, *busy) {
-                                (true, true, _) => "healthy · upgrade pending".to_string(),
-                                (true, _, true) => "healthy · busy".to_string(),
-                                (true, _, _) => "healthy".to_string(),
-                                (false, _, _) => "unhealthy".to_string(),
+                            let mut flags = Vec::new();
+                            if *upgrade_pending { flags.push("upgrade pending"); }
+                            if *busy { flags.push("busy"); }
+                            let detail = if flags.is_empty() {
+                                status.to_string()
+                            } else {
+                                format!("{status} · {}", flags.join(" · "))
                             };
                             rsx! {
-                                span {
-                                    class: "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium {cls}",
-                                    title: "{title}",
-                                    "{name}"
-                                    if *upgrade_pending {
-                                        span { class: "opacity-70", "⏫" }
-                                    }
-                                    if *busy {
-                                        span { class: "opacity-70", "…" }
-                                    }
+                                div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
+                                    dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{name}" }
+                                    dd { class: "text-right font-mono text-xs {status_cls}", "{detail}" }
                                 }
                             }
                         }
