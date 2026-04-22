@@ -46,6 +46,15 @@ struct FleetDetailData {
     inventory: Option<serde_json::Value>,
     inventory_collected_at: Option<DateTime<Utc>>,
     security: Option<serde_json::Value>,
+    /// Per-service dynamic samples from the latest heartbeat.
+    #[serde(default)]
+    service_samples: Option<serde_json::Value>,
+    /// Per-service static inventory from the latest assessment.
+    #[serde(default)]
+    service_inventories: Option<serde_json::Value>,
+    /// Per-service security findings from the latest assessment.
+    #[serde(default)]
+    service_security: Option<serde_json::Value>,
     probes: Vec<ProbeEntry>,
     viewer_is_admin: bool,
 }
@@ -92,12 +101,13 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         relay_proxy_url: Option<String>,
         file_tunnels: serde_json::Value,
         shell_tunnels: serde_json::Value,
+        service_samples: Option<serde_json::Value>,
     }
     let hb: HbRow = sqlx::query_as(
         "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.hostname, dh.environment, \
                 dh.version, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
                 dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.file_tunnels, \
-                dh.shell_tunnels \
+                dh.shell_tunnels, dh.service_samples \
          FROM daemon_heartbeats dh JOIN clusters c ON c.id = dh.cluster_id \
          WHERE dh.instance_id = $1 \
          ORDER BY dh.reported_at DESC LIMIT 1",
@@ -115,11 +125,13 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
     struct AssRow {
         inventory: serde_json::Value,
         security: serde_json::Value,
+        service_inventories: Option<serde_json::Value>,
+        service_security: Option<serde_json::Value>,
         collected_at: DateTime<Utc>,
     }
     let ass: Option<AssRow> = sqlx::query_as(
-        "SELECT inventory, security, collected_at FROM assessments \
-         WHERE instance_id = $1 ORDER BY collected_at DESC LIMIT 1",
+        "SELECT inventory, security, service_inventories, service_security, collected_at \
+         FROM assessments WHERE instance_id = $1 ORDER BY collected_at DESC LIMIT 1",
     )
     .bind(&instance_id)
     .fetch_optional(&pool)
@@ -195,6 +207,9 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         inventory: ass.as_ref().map(|a| a.inventory.clone()),
         inventory_collected_at: ass.as_ref().map(|a| a.collected_at),
         security: ass.as_ref().map(|a| a.security.clone()),
+        service_samples: hb.service_samples,
+        service_inventories: ass.as_ref().and_then(|a| a.service_inventories.clone()),
+        service_security: ass.as_ref().and_then(|a| a.service_security.clone()),
         probes,
         viewer_is_admin: is_admin,
     })
@@ -705,6 +720,9 @@ fn render_detail(d: &FleetDetailData) -> Element {
             }
         }
 
+        // ── Per-service details ──
+        {render_per_service_sections(&d)}
+
         if let Some(commit) = d.nixpkgs_commit.as_ref() {
             div { class: "text-xs text-gray-500 dark:text-gray-400",
                 "Nixpkgs commit: "
@@ -807,6 +825,20 @@ fn build_inventory_rows(v: &serde_json::Value) -> Vec<(String, String)> {
 }
 
 fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
+    // New format: Vec<SecurityFinding> (array of {id, severity, message, pass})
+    if let Some(arr) = v.as_array() {
+        return arr
+            .iter()
+            .filter_map(|f| {
+                let msg = f.get("message")?.as_str()?;
+                let pass = f.get("pass")?.as_bool()?;
+                let prefix = if pass { "pass" } else { "FAIL" };
+                Some((format!("{prefix}: {msg}"), String::new()))
+            })
+            .collect();
+    }
+
+    // Legacy format: SecurityPosture struct ({sip_enabled: bool, ...})
     let mut rows = Vec::new();
     for (key, label) in [
         ("sip_enabled", "SIP"),
@@ -842,6 +874,155 @@ fn build_security_rows(v: &serde_json::Value) -> Vec<(String, String)> {
         rows.push((label, n.to_string()));
     }
     rows
+}
+
+/// Render per-service inventory, samples, and security findings.
+fn render_per_service_sections(d: &FleetDetailData) -> Element {
+    // Collect all service names across inventory, samples, and security.
+    let mut service_names: Vec<String> = Vec::new();
+    let mut add_services = |json: &Option<serde_json::Value>| {
+        if let Some(arr) = json.as_ref().and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(name) = item.get("service").and_then(|s| s.as_str()) {
+                    if !service_names.contains(&name.to_string()) {
+                        service_names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    };
+    add_services(&d.service_inventories);
+    add_services(&d.service_samples);
+    add_services(&d.service_security);
+
+    if service_names.is_empty() {
+        return rsx! {};
+    }
+
+    let inv_arr = d.service_inventories.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let sample_arr = d.service_samples.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let sec_arr = d.service_security.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    rsx! {
+        h3 { class: "text-lg font-semibold mb-2", "Per-service details" }
+        div { class: "mb-6 space-y-4",
+            for svc_name in service_names.iter() {
+                {
+                    let inv_entries: Vec<&serde_json::Value> = inv_arr.iter()
+                        .filter(|item| item.get("service").and_then(|s| s.as_str()) == Some(svc_name))
+                        .flat_map(|item| item.get("entries").and_then(|e| e.as_array()).into_iter().flatten())
+                        .collect();
+                    let sample_entries: Vec<&serde_json::Value> = sample_arr.iter()
+                        .filter(|item| item.get("service").and_then(|s| s.as_str()) == Some(svc_name))
+                        .flat_map(|item| item.get("entries").and_then(|e| e.as_array()).into_iter().flatten())
+                        .collect();
+                    let sec_findings: Vec<&serde_json::Value> = sec_arr.iter()
+                        .filter(|item| item.get("service").and_then(|s| s.as_str()) == Some(svc_name))
+                        .flat_map(|item| item.get("findings").and_then(|f| f.as_array()).into_iter().flatten())
+                        .collect();
+
+                    let svc = svc_name.clone();
+                    rsx! {
+                        details { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                            key: "{svc}",
+                            summary { class: "px-4 py-2 cursor-pointer font-medium text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700 rounded",
+                                "{svc}"
+                            }
+                            div { class: "px-4 pb-4 space-y-3",
+                                // Inventory entries
+                                if !inv_entries.is_empty() {
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1", "Inventory" }
+                                        {render_inventory_entries(&inv_entries)}
+                                    }
+                                }
+                                // Dynamic sample entries
+                                if !sample_entries.is_empty() {
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1", "Live status" }
+                                        {render_inventory_entries(&sample_entries)}
+                                    }
+                                }
+                                // Security findings
+                                if !sec_findings.is_empty() {
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1", "Security" }
+                                        {render_security_findings(&sec_findings)}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Render a list of InventoryEntry values as a key-value grid.
+fn render_inventory_entries(entries: &[&serde_json::Value]) -> Element {
+    rsx! {
+        div { class: "grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm",
+            for entry in entries.iter() {
+                {
+                    let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("?").to_string();
+                    let value = entry.get("value").cloned().unwrap_or(serde_json::Value::Null);
+                    let display = format_inventory_value(&value);
+                    rsx! {
+                        span { class: "text-gray-500 dark:text-gray-400", "{name}" }
+                        span { class: "text-gray-900 dark:text-gray-100 font-mono text-xs", "{display}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Render security findings as a list of pass/fail items.
+fn render_security_findings(findings: &[&serde_json::Value]) -> Element {
+    rsx! {
+        div { class: "space-y-1",
+            for finding in findings.iter() {
+                {
+                    let msg = finding.get("message").and_then(|m| m.as_str()).unwrap_or("?").to_string();
+                    let pass = finding.get("pass").and_then(|p| p.as_bool()).unwrap_or(false);
+                    let severity = finding.get("severity").and_then(|s| s.as_str()).unwrap_or("info").to_string();
+                    let (icon, cls) = if pass {
+                        ("pass", "text-green-700 dark:text-green-400")
+                    } else {
+                        match severity.as_str() {
+                            "critical" | "high" => ("FAIL", "text-red-700 dark:text-red-400 font-semibold"),
+                            "medium" => ("WARN", "text-yellow-700 dark:text-yellow-400"),
+                            _ => ("info", "text-gray-600 dark:text-gray-400"),
+                        }
+                    };
+                    rsx! {
+                        div { class: "flex items-center gap-2 text-sm",
+                            span { class: "text-xs font-mono w-10 {cls}", "{icon}" }
+                            span { class: "{cls}", "{msg}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Format an InventoryEntry value for display.
+fn format_inventory_value(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => if *b { "yes" } else { "no" }.to_string(),
+        serde_json::Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(|item| {
+                item.as_str().map(String::from).unwrap_or_else(|| item.to_string())
+            }).collect();
+            items.join(", ")
+        }
+        serde_json::Value::Null => "—".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// One row per GPU combining the static inventory entry with its latest

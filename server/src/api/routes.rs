@@ -2801,12 +2801,17 @@ pub async fn post_heartbeat(
     } else {
         serde_json::to_value(&body.services_extended).ok()
     };
+    let svc_samples_json = if body.service_samples.is_empty() {
+        None
+    } else {
+        serde_json::to_value(&body.service_samples).ok()
+    };
 
     sqlx::query(
-        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname, nixpkgs_commit, sample, services_extended, git_sha, file_tunnels, relay_proxy_url, shell_tunnels) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
+        "INSERT INTO daemon_heartbeats (cluster_id, instance_id, version, hostname, environment, services, tunnels, relay_proxy_hostname, nixpkgs_commit, sample, services_extended, git_sha, file_tunnels, relay_proxy_url, shell_tunnels, service_samples) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
          ON CONFLICT (cluster_id, instance_id) \
-         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, nixpkgs_commit = $9, sample = $10, services_extended = $11, git_sha = $12, file_tunnels = $13, relay_proxy_url = $14, shell_tunnels = $15, reported_at = now()",
+         DO UPDATE SET version = $3, hostname = $4, environment = $5, services = $6, tunnels = $7, relay_proxy_hostname = $8, nixpkgs_commit = $9, sample = $10, services_extended = $11, git_sha = $12, file_tunnels = $13, relay_proxy_url = $14, shell_tunnels = $15, service_samples = $16, reported_at = now()",
     )
     .bind(auth.cluster_id)
     .bind(&body.instance_id)
@@ -2823,6 +2828,7 @@ pub async fn post_heartbeat(
     .bind(&body.file_tunnels)
     .bind(&body.relay_proxy_url)
     .bind(&body.shell_tunnels)
+    .bind(&svc_samples_json)
     .execute(pool.inner())
     .await
     .map_err(|_| Status::InternalServerError)?;
@@ -2996,18 +3002,30 @@ pub async fn post_assessment(
 
     let inventory_json = serde_json::to_value(&body.inventory).map_err(|_| Status::BadRequest)?;
     let security_json = serde_json::to_value(&body.security).map_err(|_| Status::BadRequest)?;
+    let svc_inv_json = if body.service_inventories.is_empty() {
+        None
+    } else {
+        serde_json::to_value(&body.service_inventories).ok()
+    };
+    let svc_sec_json = if body.service_security.is_empty() {
+        None
+    } else {
+        serde_json::to_value(&body.service_security).ok()
+    };
     let collected_at =
         DateTime::<Utc>::from_timestamp(body.collected_at, 0).ok_or(Status::BadRequest)?;
 
     sqlx::query(
-        "INSERT INTO assessments (cluster_id, instance_id, collected_at, inventory, security) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO assessments (cluster_id, instance_id, collected_at, inventory, security, service_inventories, service_security) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(auth.cluster_id)
     .bind(&body.instance_id)
     .bind(collected_at)
     .bind(&inventory_json)
     .bind(&security_json)
+    .bind(&svc_inv_json)
+    .bind(&svc_sec_json)
     .execute(pool.inner())
     .await
     .map_err(|e| {

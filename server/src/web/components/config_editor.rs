@@ -783,6 +783,7 @@ fn render_section_fields(
                                 let sync_c = sync.clone();
                                 if !enum_values.is_empty() {
                                     let fp = fp.clone();
+                                    let selected_val = val_str.clone();
                                     rsx! {
                                         select {
                                             class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
@@ -792,10 +793,11 @@ fn render_section_fields(
                                                     serde_json::Value::String(evt.value()));
                                                 sync_c();
                                             },
-                                            option { value: "", "-- select --" }
+                                            option { value: "", selected: selected_val.is_empty(), "-- select --" }
                                             {enum_values.iter().map(|v| {
+                                                let is_selected = *v == selected_val;
                                                 let v = v.clone();
-                                                rsx! { option { value: "{v}", "{v}" } }
+                                                rsx! { option { value: "{v}", selected: is_selected, "{v}" } }
                                             })}
                                         }
                                     }
