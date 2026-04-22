@@ -225,6 +225,12 @@ settings_tool! {
 
         // Merge patch
         json_merge_patch(&mut config, &params.patch);
+        mac_mgmt_common::config_migrate::migrate(&mut config);
+
+        // Validate merged config before saving
+        if let Err(e) = serde_json::from_value::<mac_mgmt_common::ClusterConfig>(config.clone()) {
+            return Ok(ToolOutput::Text(format!("Invalid config after merge: {e}")));
+        }
 
         // Save new config
         match ctx.store.save_config(ctx.cluster_id, &config).await {
@@ -240,7 +246,15 @@ settings_tool! {
     description: "Replace the entire cluster configuration with new JSON. Use get_config first to see the current config, then modify and set.",
     params: SetConfigParams,
     handler: |ctx, params| {
-        match ctx.store.save_config(ctx.cluster_id, &params.config).await {
+        let mut config = params.config;
+        mac_mgmt_common::config_migrate::migrate(&mut config);
+
+        // Validate before saving
+        if let Err(e) = serde_json::from_value::<mac_mgmt_common::ClusterConfig>(config.clone()) {
+            return Ok(ToolOutput::Text(format!("Invalid config: {e}")));
+        }
+
+        match ctx.store.save_config(ctx.cluster_id, &config).await {
             Ok(_) => Ok(ToolOutput::Text("Config replaced. The daemon will pick up changes on next sync.".to_string())),
             Err(e) => Ok(ToolOutput::Text(format!("Error saving config: {e}"))),
         }

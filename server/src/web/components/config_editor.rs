@@ -37,8 +37,9 @@ async fn get_current_config(cluster_id: String) -> Result<Option<ClusterConfig>,
 #[server]
 async fn save_config(cluster_id: String, config_json: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
-    let json: serde_json::Value = serde_json::from_str(&config_json)
+    let mut json: serde_json::Value = serde_json::from_str(&config_json)
         .map_err(|e| ServerFnError::new(format!("invalid JSON: {e}")))?;
+    mac_mgmt_common::config_migrate::migrate(&mut json);
     // Validate
     let _: mac_mgmt_common::ClusterConfig = serde_json::from_value(json.clone())
         .map_err(|e| ServerFnError::new(format!("invalid config: {e}")))?;
