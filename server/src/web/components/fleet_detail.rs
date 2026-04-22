@@ -246,10 +246,10 @@ fn render_detail(d: &FleetDetailData) -> Element {
         .as_ref()
         .map(build_inventory_rows)
         .unwrap_or_default();
-    let (security_badges, security_rows) = d
+    let security_items = d
         .security
         .as_ref()
-        .map(build_security_data)
+        .map(build_security_items)
         .unwrap_or_default();
     let disks = d
         .sample
@@ -735,20 +735,23 @@ fn render_detail(d: &FleetDetailData) -> Element {
         // ── Security posture ──
         h3 { class: "text-lg font-semibold mb-2", "Security posture" }
         div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-            if security_rows.is_empty() && security_badges.is_empty() {
+            if security_items.is_empty() {
                 p { class: "text-sm text-gray-500 dark:text-gray-400",
                     "No posture data yet."
                 }
-            } else if !security_badges.is_empty() {
-                div { class: "flex flex-wrap gap-2",
-                    for (msg, badge_cls) in security_badges.iter() {
-                        span { class: "px-2 py-0.5 rounded text-xs font-mono {badge_cls}",
-                            "{msg}"
+            } else {
+                dl { class: "grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2",
+                    for (label, value, badge_cls) in security_items.iter() {
+                        div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
+                            dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{label}" }
+                            dd { class: "text-right",
+                                span { class: "px-2 py-0.5 rounded text-xs font-mono {badge_cls}",
+                                    "{value}"
+                                }
+                            }
                         }
                     }
                 }
-            } else {
-                KvGrid { rows: security_rows }
             }
         }
 
@@ -856,43 +859,38 @@ fn build_inventory_rows(v: &serde_json::Value) -> Vec<(String, String)> {
     rows
 }
 
-/// Returns (badges, legacy_rows). Badges are used for the new SecurityFinding
-/// array format; legacy_rows for the old flat-field SecurityPosture format.
-fn build_security_data(
-    v: &serde_json::Value,
-) -> (Vec<(String, String)>, Vec<(String, String)>) {
+/// Returns (label, value, badge_css_class) triples for security posture.
+fn build_security_items(v: &serde_json::Value) -> Vec<(String, String, String)> {
+    let green = "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200";
+    let red = "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200";
+    let yellow = "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200";
+    let gray = "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300";
+
     // New format: Vec<SecurityFinding> (array of {id, severity, message, pass})
     if let Some(arr) = v.as_array() {
-        let badges = arr
+        return arr
             .iter()
             .filter_map(|f| {
                 let msg = f.get("message")?.as_str()?.to_string();
                 let pass = f.get("pass")?.as_bool()?;
-                let severity = f
-                    .get("severity")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("info");
-                let cls = if pass {
-                    "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
+                let severity = f.get("severity").and_then(|s| s.as_str()).unwrap_or("info");
+                let (value, cls) = if pass {
+                    ("pass".to_string(), green)
                 } else {
-                    match severity {
-                        "critical" | "high" => {
-                            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                        }
-                        "medium" => {
-                            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200"
-                        }
-                        _ => "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-                    }
+                    let cls = match severity {
+                        "critical" | "high" => red,
+                        "medium" => yellow,
+                        _ => gray,
+                    };
+                    ("fail".to_string(), cls)
                 };
-                Some((msg, cls.to_string()))
+                Some((msg, value, cls.to_string()))
             })
             .collect();
-        return (badges, Vec::new());
     }
 
     // Legacy format: SecurityPosture struct ({sip_enabled: bool, ...})
-    let mut rows = Vec::new();
+    let mut items = Vec::new();
     for (key, label) in [
         ("sip_enabled", "SIP"),
         ("filevault_enabled", "FileVault"),
@@ -902,7 +900,8 @@ fn build_security_data(
         ("ufw_active", "ufw"),
     ] {
         if let Some(b) = v.get(key).and_then(|x| x.as_bool()) {
-            rows.push((label.into(), if b { "on".into() } else { "off".into() }));
+            let (val, cls) = if b { ("on", green) } else { ("off", red) };
+            items.push((label.to_string(), val.to_string(), cls.to_string()));
         }
     }
     for (key, label) in [
@@ -911,12 +910,12 @@ fn build_security_data(
     ] {
         if let Some(s) = v.get(key).and_then(|x| x.as_str()) {
             if !s.is_empty() {
-                rows.push((label.into(), s.into()));
+                items.push((label.to_string(), s.to_string(), gray.to_string()));
             }
         }
     }
     if let Some(n) = v.get("apparmor_profiles").and_then(|x| x.as_u64()) {
-        rows.push(("AppArmor profiles".into(), n.to_string()));
+        items.push(("AppArmor profiles".to_string(), n.to_string(), gray.to_string()));
     }
     if let Some(n) = v.get("nftables_rule_count").and_then(|x| x.as_u64()) {
         let label = if n == 0 {
@@ -924,9 +923,10 @@ fn build_security_data(
         } else {
             "nftables rules".to_string()
         };
-        rows.push((label, n.to_string()));
+        let cls = if n == 0 { red } else { green };
+        items.push((label, n.to_string(), cls.to_string()));
     }
-    (Vec::new(), rows)
+    items
 }
 
 /// Render per-service inventory, samples, and security findings.
