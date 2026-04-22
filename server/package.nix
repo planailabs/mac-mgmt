@@ -25,6 +25,7 @@ rustPlatform.buildRustPackage {
   version = "0.1.0";
   src = ./..;
   cargoLock.lockFile = ../Cargo.lock;
+  cargoLock.outputHashes = import ../extra-hashes.nix;
 
   cargoBuildFlags = [ "-p" "mac-mgmt-server" ];
 

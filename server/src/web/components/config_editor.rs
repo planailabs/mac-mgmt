@@ -498,10 +498,36 @@ fn render_section_fields(
             } else {
                 let fp = field_path.clone();
                 let fp2 = field_path.clone();
+                let schema_default = resolved.get("default").cloned();
+                let is_non_default = current_value.as_ref().is_some_and(|v| {
+                    schema_default.as_ref().map_or(true, |d| v != d)
+                });
+                let reset_path = field_path.clone();
+                let reset_default = schema_default.clone();
+                let sync_reset = sync_to_json.clone();
                 rsx! {
                     div { class: "flex flex-col gap-0.5",
                         key: "{key}",
-                        label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "{field_name}" }
+                        div { class: "flex items-center justify-between gap-2",
+                            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "{field_name}" }
+                            if is_non_default {
+                                button {
+                                    r#type: "button",
+                                    class: "text-xs text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 underline",
+                                    onclick: move |evt| {
+                                        evt.prevent_default();
+                                        evt.stop_propagation();
+                                        if let Some(ref def) = reset_default {
+                                            set_at_path(&mut form_values, &reset_path, def.clone());
+                                        } else {
+                                            remove_at_path(&mut form_values, &reset_path);
+                                        }
+                                        sync_reset();
+                                    },
+                                    "reset to default"
+                                }
+                            }
+                        }
                         if !description.is_empty() {
                             p { class: "text-xs text-gray-500 dark:text-gray-400", "{description}" }
                         }
