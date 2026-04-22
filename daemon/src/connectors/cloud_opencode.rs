@@ -5,18 +5,34 @@ use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 use mac_mgmt_common::CloudConfig;
 
-/// Configures OpenCode to use a cloud LLM provider.
+/// Configures OpenCode with all enabled cloud LLM providers.
 ///
 /// Reads live config from the "cloud" config store entry on each run.
+/// All enabled providers are configured; the first one's model is set as the
+/// default.
 pub struct CloudOpencode;
 
-/// Extract the first enabled CloudConfig from the configs map.
-fn cloud_config_from(
+/// Extract all enabled CloudConfigs from the configs map.
+fn enabled_cloud_configs(
     configs: &std::collections::HashMap<String, serde_json::Value>,
-) -> Option<CloudConfig> {
-    let cloud_val = configs.get("cloud")?;
-    let list: Vec<CloudConfig> = serde_json::from_value(cloud_val.clone()).ok()?;
-    list.into_iter().find(|c| c.enabled)
+) -> Vec<CloudConfig> {
+    configs
+        .get("cloud")
+        .and_then(|v| serde_json::from_value::<Vec<CloudConfig>>(v.clone()).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| c.enabled)
+        .collect()
+}
+
+/// Resolve the model for a provider, falling back to the provider's default.
+fn resolve_model(config: &CloudConfig) -> String {
+    let provider = config.provider.as_str();
+    if config.default_model.is_empty() || !config.default_model.starts_with(provider) {
+        config.provider.default_model().to_string()
+    } else {
+        config.default_model.clone()
+    }
 }
 
 impl Connector for CloudOpencode {
@@ -32,27 +48,10 @@ impl Connector for CloudOpencode {
         &self,
         configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        let config = cloud_config_from(configs)
-            .ok_or_else(|| anyhow::anyhow!("no enabled cloud provider found"))?;
-        let provider = config.provider.as_str();
-        let model = if config.default_model.is_empty()
-            || !config.default_model.starts_with(provider)
-        {
-            config.provider.default_model().to_string()
-        } else {
-            config.default_model.clone()
-        };
-
-        tracing::info!("connecting cloud provider {provider} to opencode (model={model})");
-        sentry_ext::breadcrumb(
-            "connector",
-            &format!("cloud→opencode provider={provider} model={model}"),
-            &[
-                ("connector", "cloud→opencode"),
-                ("provider", provider),
-                ("model", &model),
-            ],
-        );
+        let enabled = enabled_cloud_configs(configs);
+        if enabled.is_empty() {
+            anyhow::bail!("no enabled cloud provider found");
+        }
 
         let path = config_path()?;
         if !path.exists() {
@@ -60,29 +59,54 @@ impl Connector for CloudOpencode {
             return Ok(());
         }
 
-        let mut provider_opts = serde_json::json!({});
-        if let Some(key) = &config.api_key {
-            if !key.is_empty() {
-                provider_opts["apiKey"] = serde_json::json!(key);
+        // The first enabled provider's model becomes the default.
+        let primary_model = resolve_model(&enabled[0]);
+
+        let provider_names: Vec<&str> = enabled.iter().map(|c| c.provider.as_str()).collect();
+        tracing::info!(
+            "connecting cloud providers [{}] to opencode (primary model={primary_model})",
+            provider_names.join(", ")
+        );
+        sentry_ext::breadcrumb(
+            "connector",
+            &format!(
+                "cloud→opencode providers=[{}] primary_model={primary_model}",
+                provider_names.join(", ")
+            ),
+            &[("connector", "cloud→opencode")],
+        );
+
+        // Configure all enabled providers.
+        let mut providers = serde_json::Map::new();
+        for config in &enabled {
+            let provider = config.provider.as_str();
+            let mut opts = serde_json::json!({});
+            if let Some(key) = &config.api_key {
+                if !key.is_empty() {
+                    opts["apiKey"] = serde_json::json!(key);
+                }
             }
-        }
-        if let Some(url) = &config.base_url {
-            if !url.is_empty() {
-                provider_opts["baseURL"] = serde_json::json!(url);
+            if let Some(url) = &config.base_url {
+                if !url.is_empty() {
+                    opts["baseURL"] = serde_json::json!(url);
+                }
             }
+            providers.insert(
+                provider.to_string(),
+                serde_json::json!({ "options": opts }),
+            );
         }
 
         let patch = serde_json::json!({
-            "provider": {
-                provider: {
-                    "options": provider_opts,
-                }
-            },
-            "model": model,
+            "provider": providers,
+            "model": primary_model,
         });
 
         merge_and_write(&path, &patch)?;
-        tracing::info!("cloud→opencode connected: {provider} configured");
+        tracing::info!(
+            "cloud→opencode connected: {} provider(s) configured",
+            enabled.len()
+        );
         Ok(())
     }
 }
