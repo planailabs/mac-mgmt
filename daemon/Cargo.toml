@@ -42,6 +42,7 @@ toml = "0.8"
 rocket = { version = "0.5", default-features = false, features = ["json"] }
 prometheus = "0.14"
 reqwest = { workspace = true, features = ["blocking", "stream"] }
+rustls = { workspace = true }
 russh = { version = "0.59", default-features = false, features = ["ring", "flate2"] }
 rand = "0.8"
 mac-mgmt-ws = { path = "../mac-mgmt-ws", features = ["client"] }

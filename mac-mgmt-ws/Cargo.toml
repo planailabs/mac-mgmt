@@ -10,9 +10,10 @@ tracing = "0.1"
 anyhow = "1"
 
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"], optional = true }
+rustls = { workspace = true, optional = true }
 axum = { version = "0.8", features = ["ws"], optional = true }
 
 [features]
 default = ["client"]
-client = ["dep:tokio-tungstenite"]
+client = ["dep:tokio-tungstenite", "dep:rustls"]
 axum = ["dep:axum"]

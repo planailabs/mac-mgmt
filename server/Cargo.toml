@@ -7,8 +7,8 @@ edition = "2024"
 default = ["web", "server", "webui"]
 web = ["webui", "dioxus/web"]
 webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-tabular", "dep:pulldown-cmark"]
-server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "mac-mgmt-common/observability"]
-server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:sentry", "dep:mac-mgmt-healer", "mac-mgmt-common/observability"]
+server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "mac-mgmt-common/observability"]
+server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:sentry", "dep:mac-mgmt-healer", "mac-mgmt-common/observability"]
 
 [dependencies]
 dioxus = { version = "0.7", features = ["fullstack", "router"], optional = true }
@@ -33,11 +33,12 @@ anyhow = { version = "1", optional = true }
 async-trait = { version = "0.1", optional = true }
 toml = { version = "0.8", optional = true }
 axum-oidc-client = { version = "0.3", features = ["sql-cache-postgres", "redis"], optional = true }
-jsonschema = { version = "0.45", optional = true }
+jsonschema = { version = "0.45", default-features = false, features = ["resolve-http", "resolve-file", "tls-ring"], optional = true }
 serde_json = "1"
 base64 = { version = "0.22", optional = true }
 axum-extra = { version = "0.10", features = ["cookie-private"], optional = true }
 reqwest = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 dioxus-tabular = { version = "0.3", optional = true }
 ed25519-dalek = { version = "2", optional = true }
 mac-mgmt-common = { path = "../common" }
