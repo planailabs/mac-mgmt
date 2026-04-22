@@ -427,17 +427,18 @@ fn render_detail(d: &FleetDetailData) -> Element {
             }
         }
 
-        // ── Tunnel links ──
+        // ── Remote tools (require relay connection) ──
         {
-            let has_files = d.file_tunnels
+            let has_relay = d.relay_proxy_url.is_some();
+            let has_files = has_relay && d.file_tunnels
                 .as_ref()
                 .and_then(|v| v.as_array())
                 .is_some_and(|a| !a.is_empty());
-            let has_shell = d.shell_tunnels
+            let has_shell = has_relay && d.shell_tunnels
                 .as_ref()
                 .and_then(|v| v.as_array())
                 .is_some_and(|a| !a.is_empty());
-            if has_files || has_shell {
+            if has_relay {
                 let files_url = format!("/fleet/{}/files", d.instance_id);
                 let shell_url = format!("/fleet/{}/shell", d.instance_id);
                 let logs_url = format!("/fleet/{}/logs", d.instance_id);
