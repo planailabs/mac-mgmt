@@ -848,7 +848,7 @@ fn CloudInitModal(cluster_id: String, cluster_name: String, mut open: Signal<boo
                                     );
                                 }
                             },
-                            "[data-copy-ack]": "1",
+                            "data-copy-ack": "1",
                             if *copied.read() { "Copied!" } else { "Copy" }
                         }
                         button {
