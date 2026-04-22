@@ -140,6 +140,12 @@ async fn main() -> Result<()> {
         Some(v) => v,
         None => "dev",
     };
+    // Install ring as the default rustls crypto provider before any TLS
+    // client is created (sentry, reqwest, etc.).
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls ring crypto provider");
+
     let _sentry = crash::init(ENVIRONMENT);
     let cli = Cli::parse();
 

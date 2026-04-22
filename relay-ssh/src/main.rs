@@ -74,6 +74,10 @@ fn load_config() -> Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls ring crypto provider");
+
     let cli = Cli::parse();
     let config = load_config();
 

@@ -91,6 +91,10 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls ring crypto provider");
+
     mac_mgmt_common::tracing_init::init_tracing("info,mac_mgmt_runner=info");
 
     let opts = Opts::parse();

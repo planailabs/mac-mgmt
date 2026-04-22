@@ -312,6 +312,11 @@ enum Commands {
 }
 
 fn main() {
+    #[cfg(any(feature = "server", feature = "server-api-only"))]
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls ring crypto provider");
+
     let cli = Cli::parse();
 
     // Handle subcommands that don't need the full server
