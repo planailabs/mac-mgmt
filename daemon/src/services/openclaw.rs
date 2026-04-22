@@ -495,4 +495,96 @@ impl ManagedService for OpenClaw {
         }
         files
     }
+
+    fn service_inventory(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        use mac_mgmt_common::{InventoryEntry, InventoryValueType};
+        Box::pin(async move {
+            let mut entries = Vec::new();
+            if let Ok(out) = crate::cmd::output_with_timeout(
+                Command::new("openclaw").arg("--version"),
+                crate::cmd::DEFAULT_TIMEOUT,
+            ) {
+                if out.status.success() {
+                    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !v.is_empty() {
+                        entries.push(InventoryEntry {
+                            id: "version".into(),
+                            name: "Version".into(),
+                            value: serde_json::Value::String(v),
+                            value_type: InventoryValueType::String,
+                        });
+                    }
+                }
+            }
+            entries
+        })
+    }
+
+    fn service_sample(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        use mac_mgmt_common::{InventoryEntry, InventoryValueType};
+        Box::pin(async move {
+            let count = Self::active_session_count();
+            vec![InventoryEntry {
+                id: "active_sessions".into(),
+                name: "Active Sessions".into(),
+                value: serde_json::json!(count),
+                value_type: InventoryValueType::Number,
+            }]
+        })
+    }
+
+    fn service_security(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
+        use mac_mgmt_common::{FindingSeverity, SecurityFinding};
+        Box::pin(async move {
+            let mut findings = Vec::new();
+
+            // Check auth config from ~/.openclaw/openclaw.json
+            let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/root"));
+            let config_path = home.join(".openclaw/openclaw.json");
+            if let Ok(contents) = std::fs::read_to_string(&config_path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    // Check for auth: none
+                    let auth = json.pointer("/gateway/auth")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let auth_none = auth.eq_ignore_ascii_case("none");
+                    findings.push(SecurityFinding {
+                        id: "openclaw_auth_none".into(),
+                        severity: FindingSeverity::High,
+                        message: if auth_none {
+                            "Gateway authentication disabled (auth: none)".into()
+                        } else {
+                            format!("Gateway authentication enabled (auth: {auth})")
+                        },
+                        pass: !auth_none,
+                    });
+
+                    // Check for gateway token presence
+                    let has_token = json.pointer("/gateway/auth/token")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|t| !t.is_empty());
+                    if !auth_none {
+                        findings.push(SecurityFinding {
+                            id: "openclaw_gateway_token".into(),
+                            severity: FindingSeverity::Medium,
+                            message: if has_token {
+                                "Gateway auth token is configured".into()
+                            } else {
+                                "Gateway auth token is missing".into()
+                            },
+                            pass: has_token,
+                        });
+                    }
+                }
+            }
+
+            findings
+        })
+    }
 }

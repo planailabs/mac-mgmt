@@ -764,6 +764,105 @@ impl ServiceManager {
         file_tunnels
     }
 
+    // ── Per-service assessments ─────────────────────────────────────
+
+    /// Collect dynamic samples from all healthy managed services. Called per heartbeat.
+    pub async fn collect_service_samples(&self) -> Vec<mac_mgmt_common::ServiceSample> {
+        use mac_mgmt_common::ServiceSample;
+
+        let futs: Vec<_> = self
+            .services
+            .iter()
+            .filter(|s| s.phase.is_healthy())
+            .map(|s| {
+                let name = s.name.clone();
+                let fut = s.service.service_sample();
+                async move {
+                    let entries =
+                        tokio::time::timeout(std::time::Duration::from_secs(5), fut).await;
+                    let entries = entries.unwrap_or_default();
+                    if entries.is_empty() {
+                        None
+                    } else {
+                        Some(ServiceSample {
+                            service: name,
+                            entries,
+                        })
+                    }
+                }
+            })
+            .collect();
+        futures_util::future::join_all(futs)
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    /// Collect static inventory from all managed + install-only services.
+    /// Called at the ~6h inventory cadence.
+    pub async fn collect_service_inventories(&self) -> Vec<mac_mgmt_common::ServiceInventory> {
+        use mac_mgmt_common::ServiceInventory;
+
+        let timeout = std::time::Duration::from_secs(30);
+        let mut futs: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Option<ServiceInventory>> + Send>>> = Vec::new();
+
+        for s in &self.services {
+            let name = s.name.clone();
+            let fut = s.service.service_inventory();
+            futs.push(Box::pin(async move {
+                let entries = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
+                if entries.is_empty() { None } else { Some(ServiceInventory { service: name, entries }) }
+            }));
+        }
+        for svc in &self.install_only {
+            let name = svc.name().to_string();
+            let fut = svc.service_inventory();
+            futs.push(Box::pin(async move {
+                let entries = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
+                if entries.is_empty() { None } else { Some(ServiceInventory { service: name, entries }) }
+            }));
+        }
+
+        futures_util::future::join_all(futs)
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    /// Collect security findings from all managed + install-only services.
+    /// Called at the ~6h inventory cadence.
+    pub async fn collect_service_security(&self) -> Vec<mac_mgmt_common::ServiceSecurity> {
+        use mac_mgmt_common::ServiceSecurity;
+
+        let timeout = std::time::Duration::from_secs(30);
+        let mut futs: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Option<ServiceSecurity>> + Send>>> = Vec::new();
+
+        for s in &self.services {
+            let name = s.name.clone();
+            let fut = s.service.service_security();
+            futs.push(Box::pin(async move {
+                let findings = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
+                if findings.is_empty() { None } else { Some(ServiceSecurity { service: name, findings }) }
+            }));
+        }
+        for svc in &self.install_only {
+            let name = svc.name().to_string();
+            let fut = svc.service_security();
+            futs.push(Box::pin(async move {
+                let findings = tokio::time::timeout(timeout, fut).await.unwrap_or_default();
+                if findings.is_empty() { None } else { Some(ServiceSecurity { service: name, findings }) }
+            }));
+        }
+
+        futures_util::future::join_all(futs)
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
     // ── Shutdown ─────────────────────────────────────────────────────
 
     pub async fn shutdown(&mut self) {

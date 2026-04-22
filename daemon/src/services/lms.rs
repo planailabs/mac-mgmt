@@ -208,6 +208,59 @@ impl ManagedService for Lms {
             tcp_port: self.effective_port(),
         }]
     }
+
+    fn service_inventory(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        use mac_mgmt_common::{InventoryEntry, InventoryValueType};
+        Box::pin(async move {
+            let mut entries = Vec::new();
+            if let Ok(out) = crate::cmd::output_with_timeout(
+                std::process::Command::new("lms").arg("--version"),
+                crate::cmd::DEFAULT_TIMEOUT,
+            ) {
+                if out.status.success() {
+                    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !v.is_empty() {
+                        entries.push(InventoryEntry {
+                            id: "version".into(),
+                            name: "Version".into(),
+                            value: serde_json::Value::String(v),
+                            value_type: InventoryValueType::String,
+                        });
+                    }
+                }
+            }
+            entries
+        })
+    }
+
+    fn service_sample(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        use mac_mgmt_common::{InventoryEntry, InventoryValueType};
+        let host = self.effective_host().to_string();
+        let port = self.effective_port();
+        Box::pin(async move {
+            let mut entries = Vec::new();
+            if let Ok(body) = super::http_get(&host, port, "/v1/models").await {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(models) = json.get("data").and_then(|d| d.as_array()) {
+                        let names: Vec<serde_json::Value> = models.iter()
+                            .filter_map(|m| m.get("id").cloned())
+                            .collect();
+                        entries.push(InventoryEntry {
+                            id: "loaded_models".into(),
+                            name: "Loaded Models".into(),
+                            value: serde_json::Value::Array(names),
+                            value_type: InventoryValueType::Json,
+                        });
+                    }
+                }
+            }
+            entries
+        })
+    }
 }
 
 /// Load every model in `config.models` via `lms load -y`.

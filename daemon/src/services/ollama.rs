@@ -308,6 +308,113 @@ impl ManagedService for Ollama {
             description: "Ollama environment variables (key=value)".into(),
         }]
     }
+
+    fn service_inventory(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        use mac_mgmt_common::{InventoryEntry, InventoryValueType};
+        Box::pin(async move {
+            let mut entries = Vec::new();
+
+            // Version
+            if let Ok(out) = crate::cmd::output_with_timeout(
+                std::process::Command::new("ollama").arg("--version"),
+                crate::cmd::DEFAULT_TIMEOUT,
+            ) {
+                if out.status.success() {
+                    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !v.is_empty() {
+                        entries.push(InventoryEntry {
+                            id: "version".into(),
+                            name: "Version".into(),
+                            value: serde_json::Value::String(v),
+                            value_type: InventoryValueType::String,
+                        });
+                    }
+                }
+            }
+
+            // Installed models via /api/tags
+            if let Ok(body) = self.http_get("/api/tags").await {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(models) = json.get("models").and_then(|m| m.as_array()) {
+                        let names: Vec<serde_json::Value> = models.iter()
+                            .filter_map(|m| m.get("name").cloned())
+                            .collect();
+                        entries.push(InventoryEntry {
+                            id: "installed_models".into(),
+                            name: "Installed Models".into(),
+                            value: serde_json::Value::Array(names),
+                            value_type: InventoryValueType::Json,
+                        });
+                    }
+                }
+            }
+
+            entries
+        })
+    }
+
+    fn service_sample(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        use mac_mgmt_common::{InventoryEntry, InventoryValueType};
+        Box::pin(async move {
+            let mut entries = Vec::new();
+
+            if let Ok(body) = self.http_get("/api/ps").await {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(models) = json.get("models").and_then(|m| m.as_array()) {
+                        let names: Vec<serde_json::Value> = models.iter()
+                            .filter_map(|m| m.get("name").cloned())
+                            .collect();
+                        entries.push(InventoryEntry {
+                            id: "loaded_models".into(),
+                            name: "Loaded Models".into(),
+                            value: serde_json::Value::Array(names),
+                            value_type: InventoryValueType::Json,
+                        });
+                    }
+                }
+            }
+
+            entries
+        })
+    }
+
+    fn service_security(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
+        use mac_mgmt_common::{FindingSeverity, SecurityFinding};
+        Box::pin(async move {
+            let mut findings = Vec::new();
+
+            // Check if OLLAMA_ORIGINS is set to wildcard in the env file
+            let env_path = crate::config::config_dir().join("ollama-env");
+            if let Ok(content) = std::fs::read_to_string(&env_path) {
+                let has_wildcard = content.lines().any(|line| {
+                    let line = line.trim();
+                    if let Some(val) = line.strip_prefix("OLLAMA_ORIGINS=") {
+                        val.trim() == "*"
+                    } else {
+                        false
+                    }
+                });
+                findings.push(SecurityFinding {
+                    id: "ollama_wildcard_origins".into(),
+                    severity: FindingSeverity::High,
+                    message: if has_wildcard {
+                        "OLLAMA_ORIGINS set to wildcard (*) — any origin can access the API".into()
+                    } else {
+                        "OLLAMA_ORIGINS is not set to wildcard".into()
+                    },
+                    pass: !has_wildcard,
+                });
+            }
+
+            findings
+        })
+    }
 }
 
 /// Pull every model listed in `config.models` via `ollama pull`.

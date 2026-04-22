@@ -202,7 +202,7 @@ impl Daemon {
         self.dispatcher.dispatch(&DaemonEvent::DaemonStopped);
     }
 
-    fn send_heartbeat(
+    async fn send_heartbeat(
         &self,
         relay_proxy_hostname: Option<String>,
         relay_proxy_url: Option<String>,
@@ -277,6 +277,11 @@ impl Daemon {
             let sample = self.assessor.latest_sample_snapshot();
             let services_extended = self.assessor.latest_probes_snapshot();
 
+            #[cfg(feature = "services")]
+            let service_samples = self.svc_mgr.collect_service_samples().await;
+            #[cfg(not(feature = "services"))]
+            let service_samples = Vec::new();
+
             let url = url.clone();
             let token = token.clone();
             let iid = self.instance_id.clone();
@@ -297,6 +302,7 @@ impl Daemon {
                     relay_proxy_url,
                     sample,
                     services_extended,
+                    service_samples,
                 )
                 .await;
 
@@ -306,7 +312,9 @@ impl Daemon {
                 // the parent is there. swap(false) is a compare-and-set
                 // so concurrent heartbeat sends at startup don't race.
                 if ok && pending.swap(false, Ordering::Relaxed) {
-                    assessor.send_inventory(&url, &token, &iid, &hk).await;
+                    // Initial send — service inventories/security will be
+                    // collected on the first full 6h inventory tick.
+                    assessor.send_inventory(&url, &token, &iid, &hk, Vec::new(), Vec::new()).await;
                 }
             });
         }
@@ -319,15 +327,23 @@ impl Daemon {
     }
 
     /// Fire-and-forget: build and send a full inventory+security assessment.
-    fn send_assessment_inventory(&self) {
+    /// Service inventories/security are collected synchronously before spawning.
+    async fn send_assessment_inventory(&self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            #[cfg(feature = "services")]
+            let (si, ss) = tokio::join!(
+                self.svc_mgr.collect_service_inventories(),
+                self.svc_mgr.collect_service_security(),
+            );
+            #[cfg(not(feature = "services"))]
+            let (si, ss): (Vec<mac_mgmt_common::ServiceInventory>, Vec<mac_mgmt_common::ServiceSecurity>) = (Vec::new(), Vec::new());
             let u = url.clone();
             let t = token.clone();
             let iid = self.instance_id.clone();
             let hk = Arc::clone(&self.host_key);
             let assessor = Arc::clone(&self.assessor);
             tokio::spawn(async move {
-                assessor.send_inventory(&u, &t, &iid, &hk).await;
+                assessor.send_inventory(&u, &t, &iid, &hk, si, ss).await;
             });
         }
     }
@@ -347,15 +363,22 @@ impl Daemon {
     }
 
     /// Respond to `PushCommand::RequestAssessment` — runs inventory + probes now.
-    fn handle_request_assessment(&self) {
+    async fn handle_request_assessment(&self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            #[cfg(feature = "services")]
+            let (si, ss) = tokio::join!(
+                self.svc_mgr.collect_service_inventories(),
+                self.svc_mgr.collect_service_security(),
+            );
+            #[cfg(not(feature = "services"))]
+            let (si, ss): (Vec<mac_mgmt_common::ServiceInventory>, Vec<mac_mgmt_common::ServiceSecurity>) = (Vec::new(), Vec::new());
             let u = url.clone();
             let t = token.clone();
             let iid = self.instance_id.clone();
             let hk = Arc::clone(&self.host_key);
             let assessor = Arc::clone(&self.assessor);
             tokio::spawn(async move {
-                assessor.request(&u, &t, &iid, &hk).await;
+                assessor.request(&u, &t, &iid, &hk, si, ss).await;
             });
         }
     }
@@ -440,7 +463,7 @@ impl Daemon {
             }
             PushCommand::RequestAssessment => {
                 tracing::info!("server push: system assessment requested");
-                self.handle_request_assessment();
+                self.handle_request_assessment().await;
                 false
             }
         }
@@ -802,18 +825,18 @@ pub async fn run(
                 daemon.refresh_assessment_sample().await;
                 // Send heartbeat BEFORE connectors — connectors run blocking
                 // CLI commands that can hang for minutes.
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
                 #[cfg(feature = "services")]
                 tokio::task::block_in_place(|| daemon.svc_mgr.run_connectors_tick());
             }
 
             _ = heartbeat_tick.tick() => {
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
 
             _ = assessment_inventory_tick.tick() => {
-                daemon.send_assessment_inventory();
+                daemon.send_assessment_inventory().await;
             }
 
             _ = assessment_probe_tick.tick() => {
@@ -867,7 +890,7 @@ pub async fn run(
                 { std::future::pending::<Option<()>>().await }
             } => {
                 tracing::debug!("relay signalled heartbeat");
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
         }
     }
@@ -968,6 +991,7 @@ async fn do_send_heartbeat(
     relay_proxy_url: Option<String>,
     sample: Option<mac_mgmt_common::DynamicSample>,
     services_extended: Vec<mac_mgmt_common::ServiceExtState>,
+    service_samples: Vec<mac_mgmt_common::ServiceSample>,
 ) -> bool {
     use russh::keys::PublicKeyBase64;
     use russh::keys::signature::Signer;
@@ -1014,6 +1038,7 @@ async fn do_send_heartbeat(
         signed_at,
         sample,
         services_extended,
+        service_samples,
     };
 
     let url = format!("{server_url}/api/heartbeat");
@@ -1228,7 +1253,7 @@ pub async fn run_sim(
                 #[cfg(feature = "services")]
                 daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
                 // In sim mode, call connectors directly (block_in_place panics
                 // on current_thread runtime used by #[tokio::test]).
                 #[cfg(feature = "services")]
@@ -1237,11 +1262,11 @@ pub async fn run_sim(
 
             _ = heartbeat_tick.tick() => {
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
 
             _ = assessment_inventory_tick.tick() => {
-                daemon.send_assessment_inventory();
+                daemon.send_assessment_inventory().await;
             }
 
             _ = assessment_probe_tick.tick() => {
@@ -1286,7 +1311,7 @@ pub async fn run_sim(
                 { std::future::pending::<Option<()>>().await }
             } => {
                 tracing::debug!("relay signalled heartbeat");
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
         }
     }
@@ -1451,17 +1476,17 @@ pub async fn run_sim_with_services(
                 daemon.update_relay_shell_tunnel_defs(&relay_mgr);
                 daemon.update_relay_config(relay_proxy_hostname!());
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
                 daemon.svc_mgr.run_connectors_tick();
             }
 
             _ = heartbeat_tick.tick() => {
                 daemon.refresh_assessment_sample().await;
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
 
             _ = assessment_inventory_tick.tick() => {
-                daemon.send_assessment_inventory();
+                daemon.send_assessment_inventory().await;
             }
 
             _ = assessment_probe_tick.tick() => {
@@ -1506,7 +1531,7 @@ pub async fn run_sim_with_services(
                 { std::future::pending::<Option<()>>().await }
             } => {
                 tracing::debug!("relay signalled heartbeat");
-                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!());
+                daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
         }
     }

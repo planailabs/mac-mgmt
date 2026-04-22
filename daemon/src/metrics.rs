@@ -1,6 +1,6 @@
 use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 
-use mac_mgmt_common::{DynamicSample, GpuInfo, GpuSample, Inventory, SecurityPosture};
+use mac_mgmt_common::{DynamicSample, GpuInfo, GpuSample, Inventory, SecurityFinding};
 
 use crate::assessment::probes::{ProbeKind, ProbeResult};
 
@@ -439,37 +439,36 @@ impl AssessmentMetrics {
         self.update_gpu_inventory(&inv.gpus);
     }
 
-    pub fn update_security(&self, s: &SecurityPosture) {
-        for (name, v) in [
-            ("sip", s.sip_enabled),
-            ("filevault", s.filevault_enabled),
-            ("firewall", s.firewall_enabled),
-            ("gatekeeper", s.gatekeeper_enabled),
-            ("fde", s.fde_enabled),
-            ("ufw", s.ufw_active),
-        ] {
-            let value = match v {
-                None => -1,
-                Some(true) => 1,
-                Some(false) => 0,
-            };
-            self.security_bool.with_label_values(&[name]).set(value);
+    pub fn update_security(&self, findings: &[SecurityFinding]) {
+        // Map findings back to the bool gauges by id.
+        let bool_ids = ["macos_sip", "macos_filevault", "macos_firewall", "macos_gatekeeper", "linux_fde", "linux_ufw"];
+        let gauge_names = ["sip", "filevault", "firewall", "gatekeeper", "fde", "ufw"];
+        for (id, gauge_name) in bool_ids.iter().zip(gauge_names.iter()) {
+            let value = findings
+                .iter()
+                .find(|f| f.id == *id)
+                .map(|f| if f.pass { 1i64 } else { 0 })
+                .unwrap_or(-1);
+            self.security_bool.with_label_values(&[gauge_name]).set(value);
         }
+
         self.security_info.reset();
-        let apparmor = s
-            .apparmor_profiles
-            .map(|n| n.to_string())
-            .unwrap_or_default();
+        let xprotect = findings.iter().find(|f| f.id == "macos_xprotect");
+        let selinux = findings.iter().find(|f| f.id == "linux_selinux");
+        let apparmor = findings.iter().find(|f| f.id == "linux_apparmor");
         self.security_info
             .with_label_values(&[
-                s.xprotect_version.as_deref().unwrap_or(""),
-                s.selinux_mode.as_deref().unwrap_or(""),
-                apparmor.as_str(),
+                xprotect.map(|f| f.message.strip_prefix("XProtect definitions version ").unwrap_or(&f.message)).unwrap_or(""),
+                selinux.map(|f| f.message.strip_prefix("SELinux mode: ").unwrap_or(&f.message)).unwrap_or(""),
+                &apparmor.map(|f| f.message.clone()).unwrap_or_default(),
             ])
             .set(1);
-        // Absent == -1 so alerting can distinguish "no rules" (0) from
-        // "can't read nft" (-1). Prometheus gauges don't have Option.
-        let n = s.nftables_rule_count.map(|n| n as i64).unwrap_or(-1);
+
+        let n = findings
+            .iter()
+            .find(|f| f.id == "linux_nftables")
+            .and_then(|f| f.message.split_whitespace().next()?.parse::<i64>().ok())
+            .unwrap_or(-1);
         self.security_nftables_rule_count.set(n);
     }
 

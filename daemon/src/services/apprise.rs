@@ -65,4 +65,30 @@ impl ManagedService for Apprise {
         tracing::info!("{PKG} upgraded");
         Ok(true)
     }
+
+    fn service_inventory(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        use mac_mgmt_common::{InventoryEntry, InventoryValueType};
+        Box::pin(async {
+            let mut entries = Vec::new();
+            if let Ok(out) = crate::cmd::output_with_timeout(
+                std::process::Command::new("apprise").arg("--version"),
+                crate::cmd::DEFAULT_TIMEOUT,
+            ) {
+                if out.status.success() {
+                    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !v.is_empty() {
+                        entries.push(InventoryEntry {
+                            id: "version".into(),
+                            name: "Version".into(),
+                            value: serde_json::Value::String(v),
+                            value_type: InventoryValueType::String,
+                        });
+                    }
+                }
+            }
+            entries
+        })
+    }
 }

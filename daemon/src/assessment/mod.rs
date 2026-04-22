@@ -23,7 +23,10 @@ use std::time::Duration;
 use base64::Engine;
 use tokio::sync::RwLock;
 
-use mac_mgmt_common::{Assessment, DaemonConfig, DynamicSample, ProbeReport, ServiceExtState};
+use mac_mgmt_common::{
+    Assessment, DaemonConfig, DynamicSample, ProbeReport, SecurityFinding, ServiceExtState,
+    ServiceInventory, ServiceSecurity,
+};
 
 use crate::metrics::Metrics;
 
@@ -104,6 +107,8 @@ impl Assessor {
         server_token: &str,
         instance_id: &str,
         host_key: &russh::keys::PrivateKey,
+        service_inventories: Vec<ServiceInventory>,
+        service_security: Vec<ServiceSecurity>,
     ) {
         let inventory = match inventory::collect().await {
             Ok(i) => i,
@@ -125,15 +130,21 @@ impl Assessor {
         }
 
         let collected_at = chrono::Utc::now().timestamp();
-        let body =
-            match build_signed_assessment(instance_id, collected_at, inventory, security, host_key)
-            {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!("failed to sign assessment: {e}");
-                    return;
-                }
-            };
+        let body = match build_signed_assessment(
+            instance_id,
+            collected_at,
+            inventory,
+            security,
+            service_inventories,
+            service_security,
+            host_key,
+        ) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("failed to sign assessment: {e}");
+                return;
+            }
+        };
 
         post_assessment(server_url, server_token, body).await;
     }
@@ -198,18 +209,28 @@ impl Assessor {
     }
 
     /// Called on `PushCommand::RequestAssessment` — runs both inventory and probes
-    /// immediately.
+    /// immediately. `service_inventories` and `service_security` are collected by
+    /// the caller (ServiceManager) and passed in.
     pub async fn request(
         &self,
         server_url: &str,
         server_token: &str,
         instance_id: &str,
         host_key: &russh::keys::PrivateKey,
+        service_inventories: Vec<ServiceInventory>,
+        service_security: Vec<ServiceSecurity>,
     ) {
         tracing::info!("assessment: on-demand snapshot requested");
         self.refresh_sample().await;
-        self.send_inventory(server_url, server_token, instance_id, host_key)
-            .await;
+        self.send_inventory(
+            server_url,
+            server_token,
+            instance_id,
+            host_key,
+            service_inventories,
+            service_security,
+        )
+        .await;
         self.run_probes(server_url, server_token, instance_id, host_key)
             .await;
     }
@@ -234,7 +255,9 @@ fn build_signed_assessment(
     instance_id: &str,
     collected_at: i64,
     inventory: mac_mgmt_common::Inventory,
-    security: mac_mgmt_common::SecurityPosture,
+    security: Vec<SecurityFinding>,
+    service_inventories: Vec<ServiceInventory>,
+    service_security: Vec<ServiceSecurity>,
     host_key: &russh::keys::PrivateKey,
 ) -> anyhow::Result<Assessment> {
     use russh::keys::PublicKeyBase64;
@@ -250,6 +273,8 @@ fn build_signed_assessment(
         collected_at,
         inventory,
         security,
+        service_inventories,
+        service_security,
         public_key,
         signature,
     })

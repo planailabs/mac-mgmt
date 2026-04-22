@@ -320,4 +320,28 @@ pub trait ManagedService: Send + Sync {
     fn expose_shell_commands(&self) -> Vec<ShellCommandDef> {
         Vec::new()
     }
+
+    /// Per-service static inventory (version, installed models, etc.).
+    /// Called at the ~6h inventory cadence. Override to report facts.
+    fn service_inventory(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        Box::pin(std::future::ready(Vec::new()))
+    }
+
+    /// Per-service dynamic sample (loaded models, active sessions, etc.).
+    /// Called every heartbeat (~1m). Override to report live state.
+    fn service_sample(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Vec<mac_mgmt_common::InventoryEntry>> + Send + '_>> {
+        Box::pin(std::future::ready(Vec::new()))
+    }
+
+    /// Per-service security findings (auth config, exposed APIs, etc.).
+    /// Called at the ~6h inventory cadence. Override to report checks.
+    fn service_security(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
+        Box::pin(std::future::ready(Vec::new()))
+    }
 }

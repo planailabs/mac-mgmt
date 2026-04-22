@@ -79,6 +79,9 @@ pub struct HeartbeatBody {
     /// Optional for back-compat with older daemons.
     #[serde(default)]
     pub shell_tunnels: serde_json::Value,
+    /// Per-service dynamic samples (loaded models, active sessions, etc.).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_samples: Vec<ServiceSample>,
 }
 
 /// Small dynamic sample sent with each heartbeat. GDPR allowlist: no user data,
@@ -177,7 +180,14 @@ pub struct Assessment {
     /// Unix seconds.
     pub collected_at: i64,
     pub inventory: Inventory,
-    pub security: SecurityPosture,
+    /// System-level security findings (SIP, firewall, FDE, etc.).
+    pub security: Vec<SecurityFinding>,
+    /// Per-service static inventory (version, installed models, etc.).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_inventories: Vec<ServiceInventory>,
+    /// Per-service security findings (auth config, exposed APIs, etc.).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_security: Vec<ServiceSecurity>,
     /// Ed25519 signature over "{instance_id}:{collected_at}".
     pub public_key: String,
     pub signature: String,
@@ -228,43 +238,78 @@ pub struct DiskInfo {
     pub total_bytes: u64,
 }
 
-/// Security posture — booleans + versions only, no secrets.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SecurityPosture {
-    /// macOS: System Integrity Protection enabled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sip_enabled: Option<bool>,
-    /// macOS: FileVault on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filevault_enabled: Option<bool>,
-    /// macOS: Application Firewall enabled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub firewall_enabled: Option<bool>,
-    /// macOS: Gatekeeper assessments enabled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gatekeeper_enabled: Option<bool>,
-    /// macOS: XProtect definitions version string.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub xprotect_version: Option<String>,
-    /// Linux: SELinux mode — "enforcing", "permissive", "disabled".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selinux_mode: Option<String>,
-    /// Linux: AppArmor profiles loaded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub apparmor_profiles: Option<u32>,
-    /// Linux: ufw installed *and* reporting "Status: active". `None` means
-    /// ufw is not present on the host at all (most NixOS systems).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ufw_active: Option<bool>,
-    /// Linux: total rule count reported by `nft --json list ruleset`.
-    /// `None` means nftables isn't usable (missing binary / permission
-    /// denied / netlink unavailable). `Some(0)` means nftables is usable
-    /// but no rules are loaded — the host has no firewall policy.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub nftables_rule_count: Option<u32>,
-    /// Linux: full-disk encryption detected on root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fde_enabled: Option<bool>,
+// ── Security findings (shared between system-level and per-service) ──
+
+/// Severity level for a security finding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FindingSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+/// A single security finding — both system-level (SIP, firewall) and
+/// per-service (auth config, exposed APIs) use the same shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityFinding {
+    /// Machine-readable identifier (e.g. "macos_sip", "openclaw_auth_none").
+    pub id: String,
+    pub severity: FindingSeverity,
+    /// Human-readable description.
+    pub message: String,
+    /// `true` = check passed (good), `false` = problem found.
+    pub pass: bool,
+}
+
+// ── Per-service inventory / sample / security ──
+
+/// Display-type hint for an [`InventoryEntry`] value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InventoryValueType {
+    String,
+    Number,
+    Bool,
+    Json,
+}
+
+/// A single key-value fact about a service. Used for both static inventory
+/// (version, installed models) and dynamic samples (loaded models, active sessions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InventoryEntry {
+    /// Machine-readable key (e.g. "version", "installed_models").
+    pub id: String,
+    /// Human-readable label (e.g. "Version", "Installed Models").
+    pub name: String,
+    /// The value — string, number, bool, array, or object.
+    pub value: serde_json::Value,
+    /// Hint for how to display the value.
+    #[serde(rename = "type")]
+    pub value_type: InventoryValueType,
+}
+
+/// Per-service static inventory facts, collected at the 6h assessment cadence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceInventory {
+    pub service: String,
+    pub entries: Vec<InventoryEntry>,
+}
+
+/// Per-service dynamic sample, piggybacked on each heartbeat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceSample {
+    pub service: String,
+    pub entries: Vec<InventoryEntry>,
+}
+
+/// Per-service security findings, collected at the 6h assessment cadence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceSecurity {
+    pub service: String,
+    pub findings: Vec<SecurityFinding>,
 }
 
 /// Single probe result sent to `POST /api/assessment/probe`. Signed.
