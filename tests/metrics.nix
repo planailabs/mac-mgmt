@@ -33,6 +33,7 @@ let
     version = "0.1.0";
     src = ./..;
     cargoLock.lockFile = ../Cargo.lock;
+    cargoLock.outputHashes = import ../extra-hashes.nix;
     cargoBuildFlags = [ "-p" "mac-mgmt" "--no-default-features" "--features" "relay" ];
     doCheck = false;
   };

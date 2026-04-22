@@ -7,6 +7,7 @@ final: prev:
     version = "0.1.0";
     src = ./.;
     cargoLock.lockFile = ./Cargo.lock;
+    cargoLock.outputHashes = import ./extra-hashes.nix;
     buildInputs = prev.lib.optionals prev.stdenv.isDarwin [ prev.libiconv ];
     env.GIT_SHA = gitSha;
   };
