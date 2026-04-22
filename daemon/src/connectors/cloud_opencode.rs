@@ -6,8 +6,17 @@ use crate::services::opencode::{config_path, merge_and_write};
 use mac_mgmt_common::CloudConfig;
 
 /// Configures OpenCode to use a cloud LLM provider.
-pub struct CloudOpencode {
-    pub config: CloudConfig,
+///
+/// Reads live config from the "cloud" config store entry on each run.
+pub struct CloudOpencode;
+
+/// Extract the first enabled CloudConfig from the configs map.
+fn cloud_config_from(
+    configs: &std::collections::HashMap<String, serde_json::Value>,
+) -> Option<CloudConfig> {
+    let cloud_val = configs.get("cloud")?;
+    let list: Vec<CloudConfig> = serde_json::from_value(cloud_val.clone()).ok()?;
+    list.into_iter().find(|c| c.enabled)
 }
 
 impl Connector for CloudOpencode {
@@ -16,20 +25,22 @@ impl Connector for CloudOpencode {
     }
 
     fn depends_on(&self) -> &[&str] {
-        &["opencode"]
+        &["opencode", "cloud"]
     }
 
     fn connect(
         &self,
-        _configs: &std::collections::HashMap<String, serde_json::Value>,
+        configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        let provider = self.config.provider.as_str();
-        let model = if self.config.default_model.is_empty()
-            || !self.config.default_model.starts_with(provider)
+        let config = cloud_config_from(configs)
+            .ok_or_else(|| anyhow::anyhow!("no enabled cloud provider found"))?;
+        let provider = config.provider.as_str();
+        let model = if config.default_model.is_empty()
+            || !config.default_model.starts_with(provider)
         {
-            self.config.provider.default_model().to_string()
+            config.provider.default_model().to_string()
         } else {
-            self.config.default_model.clone()
+            config.default_model.clone()
         };
 
         tracing::info!("connecting cloud provider {provider} to opencode (model={model})");
@@ -50,12 +61,12 @@ impl Connector for CloudOpencode {
         }
 
         let mut provider_opts = serde_json::json!({});
-        if let Some(key) = &self.config.api_key {
+        if let Some(key) = &config.api_key {
             if !key.is_empty() {
                 provider_opts["apiKey"] = serde_json::json!(key);
             }
         }
-        if let Some(url) = &self.config.base_url {
+        if let Some(url) = &config.base_url {
             if !url.is_empty() {
                 provider_opts["baseURL"] = serde_json::json!(url);
             }

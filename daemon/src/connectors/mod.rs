@@ -16,8 +16,8 @@ use crate::services::{
     openclaw::OpenClaw, opencode::Opencode, rocm_smi::RocmSmi,
 };
 use mac_mgmt_common::{
-    AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig,
-    OpencodeConfig,
+    AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig,
+    OpenClawConfig, OpencodeConfig,
 };
 
 /// A connector wires two services together after they are both healthy.
@@ -119,10 +119,8 @@ pub fn build_connectors(
                     }));
                 }
                 LlmProvider::Cloud => {
-                    if let Some(cloud_cfg) = cloud_cfgs.iter().find(|c| c.enabled) {
-                        connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
-                            config: cloud_cfg.clone(),
-                        }));
+                    if cloud_cfgs.iter().any(|c| c.enabled) {
+                        connectors.push(Box::new(cloud_openclaw::CloudOpenClaw));
                     }
                 }
                 _ => {}
@@ -145,10 +143,8 @@ pub fn build_connectors(
                     }));
                 }
                 LlmProvider::Cloud => {
-                    if let Some(cloud_cfg) = cloud_cfgs.iter().find(|c| c.enabled) {
-                        connectors.push(Box::new(cloud_opencode::CloudOpencode {
-                            config: cloud_cfg.clone(),
-                        }));
+                    if cloud_cfgs.iter().any(|c| c.enabled) {
+                        connectors.push(Box::new(cloud_opencode::CloudOpencode));
                     }
                 }
                 _ => {}

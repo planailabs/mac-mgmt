@@ -173,13 +173,20 @@ impl Daemon {
                     || format!("{:?}", new_cfg.openclaw)
                         != format!("{:?}", self.current_cfg.openclaw)
                     || format!("{:?}", new_cfg.opencode)
-                        != format!("{:?}", self.current_cfg.opencode);
+                        != format!("{:?}", self.current_cfg.opencode)
+                    || format!("{:?}", new_cfg.lms) != format!("{:?}", self.current_cfg.lms)
+                    || format!("{:?}", new_cfg.cloud) != format!("{:?}", self.current_cfg.cloud);
 
                 if needs_restart {
                     tracing::info!("service config changed, scheduling restart");
                     #[cfg(feature = "services")]
                     self.svc_mgr.schedule_restart().await;
                 }
+
+                // Update config store and rebuild connectors so cloud/LLM
+                // changes take effect without a full daemon restart.
+                #[cfg(feature = "services")]
+                self.svc_mgr.reload_connectors(&new_cfg);
                 if new_cfg.metrics.port != self.current_cfg.metrics.port {
                     tracing::warn!(
                         "metrics.port changed \u{2014} daemon restart required to apply"

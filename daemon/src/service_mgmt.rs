@@ -687,6 +687,49 @@ impl ServiceManager {
         }
     }
 
+    /// Update the config store and rebuild connectors after a config reload.
+    ///
+    /// This ensures connectors see new cloud/ollama/lms settings and that the
+    /// connector list matches the current `default_llm` / `default_agent`.
+    pub fn reload_connectors(&mut self, cfg: &crate::config::Config) {
+        // Update config store entries so change detection works.
+        if let Ok(v) = serde_json::to_value(&cfg.ollama) {
+            self.config_store.set("ollama", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cfg.lms) {
+            self.config_store.set("lms", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cfg.openclaw) {
+            self.config_store.set("openclaw", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cfg.opencode) {
+            self.config_store.set("opencode", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cfg.cloud) {
+            self.config_store.set("cloud", v);
+        }
+
+        // Rebuild the connector list from current config.
+        let new_connectors =
+            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.cloud);
+        self.connectors = new_connectors
+            .into_iter()
+            .map(|c| ConnectorState {
+                connector: c,
+                last_snapshot: ConnectorSnapshot::default(),
+                ran: false,
+            })
+            .collect();
+        tracing::info!(
+            "connectors rebuilt: {}",
+            self.connectors
+                .iter()
+                .map(|c| c.connector.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
     // ── Status collection ────────────────────────────────────────────
 
     pub fn collect_statuses(&self) -> Vec<serde_json::Value> {

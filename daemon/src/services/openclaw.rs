@@ -39,10 +39,10 @@ pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Resu
         .with_context(|| format!("failed to write {}", config_path.display()))?;
 
     // Validate
-    let valid = match Command::new("openclaw")
-        .args(["config", "validate"])
-        .output()
-    {
+    let valid = match crate::cmd::output_with_timeout(
+        Command::new("openclaw").args(["config", "validate"]),
+        crate::cmd::DEFAULT_TIMEOUT,
+    ) {
         Ok(output) if output.status.success() => true,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);

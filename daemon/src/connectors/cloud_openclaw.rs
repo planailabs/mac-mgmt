@@ -6,13 +6,23 @@ use crate::services::openclaw::{config_path, merge_and_validate};
 use mac_mgmt_common::CloudConfig;
 
 /// Configures OpenClaw to use a cloud LLM provider (Anthropic, OpenAI, etc.).
-pub struct CloudOpenClaw {
-    pub config: CloudConfig,
-}
+///
+/// The connector reads live config from the "cloud" config store entry on each
+/// run, so hot-reloaded cloud settings take effect without a daemon restart.
+pub struct CloudOpenClaw;
 
 /// Return Some only if the string is non-empty.
 fn non_empty(s: &Option<String>) -> Option<&str> {
     s.as_deref().filter(|s| !s.is_empty())
+}
+
+/// Extract the first enabled CloudConfig from the configs map.
+fn cloud_config_from(
+    configs: &std::collections::HashMap<String, serde_json::Value>,
+) -> Option<CloudConfig> {
+    let cloud_val = configs.get("cloud")?;
+    let list: Vec<CloudConfig> = serde_json::from_value(cloud_val.clone()).ok()?;
+    list.into_iter().find(|c| c.enabled)
 }
 
 impl Connector for CloudOpenClaw {
@@ -21,32 +31,34 @@ impl Connector for CloudOpenClaw {
     }
 
     fn depends_on(&self) -> &[&str] {
-        &["openclaw"]
+        &["openclaw", "cloud"]
     }
 
     fn connect(
         &self,
-        _configs: &std::collections::HashMap<String, serde_json::Value>,
+        configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        let provider = self.config.provider.as_str();
+        let config = cloud_config_from(configs)
+            .ok_or_else(|| anyhow::anyhow!("no enabled cloud provider found"))?;
+        let provider = config.provider.as_str();
         // Use the configured model, but fall back to the provider's default if
         // the configured model doesn't belong to this provider (e.g. user switched
         // provider but didn't update the model).
-        let model = if self.config.default_model.is_empty()
-            || !self.config.default_model.starts_with(provider)
+        let model = if config.default_model.is_empty()
+            || !config.default_model.starts_with(provider)
         {
-            let default = self.config.provider.default_model();
-            if self.config.default_model.is_empty() {
+            let default = config.provider.default_model();
+            if config.default_model.is_empty() {
                 tracing::info!("no model configured, using default: {default}");
             } else {
                 tracing::info!(
                     "model '{}' doesn't match provider '{provider}', using default: {default}",
-                    self.config.default_model
+                    config.default_model
                 );
             }
             default.to_string()
         } else {
-            self.config.default_model.clone()
+            config.default_model.clone()
         };
         let model = &model;
         tracing::info!("connecting cloud provider {provider} to openclaw (model={model})");
@@ -66,25 +78,25 @@ impl Connector for CloudOpenClaw {
             return Ok(());
         }
 
-        let api_key = non_empty(&self.config.api_key);
-        let base_url = non_empty(&self.config.base_url);
+        let api_key = non_empty(&config.api_key);
+        let base_url = non_empty(&config.base_url);
 
         let mut patch = serde_json::json!({});
 
         // Custom provider: needs a models.providers entry when base_url, api, or auth is set.
         // Built-in provider: just set the API key env var.
         let needs_custom =
-            base_url.is_some() || self.config.api.is_some() || self.config.auth.is_some();
+            base_url.is_some() || config.api.is_some() || config.auth.is_some();
 
         if needs_custom {
             let mut provider_cfg = serde_json::json!({});
             if let Some(url) = base_url {
                 provider_cfg["baseUrl"] = serde_json::json!(url);
             }
-            if let Some(ref api) = self.config.api {
+            if let Some(ref api) = config.api {
                 provider_cfg["api"] = serde_json::json!(api);
             }
-            if let Some(ref auth) = self.config.auth {
+            if let Some(ref auth) = config.auth {
                 provider_cfg["auth"] = serde_json::json!(auth);
             }
             if let Some(key) = api_key {
@@ -95,7 +107,7 @@ impl Connector for CloudOpenClaw {
 
             patch["models"] = serde_json::json!({ "providers": { provider: provider_cfg } });
         } else if let Some(key) = api_key {
-            let env_var = self.config.provider.env_var();
+            let env_var = config.provider.env_var();
             patch["env"] = serde_json::json!({ "vars": { env_var: key } });
         }
 
