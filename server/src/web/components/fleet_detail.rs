@@ -298,13 +298,21 @@ fn render_detail(d: &FleetDetailData) -> Element {
     // Tunnel entries paired with the relay hostname. Present only when
     // the daemon published both — a daemon behind a relay it can't reach
     // won't emit relay_proxy_hostname so we won't show clickable buttons.
-    let tunnel_names: Vec<String> = d
+    let tunnels: Vec<(String, String)> = d
         .tunnels
         .as_ref()
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+                .filter_map(|t| {
+                    let name = t.get("name").and_then(|v| v.as_str())?.to_string();
+                    let port = t
+                        .get("tcp_port")
+                        .and_then(|v| v.as_u64())
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "—".to_string());
+                    Some((name, port))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -375,60 +383,66 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Tunnels ──
-        // Clickable only when both the tunnels array and relay_proxy_url
-        // are present. Without a proxy URL the daemon is either on a
-        // bare relay or offline, so the buttons have nowhere to point.
-        if !tunnel_names.is_empty() {
-            div { class: "mb-6",
-                h3 { class: "text-lg font-semibold mb-2", "Tunnels" }
-                if let Some(ref purl) = proxy_url {
-                    div { class: "flex flex-wrap gap-2",
-                        for tname in tunnel_names.iter() {
-                            {
-                                let tn = tname.clone();
-                                let pu = purl.clone();
-                                let ph = proxy_hostname.clone().unwrap_or_default();
-                                let iid = instance_prefix.clone();
-                                rsx! {
-                                    button {
-                                        class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
-                                        title: "Open a short-lived proxy URL in a new tab",
-                                        onclick: move |_| {
-                                            let tn = tn.clone();
-                                            let pu = pu.clone();
-                                            let ph = ph.clone();
-                                            let iid = iid.clone();
-                                            async move {
-                                                match create_proxy_token().await {
-                                                    Ok(res) => {
-                                                        let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
-                                                        let url = format!(
-                                                            "{scheme}{iid}-{tn}.{ph}/proxy?proxy_token={}",
-                                                            res.proxy_token
-                                                        );
-                                                        let _ = document::eval(&format!(
-                                                            "window.open('{}', '_blank')",
-                                                            url.replace('\'', "\\'"),
-                                                        ));
-                                                    }
-                                                    Err(e) => {
-                                                        tracing::error!("proxy token creation failed: {e}");
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        "{tname}"
-                                    }
-                                }
+        if !tunnels.is_empty() {
+            h3 { class: "text-lg font-semibold mb-2", "Tunnels" }
+            div { class: "mb-6 overflow-x-auto",
+                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                    thead { class: "bg-gray-50 dark:bg-gray-700",
+                        tr {
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Name" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Port" }
+                            if proxy_url.is_some() {
+                                th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
                             }
                         }
                     }
-                } else {
-                    div { class: "flex flex-wrap gap-2",
-                        for tname in tunnel_names.iter() {
-                            span { class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-                                title: "No relay proxy hostname reported — daemon isn't reachable via the relay",
-                                "{tname}"
+                    tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for (tname, tport) in tunnels.iter() {
+                            {
+                                let has_proxy = proxy_url.is_some();
+                                let tn = tname.clone();
+                                let pu = proxy_url.clone().unwrap_or_default();
+                                let ph = proxy_hostname.clone().unwrap_or_default();
+                                let iid = instance_prefix.clone();
+                                rsx! {
+                                    tr {
+                                        td { class: "px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100", "{tname}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{tport}" }
+                                        if has_proxy {
+                                            td { class: "px-4 py-2",
+                                                button {
+                                                    class: "px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
+                                                    title: "Open a short-lived proxy URL in a new tab",
+                                                    onclick: move |_| {
+                                                        let tn = tn.clone();
+                                                        let pu = pu.clone();
+                                                        let ph = ph.clone();
+                                                        let iid = iid.clone();
+                                                        async move {
+                                                            match create_proxy_token().await {
+                                                                Ok(res) => {
+                                                                    let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
+                                                                    let url = format!(
+                                                                        "{scheme}{iid}-{tn}.{ph}/proxy?proxy_token={}",
+                                                                        res.proxy_token
+                                                                    );
+                                                                    let _ = document::eval(&format!(
+                                                                        "window.open('{}', '_blank')",
+                                                                        url.replace('\'', "\\'"),
+                                                                    ));
+                                                                }
+                                                                Err(e) => {
+                                                                    tracing::error!("proxy token creation failed: {e}");
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    "open"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
