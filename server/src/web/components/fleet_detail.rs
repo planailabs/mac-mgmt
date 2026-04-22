@@ -329,30 +329,43 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Services ──
-        if !service_badges.is_empty() {
-            h3 { class: "text-lg font-semibold mb-2", "Services" }
-            div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                dl { class: "grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2",
-                    for (name, healthy, upgrade_pending, busy) in service_badges.iter() {
-                        {
-                            let status = if *healthy { "healthy" } else { "unhealthy" };
-                            let status_cls = if *healthy {
-                                "text-green-700 dark:text-green-400"
-                            } else {
-                                "text-red-700 dark:text-red-400"
-                            };
-                            let mut flags = Vec::new();
-                            if *upgrade_pending { flags.push("upgrade pending"); }
-                            if *busy { flags.push("busy"); }
-                            let detail = if flags.is_empty() {
-                                status.to_string()
-                            } else {
-                                format!("{status} · {}", flags.join(" · "))
-                            };
-                            rsx! {
-                                div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
-                                    dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{name}" }
-                                    dd { class: "text-right font-mono text-xs {status_cls}", "{detail}" }
+        h3 { class: "text-lg font-semibold mb-2", "Services" }
+        if service_badges.is_empty() {
+            p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
+                "No services reported."
+            }
+        } else {
+            div { class: "mb-6 overflow-x-auto",
+                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                    thead { class: "bg-gray-50 dark:bg-gray-700",
+                        tr {
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Service" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Status" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Upgrade" }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Busy" }
+                        }
+                    }
+                    tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for (name, healthy, upgrade_pending, busy) in service_badges.iter() {
+                            {
+                                let (badge_cls, badge_text) = if *healthy {
+                                    ("bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200", "healthy")
+                                } else {
+                                    ("bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200", "unhealthy")
+                                };
+                                let upgrade = if *upgrade_pending { "pending" } else { "—" };
+                                let busy_text = if *busy { "yes" } else { "—" };
+                                rsx! {
+                                    tr {
+                                        td { class: "px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100", "{name}" }
+                                        td { class: "px-4 py-2",
+                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_cls}",
+                                                "{badge_text}"
+                                            }
+                                        }
+                                        td { class: "px-4 py-2 text-xs text-gray-600 dark:text-gray-300", "{upgrade}" }
+                                        td { class: "px-4 py-2 text-xs text-gray-600 dark:text-gray-300", "{busy_text}" }
+                                    }
                                 }
                             }
                         }
