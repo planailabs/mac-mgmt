@@ -882,7 +882,7 @@ fn build_security_items(v: &serde_json::Value) -> Vec<(String, String, String)> 
                         "medium" => yellow,
                         _ => gray,
                     };
-                    ("fail".to_string(), cls)
+                    (severity.to_string(), cls)
                 };
                 Some((msg, value, cls.to_string()))
             })
