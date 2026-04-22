@@ -881,12 +881,23 @@ pub(super) fn set_at_path(
     }
 }
 
-/// Remove a value at a nested JSON path.
+/// Remove a value at a nested JSON path. Numeric segments index into arrays.
 pub(super) fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: &[String]) {
     let mut val = form_values.write();
     let mut current = &mut *val;
     for key in &path[..path.len() - 1] {
-        match current.get_mut(key) {
+        if let Ok(idx) = key.parse::<usize>() {
+            if let serde_json::Value::Array(arr) = current {
+                match arr.get_mut(idx) {
+                    Some(next) => {
+                        current = next;
+                        continue;
+                    }
+                    None => return,
+                }
+            }
+        }
+        match current.get_mut(key.as_str()) {
             Some(next) => current = next,
             None => return,
         }
