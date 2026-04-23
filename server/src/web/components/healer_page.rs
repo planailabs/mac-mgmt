@@ -33,6 +33,9 @@ pub struct SessionSummary {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub label: Option<String>,
+    pub auto_approve: bool,
+    pub fix_provider: Option<String>,
+    pub fix_model: Option<String>,
 }
 
 // Re-export wire types from common — single source of truth.
@@ -210,9 +213,10 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
         provider: Option<String>,
         model: Option<String>,
         label: Option<String>,
+        state_data: serde_json::Value,
     }
     let sessions = sqlx::query_as::<_, SessRow>(
-        "SELECT id, state, created_by, created_at, error_message, provider, model, label \
+        "SELECT id, state, created_by, created_at, error_message, provider, model, label, state_data \
          FROM healer_sessions \
          WHERE cluster_id = $1 AND instance_id = $2 \
          ORDER BY created_at DESC LIMIT 20",
@@ -223,15 +227,23 @@ pub async fn get_healer_context(instance_id: String) -> Result<HealerContext, Se
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|r| SessionSummary {
-        id: r.id.to_string(),
-        state: r.state,
-        created_by: r.created_by,
-        created_at: r.created_at.format("%Y-%m-%d %H:%M").to_string(),
-        error_message: r.error_message,
-        provider: r.provider,
-        model: r.model,
-        label: r.label,
+    .map(|r| {
+        let auto_approve = r.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false);
+        let fix_provider = r.state_data.get("fix_provider").and_then(|v| v.as_str()).map(String::from);
+        let fix_model = r.state_data.get("fix_model").and_then(|v| v.as_str()).map(String::from);
+        SessionSummary {
+            id: r.id.to_string(),
+            state: r.state,
+            created_by: r.created_by,
+            created_at: r.created_at.format("%Y-%m-%d %H:%M").to_string(),
+            error_message: r.error_message,
+            provider: r.provider,
+            model: r.model,
+            label: r.label,
+            auto_approve,
+            fix_provider,
+            fix_model,
+        }
     })
     .collect();
 
@@ -556,6 +568,84 @@ pub async fn get_session_meta(session_id: String) -> Result<SessionMeta, ServerF
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HealerSettings {
+    pub auto_trigger: Option<bool>,
+    pub auto_approve: Option<bool>,
+    pub fix_provider: Option<String>,
+    pub fix_model: Option<String>,
+}
+
+#[server]
+pub async fn get_healer_settings(cluster_id: String) -> Result<HealerSettings, ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid cluster id"))?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        auto_trigger: Option<bool>,
+        auto_approve: Option<bool>,
+        fix_provider: Option<String>,
+        fix_model: Option<String>,
+    }
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT auto_trigger, auto_approve, fix_provider, fix_model \
+         FROM healer_cluster_settings WHERE cluster_id = $1",
+    )
+    .bind(cid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(row
+        .map(|r| HealerSettings {
+            auto_trigger: r.auto_trigger,
+            auto_approve: r.auto_approve,
+            fix_provider: r.fix_provider,
+            fix_model: r.fix_model,
+        })
+        .unwrap_or_default())
+}
+
+#[server]
+pub async fn save_healer_settings(
+    cluster_id: String,
+    auto_trigger: Option<bool>,
+    auto_approve: Option<bool>,
+    fix_provider: Option<String>,
+    fix_model: Option<String>,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid cluster id"))?;
+    user.require_cluster_write(&pool, cid).await?;
+
+    sqlx::query(
+        "INSERT INTO healer_cluster_settings (cluster_id, auto_trigger, auto_approve, fix_provider, fix_model, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, now()) \
+         ON CONFLICT (cluster_id) DO UPDATE SET \
+            auto_trigger = EXCLUDED.auto_trigger, \
+            auto_approve = EXCLUDED.auto_approve, \
+            fix_provider = EXCLUDED.fix_provider, \
+            fix_model = EXCLUDED.fix_model, \
+            updated_at = now()",
+    )
+    .bind(cid)
+    .bind(auto_trigger)
+    .bind(auto_approve)
+    .bind(&fix_provider)
+    .bind(&fix_model)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
 // ── Component ──────────────────────────────────────────────────────────
 
 #[component]
@@ -588,6 +678,26 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut selected_model_key = use_signal(String::new);
     let mut selected_fix_model_key = use_signal(|| "none".to_string());
     let mut auto_approve = use_signal(|| false);
+    let mut settings_open = use_signal(|| false);
+    let mut settings_saving = use_signal(|| false);
+
+    // Load per-cluster healer settings.
+    let cluster_id_for_settings = ctx.cluster_id.clone();
+    let mut settings_future = use_server_future(move || {
+        let cid = cluster_id_for_settings.clone();
+        async move { get_healer_settings(cid).await }
+    })?;
+    let healer_settings = settings_future
+        .read()
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut s_auto_trigger = use_signal(move || healer_settings.auto_trigger.unwrap_or(false));
+    let mut s_auto_approve = use_signal(move || healer_settings.auto_approve.unwrap_or(false));
+    let mut s_fix_provider = use_signal(move || healer_settings.fix_provider.clone().unwrap_or_default());
+    let mut s_fix_model = use_signal(move || healer_settings.fix_model.clone().unwrap_or_default());
     let models = ctx.models.clone();
 
     let unhealthy: Vec<String> = ctx
@@ -610,6 +720,111 @@ fn render_healer(ctx: &HealerContext) -> Element {
             div { class: "mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded",
                 p { class: "text-sm font-medium text-red-800 dark:text-red-300",
                     "Unhealthy services: {unhealthy.join(\", \")}"
+                }
+            }
+        }
+
+        // Cluster healer settings (collapsible)
+        {
+            let cluster_id = ctx.cluster_id.clone();
+            rsx! {
+                div { class: "mb-4",
+                    button {
+                        class: "text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1",
+                        onclick: move |_| { let v = *settings_open.read(); settings_open.set(!v); },
+                        if *settings_open.read() { "Settings" } else { "Settings" }
+                        span { class: "text-xs", if *settings_open.read() { "\u{25BC}" } else { "\u{25B6}" } }
+                    }
+                    if *settings_open.read() {
+                        div { class: "mt-2 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 border border-gray-200 dark:border-gray-700",
+                            div { class: "grid grid-cols-1 md:grid-cols-2 gap-4",
+                                // Auto-trigger toggle
+                                div { class: "flex items-center gap-2",
+                                    input {
+                                        r#type: "checkbox",
+                                        id: "s-auto-trigger",
+                                        class: "rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700",
+                                        checked: *s_auto_trigger.read(),
+                                        onchange: move |e| s_auto_trigger.set(e.checked()),
+                                    }
+                                    label {
+                                        r#for: "s-auto-trigger",
+                                        class: "text-sm text-gray-700 dark:text-gray-300",
+                                        "Auto-trigger healer sessions"
+                                    }
+                                }
+                                // Auto-approve toggle
+                                div { class: "flex items-center gap-2",
+                                    input {
+                                        r#type: "checkbox",
+                                        id: "s-auto-approve",
+                                        class: "rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700",
+                                        checked: *s_auto_approve.read(),
+                                        onchange: move |e| s_auto_approve.set(e.checked()),
+                                    }
+                                    label {
+                                        r#for: "s-auto-approve",
+                                        class: "text-sm text-gray-700 dark:text-gray-300",
+                                        "Auto-approve remediation"
+                                    }
+                                }
+                                // Fix provider
+                                div {
+                                    label { class: "block text-sm text-gray-700 dark:text-gray-300 mb-1", "Fix provider" }
+                                    input {
+                                        r#type: "text",
+                                        class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                        placeholder: "e.g. anthropic, openrouter",
+                                        value: "{s_fix_provider}",
+                                        oninput: move |e| s_fix_provider.set(e.value()),
+                                    }
+                                }
+                                // Fix model
+                                div {
+                                    label { class: "block text-sm text-gray-700 dark:text-gray-300 mb-1", "Fix model" }
+                                    input {
+                                        r#type: "text",
+                                        class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                        placeholder: "e.g. claude-sonnet-4-6",
+                                        value: "{s_fix_model}",
+                                        oninput: move |e| s_fix_model.set(e.value()),
+                                    }
+                                }
+                            }
+                            div { class: "mt-3 flex items-center gap-2",
+                                button {
+                                    class: "px-3 py-1 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50",
+                                    disabled: *settings_saving.read(),
+                                    onclick: {
+                                        let cluster_id = cluster_id.clone();
+                                        move |_| {
+                                            let cid = cluster_id.clone();
+                                            let at = *s_auto_trigger.read();
+                                            let aa = *s_auto_approve.read();
+                                            let fp = s_fix_provider.read().clone();
+                                            let fm = s_fix_model.read().clone();
+                                            settings_saving.set(true);
+                                            async move {
+                                                let _ = save_healer_settings(
+                                                    cid,
+                                                    if at { Some(true) } else { None },
+                                                    if aa { Some(true) } else { None },
+                                                    if fp.is_empty() { None } else { Some(fp) },
+                                                    if fm.is_empty() { None } else { Some(fm) },
+                                                ).await;
+                                                settings_saving.set(false);
+                                                settings_future.restart();
+                                            }
+                                        }
+                                    },
+                                    if *settings_saving.read() { "Saving..." } else { "Save" }
+                                }
+                                p { class: "text-xs text-gray-500 dark:text-gray-400",
+                                    "Per-cluster settings for the healer (auto-trigger, approval, fix model)."
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -941,6 +1156,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             let model_label = sess.model.clone().unwrap_or_default();
                             let session_label = sess.label.clone().unwrap_or_default();
                             let is_auto = created_by.starts_with("auto:");
+                            let is_awaiting_approval = sess_state == "awaiting_approval";
+                            let has_auto_approve = sess.auto_approve;
+                            let fix_model_label = sess.fix_model.clone().unwrap_or_default();
                             let (badge_class, badge_label) = state_badge(&sess_state);
                             let url = format!("/fleet/{}/healer/{}", instance_id, sid);
 
@@ -948,10 +1166,16 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 Link {
                                     to: url,
                                     class: "flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer",
-                                    div { class: "flex items-center gap-3",
+                                    div { class: "flex items-center gap-3 flex-wrap",
                                         span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}", "{badge_label}" }
+                                        if is_awaiting_approval {
+                                            span { class: "px-1.5 py-0.5 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300 rounded animate-pulse", "approval pending" }
+                                        }
                                         if is_auto {
                                             span { class: "px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded", "auto" }
+                                        }
+                                        if has_auto_approve {
+                                            span { class: "px-1.5 py-0.5 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded", "auto-approve" }
                                         }
                                         if !session_label.is_empty() {
                                             span { class: "text-sm font-medium text-gray-700 dark:text-gray-300 truncate max-w-xs", "{session_label}" }
@@ -959,6 +1183,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                         span { class: "text-sm text-gray-700 dark:text-gray-300", "{created_at}" }
                                         if !model_label.is_empty() {
                                             span { class: "px-1.5 py-0.5 text-xs font-mono bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded", "{model_label}" }
+                                        }
+                                        if !fix_model_label.is_empty() {
+                                            span { class: "px-1.5 py-0.5 text-xs font-mono bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-300 rounded", "fix: {fix_model_label}" }
                                         }
                                         if !is_auto {
                                             span { class: "text-xs text-gray-500 dark:text-gray-400", "{created_by}" }
@@ -1319,6 +1546,10 @@ fn state_badge(st: &str) -> (&'static str, &'static str) {
         "paused" => (
             "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
             "Paused",
+        ),
+        "awaiting_approval" => (
+            "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+            "Awaiting Approval",
         ),
         "awaiting_retry" => (
             "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",

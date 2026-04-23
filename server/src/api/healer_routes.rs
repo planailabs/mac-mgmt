@@ -85,6 +85,11 @@ pub struct SessionSummary {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    pub auto_approve: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -259,17 +264,25 @@ pub async fn list_sessions(
     Ok(Json(
         sessions
             .into_iter()
-            .map(|s| SessionSummary {
-                id: s.id,
-                instance_id: s.instance_id,
-                state: s.state.as_str().to_string(),
-                created_by: s.created_by,
-                created_at: s.created_at,
-                completed_at: s.completed_at,
-                error_message: s.error_message,
-                provider: s.provider,
-                model: s.model,
-                label: s.label,
+            .map(|s| {
+                let auto_approve = s.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false);
+                let fix_provider = s.state_data.get("fix_provider").and_then(|v| v.as_str()).map(String::from);
+                let fix_model = s.state_data.get("fix_model").and_then(|v| v.as_str()).map(String::from);
+                SessionSummary {
+                    id: s.id,
+                    instance_id: s.instance_id,
+                    state: s.state.as_str().to_string(),
+                    created_by: s.created_by,
+                    created_at: s.created_at,
+                    completed_at: s.completed_at,
+                    error_message: s.error_message,
+                    provider: s.provider,
+                    model: s.model,
+                    label: s.label,
+                    auto_approve,
+                    fix_provider,
+                    fix_model,
+                }
             })
             .collect(),
     ))
@@ -290,6 +303,10 @@ pub async fn get_session(
         .map_err(|_| Status::InternalServerError)?
         .ok_or(Status::NotFound)?;
 
+    let auto_approve = session.state_data.get("auto_approve").and_then(|v| v.as_bool()).unwrap_or(false);
+    let fix_provider = session.state_data.get("fix_provider").and_then(|v| v.as_str()).map(String::from);
+    let fix_model = session.state_data.get("fix_model").and_then(|v| v.as_str()).map(String::from);
+
     Ok(Json(SessionDetail {
         session: SessionSummary {
             id: session.id,
@@ -302,6 +319,9 @@ pub async fn get_session(
             provider: session.provider,
             model: session.model,
             label: session.label,
+            auto_approve,
+            fix_provider,
+            fix_model,
         },
         messages: messages
             .into_iter()

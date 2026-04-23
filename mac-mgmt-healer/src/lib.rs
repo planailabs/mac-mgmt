@@ -193,6 +193,7 @@ impl HealerState {
             "file_tunnels": req.file_tunnels,
             "shell_tunnels": req.shell_tunnels,
             "sample": req.sample,
+            "auto_approve": req.auto_approve,
             "fix_provider": req.fix_provider,
             "fix_model": req.fix_model,
         });
