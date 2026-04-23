@@ -179,7 +179,6 @@ async fn main() -> Result<()> {
                 let socket_path = mac_mgmt_services::default_socket_path();
                 let reexec = mac_mgmt_services::server::run(&socket_path).await?;
                 if reexec {
-                    #[allow(deprecated)]
                     mac_mgmt_services::server::reexec_self();
                 }
             }

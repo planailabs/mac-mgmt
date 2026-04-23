@@ -92,6 +92,10 @@ impl Daemon {
                     tokio::task::spawn_blocking(crate::self_update::check_and_apply),
                 )
                 .await;
+                // Tell the supervisor to reexec so it picks up the new binary too.
+                // Children survive the reexec — they're reparented seamlessly.
+                #[cfg(feature = "services")]
+                self.svc_mgr.send_update_self().await;
             }
             #[cfg(not(feature = "sim"))]
             tokio::task::spawn_blocking(upgrade_nix);

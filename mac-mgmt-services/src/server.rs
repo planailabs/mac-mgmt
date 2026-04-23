@@ -11,7 +11,28 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
+use serde::{Deserialize, Serialize};
+
 use crate::protocol::{Message, Notification, Request, Response, ServiceStatus, SpawnSpec};
+
+/// Persisted state for seamless reexec. Written before exec, read on startup.
+#[derive(Serialize, Deserialize)]
+struct SavedState {
+    services: Vec<SavedService>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedService {
+    name: String,
+    spec: SpawnSpec,
+    pid: u32,
+    resolved_program: Option<String>,
+}
+
+/// Path to the state file used for reexec handoff.
+fn reexec_state_path(socket_path: &Path) -> std::path::PathBuf {
+    socket_path.with_extension("reexec-state.json")
+}
 
 /// Delay between failed spawns before retrying.
 const RESPAWN_DELAY: Duration = Duration::from_secs(2);
@@ -36,6 +57,25 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
 
     let state = Arc::new(SupervisorState::new());
     let (notif_tx, _) = broadcast::channel::<Notification>(256);
+
+    // Adopt children from a previous supervisor that reexec'd.
+    let state_file = reexec_state_path(socket_path);
+    if state_file.exists() {
+        if let Ok(json) = std::fs::read_to_string(&state_file) {
+            std::fs::remove_file(&state_file).ok();
+            if let Ok(saved) = serde_json::from_str::<SavedState>(&json) {
+                tracing::info!(
+                    "supervisor: adopting {} child(ren) from previous instance",
+                    saved.services.len()
+                );
+                for svc in saved.services {
+                    state.adopt(svc.name, svc.spec, svc.pid, svc.resolved_program, notif_tx.clone()).await;
+                }
+            }
+        } else {
+            std::fs::remove_file(&state_file).ok();
+        }
+    }
     let (req_tx, mut req_rx) = mpsc::channel::<(Request, mpsc::Sender<Response>)>(64);
 
     {
@@ -63,6 +103,8 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("SIGINT handler")?;
 
+    let mut reexec = false;
+
     loop {
         tokio::select! {
             _ = sigterm.recv() => {
@@ -80,13 +122,12 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
                         let _ = resp_tx.send(Response::Ok).await;
                         break;
                     }
-                    // compat: added 2026-04-24, removable after 2026-07-24
-                    // UpdateSelf is no longer used — the daemon handles its
-                    // own restart after self-update via exec. Kept as a no-op
-                    // for protocol backwards compatibility.
                     Request::UpdateSelf => {
-                        tracing::info!("supervisor: update-self requested (no-op, daemon handles restart)");
+                        tracing::info!("supervisor: update-self requested, saving state for reexec");
+                        state.save_state_for_reexec(&reexec_state_path(socket_path));
                         let _ = resp_tx.send(Response::Ok).await;
+                        reexec = true;
+                        break;
                     }
                     other => {
                         let resp = state.handle(other, &notif_tx).await;
@@ -97,18 +138,25 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
         }
     }
 
-    tracing::info!("supervisor tearing down children");
-    state.shutdown_all().await;
+    if reexec {
+        // On reexec, leave children running — they keep the same parent PID
+        // after exec(). State was saved by save_state_for_reexec().
+        tracing::info!("supervisor: leaving children running for reexec");
+        // Drop the service map without sending stop signals.
+        // The tokio runtime will be dropped when exec replaces the process.
+    } else {
+        tracing::info!("supervisor tearing down children");
+        state.shutdown_all().await;
+    }
     std::fs::remove_file(socket_path).ok();
 
-    Ok(false)
+    Ok(reexec)
 }
 
-/// Re-exec the current binary with its original argv.
-///
-/// Deprecated: the daemon now handles its own restart after self-update.
-/// Kept for callers that still check `run()` returning `Ok(true)`.
-#[deprecated(note = "daemon handles restart via exec after self-update")]
+/// Re-exec the current binary with its original argv. Call after
+/// `run()` returns `Ok(true)`. Child processes survive the exec because
+/// the PID stays the same — the new process image adopts them via
+/// the state file written by `save_state_for_reexec`.
 pub fn reexec_self() -> ! {
     use std::os::unix::process::CommandExt;
     let exe = match std::env::current_exe() {
@@ -304,12 +352,91 @@ impl SupervisorState {
         );
     }
 
+    /// Adopt an existing child process from a previous supervisor instance.
+    async fn adopt(
+        self: &Arc<Self>,
+        name: String,
+        spec: SpawnSpec,
+        pid: u32,
+        resolved_program: Option<String>,
+        notif_tx: broadcast::Sender<Notification>,
+    ) {
+        // Check if the PID is still alive.
+        let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+        if !alive {
+            tracing::warn!("supervisor: cannot adopt {name} (pid {pid}): process not found");
+            return;
+        }
+        tracing::info!("supervisor: adopting {name} (pid {pid})");
+
+        let (stop_tx, stop_rx) = mpsc::channel(1);
+        let pid_arc = Arc::new(AtomicU32::new(pid));
+        let task_name = name.clone();
+        let task_spec = spec.clone();
+        let task_pid = pid_arc.clone();
+        let task = tokio::spawn(monitor_adopted(
+            task_name, task_spec, pid, notif_tx, stop_rx, task_pid,
+        ));
+        self.services.lock().await.insert(
+            name,
+            Entry {
+                spec,
+                supervisor: task,
+                stop_tx,
+                pid: pid_arc,
+                resolved_program,
+            },
+        );
+    }
+
     async fn unregister(&self, name: &str) {
         let existing = self.services.lock().await.remove(name);
         if let Some(entry) = existing {
             tracing::info!("supervisor: unregistering {name}");
             let _ = entry.stop_tx.send(()).await;
             let _ = entry.supervisor.await;
+        }
+    }
+
+    /// Save current service state to a file so the new process can adopt children.
+    fn save_state_for_reexec(&self, state_path: &Path) {
+        // Use try_lock since we're on the event loop — block would deadlock.
+        let map = match self.services.try_lock() {
+            Ok(m) => m,
+            Err(_) => {
+                tracing::warn!("supervisor: could not lock services for reexec state save");
+                return;
+            }
+        };
+        let saved = SavedState {
+            services: map
+                .iter()
+                .filter_map(|(name, entry)| {
+                    let pid = entry.pid.load(Ordering::Relaxed);
+                    if pid == 0 {
+                        return None;
+                    }
+                    Some(SavedService {
+                        name: name.clone(),
+                        spec: entry.spec.clone(),
+                        pid,
+                        resolved_program: entry.resolved_program.clone(),
+                    })
+                })
+                .collect(),
+        };
+        match serde_json::to_string(&saved) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(state_path, json) {
+                    tracing::warn!("supervisor: failed to write reexec state: {e}");
+                } else {
+                    tracing::info!(
+                        "supervisor: saved {} service(s) for reexec",
+                        saved.services.len()
+                    );
+                }
+            }
+            Err(e) => tracing::warn!("supervisor: failed to serialize reexec state: {e}"),
         }
     }
 
@@ -324,6 +451,58 @@ impl SupervisorState {
 }
 
 // ── Per-service runner ──────────────────────────────────────────────
+
+/// Monitor an adopted child process (from reexec). Waits for it to exit,
+/// then falls into the normal spawn-and-supervise loop.
+async fn monitor_adopted(
+    name: String,
+    spec: SpawnSpec,
+    adopted_pid: u32,
+    notif_tx: broadcast::Sender<Notification>,
+    mut stop_rx: mpsc::Receiver<()>,
+    pid: Arc<AtomicU32>,
+) {
+    tracing::info!("supervisor: monitoring adopted {name} (pid {adopted_pid})");
+
+    // Wait for the adopted process to exit by polling kill(pid, 0).
+    let exited = loop {
+        let alive = unsafe { libc::kill(adopted_pid as i32, 0) } == 0;
+        if !alive {
+            break true;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            _ = stop_rx.recv() => {
+                // Stop requested — kill the adopted child.
+                tracing::info!("supervisor: stopping adopted {name} (pid {adopted_pid})");
+                unsafe { libc::kill(adopted_pid as i32, libc::SIGTERM) };
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let still_alive = unsafe { libc::kill(adopted_pid as i32, 0) } == 0;
+                if still_alive {
+                    unsafe { libc::kill(adopted_pid as i32, libc::SIGKILL) };
+                }
+                pid.store(0, Ordering::Relaxed);
+                return;
+            }
+        }
+    };
+
+    pid.store(0, Ordering::Relaxed);
+    if exited {
+        tracing::info!("supervisor: adopted {name} (pid {adopted_pid}) exited, respawning");
+        let _ = notif_tx.send(Notification::Crashed {
+            name: name.clone(),
+            exit_code: None,
+        });
+        tokio::select! {
+            _ = tokio::time::sleep(RESPAWN_DELAY) => {}
+            _ = stop_rx.recv() => return,
+        }
+    }
+
+    // Fall into normal spawn-and-supervise loop.
+    run_service(name, spec, notif_tx, stop_rx, pid).await;
+}
 
 async fn run_service(
     name: String,
