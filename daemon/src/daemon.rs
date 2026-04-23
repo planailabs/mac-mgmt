@@ -290,12 +290,17 @@ impl Daemon {
             #[cfg(not(feature = "services"))]
             let service_samples = Vec::new();
 
+            self.metrics
+                .assessment
+                .update_service_samples(&service_samples);
+
             let url = url.clone();
             let token = token.clone();
             let iid = self.instance_id.clone();
             let hk = Arc::clone(&self.host_key);
             let pending = Arc::clone(&self.initial_assessment_pending);
             let assessor = Arc::clone(&self.assessor);
+            let metrics = Arc::clone(&self.metrics);
             tokio::spawn(async move {
                 let ok = do_send_heartbeat(
                     &url,
@@ -313,6 +318,12 @@ impl Daemon {
                     service_samples,
                 )
                 .await;
+
+                if ok {
+                    metrics.record_heartbeat_success();
+                } else {
+                    metrics.record_heartbeat_failure();
+                }
 
                 // First successful heartbeat creates the parent row for
                 // assessments + probes via migration 031's FK. Only fire
@@ -345,6 +356,10 @@ impl Daemon {
             );
             #[cfg(not(feature = "services"))]
             let (si, ss): (Vec<mac_mgmt_common::ServiceInventory>, Vec<mac_mgmt_common::ServiceSecurity>) = (Vec::new(), Vec::new());
+
+            self.metrics.assessment.update_service_inventories(&si);
+            self.metrics.assessment.update_service_security(&ss);
+
             let u = url.clone();
             let t = token.clone();
             let iid = self.instance_id.clone();

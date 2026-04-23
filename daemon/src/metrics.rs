@@ -1,6 +1,11 @@
-use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
+};
 
-use mac_mgmt_common::{DynamicSample, GpuInfo, GpuSample, Inventory, SecurityFinding};
+use mac_mgmt_common::{
+    DynamicSample, GpuInfo, GpuSample, Inventory, SecurityFinding, ServiceInventory,
+    ServiceSample, ServiceSecurity,
+};
 
 use crate::assessment::probes::{ProbeKind, ProbeResult};
 
@@ -58,6 +63,11 @@ pub struct AssessmentMetrics {
     pub probe_tokens_in: IntGaugeVec,
     pub probe_tokens_out: IntGaugeVec,
     pub probe_last_run_timestamp: IntGaugeVec,
+
+    // Service-level assessment.
+    pub service_sample: IntGaugeVec,
+    pub service_inventory: IntGaugeVec,
+    pub service_security: IntGaugeVec,
 }
 
 impl AssessmentMetrics {
@@ -270,6 +280,31 @@ impl AssessmentMetrics {
         )
         .unwrap();
 
+        let service_sample = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_service_sample",
+                "Per-service dynamic sample value",
+            ),
+            &["service", "entry"],
+        )
+        .unwrap();
+        let service_inventory = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_service_inventory",
+                "Per-service inventory entry (info-style: value on label, gauge=1)",
+            ),
+            &["service", "entry", "value"],
+        )
+        .unwrap();
+        let service_security = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_service_security",
+                "Per-service security finding (1=pass, 0=fail)",
+            ),
+            &["service", "check"],
+        )
+        .unwrap();
+
         for c in [
             Box::new(cpu_load_1m.clone()) as Box<dyn prometheus::core::Collector>,
             Box::new(mem_used_bytes.clone()),
@@ -301,6 +336,9 @@ impl AssessmentMetrics {
             Box::new(probe_tokens_in.clone()),
             Box::new(probe_tokens_out.clone()),
             Box::new(probe_last_run_timestamp.clone()),
+            Box::new(service_sample.clone()),
+            Box::new(service_inventory.clone()),
+            Box::new(service_security.clone()),
         ] {
             registry.register(c).unwrap();
         }
@@ -337,6 +375,9 @@ impl AssessmentMetrics {
             probe_tokens_in,
             probe_tokens_out,
             probe_last_run_timestamp,
+            service_sample,
+            service_inventory,
+            service_security,
         }
     }
 
@@ -498,6 +539,47 @@ impl AssessmentMetrics {
             .with_label_values(&[service])
             .set(chrono::Utc::now().timestamp());
     }
+
+    pub fn update_service_samples(&self, samples: &[ServiceSample]) {
+        self.service_sample.reset();
+        for ss in samples {
+            for entry in &ss.entries {
+                if let Some(n) = entry.value.as_i64().or_else(|| entry.value.as_f64().map(|f| f as i64)) {
+                    self.service_sample
+                        .with_label_values(&[&ss.service, &entry.id])
+                        .set(n);
+                }
+            }
+        }
+    }
+
+    pub fn update_service_inventories(&self, inventories: &[ServiceInventory]) {
+        self.service_inventory.reset();
+        for si in inventories {
+            for entry in &si.entries {
+                let val = match &entry.value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    other => other.to_string(),
+                };
+                self.service_inventory
+                    .with_label_values(&[&si.service, &entry.id, &val])
+                    .set(1);
+            }
+        }
+    }
+
+    pub fn update_service_security(&self, findings: &[ServiceSecurity]) {
+        self.service_security.reset();
+        for sf in findings {
+            for finding in &sf.findings {
+                self.service_security
+                    .with_label_values(&[&sf.service, &finding.id])
+                    .set(if finding.pass { 1 } else { 0 });
+            }
+        }
+    }
 }
 
 pub struct Metrics {
@@ -508,6 +590,8 @@ pub struct Metrics {
     pub assessment: AssessmentMetrics,
     pub daemon_version: String,
     pub started_at: std::time::Instant,
+    pub heartbeat_last_success: IntGauge,
+    pub heartbeat_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -551,6 +635,26 @@ impl Metrics {
 
         let assessment = AssessmentMetrics::new(&registry);
 
+        let heartbeat_last_success = IntGauge::new(
+            "mac_mgmt_heartbeat_last_success_timestamp_seconds",
+            "Unix timestamp of the last successful heartbeat",
+        )
+        .unwrap();
+        let heartbeat_total = IntCounterVec::new(
+            Opts::new(
+                "mac_mgmt_heartbeat_total",
+                "Total heartbeat attempts by result",
+            ),
+            &["result"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(heartbeat_last_success.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(heartbeat_total.clone()))
+            .unwrap();
+
         Metrics {
             registry,
             service_healthy,
@@ -559,7 +663,23 @@ impl Metrics {
             assessment,
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             started_at: std::time::Instant::now(),
+            heartbeat_last_success,
+            heartbeat_total,
         }
+    }
+
+    pub fn record_heartbeat_success(&self) {
+        self.heartbeat_last_success
+            .set(chrono::Utc::now().timestamp());
+        self.heartbeat_total
+            .with_label_values(&["success"])
+            .inc();
+    }
+
+    pub fn record_heartbeat_failure(&self) {
+        self.heartbeat_total
+            .with_label_values(&["failure"])
+            .inc();
     }
 
     pub fn register_collector(
