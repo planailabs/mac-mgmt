@@ -505,6 +505,22 @@ impl CloudProvider {
 }
 
 impl CloudProvider {
+    /// Standard API base URL for this provider.
+    pub fn base_url(&self) -> &str {
+        match self {
+            Self::Anthropic => "https://api.anthropic.com/v1",
+            Self::Openai => "https://api.openai.com/v1",
+            Self::Google => "https://generativelanguage.googleapis.com/v1beta",
+            Self::Mistral => "https://api.mistral.ai/v1",
+            Self::Groq => "https://api.groq.com/openai/v1",
+            Self::Xai => "https://api.x.ai/v1",
+            Self::Deepseek => "https://api.deepseek.com/v1",
+            Self::Openrouter => "https://openrouter.ai/api/v1",
+            Self::Together => "https://api.together.xyz/v1",
+            Self::Bedrock => "https://bedrock-runtime.us-east-1.amazonaws.com",
+        }
+    }
+
     pub fn default_model(&self) -> &str {
         match self {
             Self::Anthropic => "anthropic/claude-sonnet-4-6",
