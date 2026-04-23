@@ -193,8 +193,9 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
     })
 }
 
-/// Fetch commit counts from the GitLab API for a set of SHAs.
-/// Results are cached permanently (commit count for a SHA never changes).
+/// Fetch commit counts from GitLab for a set of SHAs via binary search
+/// on the commits list endpoint (per_page=1, check if page has data).
+/// Results are cached permanently since commit count for a SHA never changes.
 #[cfg(feature = "server")]
 async fn fetch_commit_counts(
     shas: &std::collections::HashSet<String>,
@@ -223,38 +224,76 @@ async fn fetch_commit_counts(
     }
 
     let client = reqwest::Client::new();
-    // GitLab project: plan-ai/mac-mgmt (URL-encoded: plan-ai%2Fmac-mgmt)
-    let base = "https://git.plan.ai/api/v4/projects/plan-ai%2Fmac-mgmt/repository/commits";
 
     for sha in &to_fetch {
-        let url = format!("{base}?ref_name={sha}&per_page=1");
-        match client
-            .get(&url)
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                if let Some(total) = resp
-                    .headers()
-                    .get("x-total")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                {
-                    result.insert(sha.clone(), total);
-                    cache.lock().unwrap().insert(sha.clone(), total);
-                }
-            }
-            Ok(resp) => {
-                tracing::debug!("gitlab commit count for {sha}: HTTP {}", resp.status());
-            }
-            Err(e) => {
-                tracing::debug!("gitlab commit count for {sha}: {e}");
-            }
+        if let Some(count) = gitlab_commit_count(&client, sha).await {
+            result.insert(sha.clone(), count);
+            cache.lock().unwrap().insert(sha.clone(), count);
         }
     }
 
     result
+}
+
+/// Binary search the GitLab commits endpoint to find the total commit count
+/// for a ref. Uses per_page=1 and checks if the page has data (content-length > 2
+/// means non-empty JSON array). ~10 requests max for repos up to 1M commits.
+#[cfg(feature = "server")]
+async fn gitlab_commit_count(client: &reqwest::Client, sha: &str) -> Option<u64> {
+    let base = "https://git.plan.ai/api/v4/projects/plan-ai%2Fmac-mgmt/repository/commits";
+
+    // Check if page `n` has data.
+    let has_data = |page: u64| {
+        let url = format!("{base}?ref_name={sha}&per_page=1&page={page}");
+        let client = client.clone();
+        async move {
+            let resp = client
+                .head(&url)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+                .ok()?;
+            // Empty page returns content-length: 2 (for "[]"), or 0 for HEAD.
+            // Check x-next-page: if empty, this is the last or beyond-last page.
+            let next = resp.headers().get("x-next-page")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if !next.is_empty() {
+                // There's a next page, so this page has data.
+                Some(true)
+            } else {
+                // No next page. Check if THIS page has data by doing a GET.
+                let resp2 = client.clone()
+                    .get(&format!("{base}?ref_name={sha}&per_page=1&page={page}"))
+                    .timeout(std::time::Duration::from_secs(5))
+                    .send()
+                    .await
+                    .ok()?;
+                let body = resp2.text().await.ok()?;
+                Some(body.len() > 2) // "[]" is 2 bytes = empty
+            }
+        }
+    };
+
+    // Binary search: find the last page with data.
+    let mut lo: u64 = 1;
+    let mut hi: u64 = 100_000;
+
+    // Quick probe: if page 1 has no data, the SHA is invalid.
+    if !has_data(1).await? {
+        return None;
+    }
+
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2;
+        if has_data(mid).await? {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    Some(lo)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
