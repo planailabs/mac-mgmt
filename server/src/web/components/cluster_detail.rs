@@ -5,6 +5,7 @@ use crate::web::app::Route;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
+use super::cluster_healer_settings::ClusterHealerSettings;
 use super::cluster_mcp_servers::ClusterMcpServers;
 use super::cluster_skills::ClusterSkills;
 use super::cluster_ssh_keys::ClusterSshKeys;
@@ -502,6 +503,10 @@ pub fn ClusterDetail(id: String) -> Element {
                     div {
                         h3 { class: "text-lg font-semibold mb-3", "SSH Keys" }
                         ClusterSshKeys { cluster_id: cid2.clone(), read_only: !can_admin }
+                    }
+                    div {
+                        h3 { class: "text-lg font-semibold mb-3", "Healer" }
+                        ClusterHealerSettings { cluster_id: cid2.clone(), read_only }
                     }
                 }
             }

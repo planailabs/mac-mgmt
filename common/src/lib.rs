@@ -1016,6 +1016,12 @@ pub struct HealerClusterConfig {
     #[schemars(description = "Enable auto-triggered healer sessions for this cluster")]
     #[serde(default)]
     pub auto_trigger: Option<bool>,
+    #[schemars(description = "Provider for auto-triggered sessions")]
+    #[serde(default)]
+    pub auto_trigger_provider: Option<String>,
+    #[schemars(description = "Model for auto-triggered sessions")]
+    #[serde(default)]
+    pub auto_trigger_model: Option<String>,
     #[schemars(description = "Auto-approve remediation (skip approval gate)")]
     #[serde(default)]
     pub auto_approve: Option<bool>,

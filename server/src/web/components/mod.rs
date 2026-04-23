@@ -5,6 +5,7 @@ pub mod bundle_form;
 pub mod bundle_list;
 pub mod cluster_detail;
 pub mod cluster_form;
+pub mod cluster_healer_settings;
 pub mod cluster_list;
 pub mod cluster_mcp_servers;
 pub mod cluster_skills;

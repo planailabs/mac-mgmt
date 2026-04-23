@@ -34,12 +34,15 @@ async fn cluster_healer_config(
     #[derive(sqlx::FromRow)]
     struct Row {
         auto_trigger: Option<bool>,
+        auto_trigger_provider: Option<String>,
+        auto_trigger_model: Option<String>,
         auto_approve: Option<bool>,
         fix_provider: Option<String>,
         fix_model: Option<String>,
     }
     sqlx::query_as::<_, Row>(
-        "SELECT auto_trigger, auto_approve, fix_provider, fix_model \
+        "SELECT auto_trigger, auto_trigger_provider, auto_trigger_model, \
+                auto_approve, fix_provider, fix_model \
          FROM healer_cluster_settings WHERE cluster_id = $1",
     )
     .bind(cluster_id)
@@ -49,6 +52,8 @@ async fn cluster_healer_config(
     .flatten()
     .map(|r| mac_mgmt_common::HealerClusterConfig {
         auto_trigger: r.auto_trigger,
+        auto_trigger_provider: r.auto_trigger_provider,
+        auto_trigger_model: r.auto_trigger_model,
         auto_approve: r.auto_approve,
         fix_provider: r.fix_provider,
         fix_model: r.fix_model,
@@ -332,8 +337,8 @@ async fn build_spawn_request(
         cluster_name,
         hostname: hb.hostname.unwrap_or_default(),
         skip_cooldown: false,
-        provider: Some(config.provider.clone()),
-        model: config.model.clone(),
+        provider: Some(cluster_healer.auto_trigger_provider.clone().unwrap_or_else(|| config.provider.clone())),
+        model: cluster_healer.auto_trigger_model.clone().or_else(|| config.model.clone()),
         label: Some("auto-triggered".to_string()),
         token_budget: None,
         proxy_expires: Some(proxy_expires),
