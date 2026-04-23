@@ -198,6 +198,46 @@ pub fn build_connectors(
     connectors
 }
 
+// ── Shared cloud-connector helpers ───────────────────────────────────
+
+/// Return Some only if the string is non-empty.
+pub(crate) fn non_empty(s: &Option<String>) -> Option<&str> {
+    s.as_deref().filter(|s| !s.is_empty())
+}
+
+/// Extract all enabled CloudConfigs from the configs map.
+pub(crate) fn enabled_cloud_configs(
+    configs: &std::collections::HashMap<String, serde_json::Value>,
+) -> Vec<CloudConfig> {
+    let Some(v) = configs.get("cloud") else {
+        tracing::warn!("cloud config not found in config store");
+        return Vec::new();
+    };
+    let all = match serde_json::from_value::<Vec<CloudConfig>>(v.clone()) {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!("failed to deserialize cloud configs: {e}");
+            return Vec::new();
+        }
+    };
+    let enabled: Vec<CloudConfig> = all.into_iter().filter(|c| c.enabled).collect();
+    if enabled.is_empty() {
+        tracing::debug!("no enabled cloud provider entries in config store");
+    }
+    enabled
+}
+
+/// Resolve the model for a provider, falling back to the provider's default
+/// if the configured model doesn't match the provider prefix.
+pub(crate) fn resolve_model(config: &CloudConfig) -> String {
+    let provider = config.provider.as_str();
+    if config.default_model.is_empty() || !config.default_model.starts_with(provider) {
+        config.provider.default_model().to_string()
+    } else {
+        config.default_model.clone()
+    }
+}
+
 /// Recursively merge `source` into `target`. For objects, keys from source
 /// are merged into target. For all other types, source overwrites target.
 pub fn merge_json(target: &mut serde_json::Value, source: &serde_json::Value) {

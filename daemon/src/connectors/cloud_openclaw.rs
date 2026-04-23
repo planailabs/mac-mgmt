@@ -1,9 +1,8 @@
 use anyhow::Result;
 
-use super::Connector;
+use super::{enabled_cloud_configs, non_empty, resolve_model, Connector};
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
-use mac_mgmt_common::CloudConfig;
 
 /// Configures OpenClaw with all enabled cloud LLM providers.
 ///
@@ -12,44 +11,6 @@ use mac_mgmt_common::CloudConfig;
 /// All enabled providers are configured; the first one's model is set as the
 /// default.
 pub struct CloudOpenClaw;
-
-/// Return Some only if the string is non-empty.
-fn non_empty(s: &Option<String>) -> Option<&str> {
-    s.as_deref().filter(|s| !s.is_empty())
-}
-
-/// Extract all enabled CloudConfigs from the configs map.
-fn enabled_cloud_configs(
-    configs: &std::collections::HashMap<String, serde_json::Value>,
-) -> Vec<CloudConfig> {
-    let Some(v) = configs.get("cloud") else {
-        tracing::warn!("cloud config not found in config store");
-        return Vec::new();
-    };
-    let all = match serde_json::from_value::<Vec<CloudConfig>>(v.clone()) {
-        Ok(list) => list,
-        Err(e) => {
-            tracing::error!("failed to deserialize cloud configs: {e}");
-            return Vec::new();
-        }
-    };
-    let enabled: Vec<CloudConfig> = all.into_iter().filter(|c| c.enabled).collect();
-    if enabled.is_empty() {
-        tracing::debug!("no enabled cloud provider entries in config store");
-    }
-    enabled
-}
-
-/// Resolve the model for a provider, falling back to the provider's default
-/// if the configured model doesn't match the provider prefix.
-fn resolve_model(config: &CloudConfig) -> String {
-    let provider = config.provider.as_str();
-    if config.default_model.is_empty() || !config.default_model.starts_with(provider) {
-        config.provider.default_model().to_string()
-    } else {
-        config.default_model.clone()
-    }
-}
 
 impl Connector for CloudOpenClaw {
     fn name(&self) -> &str {
