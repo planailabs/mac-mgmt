@@ -20,6 +20,17 @@ static TARGET_STATE: std::sync::RwLock<Target> = std::sync::RwLock::new(Target {
     store_path: None,
 });
 
+/// Set after a successful update. The main loop checks this to trigger
+/// a clean shutdown followed by exec of the new binary.
+static RESTART_EXEC: std::sync::RwLock<Option<std::path::PathBuf>> =
+    std::sync::RwLock::new(None);
+
+/// Check whether a self-update completed and a restart is pending.
+/// Returns the path to the new binary if so.
+pub fn take_restart_exec() -> Option<std::path::PathBuf> {
+    RESTART_EXEC.write().unwrap().take()
+}
+
 pub fn set_target(version: String, store_path: Option<String>) {
     let mut t = TARGET_STATE.write().unwrap();
     t.version = Some(version);
@@ -276,16 +287,19 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
 
     write_last_store_path(store_path);
 
-    tracing::info!("binary updated to {version} (symlink → {store_path})");
+    tracing::info!("binary updated to {version} (symlink → {store_path}), restart pending");
     sentry_ext::breadcrumb(
         "self-update",
-        "binary updated",
+        "binary updated, restart pending",
         &[
             ("from", CURRENT_VERSION),
             ("to", version),
             ("store_path", store_path),
         ],
     );
+
+    // Signal the main loop to perform a clean shutdown then exec the new binary.
+    *RESTART_EXEC.write().unwrap() = Some(new_bin);
     Ok(())
 }
 

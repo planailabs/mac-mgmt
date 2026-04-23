@@ -974,6 +974,9 @@ pub async fn run(
 
     // ── Main event loop ──────────────────────────────────────────────
 
+    #[cfg(feature = "self-update")]
+    let mut restart_exec_bin: Option<std::path::PathBuf> = None;
+
     loop {
         tokio::select! {
             _ = sigterm.recv() => { daemon.handle_shutdown("SIGTERM"); break; }
@@ -981,6 +984,12 @@ pub async fn run(
 
             _ = update_tick.tick() => {
                 daemon.handle_update().await;
+                #[cfg(feature = "self-update")]
+                if let Some(bin) = crate::self_update::take_restart_exec() {
+                    restart_exec_bin = Some(bin);
+                    daemon.handle_shutdown("self-update");
+                    break;
+                }
                 #[cfg(feature = "relay")]
                 relay_mgr.sync_ssh_keys();
             }
@@ -1076,6 +1085,16 @@ pub async fn run(
 
     sentry_ext::breadcrumb("daemon", "daemon shutdown complete", &[]);
     tracing::info!("daemon shutdown complete");
+
+    // If a self-update completed, exec the new binary now that cleanup is done.
+    #[cfg(feature = "self-update")]
+    if let Some(new_bin) = restart_exec_bin {
+        use std::os::unix::process::CommandExt;
+        tracing::info!("exec'ing new binary: {}", new_bin.display());
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let err = std::process::Command::new(&new_bin).args(&args).exec();
+        tracing::error!("failed to exec {}: {err}", new_bin.display());
+    }
 
     Ok(())
 }
