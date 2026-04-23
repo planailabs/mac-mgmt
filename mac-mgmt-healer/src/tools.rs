@@ -37,6 +37,8 @@ pub struct ToolContext {
     pub metrics_url: Option<String>,
     /// Whether remediation is auto-approved (false = diagnosis-only until approved).
     pub auto_approve: bool,
+    /// Notify handle to signal AwaitingApproval to the select! loop.
+    pub approval_notify: Arc<tokio::sync::Notify>,
 }
 
 macro_rules! healer_tool {
@@ -544,6 +546,8 @@ healer_tool! {
             ).await {
                 Ok(()) => {
                     crate::session::emit_state_change(&ctx.events_tx, "awaiting_approval", &data);
+                    // Signal the select! loop to stop the agent immediately.
+                    ctx.approval_notify.notify_one();
                     return Ok(ToolOutput::Text(
                         "Diagnosis complete. Session paused — awaiting remediation approval.".to_string()
                     ));

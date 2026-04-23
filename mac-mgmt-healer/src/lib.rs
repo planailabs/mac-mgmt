@@ -71,13 +71,16 @@ struct HealerStateInner {
     extended_budgets: DashMap<Uuid, u64>,
 }
 
+#[allow(dead_code)] // approval_notify is kept alive here; used via Arc in the spawned task
 struct RunningSession {
     cancel: CancellationToken,
-    pause_requested: Arc<AtomicBool>,
+    pause_notify: Arc<tokio::sync::Notify>,
     budget_limit: Arc<std::sync::atomic::AtomicU64>,
     events_tx: broadcast::Sender<HealerEvent>,
     /// Currently executing tools (in-memory only, not persisted).
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
+    /// Fired by the set_phase tool when transitioning to AwaitingApproval.
+    approval_notify: Arc<tokio::sync::Notify>,
 }
 
 /// Request to spawn a new healer session.
@@ -207,7 +210,8 @@ impl HealerState {
 
         // 4. Set up cancellation and event broadcasting
         let cancel = CancellationToken::new();
-        let pause_requested = Arc::new(AtomicBool::new(false));
+        let pause_notify = Arc::new(tokio::sync::Notify::new());
+        let approval_notify = Arc::new(tokio::sync::Notify::new());
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         let effective_budget = req.token_budget.unwrap_or(self.inner.connector_config.token_budget);
@@ -216,10 +220,11 @@ impl HealerState {
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
-                pause_requested: pause_requested.clone(),
+                pause_notify: pause_notify.clone(),
                 budget_limit: budget_limit.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
+                approval_notify: approval_notify.clone(),
             },
         );
 
@@ -232,7 +237,8 @@ impl HealerState {
                 session_id,
                 req,
                 cancel.clone(),
-                pause_requested,
+                pause_notify,
+                approval_notify,
                 budget_limit,
                 events_tx.clone(),
                 running_tools,
@@ -376,7 +382,8 @@ impl HealerState {
 
         // Set up cancellation and events
         let cancel = CancellationToken::new();
-        let pause_requested = Arc::new(AtomicBool::new(false));
+        let pause_notify = Arc::new(tokio::sync::Notify::new());
+        let approval_notify = Arc::new(tokio::sync::Notify::new());
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
         // Use extended budget if one was granted, otherwise default
@@ -387,10 +394,11 @@ impl HealerState {
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
-                pause_requested: pause_requested.clone(),
+                pause_notify: pause_notify.clone(),
                 budget_limit: budget_limit.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
+                approval_notify: approval_notify.clone(),
             },
         );
 
@@ -433,7 +441,8 @@ impl HealerState {
                 session_id,
                 req,
                 cancel,
-                pause_requested,
+                pause_notify,
+                approval_notify,
                 budget_limit,
                 events_tx.clone(),
                 running_tools,
@@ -466,11 +475,11 @@ impl HealerState {
         Ok(())
     }
 
-    /// Request a running session to pause at its next checkpoint.
-    /// The agent will finish its current LLM request, then transition to Paused.
+    /// Request a running session to pause immediately.
+    /// The agent future is dropped, then the session transitions to Paused.
     pub fn pause_session(&self, session_id: Uuid) -> Result<()> {
         if let Some(entry) = self.inner.running.get(&session_id) {
-            entry.pause_requested.store(true, Ordering::Relaxed);
+            entry.pause_notify.notify_one();
             Ok(())
         } else {
             Err(anyhow::anyhow!("session is not running"))
@@ -612,7 +621,8 @@ async fn run_agent_session(
     session_id: Uuid,
     req: SpawnRequest,
     cancel: CancellationToken,
-    pause_requested: Arc<AtomicBool>,
+    pause_notify: Arc<tokio::sync::Notify>,
+    approval_notify: Arc<tokio::sync::Notify>,
     budget_limit: Arc<std::sync::atomic::AtomicU64>,
     events_tx: broadcast::Sender<HealerEvent>,
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
@@ -683,6 +693,7 @@ async fn run_agent_session(
         events_tx: events_tx.clone(),
         metrics_url: req.metrics_url.clone(),
         auto_approve: req.auto_approve,
+        approval_notify: approval_notify.clone(),
     };
 
     // In approval mode, the agent starts with diagnosis-only tools (no mutating
@@ -741,11 +752,7 @@ async fn run_agent_session(
     // 6. Build and run agent
     let store_msg = store.clone();
     let events_tx_msg = events_tx.clone();
-    let token_usage = llm.token_usage.clone();
     let is_cloud = llm.is_cloud;
-    // state is Clone (inner Arc) — we can pass it into closures for shutdown checks
-    let store_hook = store.clone();
-    let events_tx_hook = events_tx.clone();
     let proxy_expires = req.proxy_expires;
 
     // Determine initial prompt
@@ -876,7 +883,6 @@ async fn run_agent_session(
         let events_tx_after_tool = events_tx.clone();
         let running_tools_after = running_tools.clone();
 
-        let state_ref = state.clone();
         builder
             .system_prompt(system_prompt)
             .on_new_message(move |_agent, msg| {
@@ -970,128 +976,108 @@ async fn run_agent_session(
                     Ok(())
                 })
             })
-            .before_completion(move |_agent, _req| {
-                let cancel = cancel.clone();
-                let pause_requested = pause_requested.clone();
-                let budget_limit = budget_limit.clone();
-                let store = store_hook.clone();
-                let events_tx = events_tx_hook.clone();
-                let token_usage = token_usage.clone();
-                let state_ref = state_ref.clone();
-                Box::pin(async move {
-                    // 1. Check shutdown
-                    if state_ref.is_shutting_down() {
-                        let data = json!({"reason": "server_shutdown"});
-                        store.transition_state(
-                            session_id,
-                            &SessionState::AwaitingRetry,
-                            &data,
-                        )
-                        .await
-                        .ok();
-                        session::emit_state_change(&events_tx, "awaiting_retry", &data);
-                        return Err(anyhow::anyhow!("server shutting down"));
-                    }
-
-                    // 2. Check cancellation
-                    if cancel.is_cancelled() {
-                        let data = json!({"reason": "cancelled"});
-                        store.transition_state(
-                            session_id,
-                            &SessionState::Cancelled,
-                            &data,
-                        )
-                        .await
-                        .ok();
-                        session::emit_state_change(&events_tx, "cancelled", &data);
-                        return Err(anyhow::anyhow!("session cancelled"));
-                    }
-
-                    // 2b. Check manual pause request
-                    if pause_requested.swap(false, Ordering::Relaxed) {
-                        let data = json!({"reason": "manual_pause"});
-                        store.transition_state(
-                            session_id,
-                            &SessionState::Paused,
-                            &data,
-                        )
-                        .await
-                        .ok();
-                        session::emit_state_change(&events_tx, "paused", &data);
-                        return Err(anyhow::anyhow!("session paused by user"));
-                    }
-
-                    // 2c. Check if awaiting approval (set by set_phase tool)
-                    if let Ok(Some(s)) = store.get_session(session_id).await {
-                        if s.state == SessionState::AwaitingApproval {
-                            return Err(anyhow::anyhow!("session awaiting remediation approval"));
-                        }
-                    }
-
-                    // 3. Check proxy token expiry (server mode only)
-                    if let Some(expires) = proxy_expires {
-                        if Utc::now() + chrono::Duration::minutes(30) > expires {
-                            let data = json!({"reason": "proxy_token_expiring"});
-                            store.transition_state(
-                                session_id,
-                                &SessionState::AwaitingRetry,
-                                &data,
-                            )
-                            .await
-                            .ok();
-                            session::emit_state_change(&events_tx, "awaiting_retry", &data);
-                            return Err(anyhow::anyhow!("proxy token expiring"));
-                        }
-                    }
-
-                    // 4. Check cloud token budget
-                    let current_budget = budget_limit.load(Ordering::Relaxed);
-                    if is_cloud && current_budget > 0 {
-                        let used = token_usage.load(Ordering::Relaxed);
-                        if used >= current_budget {
-                            let data = json!({
-                                "reason": "token_budget_exceeded",
-                                "tokens_used": used,
-                                "budget_limit": current_budget
-                            });
-                            store.transition_state(
-                                session_id,
-                                &SessionState::Paused,
-                                &data,
-                            )
-                            .await
-                            .ok();
-                            session::emit_state_change(&events_tx, "paused", &data);
-                            return Err(anyhow::anyhow!(
-                                "token budget exceeded ({used}/{current_budget})"
-                            ));
-                        }
-                    }
-
-                    Ok(())
-                })
-            })
             .limit(50);
 
         builder.build().context("failed to build agent")?
     };
 
-    // Run the agent
-    agent
-        .query(initial_prompt)
-        .await
-        .context("agent query failed")?;
+    // Race agent execution against control signals.
+    // When a signal fires, the agent future is dropped — immediately stopping
+    // all LLM calls and tool execution. This replaces the broken
+    // before_completion hook approach (swiftide swallows hook errors).
 
-    // Mark completed
-    let completed_data = json!({"reason": "agent finished"});
-    store.transition_state(
-        session_id,
-        &SessionState::Completed,
-        &completed_data,
-    )
-    .await?;
+    let store_select = store.clone();
+    let events_tx_select = events_tx.clone();
 
-    session::emit_state_change(&events_tx, "completed", &completed_data);
+    enum StopReason {
+        Completed,
+        AgentError(anyhow::Error),
+        Cancelled,
+        Paused,
+        AwaitingApproval,
+        Shutdown,
+        ProxyExpiring,
+        BudgetExceeded { used: u64, limit: u64 },
+    }
+
+    let reason = tokio::select! {
+        result = agent.query(initial_prompt) => {
+            match result {
+                Ok(()) => StopReason::Completed,
+                Err(e) => StopReason::AgentError(e.into()),
+            }
+        }
+        _ = cancel.cancelled() => StopReason::Cancelled,
+        _ = pause_notify.notified() => StopReason::Paused,
+        _ = approval_notify.notified() => StopReason::AwaitingApproval,
+        _ = shutdown_signal(state) => StopReason::Shutdown,
+        _ = proxy_expiry_signal(proxy_expires) => StopReason::ProxyExpiring,
+        _ = budget_exceeded_signal(&llm.token_usage, &budget_limit, is_cloud) => {
+            let used = llm.token_usage.load(Ordering::Relaxed);
+            let limit = budget_limit.load(Ordering::Relaxed);
+            StopReason::BudgetExceeded { used, limit }
+        }
+    };
+
+    match reason {
+        StopReason::Completed => {
+            let data = json!({"reason": "agent finished"});
+            store_select
+                .transition_state(session_id, &SessionState::Completed, &data)
+                .await?;
+            session::emit_state_change(&events_tx_select, "completed", &data);
+        }
+        StopReason::AgentError(e) => {
+            return Err(e.context("agent query failed"));
+        }
+        StopReason::Cancelled => {
+            let data = json!({"reason": "cancelled"});
+            store_select
+                .transition_state(session_id, &SessionState::Cancelled, &data)
+                .await
+                .ok();
+            session::emit_state_change(&events_tx_select, "cancelled", &data);
+        }
+        StopReason::Paused => {
+            let data = json!({"reason": "manual_pause"});
+            store_select
+                .transition_state(session_id, &SessionState::Paused, &data)
+                .await
+                .ok();
+            session::emit_state_change(&events_tx_select, "paused", &data);
+        }
+        StopReason::AwaitingApproval => {
+            // State already transitioned by set_phase tool — nothing to do.
+        }
+        StopReason::Shutdown => {
+            let data = json!({"reason": "server_shutdown"});
+            store_select
+                .transition_state(session_id, &SessionState::AwaitingRetry, &data)
+                .await
+                .ok();
+            session::emit_state_change(&events_tx_select, "awaiting_retry", &data);
+        }
+        StopReason::ProxyExpiring => {
+            let data = json!({"reason": "proxy_token_expiring"});
+            store_select
+                .transition_state(session_id, &SessionState::AwaitingRetry, &data)
+                .await
+                .ok();
+            session::emit_state_change(&events_tx_select, "awaiting_retry", &data);
+        }
+        StopReason::BudgetExceeded { used, limit } => {
+            let data = json!({
+                "reason": "token_budget_exceeded",
+                "tokens_used": used,
+                "budget_limit": limit,
+            });
+            store_select
+                .transition_state(session_id, &SessionState::Paused, &data)
+                .await
+                .ok();
+            session::emit_state_change(&events_tx_select, "paused", &data);
+        }
+    }
 
     Ok(())
 }
@@ -1138,6 +1124,54 @@ impl swiftide::chat_completion::Tool for RenamedTool {
         tool_call: &swiftide::chat_completion::ToolCall,
     ) -> Result<swiftide::chat_completion::ToolOutput, swiftide::chat_completion::errors::ToolError> {
         self.inner.invoke(agent_context, tool_call).await
+    }
+}
+
+/// Wait until the HealerState signals a server shutdown.
+async fn shutdown_signal(state: &HealerState) {
+    loop {
+        if state.is_shutting_down() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+/// Wait until the proxy token is about to expire (30 minutes before).
+/// Returns `pending` if no expiry is set.
+async fn proxy_expiry_signal(expires: Option<DateTime<Utc>>) {
+    let Some(expires) = expires else {
+        return std::future::pending().await;
+    };
+    let deadline = expires - chrono::Duration::minutes(30);
+    let now = Utc::now();
+    if now >= deadline {
+        return;
+    }
+    let dur = (deadline - now).to_std().unwrap_or_default();
+    tokio::time::sleep(dur).await;
+}
+
+/// Wait until token usage exceeds the budget. Polls every 5 seconds.
+/// Returns `pending` if not a cloud provider or budget is 0.
+async fn budget_exceeded_signal(
+    token_usage: &std::sync::atomic::AtomicU64,
+    budget_limit: &std::sync::atomic::AtomicU64,
+    is_cloud: bool,
+) {
+    if !is_cloud {
+        return std::future::pending().await;
+    }
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let budget = budget_limit.load(Ordering::Relaxed);
+        if budget == 0 {
+            continue;
+        }
+        let used = token_usage.load(Ordering::Relaxed);
+        if used >= budget {
+            return;
+        }
     }
 }
 
