@@ -20,6 +20,8 @@ struct FleetDetailData {
     hostname: String,
     environment: String,
     version: String,
+    #[serde(default)]
+    git_sha: Option<String>,
     nixpkgs_commit: Option<String>,
     reported_at: DateTime<Utc>,
     sample: Option<serde_json::Value>,
@@ -78,6 +80,20 @@ struct ProbeEntry {
 }
 
 #[server]
+async fn get_mac_mgmt_commit_count(sha: String) -> Result<Option<u64>, ServerFnError> {
+    let shas = std::collections::HashSet::from([sha.clone()]);
+    let counts = super::commit_count::mac_mgmt_commit_counts(&shas).await;
+    Ok(counts.get(&sha).copied())
+}
+
+#[server]
+async fn get_nixpkgs_commit_count_detail(sha: String) -> Result<Option<u64>, ServerFnError> {
+    let shas = std::collections::HashSet::from([sha.clone()]);
+    let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+    Ok(counts.get(&sha).copied())
+}
+
+#[server]
 async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, ServerFnError> {
     let user = current_user().await?;
     let pool = crate::server_pool()?;
@@ -91,6 +107,7 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         hostname: String,
         environment: String,
         version: String,
+        git_sha: Option<String>,
         nixpkgs_commit: Option<String>,
         reported_at: DateTime<Utc>,
         sample: Option<serde_json::Value>,
@@ -105,7 +122,7 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
     }
     let hb: HbRow = sqlx::query_as(
         "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.hostname, dh.environment, \
-                dh.version, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
+                dh.version, dh.git_sha, dh.nixpkgs_commit, dh.reported_at, dh.sample, dh.services_extended, \
                 dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.file_tunnels, \
                 dh.shell_tunnels, dh.service_samples \
          FROM daemon_heartbeats dh JOIN clusters c ON c.id = dh.cluster_id \
@@ -194,6 +211,7 @@ async fn get_fleet_detail(instance_id: String) -> Result<FleetDetailData, Server
         hostname: hb.hostname,
         environment: hb.environment,
         version: hb.version,
+        git_sha: hb.git_sha,
         nixpkgs_commit: hb.nixpkgs_commit,
         reported_at: hb.reported_at,
         sample: hb.sample,
@@ -326,6 +344,31 @@ fn render_detail(d: &FleetDetailData) -> Element {
                 h2 { class: "text-2xl font-bold", "{d.hostname}" }
                 div { class: "text-sm text-gray-500 dark:text-gray-400",
                     "{d.cluster_name} · {d.environment} · v{d.version}"
+                    if let Some(sha) = &d.git_sha {
+                        {
+                            let short: String = sha.chars().take(12).collect();
+                            let url = format!("https://git.plan.ai/plan-ai/mac-mgmt/-/commit/{sha}");
+                            let sha_for_count = sha.clone();
+                            let count_res = use_resource(move || {
+                                let s = sha_for_count.clone();
+                                async move { get_mac_mgmt_commit_count(s).await.ok().flatten() }
+                            });
+                            let count_label = count_res.read().as_ref()
+                                .and_then(|n| n.as_ref())
+                                .map(|n| format!(" #{n}"))
+                                .unwrap_or_default();
+                            rsx! {
+                                " · "
+                                a {
+                                    class: "font-mono hover:text-blue-600 dark:hover:text-blue-400",
+                                    href: "{url}",
+                                    target: "_blank",
+                                    title: "{sha}",
+                                    "{short}{count_label}"
+                                }
+                            }
+                        }
+                    }
                 }
             }
             div { class: "text-right text-xs text-gray-500 dark:text-gray-400",
@@ -639,6 +682,36 @@ fn render_detail(d: &FleetDetailData) -> Element {
                 }
             } else {
                 KvGrid { rows: inventory_rows }
+                // Nixpkgs commit with link + async commit count
+                if let Some(nix_sha) = &d.nixpkgs_commit {
+                    {
+                        let short: String = nix_sha.chars().take(12).collect();
+                        let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{nix_sha}");
+                        let sha_for_count = nix_sha.clone();
+                        let count_res = use_resource(move || {
+                            let s = sha_for_count.clone();
+                            async move { get_nixpkgs_commit_count_detail(s).await.ok().flatten() }
+                        });
+                        let count_label = count_res.read().as_ref()
+                            .and_then(|n| n.as_ref())
+                            .map(|n| format!(" #{n}"))
+                            .unwrap_or_default();
+                        rsx! {
+                            div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
+                                dt { class: "text-gray-500 dark:text-gray-400 mr-4", "Nixpkgs pin" }
+                                dd { class: "text-right font-mono text-xs text-gray-800 dark:text-gray-200",
+                                    a {
+                                        class: "hover:text-blue-600 dark:hover:text-blue-400",
+                                        href: "{url}",
+                                        target: "_blank",
+                                        title: "{nix_sha}",
+                                        "{short}{count_label}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if !interfaces.is_empty() {
                     h4 { class: "mt-4 mb-2 text-sm font-semibold text-gray-700 dark:text-gray-200", "Network interfaces" }
                     div { class: "flex flex-wrap gap-2",
@@ -853,9 +926,8 @@ fn build_inventory_rows(v: &serde_json::Value) -> Vec<(String, String)> {
     if let Some(n) = get_s("nix_version") {
         rows.push(("Nix".into(), n));
     }
-    if let Some(c) = get_s("nixpkgs_commit") {
-        rows.push(("Nixpkgs pin".into(), c));
-    }
+    // nixpkgs_commit handled separately with link + commit count
+
     rows
 }
 
