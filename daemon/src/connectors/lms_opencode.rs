@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::Connector;
+use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 
@@ -14,6 +14,10 @@ pub struct LmsOpencode {
 impl Connector for LmsOpencode {
     fn name(&self) -> &str {
         "lms→opencode"
+    }
+
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PreStart
     }
 
     fn depends_on(&self) -> &[&str] {

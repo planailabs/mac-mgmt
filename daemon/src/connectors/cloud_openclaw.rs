@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{enabled_cloud_configs, non_empty, resolve_model, Connector};
+use super::{enabled_cloud_configs, non_empty, resolve_model, Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
 
@@ -15,6 +15,10 @@ pub struct CloudOpenClaw;
 impl Connector for CloudOpenClaw {
     fn name(&self) -> &str {
         "cloud→openclaw"
+    }
+
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PreStart
     }
 
     fn depends_on(&self) -> &[&str] {

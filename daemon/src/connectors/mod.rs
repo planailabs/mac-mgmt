@@ -20,13 +20,26 @@ use mac_mgmt_common::{
     OpenClawConfig, OpencodeConfig,
 };
 
-/// A connector wires two services together after they are both healthy.
+/// When a connector runs relative to service startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectorPhase {
+    /// Runs before services are spawned. Config-store deps only.
+    PreStart,
+    /// Runs after dependent services are healthy (post_start_done).
+    PostStart,
+}
+
+/// A connector wires two services together.
 ///
 /// Dependencies are either managed service names (must have post_start done)
 /// or config provider names (must be set in the ConfigStore). When any
 /// dependency changes, the connector is re-run.
 pub trait Connector: Send + Sync {
     fn name(&self) -> &str;
+    /// When this connector should run. Defaults to PostStart.
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PostStart
+    }
     /// Names of services and/or config providers this connector depends on.
     fn depends_on(&self) -> &[&str];
     /// Run the connector. `configs` contains the current values of all
@@ -114,6 +127,8 @@ pub fn build_connectors(
             match global.default_llm {
                 LlmProvider::Ollama if ollama_cfg.enabled => {
                     connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
+                        host: ollama_cfg.host.clone(),
+                        port: ollama_cfg.port,
                         default_model: ollama_cfg.default_model.clone(),
                     }));
                 }

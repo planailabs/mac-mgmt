@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::Connector;
+use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
 
@@ -16,6 +16,10 @@ pub struct LmsOpenClaw {
 impl Connector for LmsOpenClaw {
     fn name(&self) -> &str {
         "lms→openclaw"
+    }
+
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PreStart
     }
 
     fn depends_on(&self) -> &[&str] {

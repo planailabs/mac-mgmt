@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::Connector;
+use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 
@@ -12,6 +12,10 @@ pub struct OllamaOpencode {
 impl Connector for OllamaOpencode {
     fn name(&self) -> &str {
         "ollama→opencode"
+    }
+
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PreStart
     }
 
     fn depends_on(&self) -> &[&str] {

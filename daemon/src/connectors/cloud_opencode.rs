@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{enabled_cloud_configs, resolve_model, Connector};
+use super::{enabled_cloud_configs, resolve_model, Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 
@@ -14,6 +14,10 @@ pub struct CloudOpencode;
 impl Connector for CloudOpencode {
     fn name(&self) -> &str {
         "cloud→opencode"
+    }
+
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PreStart
     }
 
     fn depends_on(&self) -> &[&str] {

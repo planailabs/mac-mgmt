@@ -15,7 +15,7 @@ fn inprocess_enabled() -> bool {
 }
 
 use crate::config_providers::{ConfigStore, ConnectorSnapshot};
-use crate::connectors::{self, Connector};
+use crate::connectors::{self, Connector, ConnectorPhase};
 use crate::events::DaemonEvent;
 use crate::log_buffer::LogBuffer;
 use crate::managed_service::{
@@ -229,7 +229,7 @@ impl ServiceManager {
             });
         }
 
-        let connectors = connectors
+        let mut connectors: Vec<ConnectorState> = connectors
             .into_iter()
             .map(|c| ConnectorState {
                 connector: c,
@@ -237,6 +237,10 @@ impl ServiceManager {
                 ran: false,
             })
             .collect();
+
+        // Run pre-start connectors before services are spawned so they
+        // boot with the correct config (cloud keys, ollama provider, etc.).
+        Self::run_prestart_connectors(&mut connectors, &config_store);
 
         Ok(Self {
             services,
@@ -613,8 +617,42 @@ impl ServiceManager {
         self.run_connectors();
     }
 
+    /// Run pre-start connectors (config-patching). Called during init before
+    /// services are spawned, and again on config reload before services restart.
+    fn run_prestart_connectors(
+        connectors: &mut [ConnectorState],
+        config_store: &ConfigStore,
+    ) {
+        for cs in connectors.iter_mut() {
+            if cs.connector.phase() != ConnectorPhase::PreStart {
+                continue;
+            }
+            let deps = cs.connector.depends_on();
+            let deps_ready = deps.iter().all(|dep| config_store.get(dep).is_some());
+            if !deps_ready {
+                continue;
+            }
+            let should_run = !cs.ran || config_store.any_changed(deps, &cs.last_snapshot);
+            if !should_run {
+                continue;
+            }
+            let name = cs.connector.name();
+            let configs = config_store.values_for(deps);
+            tracing::info!("running pre-start connector: {name}");
+            if let Err(e) = cs.connector.connect(&configs) {
+                tracing::error!("pre-start connector {name} failed: {e}");
+            }
+            cs.last_snapshot = config_store.snapshot(deps);
+            cs.ran = true;
+        }
+    }
+
+    /// Run post-start connectors (need running services).
     fn run_connectors(&mut self) {
         for cs in &mut self.connectors {
+            if cs.connector.phase() != ConnectorPhase::PostStart {
+                continue;
+            }
             let deps = cs.connector.depends_on();
 
             let deps_ready = deps.iter().all(|dep| {
@@ -728,6 +766,10 @@ impl ServiceManager {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+
+        // Run pre-start connectors so config patches are applied before
+        // schedule_restart() restarts services.
+        Self::run_prestart_connectors(&mut self.connectors, &self.config_store);
     }
 
     // ── Status collection ────────────────────────────────────────────
