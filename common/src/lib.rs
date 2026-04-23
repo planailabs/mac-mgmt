@@ -1053,6 +1053,8 @@ pub struct ClusterConfig {
     pub metrics: MetricsConfig,
     #[serde(default)]
     pub relay: RelayConfig,
+    #[serde(default)]
+    pub healer: HealerClusterConfig,
 }
 
 impl OllamaConfig {
