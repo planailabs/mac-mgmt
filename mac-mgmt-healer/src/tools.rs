@@ -35,6 +35,8 @@ pub struct ToolContext {
     pub events_tx: tokio::sync::broadcast::Sender<crate::session::HealerEvent>,
     /// Optional metrics URL for the get_metrics tool.
     pub metrics_url: Option<String>,
+    /// Whether remediation is auto-approved (false = diagnosis-only until approved).
+    pub auto_approve: bool,
 }
 
 macro_rules! healer_tool {
@@ -531,6 +533,25 @@ healer_tool! {
                 params.phase
             )));
         };
+
+        // When approval is required, intercept the transition to remediating.
+        if !ctx.auto_approve && new_state == crate::session::SessionState::Remediating {
+            let data = serde_json::json!({ "reason": params.reason });
+            match ctx.store.transition_state(
+                ctx.session_id,
+                &crate::session::SessionState::AwaitingApproval,
+                &data,
+            ).await {
+                Ok(()) => {
+                    crate::session::emit_state_change(&ctx.events_tx, "awaiting_approval", &data);
+                    return Ok(ToolOutput::Text(
+                        "Diagnosis complete. Session paused — awaiting remediation approval.".to_string()
+                    ));
+                }
+                Err(e) => return Ok(ToolOutput::Text(format!("Error requesting approval: {e}"))),
+            }
+        }
+
         let data = serde_json::json!({ "reason": params.reason });
         match ctx.store.transition_state(
             ctx.session_id,
@@ -921,15 +942,16 @@ healer_tool! {
 }
 
 /// Create all healer tools for a session.
-pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
+///
+/// When `diagnosis_only` is true, mutating tools (write_file, run_command,
+/// run_cluster_command) are omitted — the agent can only observe.
+pub fn all_tools(ctx: ToolContext, diagnosis_only: bool) -> Vec<Box<dyn Tool>> {
     let has_cluster = ctx.cluster.is_some();
     let has_metrics = ctx.metrics_url.is_some();
 
     let mut tools: Vec<Box<dyn Tool>> = vec![
         ListFilesTool::new(ctx.clone()),
         ReadFileTool::new(ctx.clone()),
-        WriteFileTool::new(ctx.clone()),
-        RunCommandTool::new(ctx.clone()),
         FetchLogsTool::new(ctx.clone()),
         ListFileTunnelsTool::new(ctx.clone()),
         ListShellCommandsTool::new(ctx.clone()),
@@ -947,11 +969,18 @@ pub fn all_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
         ListBuiltinSkillsTool::new(ctx.clone()),
     ];
 
+    if !diagnosis_only {
+        tools.push(WriteFileTool::new(ctx.clone()));
+        tools.push(RunCommandTool::new(ctx.clone()));
+    }
+
     if has_cluster {
         tools.push(FetchClusterLogsTool::new(ctx.clone()));
-        tools.push(RunClusterCommandTool::new(ctx.clone()));
         tools.push(CheckNodeOnlineTool::new(ctx.clone()));
         tools.push(WaitForNodeTool::new(ctx.clone()));
+        if !diagnosis_only {
+            tools.push(RunClusterCommandTool::new(ctx.clone()));
+        }
     }
 
     if has_metrics {

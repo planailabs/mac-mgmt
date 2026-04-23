@@ -111,6 +111,9 @@ pub struct SpawnRequest {
     /// Optional proxy token expiry time. If set, the session will pause
     /// when the token is about to expire (server mode only).
     pub proxy_expires: Option<DateTime<Utc>>,
+    /// When false, the session pauses for human approval before remediation.
+    /// Mutating tools are not available until approved. Default: true.
+    pub auto_approve: bool,
 }
 
 impl HealerState {
@@ -414,6 +417,10 @@ impl HealerState {
             label: sess.label.clone(),
             token_budget: None, // resume uses the budget from the running session state
             proxy_expires: access.proxy_expires,
+            // After approval, remediation tools are unlocked. For regular
+            // resumes (from Paused), keep the original behavior (auto_approve
+            // was true for auto-triggered sessions, determined by current state).
+            auto_approve: sess.state == SessionState::Remediating || sess.state == SessionState::Verifying,
         };
 
         let state = self.clone();
@@ -484,6 +491,35 @@ impl HealerState {
             )
             .await
         }
+    }
+
+    /// Approve remediation for a session awaiting approval.
+    /// Transitions to Remediating and resumes the agent with full tools.
+    pub async fn approve_session(&self, session_id: Uuid) -> Result<()> {
+        let mut sess = self
+            .inner
+            .store
+            .get_session(session_id)
+            .await?
+            .context("session not found")?;
+
+        if sess.state != SessionState::AwaitingApproval {
+            anyhow::bail!(
+                "session {} is in state {:?}, can only approve from AwaitingApproval",
+                session_id,
+                sess.state
+            );
+        }
+
+        // Transition to Remediating before resuming — the resumed agent will
+        // have auto_approve=true so all tools are registered.
+        self.inner
+            .store
+            .transition_state(session_id, &SessionState::Remediating, &json!({"reason": "approved"}))
+            .await?;
+        sess.state = SessionState::Remediating;
+
+        self.resume_session_internal(sess).await
     }
 
     /// Increase the token budget for a session to 1 million tokens.
@@ -646,9 +682,15 @@ async fn run_agent_session(
         push_fn: state.inner.push_fn.clone(),
         events_tx: events_tx.clone(),
         metrics_url: req.metrics_url.clone(),
+        auto_approve: req.auto_approve,
     };
-    let healer_tools = tools::all_tools(tool_ctx.clone());
-    let settings_tools = settings_tools::all_settings_tools(tool_ctx);
+
+    // In approval mode, the agent starts with diagnosis-only tools (no mutating
+    // tools). On resume after approval, auto_approve is true so all tools are
+    // registered.
+    let diagnosis_only = !req.auto_approve;
+    let healer_tools = tools::all_tools(tool_ctx.clone(), diagnosis_only);
+    let settings_tools = settings_tools::all_settings_tools(tool_ctx, diagnosis_only);
 
     // 4. Build system prompt
     let sample_summary = req
@@ -676,6 +718,7 @@ async fn run_agent_session(
         &file_tunnel_names,
         &shell_command_names,
         resume_context,
+        req.auto_approve,
     );
 
     // 5. Transition to Diagnosing
@@ -976,6 +1019,13 @@ async fn run_agent_session(
                         .ok();
                         session::emit_state_change(&events_tx, "paused", &data);
                         return Err(anyhow::anyhow!("session paused by user"));
+                    }
+
+                    // 2c. Check if awaiting approval (set by set_phase tool)
+                    if let Ok(Some(s)) = store.get_session(session_id).await {
+                        if s.state == SessionState::AwaitingApproval {
+                            return Err(anyhow::anyhow!("session awaiting remediation approval"));
+                        }
                     }
 
                     // 3. Check proxy token expiry (server mode only)

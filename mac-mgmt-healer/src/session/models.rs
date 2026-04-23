@@ -16,6 +16,7 @@ pub enum SessionState {
     Failed,
     Cancelled,
     AwaitingRetry,
+    AwaitingApproval,
     Paused,
     NeedsHumanAttention,
 }
@@ -33,6 +34,7 @@ impl SessionState {
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::AwaitingRetry => "awaiting_retry",
+            Self::AwaitingApproval => "awaiting_approval",
             Self::Paused => "paused",
             Self::NeedsHumanAttention => "needs_human_attention",
         }
@@ -50,6 +52,7 @@ impl SessionState {
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
             "awaiting_retry" => Some(Self::AwaitingRetry),
+            "awaiting_approval" => Some(Self::AwaitingApproval),
             "paused" => Some(Self::Paused),
             "needs_human_attention" => Some(Self::NeedsHumanAttention),
             _ => None,

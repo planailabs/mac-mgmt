@@ -22,6 +22,7 @@ pub fn build_system_prompt(
     file_tunnels: &[String],
     shell_commands: &[String],
     resume_context: Option<&str>,
+    auto_approve: bool,
 ) -> String {
     let mut prompt = String::with_capacity(4096);
 
@@ -197,6 +198,18 @@ pub fn build_system_prompt(
     if !error_classes.is_empty() {
         prompt.push_str("## Remediation Procedures\n");
         prompt.push_str(&skills::format_skills_for_prompt(&error_classes));
+    }
+
+    // Approval mode
+    if !auto_approve {
+        prompt.push_str("\n## Approval Required\n\
+            This session requires human approval before remediation. \
+            You are in diagnosis-only mode — mutating tools (write_file, run_command, \
+            config changes, etc.) are not available.\n\
+            Complete your diagnosis using the available read-only tools. \
+            Pin your findings with the `pin` tool (use the \"diagnosis\" slot). \
+            When ready, call `set_phase(\"remediating\")` to request approval. \
+            The session will pause for human review before remediation tools are unlocked.\n");
     }
 
     // Resume context

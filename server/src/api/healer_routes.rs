@@ -23,6 +23,9 @@ pub struct CreateSessionBody {
     /// Force a specific model name (e.g. "gemma4", "claude-sonnet-4-6").
     #[serde(default)]
     pub model: Option<String>,
+    /// Auto-approve remediation (skip approval gate). Default: false.
+    #[serde(default)]
+    pub auto_approve: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,6 +181,7 @@ pub async fn create_session(
         label: None,
         token_budget: per_model_budget,
         proxy_expires: Some(proxy_expires),
+        auto_approve: body.auto_approve,
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {
@@ -321,6 +325,21 @@ pub async fn resume_session(
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
     healer.resume_session(session_id).await.map_err(|e| {
         tracing::error!(err = %e, "failed to resume healer session");
+        Status::BadRequest
+    })?;
+    Ok(Status::Ok)
+}
+
+/// Approve remediation for a session awaiting approval.
+#[post("/healer/sessions/<id>/approve")]
+pub async fn approve_session(
+    _auth: SettingAuth,
+    healer: &State<HealerState>,
+    id: &str,
+) -> Result<Status, Status> {
+    let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    healer.approve_session(session_id).await.map_err(|e| {
+        tracing::error!(err = %e, "failed to approve healer session");
         Status::BadRequest
     })?;
     Ok(Status::Ok)

@@ -397,6 +397,7 @@ pub async fn start_healer_session(
             }
         },
         proxy_expires: Some(proxy_expires),
+        auto_approve: false,
     };
 
     let session_id = healer

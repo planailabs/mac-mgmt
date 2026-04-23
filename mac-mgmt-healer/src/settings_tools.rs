@@ -563,26 +563,35 @@ settings_tool! {
     }
 }
 
-pub fn all_settings_tools(ctx: ToolContext) -> Vec<Box<dyn Tool>> {
-    vec![
+/// Create all settings tools for a session.
+///
+/// When `diagnosis_only` is true, mutating tools (patch_config, set_config,
+/// add/remove skill/mcp, send_push, request_assessment) are omitted.
+pub fn all_settings_tools(ctx: ToolContext, diagnosis_only: bool) -> Vec<Box<dyn Tool>> {
+    let mut tools: Vec<Box<dyn Tool>> = vec![
         WaitTool::new(ctx.clone()),
-        RequestAssessmentTool::new(ctx.clone()),
         GetConfigTool::new(ctx.clone()),
-        PatchConfigTool::new(ctx.clone()),
-        SetConfigTool::new(ctx.clone()),
         ListSkillsTool::new(ctx.clone()),
-        AddSkillTool::new(ctx.clone()),
-        RemoveSkillTool::new(ctx.clone()),
         ListMcpServersTool::new(ctx.clone()),
-        AddMcpServerTool::new(ctx.clone()),
-        RemoveMcpServerTool::new(ctx.clone()),
-        SendPushTool::new(ctx.clone()),
         GetVersionInfoTool::new(ctx.clone()),
         GetHeartbeatTool::new(ctx.clone()),
         GetClusterInstancesTool::new(ctx.clone()),
         GetServiceStateTool::new(ctx.clone()),
-        NixCheckUpgradesTool::new(ctx),
-    ]
+        NixCheckUpgradesTool::new(ctx.clone()),
+    ];
+
+    if !diagnosis_only {
+        tools.push(RequestAssessmentTool::new(ctx.clone()));
+        tools.push(PatchConfigTool::new(ctx.clone()));
+        tools.push(SetConfigTool::new(ctx.clone()));
+        tools.push(AddSkillTool::new(ctx.clone()));
+        tools.push(RemoveSkillTool::new(ctx.clone()));
+        tools.push(AddMcpServerTool::new(ctx.clone()));
+        tools.push(RemoveMcpServerTool::new(ctx.clone()));
+        tools.push(SendPushTool::new(ctx));
+    }
+
+    tools
 }
 
 /// JSON Merge Patch (RFC 7386)

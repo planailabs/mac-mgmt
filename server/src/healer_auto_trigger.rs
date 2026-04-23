@@ -295,5 +295,6 @@ async fn build_spawn_request(
         label: Some("auto-triggered".to_string()),
         token_budget: None,
         proxy_expires: Some(proxy_expires),
+        auto_approve: true,
     })
 }

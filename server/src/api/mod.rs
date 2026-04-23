@@ -293,6 +293,7 @@ pub fn build_rocket(
                 healer_routes::cancel_session,
                 healer_routes::pause_session,
                 healer_routes::resume_session,
+                healer_routes::approve_session,
                 healer_routes::extend_budget,
                 healer_routes::stream_session,
             ],
