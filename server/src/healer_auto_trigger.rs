@@ -26,25 +26,32 @@ pub struct AutoTriggerConfig {
     pub model: Option<String>,
 }
 
-/// Fetch the per-cluster healer overrides from the latest cluster config.
+/// Fetch per-cluster healer settings from the dedicated table.
 async fn cluster_healer_config(
     pool: &PgPool,
     cluster_id: Uuid,
 ) -> mac_mgmt_common::HealerClusterConfig {
-    let json = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config_json FROM cluster_configs \
-         WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        auto_trigger: Option<bool>,
+        auto_approve: Option<bool>,
+        fix_provider: Option<String>,
+        fix_model: Option<String>,
+    }
+    sqlx::query_as::<_, Row>(
+        "SELECT auto_trigger, auto_approve, fix_provider, fix_model \
+         FROM healer_cluster_settings WHERE cluster_id = $1",
     )
     .bind(cluster_id)
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten();
-
-    json.and_then(|v| {
-        v.get("healer")
-            .cloned()
-            .and_then(|h| serde_json::from_value(h).ok())
+    .flatten()
+    .map(|r| mac_mgmt_common::HealerClusterConfig {
+        auto_trigger: r.auto_trigger,
+        auto_approve: r.auto_approve,
+        fix_provider: r.fix_provider,
+        fix_model: r.fix_model,
     })
     .unwrap_or_default()
 }

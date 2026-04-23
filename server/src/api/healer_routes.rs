@@ -10,26 +10,32 @@ use uuid::Uuid;
 
 use super::auth::{AdminAuth, SettingAuth};
 
-/// Fetch the per-cluster healer overrides from the latest cluster config.
-/// Returns Default if no config exists or the healer section is absent.
+/// Fetch per-cluster healer settings from the dedicated table.
 async fn cluster_healer_config(
     pool: &PgPool,
     cluster_id: Uuid,
 ) -> mac_mgmt_common::HealerClusterConfig {
-    let json = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT config_json FROM cluster_configs \
-         WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        auto_trigger: Option<bool>,
+        auto_approve: Option<bool>,
+        fix_provider: Option<String>,
+        fix_model: Option<String>,
+    }
+    sqlx::query_as::<_, Row>(
+        "SELECT auto_trigger, auto_approve, fix_provider, fix_model \
+         FROM healer_cluster_settings WHERE cluster_id = $1",
     )
     .bind(cluster_id)
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten();
-
-    json.and_then(|v| {
-        v.get("healer")
-            .cloned()
-            .and_then(|h| serde_json::from_value(h).ok())
+    .flatten()
+    .map(|r| mac_mgmt_common::HealerClusterConfig {
+        auto_trigger: r.auto_trigger,
+        auto_approve: r.auto_approve,
+        fix_provider: r.fix_provider,
+        fix_model: r.fix_model,
     })
     .unwrap_or_default()
 }
@@ -382,6 +388,62 @@ pub async fn approve_session(
     healer.approve_session(session_id).await.map_err(|e| {
         tracing::error!(err = %e, "failed to approve healer session");
         Status::BadRequest
+    })?;
+    Ok(Status::Ok)
+}
+
+// ── Per-cluster healer settings ──────────────────────────────────────
+
+/// Get healer settings for a cluster.
+#[get("/healer/settings")]
+pub async fn get_healer_settings(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<mac_mgmt_common::HealerClusterConfig>, Status> {
+    let cfg = cluster_healer_config(pool.inner(), auth.cluster_id).await;
+    Ok(Json(cfg))
+}
+
+/// Update healer settings for a cluster (upsert).
+#[derive(Debug, Deserialize)]
+pub struct HealerSettingsBody {
+    #[serde(default)]
+    pub auto_trigger: Option<bool>,
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
+    #[serde(default)]
+    pub fix_provider: Option<String>,
+    #[serde(default)]
+    pub fix_model: Option<String>,
+}
+
+#[post("/healer/settings", data = "<body>")]
+pub async fn put_healer_settings(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    body: Json<HealerSettingsBody>,
+) -> Result<Status, Status> {
+    let body = body.into_inner();
+    sqlx::query(
+        "INSERT INTO healer_cluster_settings (cluster_id, auto_trigger, auto_approve, fix_provider, fix_model, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, now()) \
+         ON CONFLICT (cluster_id) DO UPDATE SET \
+            auto_trigger = EXCLUDED.auto_trigger, \
+            auto_approve = EXCLUDED.auto_approve, \
+            fix_provider = EXCLUDED.fix_provider, \
+            fix_model = EXCLUDED.fix_model, \
+            updated_at = now()",
+    )
+    .bind(auth.cluster_id)
+    .bind(body.auto_trigger)
+    .bind(body.auto_approve)
+    .bind(&body.fix_provider)
+    .bind(&body.fix_model)
+    .execute(pool.inner())
+    .await
+    .map_err(|e| {
+        tracing::error!(err = %e, "failed to save healer settings");
+        Status::InternalServerError
     })?;
     Ok(Status::Ok)
 }

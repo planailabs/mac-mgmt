@@ -366,21 +366,29 @@ pub async fn start_healer_session(
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
-    // Per-cluster healer overrides
+    // Per-cluster healer settings from dedicated table.
     let cluster_healer = {
-        let json = sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT config_json FROM cluster_configs \
-             WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            auto_trigger: Option<bool>,
+            auto_approve: Option<bool>,
+            fix_provider: Option<String>,
+            fix_model: Option<String>,
+        }
+        sqlx::query_as::<_, Row>(
+            "SELECT auto_trigger, auto_approve, fix_provider, fix_model \
+             FROM healer_cluster_settings WHERE cluster_id = $1",
         )
         .bind(hb.cluster_id)
         .fetch_optional(&pool)
         .await
         .ok()
-        .flatten();
-        json.and_then(|v| {
-            v.get("healer")
-                .cloned()
-                .and_then(|h| serde_json::from_value::<mac_mgmt_common::HealerClusterConfig>(h).ok())
+        .flatten()
+        .map(|r| mac_mgmt_common::HealerClusterConfig {
+            auto_trigger: r.auto_trigger,
+            auto_approve: r.auto_approve,
+            fix_provider: r.fix_provider,
+            fix_model: r.fix_model,
         })
         .unwrap_or_default()
     };

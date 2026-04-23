@@ -295,6 +295,8 @@ pub fn build_rocket(
                 healer_routes::resume_session,
                 healer_routes::approve_session,
                 healer_routes::extend_budget,
+                healer_routes::get_healer_settings,
+                healer_routes::put_healer_settings,
                 healer_routes::stream_session,
             ],
         )
