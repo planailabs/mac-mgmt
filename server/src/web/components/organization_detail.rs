@@ -471,6 +471,31 @@ async fn revoke_org_token(org_id: String, token_id: String) -> Result<(), Server
 }
 
 #[server]
+async fn rename_organization(id: String, name: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let oid: uuid::Uuid = id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if !user.is_admin && !user.is_org_admin(&oid) {
+        return Err(ServerFnError::new("access denied"));
+    }
+    sqlx::query("UPDATE organizations SET name = $1 WHERE id = $2")
+        .bind(&name)
+        .bind(oid)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("23505") {
+                ServerFnError::new("An organization with that name already exists")
+            } else {
+                ServerFnError::new(e.to_string())
+            }
+        })?;
+    Ok(())
+}
+
+#[server]
 async fn delete_organization(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?; // Only global admins
@@ -489,7 +514,7 @@ async fn delete_organization(id: String) -> Result<(), ServerFnError> {
 #[component]
 pub fn OrganizationDetail(id: String) -> Element {
     let id_for_org = id.clone();
-    let org_future = use_server_future(move || {
+    let mut org_future = use_server_future(move || {
         let id = id_for_org.clone();
         async move { get_organization(id).await }
     })?;
@@ -536,6 +561,8 @@ pub fn OrganizationDetail(id: String) -> Element {
     let mut confirm_delete = use_signal(|| false);
     let mut token_label = use_signal(|| String::new());
     let mut created_token = use_signal(|| Option::<String>::None);
+    let mut editing_name = use_signal(|| false);
+    let mut draft_name = use_signal(String::new);
     let nav = navigator();
 
     let perms = match &*perms_future.read() {
@@ -574,10 +601,60 @@ pub fn OrganizationDetail(id: String) -> Element {
             let can_manage_tokens = perms.is_org_admin;
             let can_delete = perms.is_global_admin;
 
+            let org_name = info.name.clone();
+            let oid_for_rename = id.clone();
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
                     div {
-                        h2 { class: "text-2xl font-bold", "{info.name}" }
+                        div { class: "flex items-center gap-3",
+                            if *editing_name.read() {
+                                form {
+                                    class: "flex items-center gap-2",
+                                    onsubmit: move |evt: FormEvent| {
+                                        evt.prevent_default();
+                                        let oid = oid_for_rename.clone();
+                                        let new_name = draft_name.read().clone();
+                                        async move {
+                                            if !new_name.trim().is_empty() {
+                                                let _ = rename_organization(oid, new_name).await;
+                                                org_future.restart();
+                                            }
+                                            editing_name.set(false);
+                                        }
+                                    },
+                                    input {
+                                        class: "text-2xl font-bold border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-white",
+                                        r#type: "text",
+                                        value: "{draft_name}",
+                                        oninput: move |e| draft_name.set(e.value()),
+                                        autofocus: true,
+                                    }
+                                    button {
+                                        class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300",
+                                        r#type: "submit",
+                                        "Save"
+                                    }
+                                    button {
+                                        class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200",
+                                        r#type: "button",
+                                        onclick: move |_| editing_name.set(false),
+                                        "Cancel"
+                                    }
+                                }
+                            } else {
+                                h2 { class: "text-2xl font-bold", "{info.name}" }
+                                if perms.is_org_admin {
+                                    button {
+                                        class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300",
+                                        onclick: move |_| {
+                                            draft_name.set(org_name.clone());
+                                            editing_name.set(true);
+                                        },
+                                        "Edit"
+                                    }
+                                }
+                            }
+                        }
                         p { class: "text-gray-500 dark:text-gray-400 text-sm",
                             "Created "
                             {info.created_at.format("%Y-%m-%d %H:%M").to_string()}
