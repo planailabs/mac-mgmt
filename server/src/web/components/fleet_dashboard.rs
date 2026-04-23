@@ -155,12 +155,12 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
-    // Collect unique SHAs and fetch commit counts from GitLab (cached).
+    // Collect unique SHAs and fetch commit counts (cached, async).
     let unique_shas: std::collections::HashSet<String> = rows
         .iter()
         .filter_map(|r| r.git_sha.clone())
         .collect();
-    let commit_counts = fetch_commit_counts(&unique_shas).await;
+    let commit_counts = super::commit_count::mac_mgmt_commit_counts(&unique_shas).await;
 
     let entries = rows
         .into_iter()
@@ -191,109 +191,6 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         entries,
         stage_label,
     })
-}
-
-/// Fetch commit counts from GitLab for a set of SHAs via binary search
-/// on the commits list endpoint (per_page=1, check if page has data).
-/// Results are cached permanently since commit count for a SHA never changes.
-#[cfg(feature = "server")]
-async fn fetch_commit_counts(
-    shas: &std::collections::HashSet<String>,
-) -> std::collections::HashMap<String, u64> {
-    use std::sync::OnceLock;
-    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
-        OnceLock::new();
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-    let mut result = std::collections::HashMap::new();
-    let mut to_fetch = Vec::new();
-
-    {
-        let cached = cache.lock().unwrap();
-        for sha in shas {
-            if let Some(&count) = cached.get(sha) {
-                result.insert(sha.clone(), count);
-            } else {
-                to_fetch.push(sha.clone());
-            }
-        }
-    }
-
-    if to_fetch.is_empty() {
-        return result;
-    }
-
-    let client = reqwest::Client::new();
-
-    for sha in &to_fetch {
-        if let Some(count) = gitlab_commit_count(&client, sha).await {
-            result.insert(sha.clone(), count);
-            cache.lock().unwrap().insert(sha.clone(), count);
-        }
-    }
-
-    result
-}
-
-/// Binary search the GitLab commits endpoint to find the total commit count
-/// for a ref. Uses per_page=1 and checks if the page has data (content-length > 2
-/// means non-empty JSON array). ~10 requests max for repos up to 1M commits.
-#[cfg(feature = "server")]
-async fn gitlab_commit_count(client: &reqwest::Client, sha: &str) -> Option<u64> {
-    let base = "https://git.plan.ai/api/v4/projects/plan-ai%2Fmac-mgmt/repository/commits";
-
-    // Check if page `n` has data.
-    let has_data = |page: u64| {
-        let url = format!("{base}?ref_name={sha}&per_page=1&page={page}");
-        let client = client.clone();
-        async move {
-            let resp = client
-                .head(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-                .ok()?;
-            // Empty page returns content-length: 2 (for "[]"), or 0 for HEAD.
-            // Check x-next-page: if empty, this is the last or beyond-last page.
-            let next = resp.headers().get("x-next-page")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            if !next.is_empty() {
-                // There's a next page, so this page has data.
-                Some(true)
-            } else {
-                // No next page. Check if THIS page has data by doing a GET.
-                let resp2 = client.clone()
-                    .get(&format!("{base}?ref_name={sha}&per_page=1&page={page}"))
-                    .timeout(std::time::Duration::from_secs(5))
-                    .send()
-                    .await
-                    .ok()?;
-                let body = resp2.text().await.ok()?;
-                Some(body.len() > 2) // "[]" is 2 bytes = empty
-            }
-        }
-    };
-
-    // Binary search: find the last page with data.
-    let mut lo: u64 = 1;
-    let mut hi: u64 = 100_000;
-
-    // Quick probe: if page 1 has no data, the SHA is invalid.
-    if !has_data(1).await? {
-        return None;
-    }
-
-    while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
-        if has_data(mid).await? {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-
-    Some(lo)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

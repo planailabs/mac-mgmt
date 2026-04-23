@@ -664,6 +664,13 @@ fn PinnedVersion(
     }
 }
 
+#[server]
+async fn get_nixpkgs_commit_count(sha: String) -> Result<Option<u64>, ServerFnError> {
+    let shas = std::collections::HashSet::from([sha.clone()]);
+    let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+    Ok(counts.get(&sha).copied())
+}
+
 #[component]
 fn NixpkgsCommit(
     cluster_id: String,
@@ -711,10 +718,31 @@ fn NixpkgsCommit(
         let display = c.clone();
         let display_for_edit = display.clone();
         let short: String = display.chars().take(12).collect();
+        let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{display}");
+
+        // Fetch commit count async via server function.
+        let sha_for_count = display.clone();
+        let count_future = use_resource(move || {
+            let sha = sha_for_count.clone();
+            async move { get_nixpkgs_commit_count(sha).await.ok().flatten() }
+        });
+        let count_label = count_future
+            .read()
+            .as_ref()
+            .and_then(|n| n.as_ref())
+            .map(|n| format!(" #{n}"))
+            .unwrap_or_default();
+
         rsx! {
             span { class: "flex items-center gap-1",
                 span { "Nixpkgs: " }
-                span { class: "font-mono font-medium text-gray-700 dark:text-gray-200", title: "{display}", "{short}" }
+                a {
+                    class: "font-mono font-medium text-gray-700 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400",
+                    href: "{url}",
+                    target: "_blank",
+                    title: "{display}",
+                    "{short}{count_label}"
+                }
                 if !read_only {
                     button {
                         class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
