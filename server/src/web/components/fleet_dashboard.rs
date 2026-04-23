@@ -18,6 +18,9 @@ struct FleetEntry {
     /// Git commit the daemon binary was built from. `None` on older daemons.
     #[serde(default)]
     git_sha: Option<String>,
+    /// Number of commits leading up to git_sha (fetched from GitLab).
+    #[serde(default)]
+    commit_count: Option<u64>,
     services: serde_json::Value,
     tunnels: serde_json::Value,
     relay_proxy_hostname: Option<String>,
@@ -152,24 +155,35 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
+    // Collect unique SHAs and fetch commit counts from GitLab (cached).
+    let unique_shas: std::collections::HashSet<String> = rows
+        .iter()
+        .filter_map(|r| r.git_sha.clone())
+        .collect();
+    let commit_counts = fetch_commit_counts(&unique_shas).await;
+
     let entries = rows
         .into_iter()
-        .map(|r| FleetEntry {
-            cluster_id: r.cluster_id.to_string(),
-            cluster_name: r.cluster_name,
-            instance_id: r.instance_id,
-            hostname: r.hostname,
-            environment: r.environment,
-            version: r.version,
-            git_sha: r.git_sha,
-            services: r.services,
-            tunnels: r.tunnels,
-            relay_proxy_hostname: r.relay_proxy_hostname,
-            relay_proxy_url: r.relay_proxy_url,
-            reported_at: r.reported_at,
-            sample: r.sample,
-            services_extended: r.services_extended,
-            viewer_is_admin: is_admin,
+        .map(|r| {
+            let commit_count = r.git_sha.as_ref().and_then(|sha| commit_counts.get(sha).copied());
+            FleetEntry {
+                cluster_id: r.cluster_id.to_string(),
+                cluster_name: r.cluster_name,
+                instance_id: r.instance_id,
+                hostname: r.hostname,
+                environment: r.environment,
+                version: r.version,
+                git_sha: r.git_sha,
+                commit_count,
+                services: r.services,
+                tunnels: r.tunnels,
+                relay_proxy_hostname: r.relay_proxy_hostname,
+                relay_proxy_url: r.relay_proxy_url,
+                reported_at: r.reported_at,
+                sample: r.sample,
+                services_extended: r.services_extended,
+                viewer_is_admin: is_admin,
+            }
         })
         .collect();
 
@@ -177,6 +191,70 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         entries,
         stage_label,
     })
+}
+
+/// Fetch commit counts from the GitLab API for a set of SHAs.
+/// Results are cached permanently (commit count for a SHA never changes).
+#[cfg(feature = "server")]
+async fn fetch_commit_counts(
+    shas: &std::collections::HashSet<String>,
+) -> std::collections::HashMap<String, u64> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let mut result = std::collections::HashMap::new();
+    let mut to_fetch = Vec::new();
+
+    {
+        let cached = cache.lock().unwrap();
+        for sha in shas {
+            if let Some(&count) = cached.get(sha) {
+                result.insert(sha.clone(), count);
+            } else {
+                to_fetch.push(sha.clone());
+            }
+        }
+    }
+
+    if to_fetch.is_empty() {
+        return result;
+    }
+
+    let client = reqwest::Client::new();
+    // GitLab project: plan-ai/mac-mgmt (URL-encoded: plan-ai%2Fmac-mgmt)
+    let base = "https://git.plan.ai/api/v4/projects/plan-ai%2Fmac-mgmt/repository/commits";
+
+    for sha in &to_fetch {
+        let url = format!("{base}?ref_name={sha}&per_page=1");
+        match client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                if let Some(total) = resp
+                    .headers()
+                    .get("x-total")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    result.insert(sha.clone(), total);
+                    cache.lock().unwrap().insert(sha.clone(), total);
+                }
+            }
+            Ok(resp) => {
+                tracing::debug!("gitlab commit count for {sha}: HTTP {}", resp.status());
+            }
+            Err(e) => {
+                tracing::debug!("gitlab commit count for {sha}: {e}");
+            }
+        }
+    }
+
+    result
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,13 +711,16 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         {
                                                             let short: String = sha.chars().take(12).collect();
                                                             let url = format!("https://git.plan.ai/plan-ai/mac-mgmt/-/commit/{sha}");
+                                                            let count_label = entry.commit_count
+                                                                .map(|n| format!(" #{n}"))
+                                                                .unwrap_or_default();
                                                             rsx! {
                                                                 a {
                                                                     class: "text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400",
                                                                     href: "{url}",
                                                                     target: "_blank",
                                                                     title: "{sha}",
-                                                                    "{short}"
+                                                                    "{short}{count_label}"
                                                                 }
                                                             }
                                                         }
