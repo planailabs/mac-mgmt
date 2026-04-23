@@ -632,11 +632,13 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     if let Some(sha) = &entry.git_sha {
                                                         {
                                                             let short: String = sha.chars().take(12).collect();
-                                                            let title = sha.clone();
+                                                            let url = format!("https://git.plan.ai/plan-ai/mac-mgmt/-/commit/{sha}");
                                                             rsx! {
-                                                                div {
-                                                                    class: "text-xs font-mono text-gray-500 dark:text-gray-400",
-                                                                    title: "{title}",
+                                                                a {
+                                                                    class: "text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400",
+                                                                    href: "{url}",
+                                                                    target: "_blank",
+                                                                    title: "{sha}",
                                                                     "{short}"
                                                                 }
                                                             }
