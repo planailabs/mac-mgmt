@@ -36,6 +36,19 @@ fn reexec_state_path(socket_path: &Path) -> std::path::PathBuf {
 
 /// Delay between failed spawns before retrying.
 const RESPAWN_DELAY: Duration = Duration::from_secs(2);
+
+/// Return the log directory for service stdout/stderr files.
+fn log_dir(socket_path: &Path) -> std::path::PathBuf {
+    socket_path
+        .parent()
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .join("service-logs")
+}
+
+/// Return the log file path for a service.
+fn service_log_path(socket_path: &Path, name: &str) -> std::path::PathBuf {
+    log_dir(socket_path).join(format!("{name}.log"))
+}
 /// Time to wait after SIGTERM before sending SIGKILL.
 const STOP_GRACE: Duration = Duration::from_secs(10);
 
@@ -55,7 +68,11 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     let listener = UnixListener::bind(socket_path)
         .with_context(|| format!("bind {}", socket_path.display()))?;
 
-    let state = Arc::new(SupervisorState::new());
+    // Ensure log directory exists.
+    let logdir = log_dir(socket_path);
+    std::fs::create_dir_all(&logdir).ok();
+
+    let state = Arc::new(SupervisorState::new(socket_path.to_path_buf()));
     let (notif_tx, _) = broadcast::channel::<Notification>(256);
 
     // Adopt children from a previous supervisor that reexec'd.
@@ -251,6 +268,7 @@ async fn write_msg(writer: &mut tokio::io::WriteHalf<UnixStream>, msg: Message) 
 
 struct SupervisorState {
     services: Mutex<HashMap<String, Entry>>,
+    socket_path: std::path::PathBuf,
 }
 
 struct Entry {
@@ -264,9 +282,10 @@ struct Entry {
 }
 
 impl SupervisorState {
-    fn new() -> Self {
+    fn new(socket_path: std::path::PathBuf) -> Self {
         Self {
             services: Mutex::new(HashMap::new()),
+            socket_path,
         }
     }
 
@@ -336,7 +355,7 @@ impl SupervisorState {
         let task_spec = spec.clone();
         let task_pid = pid.clone();
         let task = tokio::spawn(run_service(
-            task_name, task_spec, notif_tx, stop_rx, task_pid,
+            task_name, task_spec, notif_tx, stop_rx, task_pid, self.socket_path.clone(),
         ));
         self.services.lock().await.insert(
             name,
@@ -373,7 +392,7 @@ impl SupervisorState {
         let task_spec = spec.clone();
         let task_pid = pid_arc.clone();
         let task = tokio::spawn(monitor_adopted(
-            task_name, task_spec, pid, notif_tx, stop_rx, task_pid,
+            task_name, task_spec, pid, notif_tx, stop_rx, task_pid, self.socket_path.clone(),
         ));
         self.services.lock().await.insert(
             name,
@@ -461,23 +480,14 @@ async fn monitor_adopted(
     notif_tx: broadcast::Sender<Notification>,
     mut stop_rx: mpsc::Receiver<()>,
     pid: Arc<AtomicU32>,
+    socket_path: std::path::PathBuf,
 ) {
     tracing::info!("supervisor: monitoring adopted {name} (pid {adopted_pid})");
 
-    // Re-attach to child's stdout/stderr for log forwarding.
-    // On Linux, /proc/<pid>/fd/1 and /proc/<pid>/fd/2 give us the write
-    // end of the pipes. We need the read end, which we can get by opening
-    // /proc/<pid>/fd/<n> from the supervisor side — but this gives us
-    // the same fd the child writes to, not a new pipe.
-    //
-    // Since the original pipes are gone after exec, create new pipes and
-    // splice them in via /proc/<pid>/fd/ — this doesn't work portably.
-    // Instead, just accept that log lines are lost during the brief reexec
-    // window. The child won't block because broken pipes generate SIGPIPE
-    // (which most services handle) or EPIPE errors.
-    //
-    // Log forwarding resumes when the child is next respawned with fresh pipes.
-    tracing::info!("supervisor: log forwarding for adopted {name} will resume on next respawn");
+    // Re-attach log forwarding by tailing the service log file.
+    // Since children write to log files (not pipes), the new supervisor
+    // just tails the same file from the current position.
+    let tail_handle = spawn_log_tailer(&name, &socket_path, notif_tx.clone());
 
     // Wait for the adopted process to exit by polling kill(pid, 0).
     let exited = loop {
@@ -497,6 +507,7 @@ async fn monitor_adopted(
                     unsafe { libc::kill(adopted_pid as i32, libc::SIGKILL) };
                 }
                 pid.store(0, Ordering::Relaxed);
+                tail_handle.abort();
                 return;
             }
         }
@@ -516,7 +527,8 @@ async fn monitor_adopted(
     }
 
     // Fall into normal spawn-and-supervise loop.
-    run_service(name, spec, notif_tx, stop_rx, pid).await;
+    tail_handle.abort();
+    run_service(name, spec, notif_tx, stop_rx, pid, socket_path).await;
 }
 
 async fn run_service(
@@ -525,9 +537,10 @@ async fn run_service(
     notif_tx: broadcast::Sender<Notification>,
     mut stop_rx: mpsc::Receiver<()>,
     pid: Arc<AtomicU32>,
+    socket_path: std::path::PathBuf,
 ) {
     loop {
-        let child = match spawn_child(&name, &spec) {
+        let child = match spawn_child(&name, &spec, &socket_path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("supervisor: {name} spawn failed: {e:#}");
@@ -542,7 +555,7 @@ async fn run_service(
             }
         };
         pid.store(child.id().unwrap_or(0), Ordering::Relaxed);
-        let exit = wait_child(&name, child, &notif_tx, &mut stop_rx).await;
+        let exit = wait_child(&name, child, &notif_tx, &mut stop_rx, &socket_path).await;
         pid.store(0, Ordering::Relaxed);
         match exit {
             ChildExit::Stopped => return,
@@ -565,22 +578,33 @@ enum ChildExit {
     Exited { code: Option<i32> },
 }
 
-fn spawn_child(name: &str, spec: &SpawnSpec) -> Result<Child> {
+fn spawn_child(name: &str, spec: &SpawnSpec, socket_path: &Path) -> Result<Child> {
+    let log_path = service_log_path(socket_path, name);
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("open log file {}", log_path.display()))?;
+    let log_file2 = log_file
+        .try_clone()
+        .with_context(|| "clone log file handle")?;
+
     let mut cmd = Command::new(&spec.program);
     cmd.args(&spec.args)
         .envs(&spec.env)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file2))
         .kill_on_drop(true);
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn {} for {name}", spec.program))?;
     tracing::info!(
-        "supervisor: {name} spawned pid={:?} ({} {})",
+        "supervisor: {name} spawned pid={:?} ({} {}) log={}",
         child.id(),
         spec.program,
-        spec.args.join(" ")
+        spec.args.join(" "),
+        log_path.display(),
     );
     Ok(child)
 }
@@ -590,25 +614,12 @@ async fn wait_child(
     mut child: Child,
     notif_tx: &broadcast::Sender<Notification>,
     stop_rx: &mut mpsc::Receiver<()>,
+    socket_path: &Path,
 ) -> ChildExit {
-    if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(forward_lines(
-            name.to_string(),
-            stdout,
-            false,
-            notif_tx.clone(),
-        ));
-    }
-    if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(forward_lines(
-            name.to_string(),
-            stderr,
-            true,
-            notif_tx.clone(),
-        ));
-    }
+    // Tail the log file for live forwarding to the daemon.
+    let tail_handle = spawn_log_tailer(name, socket_path, notif_tx.clone());
 
-    tokio::select! {
+    let exit = tokio::select! {
         status = child.wait() => {
             let code = status.ok().and_then(|s| s.code());
             tracing::warn!("supervisor: {name} exited code={code:?}");
@@ -619,7 +630,10 @@ async fn wait_child(
             stop_child(&mut child).await;
             ChildExit::Stopped
         }
-    }
+    };
+
+    tail_handle.abort();
+    exit
 }
 
 async fn stop_child(child: &mut Child) {
@@ -642,28 +656,52 @@ async fn stop_child(child: &mut Child) {
     let _ = child.wait().await;
 }
 
-async fn forward_lines<R>(
-    name: String,
-    stream: R,
-    is_stderr: bool,
+/// Spawn a task that tails a service log file from the current end,
+/// forwarding new lines as notifications. Works across supervisor
+/// reexec since it reads from a file, not a pipe.
+fn spawn_log_tailer(
+    name: &str,
+    socket_path: &Path,
     notif_tx: broadcast::Sender<Notification>,
-) where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    let mut reader = BufReader::new(stream).lines();
-    while let Ok(Some(line)) = reader.next_line().await {
-        let clean = strip_ansi(&line);
-        if is_stderr {
-            tracing::warn!(target: "service", "[{name}] {clean}");
-        } else {
-            tracing::info!(target: "service", "[{name}] {clean}");
+) -> JoinHandle<()> {
+    let name = name.to_string();
+    let log_path = service_log_path(socket_path, &name);
+    tokio::spawn(async move {
+        // Open the file and seek to end so we only forward new lines.
+        let file = match tokio::fs::File::open(&log_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::debug!("supervisor: cannot tail {}: {e}", log_path.display());
+                return;
+            }
+        };
+        let mut reader = BufReader::new(file);
+        // Seek to end.
+        use tokio::io::AsyncSeekExt;
+        if reader.seek(std::io::SeekFrom::End(0)).await.is_err() {
+            return;
         }
-        let _ = notif_tx.send(Notification::Log {
-            name: name.clone(),
-            line: clean,
-            is_stderr,
-        });
-    }
+        let mut lines = reader.lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let clean = strip_ansi(&line);
+                    tracing::info!(target: "service", "[{name}] {clean}");
+                    let _ = notif_tx.send(Notification::Log {
+                        name: name.clone(),
+                        line: clean,
+                        is_stderr: false,
+                    });
+                }
+                Ok(None) => {
+                    // EOF — file hasn't been written to yet. Wait and retry.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    // Re-read without seeking — the reader position stays at the last read.
+                }
+                Err(_) => break,
+            }
+        }
+    })
 }
 
 /// Resolve the executable of a running pid. Used by `List` so callers can
