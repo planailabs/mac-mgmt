@@ -21,9 +21,7 @@ const STOP_GRACE: Duration = Duration::from_secs(10);
 /// Entry point for the supervisor.
 ///
 /// Binds a Unix socket at `socket_path`, then runs until the process is
-/// signalled, a `Shutdown` request arrives, or an `UpdateSelf` request
-/// arrives. On `UpdateSelf` the function returns `Ok(true)` so the caller
-/// can re-exec the current binary via [`reexec_self`].
+/// signalled or a `Shutdown` request arrives.
 pub async fn run(socket_path: &Path) -> Result<bool> {
     tracing::info!("supervisor starting on {}", socket_path.display());
 
@@ -65,8 +63,6 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("SIGINT handler")?;
 
-    let mut reexec = false;
-
     loop {
         tokio::select! {
             _ = sigterm.recv() => {
@@ -84,11 +80,13 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
                         let _ = resp_tx.send(Response::Ok).await;
                         break;
                     }
+                    // compat: added 2026-04-24, removable after 2026-07-24
+                    // UpdateSelf is no longer used — the daemon handles its
+                    // own restart after self-update via exec. Kept as a no-op
+                    // for protocol backwards compatibility.
                     Request::UpdateSelf => {
-                        tracing::info!("supervisor: update-self requested");
+                        tracing::info!("supervisor: update-self requested (no-op, daemon handles restart)");
                         let _ = resp_tx.send(Response::Ok).await;
-                        reexec = true;
-                        break;
                     }
                     other => {
                         let resp = state.handle(other, &notif_tx).await;
@@ -103,11 +101,14 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
     state.shutdown_all().await;
     std::fs::remove_file(socket_path).ok();
 
-    Ok(reexec)
+    Ok(false)
 }
 
-/// Re-exec the current binary with its original argv. Intended for use after
-/// `run()` returns `Ok(true)`.
+/// Re-exec the current binary with its original argv.
+///
+/// Deprecated: the daemon now handles its own restart after self-update.
+/// Kept for callers that still check `run()` returning `Ok(true)`.
+#[deprecated(note = "daemon handles restart via exec after self-update")]
 pub fn reexec_self() -> ! {
     use std::os::unix::process::CommandExt;
     let exe = match std::env::current_exe() {

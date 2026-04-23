@@ -92,8 +92,6 @@ impl Daemon {
                     tokio::task::spawn_blocking(crate::self_update::check_and_apply),
                 )
                 .await;
-                #[cfg(feature = "services")]
-                self.svc_mgr.send_update_self().await;
             }
             #[cfg(not(feature = "sim"))]
             tokio::task::spawn_blocking(upgrade_nix);
@@ -567,8 +565,6 @@ impl Daemon {
                             tokio::task::spawn_blocking(crate::self_update::check_and_apply),
                         )
                         .await;
-                        #[cfg(feature = "services")]
-                        self.svc_mgr.send_update_self().await;
                     }
                 } else {
                     tracing::info!("outside upgrade window, deferring self-update");
@@ -931,8 +927,6 @@ pub async fn run(
             tokio::task::spawn_blocking(crate::self_update::check_and_apply),
         )
         .await;
-        #[cfg(feature = "services")]
-        daemon.svc_mgr.send_update_self().await;
     } else {
         tracing::info!("outside upgrade window, skipping initial self-update");
     }
