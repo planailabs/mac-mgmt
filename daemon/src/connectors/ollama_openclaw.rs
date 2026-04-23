@@ -4,15 +4,15 @@ use super::{ConnectorPhase, Connector};
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
 
-/// Registers Ollama as the LLM backend for OpenClaw.
+/// Registers Ollama as an LLM provider in OpenClaw.
 ///
-/// Patches `~/.openclaw/openclaw.json` directly with the ollama provider
-/// config, reproducing what `ollama launch --yes --config --model <m> openclaw`
-/// does (see ~/ollama/cmd/launch/openclaw.go Edit()).
+/// Patches `~/.openclaw/openclaw.json` with the ollama provider config.
+/// When `set_default` is true, also sets it as the primary model.
 pub struct OllamaOpenClaw {
     pub host: String,
     pub port: u16,
     pub default_model: String,
+    pub set_default: bool,
 }
 
 impl Connector for OllamaOpenClaw {
@@ -34,7 +34,7 @@ impl Connector for OllamaOpenClaw {
     ) -> Result<()> {
         let model = &self.default_model;
         let base_url = format!("http://{}:{}", self.host, self.port);
-        tracing::info!("connecting ollama to openclaw (baseUrl={base_url}, model={model})");
+        tracing::info!("connecting ollama to openclaw (baseUrl={base_url}, model={model}, default={})", self.set_default);
         sentry_ext::breadcrumb(
             "connector",
             &format!("ollama→openclaw baseUrl={base_url} model={model}"),
@@ -47,11 +47,7 @@ impl Connector for OllamaOpenClaw {
             return Ok(());
         }
 
-        // Reproduce the patch from ollama launch (openclaw.go Edit()).
-        // Capability detection (vision, reasoning, context_length) requires a
-        // running ollama instance, so we use safe defaults here; openclaw
-        // discovers capabilities at runtime anyway.
-        let patch = serde_json::json!({
+        let mut patch = serde_json::json!({
             "models": {
                 "providers": {
                     "ollama": {
@@ -71,15 +67,13 @@ impl Connector for OllamaOpenClaw {
                         }],
                     }
                 }
-            },
-            "agents": {
-                "defaults": {
-                    "model": {
-                        "primary": format!("ollama/{model}"),
-                    }
-                }
             }
         });
+
+        if self.set_default {
+            patch["agents"] =
+                serde_json::json!({ "defaults": { "model": { "primary": format!("ollama/{model}") } } });
+        }
 
         merge_and_validate(&path, &patch)?;
         tracing::info!("ollama→openclaw connected");

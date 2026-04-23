@@ -110,7 +110,8 @@ pub fn build_connectors(
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
     // Relay→ollama connector: sets OLLAMA_ORIGINS for the tunnel proxy.
-    if global.default_llm == LlmProvider::Ollama && ollama_cfg.enabled {
+    // Always enabled when ollama is enabled (regardless of default_llm).
+    if ollama_cfg.enabled {
         connectors.push(Box::new(relay_ollama::RelayOllama));
     }
 
@@ -120,83 +121,57 @@ pub fn build_connectors(
         global.default_llm.as_str(),
     );
 
+    let has_enabled_cloud = cloud_cfgs.iter().any(|c| c.enabled);
+
+    // Register ALL enabled LLM providers with each enabled agent.
+    // Only the provider matching default_llm gets set_default=true.
     match global.default_agent {
         AgentProvider::Openclaw => {
             connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
 
-            match global.default_llm {
-                LlmProvider::Ollama if ollama_cfg.enabled => {
-                    connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
-                        host: ollama_cfg.host.clone(),
-                        port: ollama_cfg.port,
-                        default_model: ollama_cfg.default_model.clone(),
-                    }));
-                }
-                LlmProvider::Lms if lms_cfg.enabled => {
-                    connectors.push(Box::new(lms_openclaw::LmsOpenClaw {
-                        host: lms_cfg.host.clone(),
-                        port: lms_cfg.port,
-                        default_model: lms_cfg.default_model.clone(),
-                    }));
-                }
-                LlmProvider::Cloud => {
-                    let enabled_count = cloud_cfgs.iter().filter(|c| c.enabled).count();
-                    if enabled_count > 0 {
-                        tracing::info!(
-                            "cloud→openclaw connector enabled ({enabled_count} cloud provider(s))"
-                        );
-                        connectors.push(Box::new(cloud_openclaw::CloudOpenClaw));
-                    } else {
-                        tracing::warn!(
-                            "default_llm=cloud but no enabled cloud providers; \
-                             cloud→openclaw connector will not be created"
-                        );
-                    }
-                }
-                _ => {
-                    tracing::debug!(
-                        "no LLM→openclaw connector for default_llm={}",
-                        global.default_llm.as_str()
-                    );
-                }
+            if ollama_cfg.enabled {
+                connectors.push(Box::new(ollama_openclaw::OllamaOpenClaw {
+                    host: ollama_cfg.host.clone(),
+                    port: ollama_cfg.port,
+                    default_model: ollama_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Ollama,
+                }));
+            }
+            if lms_cfg.enabled {
+                connectors.push(Box::new(lms_openclaw::LmsOpenClaw {
+                    host: lms_cfg.host.clone(),
+                    port: lms_cfg.port,
+                    default_model: lms_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Lms,
+                }));
+            }
+            if has_enabled_cloud {
+                connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
+                    set_default: global.default_llm == LlmProvider::Cloud,
+                }));
             }
         }
         AgentProvider::Opencode => {
             connectors.push(Box::new(relay_opencode::RelayOpencode));
 
-            match global.default_llm {
-                LlmProvider::Ollama if ollama_cfg.enabled => {
-                    connectors.push(Box::new(ollama_opencode::OllamaOpencode {
-                        default_model: ollama_cfg.default_model.clone(),
-                    }));
-                }
-                LlmProvider::Lms if lms_cfg.enabled => {
-                    connectors.push(Box::new(lms_opencode::LmsOpencode {
-                        host: lms_cfg.host.clone(),
-                        port: lms_cfg.port,
-                        default_model: lms_cfg.default_model.clone(),
-                    }));
-                }
-                LlmProvider::Cloud => {
-                    let enabled_count = cloud_cfgs.iter().filter(|c| c.enabled).count();
-                    if enabled_count > 0 {
-                        tracing::info!(
-                            "cloud→opencode connector enabled ({enabled_count} cloud provider(s))"
-                        );
-                        connectors.push(Box::new(cloud_opencode::CloudOpencode));
-                    } else {
-                        tracing::warn!(
-                            "default_llm=cloud but no enabled cloud providers; \
-                             cloud→opencode connector will not be created"
-                        );
-                    }
-                }
-                _ => {
-                    tracing::debug!(
-                        "no LLM→opencode connector for default_llm={}",
-                        global.default_llm.as_str()
-                    );
-                }
+            if ollama_cfg.enabled {
+                connectors.push(Box::new(ollama_opencode::OllamaOpencode {
+                    default_model: ollama_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Ollama,
+                }));
+            }
+            if lms_cfg.enabled {
+                connectors.push(Box::new(lms_opencode::LmsOpencode {
+                    host: lms_cfg.host.clone(),
+                    port: lms_cfg.port,
+                    default_model: lms_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Lms,
+                }));
+            }
+            if has_enabled_cloud {
+                connectors.push(Box::new(cloud_opencode::CloudOpencode {
+                    set_default: global.default_llm == LlmProvider::Cloud,
+                }));
             }
         }
         AgentProvider::None => {

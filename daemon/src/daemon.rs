@@ -1345,6 +1345,18 @@ pub async fn run_sim(
     assessor.update_config(current_cfg.clone()).await;
     assessor.attach_metrics(Arc::clone(&metrics)).await;
 
+    #[cfg(feature = "healer")]
+    let healer_sim = {
+        let ft = std::sync::Arc::new(tokio::sync::RwLock::new(crate::file_tunnels::FileTunnelRegistry::new()));
+        let st = std::sync::Arc::new(tokio::sync::RwLock::new(crate::shell_tunnels::ShellTunnelRegistry::new()));
+        Arc::new(mac_mgmt_healer::HealerState::new(
+            std::sync::Arc::new(mac_mgmt_healer::store::json_file::JsonFileStore::open("/tmp/healer-sim").unwrap()),
+            std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(Arc::clone(&assessor), instance_id.clone())),
+            std::sync::Arc::new(crate::healer_bridge::LocalSessionFactory::new(ft, st, crate::log_buffer::LogBuffer::new())),
+            mac_mgmt_healer::connector::ConnectorConfig::default(),
+        ))
+    };
+
     let mut daemon = Daemon {
         server_url,
         server_token,
@@ -1359,6 +1371,10 @@ pub async fn run_sim(
         initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         #[cfg(feature = "services")]
         svc_mgr,
+        #[cfg(feature = "healer")]
+        healer: healer_sim,
+        #[cfg(feature = "healer")]
+        healer_unhealthy_counter: 0,
     };
 
     // Run startup sync in background.
@@ -1605,6 +1621,16 @@ pub async fn run_sim_with_services(
         }};
     }
 
+    #[cfg(feature = "healer")]
+    let healer = Arc::new(mac_mgmt_healer::HealerState::new(
+        std::sync::Arc::new(mac_mgmt_healer::store::json_file::JsonFileStore::open(config::config_dir().join("healer")).unwrap()),
+        std::sync::Arc::new(crate::healer_bridge::LocalInstanceDataSource::new(Arc::clone(&assessor), instance_id.clone())),
+        std::sync::Arc::new(crate::healer_bridge::LocalSessionFactory::new(
+            relay_mgr.file_tunnel_registry(), relay_mgr.shell_tunnel_registry(), log_buf.clone(),
+        )),
+        mac_mgmt_healer::connector::ConnectorConfig::default(),
+    ));
+
     let mut daemon = Daemon {
         server_url,
         server_token,
@@ -1618,6 +1644,10 @@ pub async fn run_sim_with_services(
         assessor,
         initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         svc_mgr,
+        #[cfg(feature = "healer")]
+        healer,
+        #[cfg(feature = "healer")]
+        healer_unhealthy_counter: 0,
     };
 
     daemon.spawn_sync_skills_and_mcp();

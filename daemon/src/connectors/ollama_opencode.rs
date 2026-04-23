@@ -4,9 +4,10 @@ use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 
-/// Configures OpenCode to use Ollama as its LLM backend.
+/// Registers Ollama as an LLM provider in OpenCode.
 pub struct OllamaOpencode {
     pub default_model: String,
+    pub set_default: bool,
 }
 
 impl Connector for OllamaOpencode {
@@ -27,7 +28,7 @@ impl Connector for OllamaOpencode {
         _configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         let model = &self.default_model;
-        tracing::info!("connecting ollama to opencode with model {model}");
+        tracing::info!("connecting ollama to opencode (model={model}, default={})", self.set_default);
         sentry_ext::breadcrumb(
             "connector",
             &format!("ollama→opencode model={model}"),
@@ -40,16 +41,18 @@ impl Connector for OllamaOpencode {
             return Ok(());
         }
 
-        let patch = serde_json::json!({
+        let mut patch = serde_json::json!({
             "provider": {
                 "ollama": {
                     "options": {
                         "baseURL": "http://127.0.0.1:11434",
                     }
                 }
-            },
-            "model": format!("ollama/{model}"),
+            }
         });
+        if self.set_default {
+            patch["model"] = serde_json::json!(format!("ollama/{model}"));
+        }
 
         merge_and_write(&path, &patch)?;
         tracing::info!("ollama→opencode connected");

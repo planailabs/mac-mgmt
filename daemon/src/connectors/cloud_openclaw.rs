@@ -10,7 +10,9 @@ use crate::services::openclaw::{config_path, merge_and_validate};
 /// run, so hot-reloaded cloud settings take effect without a daemon restart.
 /// All enabled providers are configured; the first one's model is set as the
 /// default.
-pub struct CloudOpenClaw;
+pub struct CloudOpenClaw {
+    pub set_default: bool,
+}
 
 impl Connector for CloudOpenClaw {
     fn name(&self) -> &str {
@@ -87,7 +89,7 @@ impl Connector for CloudOpenClaw {
         }
 
         // Set default model from the first enabled provider.
-        if !primary_model.is_empty() {
+        if self.set_default && !primary_model.is_empty() {
             patch["agents"] =
                 serde_json::json!({ "defaults": { "model": { "primary": primary_model } } });
         }

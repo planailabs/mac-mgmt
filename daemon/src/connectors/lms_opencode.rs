@@ -4,11 +4,12 @@ use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 
-/// Configures OpenCode to use LM Studio as its LLM backend.
+/// Registers LM Studio as an LLM provider in OpenCode.
 pub struct LmsOpencode {
     pub host: String,
     pub port: u16,
     pub default_model: String,
+    pub set_default: bool,
 }
 
 impl Connector for LmsOpencode {
@@ -29,18 +30,11 @@ impl Connector for LmsOpencode {
         _configs: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         let base_url = format!("http://{}:{}/v1", self.host, self.port);
-        tracing::info!(
-            "connecting lms to opencode (baseURL={base_url}, model={})",
-            self.default_model
-        );
+        tracing::info!("connecting lms to opencode (baseUrl={base_url}, model={}, default={})", self.default_model, self.set_default);
         sentry_ext::breadcrumb(
             "connector",
-            &format!("lms→opencode baseURL={base_url}"),
-            &[
-                ("connector", "lms→opencode"),
-                ("base_url", &base_url),
-                ("model", &self.default_model),
-            ],
+            &format!("lms→opencode baseUrl={base_url}"),
+            &[("connector", "lms→opencode"), ("base_url", &base_url), ("model", &self.default_model)],
         );
 
         let path = config_path()?;
@@ -50,16 +44,18 @@ impl Connector for LmsOpencode {
         }
 
         let model_id = &self.default_model;
-        let patch = serde_json::json!({
+        let mut patch = serde_json::json!({
             "provider": {
                 "lmstudio": {
                     "options": {
                         "baseURL": base_url,
                     }
                 }
-            },
-            "model": format!("lmstudio/{model_id}"),
+            }
         });
+        if self.set_default {
+            patch["model"] = serde_json::json!(format!("lmstudio/{model_id}"));
+        }
 
         merge_and_write(&path, &patch)?;
         tracing::info!("lms→opencode connected");

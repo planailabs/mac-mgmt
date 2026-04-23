@@ -4,12 +4,10 @@ use super::{enabled_cloud_configs, resolve_model, Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 
-/// Configures OpenCode with all enabled cloud LLM providers.
-///
-/// Reads live config from the "cloud" config store entry on each run.
-/// All enabled providers are configured; the first one's model is set as the
-/// default.
-pub struct CloudOpencode;
+/// Registers all enabled cloud LLM providers in OpenCode.
+pub struct CloudOpencode {
+    pub set_default: bool,
+}
 
 impl Connector for CloudOpencode {
     fn name(&self) -> &str {
@@ -39,24 +37,20 @@ impl Connector for CloudOpencode {
             return Ok(());
         }
 
-        // The first enabled provider's model becomes the default.
         let primary_model = resolve_model(&enabled[0]);
 
         let provider_names: Vec<&str> = enabled.iter().map(|c| c.provider.as_str()).collect();
         tracing::info!(
-            "connecting cloud providers [{}] to opencode (primary model={primary_model})",
-            provider_names.join(", ")
+            "connecting cloud providers [{}] to opencode (default={})",
+            provider_names.join(", "),
+            self.set_default,
         );
         sentry_ext::breadcrumb(
             "connector",
-            &format!(
-                "cloud→opencode providers=[{}] primary_model={primary_model}",
-                provider_names.join(", ")
-            ),
+            &format!("cloud→opencode providers=[{}]", provider_names.join(", ")),
             &[("connector", "cloud→opencode")],
         );
 
-        // Configure all enabled providers.
         let mut providers = serde_json::Map::new();
         for config in &enabled {
             let provider = config.provider.as_str();
@@ -77,10 +71,10 @@ impl Connector for CloudOpencode {
             );
         }
 
-        let patch = serde_json::json!({
-            "provider": providers,
-            "model": primary_model,
-        });
+        let mut patch = serde_json::json!({ "provider": providers });
+        if self.set_default {
+            patch["model"] = serde_json::json!(primary_model);
+        }
 
         merge_and_write(&path, &patch)?;
         tracing::info!(
