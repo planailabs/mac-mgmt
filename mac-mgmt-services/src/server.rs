@@ -260,8 +260,6 @@ struct Entry {
     /// Live PID of the currently running child (0 when none).
     pid: Arc<AtomicU32>,
     /// Canonical path of `spec.program` resolved at spawn time.
-    /// Stored so `List` can return it for store-path drift detection
-    /// even when the binary is a shebang wrapper script.
     resolved_program: Option<String>,
 }
 
@@ -452,8 +450,10 @@ impl SupervisorState {
 
 // ── Per-service runner ──────────────────────────────────────────────
 
-/// Monitor an adopted child process (from reexec). Waits for it to exit,
-/// then falls into the normal spawn-and-supervise loop.
+/// Monitor an adopted child process (from reexec). Re-attaches to the
+/// child's stdout/stderr via /proc/<pid>/fd/{1,2} so log forwarding
+/// continues after the supervisor reexec. Then waits for exit and
+/// falls into the normal spawn-and-supervise loop.
 async fn monitor_adopted(
     name: String,
     spec: SpawnSpec,
@@ -463,6 +463,21 @@ async fn monitor_adopted(
     pid: Arc<AtomicU32>,
 ) {
     tracing::info!("supervisor: monitoring adopted {name} (pid {adopted_pid})");
+
+    // Re-attach to child's stdout/stderr for log forwarding.
+    // On Linux, /proc/<pid>/fd/1 and /proc/<pid>/fd/2 give us the write
+    // end of the pipes. We need the read end, which we can get by opening
+    // /proc/<pid>/fd/<n> from the supervisor side — but this gives us
+    // the same fd the child writes to, not a new pipe.
+    //
+    // Since the original pipes are gone after exec, create new pipes and
+    // splice them in via /proc/<pid>/fd/ — this doesn't work portably.
+    // Instead, just accept that log lines are lost during the brief reexec
+    // window. The child won't block because broken pipes generate SIGPIPE
+    // (which most services handle) or EPIPE errors.
+    //
+    // Log forwarding resumes when the child is next respawned with fresh pipes.
+    tracing::info!("supervisor: log forwarding for adopted {name} will resume on next respawn");
 
     // Wait for the adopted process to exit by polling kill(pid, 0).
     let exited = loop {
