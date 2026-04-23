@@ -447,4 +447,44 @@ impl HealerStore for JsonFileStore {
     async fn remove_mcp_server(&self, _cluster_id: Uuid, _mcp_server_id: Uuid) -> Result<bool> {
         anyhow::bail!("MCP server management not available in local mode")
     }
+
+    // -- Token usage tracking (in-memory for local mode) -------------------
+
+    async fn append_token_event(
+        &self,
+        session_id: Uuid,
+        _provider: &str,
+        _model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<u64> {
+        let total = (input_tokens + output_tokens) as u64;
+        self.mutate(session_id, |sf| {
+            let used = sf.session.state_data
+                .get("tokens_used")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                + total;
+            sf.session.state_data["tokens_used"] = serde_json::json!(used);
+        })?;
+        self.get_token_usage(session_id).await
+    }
+
+    async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
+        Ok(self.read_file(session_id)?
+            .and_then(|sf| sf.session.state_data.get("tokens_used")?.as_u64())
+            .unwrap_or(0))
+    }
+
+    async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()> {
+        self.mutate(session_id, |sf| {
+            sf.session.state_data["token_budget"] = serde_json::json!(budget);
+        })
+    }
+
+    async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
+        Ok(self.read_file(session_id)?
+            .and_then(|sf| sf.session.state_data.get("token_budget")?.as_u64())
+            .unwrap_or(0))
+    }
 }

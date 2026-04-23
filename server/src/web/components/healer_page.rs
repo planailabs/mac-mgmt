@@ -503,6 +503,7 @@ pub async fn extend_healer_budget(session_id: String) -> Result<(), ServerFnErro
         .map_err(|_| ServerFnError::new("invalid id"))?;
     healer
         .extend_budget(uuid)
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
 

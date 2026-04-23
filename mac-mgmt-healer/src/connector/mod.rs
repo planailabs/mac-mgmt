@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 
@@ -43,14 +42,20 @@ impl Default for ConnectorConfig {
 /// Resolved LLM handle ready for use with swiftide agents.
 pub struct LlmHandle {
     pub provider: LlmProvider,
-    /// Token usage counter. Only incremented when using cloud providers.
-    pub token_usage: Arc<AtomicU64>,
     /// Whether this handle uses a cloud provider (subject to token budgets).
     pub is_cloud: bool,
     /// Which provider was actually selected.
     pub resolved_provider: ResolvedProvider,
     /// Which model name was actually used.
     pub resolved_model: String,
+}
+
+/// Context passed to `resolve_llm` for persisting token usage events.
+pub struct TokenEventContext {
+    pub store: crate::store::DynStore,
+    pub session_id: uuid::Uuid,
+    /// Notified when token budget is exceeded.
+    pub budget_notify: Arc<tokio::sync::Notify>,
 }
 
 pub enum LlmProvider {
@@ -90,8 +95,8 @@ pub async fn resolve_llm(
     config: &ConnectorConfig,
     forced_provider: Option<&str>,
     forced_model: Option<&str>,
+    token_ctx: Option<TokenEventContext>,
 ) -> Result<LlmHandle> {
-    let token_usage = Arc::new(AtomicU64::new(0));
 
     let try_ollama = forced_provider.is_none() || forced_provider == Some("ollama");
     let try_anthropic = forced_provider.is_none() || forced_provider == Some("anthropic");
@@ -130,7 +135,6 @@ pub async fn resolve_llm(
 
                 return Ok(LlmHandle {
                     provider: LlmProvider::Ollama(ollama),
-                    token_usage,
                     is_cloud: false,
                     resolved_provider: ResolvedProvider::Ollama,
                     resolved_model: model,
@@ -167,22 +171,41 @@ pub async fn resolve_llm(
             // SAFETY: called during server startup, before parallel agent tasks.
             unsafe { std::env::set_var("ANTHROPIC_API_KEY", api_key) };
 
-            // Wire usage tracking so the token budget actually works.
-            let usage_counter = token_usage.clone();
-            let anthropic = swiftide::integrations::anthropic::Anthropic::builder()
-                .default_prompt_model(&model)
-                .on_usage(move |usage| {
-                    let input = usage.prompt_tokens as u64;
-                    let output = usage.completion_tokens as u64;
-                    usage_counter.fetch_add(input + output, Ordering::Relaxed);
-                    Ok(())
-                })
+            let mut builder = swiftide::integrations::anthropic::Anthropic::builder();
+            builder.default_prompt_model(&model);
+
+            if let Some(ref ctx) = token_ctx {
+                let store = ctx.store.clone();
+                let sid = ctx.session_id;
+                let notify = ctx.budget_notify.clone();
+                let provider_name = "anthropic".to_string();
+                let model_name = model.clone();
+                builder.on_usage_async(move |usage| {
+                    let store = store.clone();
+                    let provider = provider_name.clone();
+                    let model = model_name.clone();
+                    let notify = notify.clone();
+                    let input = usage.prompt_tokens;
+                    let output = usage.completion_tokens;
+                    Box::pin(async move {
+                        let new_total = store.append_token_event(
+                            sid, &provider, &model, input, output,
+                        ).await.unwrap_or(0);
+                        let budget = store.get_token_budget(sid).await.unwrap_or(0);
+                        if budget > 0 && new_total >= budget {
+                            notify.notify_one();
+                        }
+                        Ok(())
+                    })
+                });
+            }
+
+            let anthropic = builder
                 .build()
                 .context("failed to build Anthropic integration")?;
 
             return Ok(LlmHandle {
                 provider: LlmProvider::Anthropic(anthropic),
-                token_usage,
                 is_cloud: true,
                 resolved_provider: ResolvedProvider::Anthropic,
                 resolved_model: model,
@@ -208,22 +231,41 @@ pub async fn resolve_llm(
 
             let client = async_openai::Client::with_config(openai_config);
 
-            let usage_counter = token_usage.clone();
-            let openrouter = swiftide::integrations::openai::OpenAI::builder()
-                .client(client)
-                .default_prompt_model(&model)
-                .on_usage(move |usage| {
-                    let input = usage.prompt_tokens as u64;
-                    let output = usage.completion_tokens as u64;
-                    usage_counter.fetch_add(input + output, Ordering::Relaxed);
-                    Ok(())
-                })
+            let mut builder = swiftide::integrations::openai::OpenAI::builder();
+            builder.client(client).default_prompt_model(&model);
+
+            if let Some(ref ctx) = token_ctx {
+                let store = ctx.store.clone();
+                let sid = ctx.session_id;
+                let notify = ctx.budget_notify.clone();
+                let provider_name = "openrouter".to_string();
+                let model_name = model.clone();
+                builder.on_usage_async(move |usage| {
+                    let store = store.clone();
+                    let provider = provider_name.clone();
+                    let model = model_name.clone();
+                    let notify = notify.clone();
+                    let input = usage.prompt_tokens;
+                    let output = usage.completion_tokens;
+                    Box::pin(async move {
+                        let new_total = store.append_token_event(
+                            sid, &provider, &model, input, output,
+                        ).await.unwrap_or(0);
+                        let budget = store.get_token_budget(sid).await.unwrap_or(0);
+                        if budget > 0 && new_total >= budget {
+                            notify.notify_one();
+                        }
+                        Ok(())
+                    })
+                });
+            }
+
+            let openrouter = builder
                 .build()
                 .context("failed to build OpenRouter integration")?;
 
             return Ok(LlmHandle {
                 provider: LlmProvider::OpenRouter(openrouter),
-                token_usage,
                 is_cloud: true,
                 resolved_provider: ResolvedProvider::OpenRouter,
                 resolved_model: model,
@@ -310,21 +352,8 @@ async fn check_ollama(url: &str, model: &str) -> OllamaStatus {
 }
 
 impl LlmHandle {
-    /// Record token usage from an LLM response.
-    pub fn record_usage(&self, input_tokens: u64, output_tokens: u64) {
-        if self.is_cloud {
-            self.token_usage
-                .fetch_add(input_tokens + output_tokens, Ordering::Relaxed);
-        }
-    }
-
-    /// Get current total token usage.
-    pub fn total_usage(&self) -> u64 {
-        self.token_usage.load(Ordering::Relaxed)
-    }
-
-    /// Reset the token usage counter (used on session resume).
-    pub fn reset_usage(&self) {
-        self.token_usage.store(0, Ordering::Relaxed);
+    /// Human-readable provider name.
+    pub fn provider_name(&self) -> &str {
+        self.resolved_provider.as_str()
     }
 }

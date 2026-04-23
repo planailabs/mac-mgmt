@@ -122,6 +122,28 @@ pub trait HealerStore: Send + Sync + 'static {
     async fn list_mcp_servers(&self, cluster_id: Uuid) -> Result<Vec<McpServerEntry>>;
     async fn add_mcp_server(&self, cluster_id: Uuid, mcp_server_id: Uuid) -> Result<()>;
     async fn remove_mcp_server(&self, cluster_id: Uuid, mcp_server_id: Uuid) -> Result<bool>;
+
+    // -- Token usage tracking ------------------------------------------------
+
+    /// Append a token usage event and update the session's running total.
+    /// Returns the new total tokens_used for budget checking.
+    async fn append_token_event(
+        &self,
+        session_id: Uuid,
+        provider: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<u64>;
+
+    /// Get the current token usage for a session (denormalized total).
+    async fn get_token_usage(&self, session_id: Uuid) -> Result<u64>;
+
+    /// Set the token budget for a session.
+    async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()>;
+
+    /// Get the token budget for a session.
+    async fn get_token_budget(&self, session_id: Uuid) -> Result<u64>;
 }
 
 // ── Data transfer types ────────────────────────────────────────────────

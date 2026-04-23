@@ -554,6 +554,71 @@ impl HealerStore for PgHealerStore {
         .await?;
         Ok(r.rows_affected() > 0)
     }
+
+    // -- Token usage tracking ------------------------------------------------
+
+    async fn append_token_event(
+        &self,
+        session_id: Uuid,
+        provider: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) -> Result<u64> {
+        let total = (input_tokens + output_tokens) as i64;
+        // Insert event and atomically update denormalized total.
+        sqlx::query(
+            "INSERT INTO healer_token_events (session_id, provider, model, input_tokens, output_tokens) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(session_id)
+        .bind(provider)
+        .bind(model)
+        .bind(input_tokens as i32)
+        .bind(output_tokens as i32)
+        .execute(&self.pool)
+        .await?;
+
+        let new_total: i64 = sqlx::query_scalar(
+            "UPDATE healer_sessions SET tokens_used = tokens_used + $1 WHERE id = $2 \
+             RETURNING tokens_used",
+        )
+        .bind(total)
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(new_total as u64)
+    }
+
+    async fn get_token_usage(&self, session_id: Uuid) -> Result<u64> {
+        let used: i64 = sqlx::query_scalar(
+            "SELECT tokens_used FROM healer_sessions WHERE id = $1",
+        )
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(used as u64)
+    }
+
+    async fn set_token_budget(&self, session_id: Uuid, budget: u64) -> Result<()> {
+        sqlx::query("UPDATE healer_sessions SET token_budget = $1 WHERE id = $2")
+            .bind(budget as i64)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_token_budget(&self, session_id: Uuid) -> Result<u64> {
+        let budget: i64 = sqlx::query_scalar(
+            "SELECT token_budget FROM healer_sessions WHERE id = $1",
+        )
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(budget as u64)
+    }
 }
 
 // ── Instance data (InstanceDataSource) ────────────────────────────────

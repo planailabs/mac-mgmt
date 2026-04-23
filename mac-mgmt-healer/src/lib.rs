@@ -66,21 +66,19 @@ struct HealerStateInner {
     running: DashMap<Uuid, RunningSession>,
     shutting_down: AtomicBool,
     push_fn: Option<tools::PushFn>,
-    /// Budget extensions for sessions that were extended while not running
-    /// (e.g. paused). Consumed when the session resumes.
-    extended_budgets: DashMap<Uuid, u64>,
 }
 
-#[allow(dead_code)] // approval_notify is kept alive here; used via Arc in the spawned task
+#[allow(dead_code)] // approval_notify/budget_notify are kept alive here; used via Arc in spawned tasks
 struct RunningSession {
     cancel: CancellationToken,
     pause_notify: Arc<tokio::sync::Notify>,
-    budget_limit: Arc<std::sync::atomic::AtomicU64>,
     events_tx: broadcast::Sender<HealerEvent>,
     /// Currently executing tools (in-memory only, not persisted).
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
     /// Fired by the set_phase tool when transitioning to AwaitingApproval.
     approval_notify: Arc<tokio::sync::Notify>,
+    /// Fired by the on_usage callback when token budget is exceeded.
+    budget_notify: Arc<tokio::sync::Notify>,
 }
 
 /// Request to spawn a new healer session.
@@ -139,7 +137,6 @@ impl HealerState {
                 running: DashMap::new(),
                 shutting_down: AtomicBool::new(false),
                 push_fn: None,
-                extended_budgets: DashMap::new(),
             }),
         }
     }
@@ -224,19 +221,25 @@ impl HealerState {
         let cancel = CancellationToken::new();
         let pause_notify = Arc::new(tokio::sync::Notify::new());
         let approval_notify = Arc::new(tokio::sync::Notify::new());
+        let budget_notify = Arc::new(tokio::sync::Notify::new());
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        // Set initial token budget on the session row.
         let effective_budget = req.token_budget.unwrap_or(self.inner.connector_config.token_budget);
-        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(effective_budget));
+        if effective_budget > 0 {
+            self.inner.store.set_token_budget(session_id, effective_budget).await.ok();
+        }
+
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
                 pause_notify: pause_notify.clone(),
-                budget_limit: budget_limit.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
                 approval_notify: approval_notify.clone(),
+                budget_notify: budget_notify.clone(),
             },
         );
 
@@ -251,7 +254,7 @@ impl HealerState {
                 cancel.clone(),
                 pause_notify,
                 approval_notify,
-                budget_limit,
+                budget_notify,
                 events_tx.clone(),
                 running_tools,
                 connector_config,
@@ -310,8 +313,7 @@ impl HealerState {
     /// Resume a paused session (manual resume via API).
     ///
     /// If the session was paused due to token budget exhaustion, refuses
-    /// to resume unless `extend_budget()` was called first (the extended
-    /// budget is stored in `self.extended_budgets`).
+    /// to resume unless `extend_budget()` was called first.
     pub async fn resume_session(&self, session_id: Uuid) -> Result<()> {
         let sess = self.inner.store.get_session(session_id)
             .await?
@@ -332,15 +334,9 @@ impl HealerState {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         if reason == "token_budget_exceeded" {
-            // Check if an extend_budget was applied (stored on the running session
-            // if one exists, or in the extended_budgets map otherwise).
-            let extended = self
-                .inner
-                .running
-                .get(&session_id)
-                .is_some_and(|r| r.budget_limit.load(Ordering::Relaxed) > self.inner.connector_config.token_budget)
-                || self.inner.extended_budgets.contains_key(&session_id);
-            if !extended {
+            let budget = self.inner.store.get_token_budget(session_id).await.unwrap_or(0);
+            let used = self.inner.store.get_token_usage(session_id).await.unwrap_or(0);
+            if budget > 0 && used >= budget {
                 anyhow::bail!(
                     "session was paused for token budget exhaustion — \
                      use 'More Tokens' to extend the budget before resuming"
@@ -396,21 +392,18 @@ impl HealerState {
         let cancel = CancellationToken::new();
         let pause_notify = Arc::new(tokio::sync::Notify::new());
         let approval_notify = Arc::new(tokio::sync::Notify::new());
+        let budget_notify = Arc::new(tokio::sync::Notify::new());
         let (events_tx, _) = broadcast::channel::<HealerEvent>(4096);
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
-        // Use extended budget if one was granted, otherwise default
-        let extended = self.inner.extended_budgets.remove(&session_id);
-        let budget = extended.map(|(_, v)| v).unwrap_or(self.inner.connector_config.token_budget);
-        let budget_limit = Arc::new(std::sync::atomic::AtomicU64::new(budget));
         self.inner.running.insert(
             session_id,
             RunningSession {
                 cancel: cancel.clone(),
                 pause_notify: pause_notify.clone(),
-                budget_limit: budget_limit.clone(),
                 events_tx: events_tx.clone(),
                 running_tools: running_tools.clone(),
                 approval_notify: approval_notify.clone(),
+                budget_notify: budget_notify.clone(),
             },
         );
 
@@ -457,7 +450,7 @@ impl HealerState {
                 cancel,
                 pause_notify,
                 approval_notify,
-                budget_limit,
+                budget_notify,
                 events_tx.clone(),
                 running_tools,
                 connector_config,
@@ -566,15 +559,9 @@ impl HealerState {
     }
 
     /// Increase the token budget for a session to 1 million tokens.
-    /// Works for both running and paused sessions.
-    pub fn extend_budget(&self, session_id: Uuid) -> Result<()> {
-        if let Some(entry) = self.inner.running.get(&session_id) {
-            entry
-                .budget_limit
-                .store(1_000_000, Ordering::Relaxed);
-        }
-        // Also record for paused sessions that will resume later
-        self.inner.extended_budgets.insert(session_id, 1_000_000);
+    /// Works for both running and paused sessions. Updates the DB directly.
+    pub async fn extend_budget(&self, session_id: Uuid) -> Result<()> {
+        self.inner.store.set_token_budget(session_id, 1_000_000).await?;
         tracing::info!("extended token budget to 1M for session {session_id}");
         Ok(())
     }
@@ -657,7 +644,7 @@ async fn run_agent_session(
     cancel: CancellationToken,
     pause_notify: Arc<tokio::sync::Notify>,
     approval_notify: Arc<tokio::sync::Notify>,
-    budget_limit: Arc<std::sync::atomic::AtomicU64>,
+    budget_notify: Arc<tokio::sync::Notify>,
     events_tx: broadcast::Sender<HealerEvent>,
     running_tools: Arc<std::sync::Mutex<Vec<session::RunningTool>>>,
     connector_config: ConnectorConfig,
@@ -666,10 +653,16 @@ async fn run_agent_session(
     let store = &state.inner.store;
 
     // 1. Resolve LLM (use forced provider/model if specified in request)
+    let token_ctx = connector::TokenEventContext {
+        store: store.clone(),
+        session_id,
+        budget_notify: budget_notify.clone(),
+    };
     let llm = connector::resolve_llm(
         &connector_config,
         req.provider.as_deref(),
         req.model.as_deref(),
+        Some(token_ctx),
     )
     .await
     .context("failed to resolve LLM")?;
@@ -816,7 +809,6 @@ async fn run_agent_session(
     // 6. Build and run agent
     let store_msg = store.clone();
     let events_tx_msg = events_tx.clone();
-    let is_cloud = llm.is_cloud;
     let proxy_expires = req.proxy_expires;
 
     // Determine initial prompt
@@ -1076,9 +1068,9 @@ async fn run_agent_session(
         _ = approval_notify.notified() => StopReason::AwaitingApproval,
         _ = shutdown_signal(state) => StopReason::Shutdown,
         _ = proxy_expiry_signal(proxy_expires) => StopReason::ProxyExpiring,
-        _ = budget_exceeded_signal(&llm.token_usage, &budget_limit, is_cloud) => {
-            let used = llm.token_usage.load(Ordering::Relaxed);
-            let limit = budget_limit.load(Ordering::Relaxed);
+        _ = budget_notify.notified() => {
+            let used = store_select.get_token_usage(session_id).await.unwrap_or(0);
+            let limit = store_select.get_token_budget(session_id).await.unwrap_or(0);
             StopReason::BudgetExceeded { used, limit }
         }
     };
@@ -1216,28 +1208,6 @@ async fn proxy_expiry_signal(expires: Option<DateTime<Utc>>) {
     tokio::time::sleep(dur).await;
 }
 
-/// Wait until token usage exceeds the budget. Polls every 5 seconds.
-/// Returns `pending` if not a cloud provider or budget is 0.
-async fn budget_exceeded_signal(
-    token_usage: &std::sync::atomic::AtomicU64,
-    budget_limit: &std::sync::atomic::AtomicU64,
-    is_cloud: bool,
-) {
-    if !is_cloud {
-        return std::future::pending().await;
-    }
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let budget = budget_limit.load(Ordering::Relaxed);
-        if budget == 0 {
-            continue;
-        }
-        let used = token_usage.load(Ordering::Relaxed);
-        if used >= budget {
-            return;
-        }
-    }
-}
 
 /// Connect to the Context7 documentation MCP server via SSE.
 async fn connect_context7(

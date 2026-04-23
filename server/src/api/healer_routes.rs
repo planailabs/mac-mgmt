@@ -383,7 +383,7 @@ pub async fn extend_budget(
     id: &str,
 ) -> Result<Status, Status> {
     let session_id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    healer.extend_budget(session_id).map_err(|e| {
+    healer.extend_budget(session_id).await.map_err(|e| {
         tracing::error!(err = %e, "failed to extend budget");
         Status::BadRequest
     })?;
