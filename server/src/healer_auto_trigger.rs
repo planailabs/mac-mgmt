@@ -33,6 +33,7 @@ async fn cluster_healer_config(
 ) -> mac_mgmt_common::HealerClusterConfig {
     #[derive(sqlx::FromRow)]
     struct Row {
+        enabled: bool,
         auto_trigger: Option<bool>,
         auto_trigger_provider: Option<String>,
         auto_trigger_model: Option<String>,
@@ -40,8 +41,8 @@ async fn cluster_healer_config(
         fix_provider: Option<String>,
         fix_model: Option<String>,
     }
-    sqlx::query_as::<_, Row>(
-        "SELECT auto_trigger, auto_trigger_provider, auto_trigger_model, \
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
                 auto_approve, fix_provider, fix_model \
          FROM healer_cluster_settings WHERE cluster_id = $1",
     )
@@ -49,16 +50,18 @@ async fn cluster_healer_config(
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten()
-    .map(|r| mac_mgmt_common::HealerClusterConfig {
-        auto_trigger: r.auto_trigger,
-        auto_trigger_provider: r.auto_trigger_provider,
-        auto_trigger_model: r.auto_trigger_model,
-        auto_approve: r.auto_approve,
-        fix_provider: r.fix_provider,
-        fix_model: r.fix_model,
-    })
-    .unwrap_or_default()
+    .flatten();
+    match row {
+        Some(r) if r.enabled => mac_mgmt_common::HealerClusterConfig {
+            auto_trigger: r.auto_trigger,
+            auto_trigger_provider: r.auto_trigger_provider,
+            auto_trigger_model: r.auto_trigger_model,
+            auto_approve: r.auto_approve,
+            fix_provider: r.fix_provider,
+            fix_model: r.fix_model,
+        },
+        _ => mac_mgmt_common::HealerClusterConfig::default(),
+    }
 }
 
 /// Run the auto-trigger background loop. Never returns.

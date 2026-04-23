@@ -6,6 +6,7 @@ use crate::web::user::current_user;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Settings {
+    enabled: bool,
     auto_trigger: bool,
     auto_trigger_key: String,
     auto_approve: bool,
@@ -35,6 +36,7 @@ async fn load_settings(cluster_id: String) -> Result<SettingsData, ServerFnError
 
     #[derive(sqlx::FromRow)]
     struct Row {
+        enabled: bool,
         auto_trigger: Option<bool>,
         auto_trigger_provider: Option<String>,
         auto_trigger_model: Option<String>,
@@ -43,7 +45,7 @@ async fn load_settings(cluster_id: String) -> Result<SettingsData, ServerFnError
         fix_model: Option<String>,
     }
     let row = sqlx::query_as::<_, Row>(
-        "SELECT auto_trigger, auto_trigger_provider, auto_trigger_model, \
+        "SELECT enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
                 auto_approve, fix_provider, fix_model \
          FROM healer_cluster_settings WHERE cluster_id = $1",
     )
@@ -54,6 +56,7 @@ async fn load_settings(cluster_id: String) -> Result<SettingsData, ServerFnError
 
     let settings = row
         .map(|r| Settings {
+            enabled: r.enabled,
             auto_trigger: r.auto_trigger.unwrap_or(false),
             auto_trigger_key: match (r.auto_trigger_provider, r.auto_trigger_model) {
                 (Some(p), Some(m)) => format!("{p}:{m}"),
@@ -88,6 +91,7 @@ async fn load_settings(cluster_id: String) -> Result<SettingsData, ServerFnError
 #[server]
 async fn save_settings(
     cluster_id: String,
+    enabled: bool,
     auto_trigger: bool,
     auto_trigger_provider: Option<String>,
     auto_trigger_model: Option<String>,
@@ -104,10 +108,11 @@ async fn save_settings(
 
     sqlx::query(
         "INSERT INTO healer_cluster_settings \
-            (cluster_id, auto_trigger, auto_trigger_provider, auto_trigger_model, \
+            (cluster_id, enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
              auto_approve, fix_provider, fix_model, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
          ON CONFLICT (cluster_id) DO UPDATE SET \
+            enabled = EXCLUDED.enabled, \
             auto_trigger = EXCLUDED.auto_trigger, \
             auto_trigger_provider = EXCLUDED.auto_trigger_provider, \
             auto_trigger_model = EXCLUDED.auto_trigger_model, \
@@ -117,6 +122,7 @@ async fn save_settings(
             updated_at = now()",
     )
     .bind(cid)
+    .bind(enabled)
     .bind(auto_trigger)
     .bind(&auto_trigger_provider)
     .bind(&auto_trigger_model)
@@ -152,6 +158,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
     };
 
     let models = data.models.clone();
+    let mut enabled = use_signal(move || data.settings.enabled);
     let mut auto_trigger = use_signal(move || data.settings.auto_trigger);
     let mut auto_trigger_key = use_signal(move || data.settings.auto_trigger_key.clone());
     let mut auto_approve = use_signal(move || data.settings.auto_approve);
@@ -162,52 +169,74 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
     let anthropic: Vec<_> = models.iter().filter(|m| m.provider == "anthropic").cloned().collect();
     let openrouter: Vec<_> = models.iter().filter(|m| m.provider == "openrouter").cloned().collect();
 
+    let is_enabled = *enabled.read();
+    let fields_disabled = read_only || !is_enabled;
+
     rsx! {
         div { class: "space-y-3",
-            // Auto-trigger
+            // Override enabled toggle
             div { class: "flex items-center gap-2",
                 input {
                     r#type: "checkbox",
                     disabled: read_only,
-                    checked: *auto_trigger.read(),
-                    onchange: move |e| auto_trigger.set(e.checked()),
+                    checked: is_enabled,
+                    onchange: move |e| enabled.set(e.checked()),
                 }
-                span { class: "text-sm", "Auto-trigger" }
-            }
-            // Auto-trigger model
-            div {
-                label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", "Auto-trigger model" }
-                select {
-                    class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
-                    disabled: read_only,
-                    value: "{auto_trigger_key}",
-                    onchange: move |e| auto_trigger_key.set(e.value()),
-                    option { value: "none", "Server default" }
-                    {model_optgroups(&ollama, &anthropic, &openrouter)}
+                span { class: "text-sm font-medium", "Override server defaults" }
+                if !is_enabled {
+                    span { class: "text-xs text-gray-400 dark:text-gray-500", "(using server defaults)" }
                 }
             }
-            // Auto-approve
-            div { class: "flex items-center gap-2",
-                input {
-                    r#type: "checkbox",
-                    disabled: read_only,
-                    checked: *auto_approve.read(),
-                    onchange: move |e| auto_approve.set(e.checked()),
+
+            div { class: if is_enabled { "" } else { "opacity-50 pointer-events-none" },
+                div { class: "space-y-3",
+                    // Auto-trigger
+                    div { class: "flex items-center gap-2",
+                        input {
+                            r#type: "checkbox",
+                            disabled: fields_disabled,
+                            checked: *auto_trigger.read(),
+                            onchange: move |e| auto_trigger.set(e.checked()),
+                        }
+                        span { class: "text-sm", "Auto-trigger" }
+                    }
+                    // Auto-trigger model
+                    div {
+                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", "Auto-trigger model" }
+                        select {
+                            class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                            disabled: fields_disabled,
+                            value: "{auto_trigger_key}",
+                            onchange: move |e| auto_trigger_key.set(e.value()),
+                            option { value: "none", "Server default" }
+                            {model_optgroups(&ollama, &anthropic, &openrouter)}
+                        }
+                    }
+                    // Auto-approve
+                    div { class: "flex items-center gap-2",
+                        input {
+                            r#type: "checkbox",
+                            disabled: fields_disabled,
+                            checked: *auto_approve.read(),
+                            onchange: move |e| auto_approve.set(e.checked()),
+                        }
+                        span { class: "text-sm", "Auto-approve remediation" }
+                    }
+                    // Fix model
+                    div {
+                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", "Fix model (remediation)" }
+                        select {
+                            class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                            disabled: fields_disabled,
+                            value: "{fix_model_key}",
+                            onchange: move |e| fix_model_key.set(e.value()),
+                            option { value: "none", "Same as diagnosis" }
+                            {model_optgroups(&ollama, &anthropic, &openrouter)}
+                        }
+                    }
                 }
-                span { class: "text-sm", "Auto-approve remediation" }
             }
-            // Fix model
-            div {
-                label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", "Fix model (remediation)" }
-                select {
-                    class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
-                    disabled: read_only,
-                    value: "{fix_model_key}",
-                    onchange: move |e| fix_model_key.set(e.value()),
-                    option { value: "none", "Same as diagnosis" }
-                    {model_optgroups(&ollama, &anthropic, &openrouter)}
-                }
-            }
+
             if !read_only {
                 button {
                     class: "px-3 py-1 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50",
@@ -216,6 +245,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                         let cluster_id = cluster_id.clone();
                         move |_| {
                             let cid = cluster_id.clone();
+                            let en = *enabled.read();
                             let at = *auto_trigger.read();
                             let aa = *auto_approve.read();
                             let at_key = auto_trigger_key.read().clone();
@@ -224,7 +254,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             let (fp, fm) = parse_key(&fix_key);
                             saving.set(true);
                             async move {
-                                let _ = save_settings(cid, at, atp, atm, aa, fp, fm).await;
+                                let _ = save_settings(cid, en, at, atp, atm, aa, fp, fm).await;
                                 saving.set(false);
                                 data_future.restart();
                             }

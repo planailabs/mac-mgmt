@@ -1,0 +1,1 @@
+ALTER TABLE healer_cluster_settings ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true;

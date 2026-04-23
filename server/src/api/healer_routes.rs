@@ -17,6 +17,7 @@ async fn cluster_healer_config(
 ) -> mac_mgmt_common::HealerClusterConfig {
     #[derive(sqlx::FromRow)]
     struct Row {
+        enabled: bool,
         auto_trigger: Option<bool>,
         auto_trigger_provider: Option<String>,
         auto_trigger_model: Option<String>,
@@ -24,8 +25,8 @@ async fn cluster_healer_config(
         fix_provider: Option<String>,
         fix_model: Option<String>,
     }
-    sqlx::query_as::<_, Row>(
-        "SELECT auto_trigger, auto_trigger_provider, auto_trigger_model, \
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
                 auto_approve, fix_provider, fix_model \
          FROM healer_cluster_settings WHERE cluster_id = $1",
     )
@@ -33,16 +34,18 @@ async fn cluster_healer_config(
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten()
-    .map(|r| mac_mgmt_common::HealerClusterConfig {
-        auto_trigger: r.auto_trigger,
-        auto_trigger_provider: r.auto_trigger_provider,
-        auto_trigger_model: r.auto_trigger_model,
-        auto_approve: r.auto_approve,
-        fix_provider: r.fix_provider,
-        fix_model: r.fix_model,
-    })
-    .unwrap_or_default()
+    .flatten();
+    match row {
+        Some(r) if r.enabled => mac_mgmt_common::HealerClusterConfig {
+            auto_trigger: r.auto_trigger,
+            auto_trigger_provider: r.auto_trigger_provider,
+            auto_trigger_model: r.auto_trigger_model,
+            auto_approve: r.auto_approve,
+            fix_provider: r.fix_provider,
+            fix_model: r.fix_model,
+        },
+        _ => mac_mgmt_common::HealerClusterConfig::default(),
+    }
 }
 
 // ── Request/Response types ─────────────────────────────────────────────
@@ -432,14 +435,24 @@ pub async fn get_healer_settings(
 /// Update healer settings for a cluster (upsert).
 #[derive(Debug, Deserialize)]
 pub struct HealerSettingsBody {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default)]
     pub auto_trigger: Option<bool>,
+    #[serde(default)]
+    pub auto_trigger_provider: Option<String>,
+    #[serde(default)]
+    pub auto_trigger_model: Option<String>,
     #[serde(default)]
     pub auto_approve: Option<bool>,
     #[serde(default)]
     pub fix_provider: Option<String>,
     #[serde(default)]
     pub fix_model: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[post("/healer/settings", data = "<body>")]
@@ -450,17 +463,25 @@ pub async fn put_healer_settings(
 ) -> Result<Status, Status> {
     let body = body.into_inner();
     sqlx::query(
-        "INSERT INTO healer_cluster_settings (cluster_id, auto_trigger, auto_approve, fix_provider, fix_model, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, now()) \
+        "INSERT INTO healer_cluster_settings \
+            (cluster_id, enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
+             auto_approve, fix_provider, fix_model, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
          ON CONFLICT (cluster_id) DO UPDATE SET \
+            enabled = EXCLUDED.enabled, \
             auto_trigger = EXCLUDED.auto_trigger, \
+            auto_trigger_provider = EXCLUDED.auto_trigger_provider, \
+            auto_trigger_model = EXCLUDED.auto_trigger_model, \
             auto_approve = EXCLUDED.auto_approve, \
             fix_provider = EXCLUDED.fix_provider, \
             fix_model = EXCLUDED.fix_model, \
             updated_at = now()",
     )
     .bind(auth.cluster_id)
+    .bind(body.enabled)
     .bind(body.auto_trigger)
+    .bind(&body.auto_trigger_provider)
+    .bind(&body.auto_trigger_model)
     .bind(body.auto_approve)
     .bind(&body.fix_provider)
     .bind(&body.fix_model)
