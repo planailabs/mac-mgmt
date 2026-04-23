@@ -134,3 +134,29 @@ flavour = "cpu"
 # [relay]
 # url = "wss://relay.example.com"
 # remote_ssh_enabled = false
+
+# ── Healer (per-cluster overrides) ──────────────────────────────────
+# These settings override server-global healer defaults for this cluster.
+# Pushed from the server via cluster config merge.
+# [healer]
+# auto_trigger = false                  # enable auto-triggered healer sessions
+# auto_trigger_provider = "ollama"      # provider for auto-triggered sessions
+# auto_trigger_model = "gemma4"         # model for auto-triggered sessions
+# auto_approve = false                  # skip approval gate between diagnosis and fix
+# fix_provider = "anthropic"            # separate model for the remediation phase
+# fix_model = "claude-sonnet-4-6"       # (optional, uses diagnosis model if omitted)
+
+# ── Cloud LLM providers ─────────────────────────────────────────────
+# Cloud providers are registered with the configured agent (OpenClaw/OpenCode).
+# All enabled providers are available; the one matching default_llm is the default.
+# Can be a single [[cloud]] entry or a list.
+# [[cloud]]
+# provider = "anthropic"                # anthropic, openai, google, mistral, groq, xai,
+#                                       # deepseek, openrouter, together, bedrock
+# api_key = "sk-ant-xxx"
+# default_model = "anthropic/claude-sonnet-4-6"
+# enabled = true
+# [[cloud]]
+# provider = "openrouter"
+# api_key = "sk-or-xxx"
+# default_model = "openrouter/auto"

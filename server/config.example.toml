@@ -63,3 +63,13 @@ token = "xzar-api-token-here"
 # auto_trigger_threshold = 10                     # consecutive unhealthy heartbeats before triggering
 # auto_trigger_provider = "ollama"                # free local model by default; set to "anthropic" or "openrouter"
 # auto_trigger_model = "qwen3:8b"                 # optional; uses provider default if omitted
+#
+# Fix-model: optional separate model for the remediation phase (after diagnosis/approval).
+# When set, the diagnosis model gathers information and the fix-model applies fixes.
+# fix_provider = "anthropic"                      # provider for the remediation phase
+# fix_model = "claude-sonnet-4-6"                 # model for the remediation phase
+#
+# Per-cluster overrides are managed via the cluster detail UI (Healer section)
+# and stored in the healer_cluster_settings table. They override these global
+# defaults for: auto_trigger, auto_trigger_provider/model, auto_approve,
+# fix_provider/model. An "Override server defaults" toggle enables/disables them.
