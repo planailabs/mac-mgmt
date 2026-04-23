@@ -150,6 +150,14 @@ pub struct HealerConfig {
     /// Model for auto-triggered sessions. If empty, uses the provider's default.
     #[serde(default)]
     pub auto_trigger_model: Option<String>,
+
+    /// Default fix-model provider for the remediation phase.
+    /// Used when not overridden by per-cluster config or request body.
+    #[serde(default)]
+    pub fix_provider: Option<String>,
+    /// Default fix-model for the remediation phase.
+    #[serde(default)]
+    pub fix_model: Option<String>,
 }
 
 fn default_auto_trigger_threshold() -> u32 {

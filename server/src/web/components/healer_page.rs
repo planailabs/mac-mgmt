@@ -271,6 +271,9 @@ pub async fn start_healer_session(
     user_message: Option<String>,
     provider: Option<String>,
     model: Option<String>,
+    fix_provider: Option<String>,
+    fix_model: Option<String>,
+    auto_approve: bool,
 ) -> Result<String, ServerFnError> {
     use mac_mgmt_healer::agent::InstanceInfo;
     use mac_mgmt_healer::SpawnRequest;
@@ -363,6 +366,26 @@ pub async fn start_healer_session(
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
+    // Per-cluster healer overrides
+    let cluster_healer = {
+        let json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT config_json FROM cluster_configs \
+             WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(hb.cluster_id)
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
+        json.and_then(|v| {
+            v.get("healer")
+                .cloned()
+                .and_then(|h| serde_json::from_value::<mac_mgmt_common::HealerClusterConfig>(h).ok())
+        })
+        .unwrap_or_default()
+    };
+    let server_cfg = crate::config::load();
+
     let req = SpawnRequest {
         cluster_id: hb.cluster_id,
         instance_id: instance_id.clone(),
@@ -384,10 +407,10 @@ pub async fn start_healer_session(
         label: None,
         token_budget: {
             if let (Some(p), Some(m)) = (&provider, &model) {
-                let models = if crate::config::load().healer.models.is_empty() {
+                let models = if server_cfg.healer.models.is_empty() {
                     crate::config::default_healer_models()
                 } else {
-                    crate::config::load().healer.models.clone()
+                    server_cfg.healer.models.clone()
                 };
                 models.iter()
                     .find(|entry| entry.provider == *p && entry.model == *m)
@@ -397,7 +420,14 @@ pub async fn start_healer_session(
             }
         },
         proxy_expires: Some(proxy_expires),
-        auto_approve: false,
+        // Priority: request param > cluster config > server global
+        auto_approve: auto_approve || cluster_healer.auto_approve.unwrap_or(false),
+        fix_provider: fix_provider
+            .or(cluster_healer.fix_provider)
+            .or_else(|| server_cfg.healer.fix_provider.clone()),
+        fix_model: fix_model
+            .or(cluster_healer.fix_model)
+            .or_else(|| server_cfg.healer.fix_model.clone()),
     };
 
     let session_id = healer
@@ -548,6 +578,8 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut running = use_signal(|| false);
     // Encodes "provider:model" or empty for first entry
     let mut selected_model_key = use_signal(String::new);
+    let mut selected_fix_model_key = use_signal(|| "none".to_string());
+    let mut auto_approve = use_signal(|| false);
     let models = ctx.models.clone();
 
     let unhealthy: Vec<String> = ctx
@@ -647,6 +679,47 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             }
                         }
 
+                        // Fix-model selector (optional, for remediation phase)
+                        div { class: "mb-3",
+                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Fix Model (remediation)" }
+                            select {
+                                class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                value: "{selected_fix_model_key}",
+                                onchange: move |e| selected_fix_model_key.set(e.value()),
+                                option { value: "none", "Same as diagnosis model" }
+                                if !ollama_models.is_empty() {
+                                    optgroup { label: "Ollama (local, free)",
+                                        for m in ollama_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                                if !anthropic_models.is_empty() {
+                                    optgroup { label: "Anthropic (cloud)",
+                                        for m in anthropic_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                                if !openrouter_models.is_empty() {
+                                    optgroup { label: "OpenRouter (cloud)",
+                                        for m in openrouter_models.iter() {
+                                            { let key = format!("{}:{}", m.provider, m.model); rsx! {
+                                                option { value: "{key}", "{m.name}" }
+                                            }}
+                                        }
+                                    }
+                                }
+                            }
+                            p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                                "Optional: use a different model for the remediation phase after diagnosis."
+                            }
+                        }
+
                         div { class: "mb-3",
                             textarea {
                                 class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
@@ -654,6 +727,23 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 placeholder: "Optional instructions (leave empty for auto-diagnosis)...",
                                 value: "{user_input}",
                                 oninput: move |e| user_input.set(e.value()),
+                            }
+                        }
+                        div { class: "mb-3 flex items-center gap-2",
+                            input {
+                                r#type: "checkbox",
+                                id: "auto-approve",
+                                class: "rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700",
+                                checked: *auto_approve.read(),
+                                onchange: move |e| auto_approve.set(e.checked()),
+                            }
+                            label {
+                                r#for: "auto-approve",
+                                class: "text-sm text-gray-700 dark:text-gray-300",
+                                "Auto-approve remediation"
+                            }
+                            p { class: "text-xs text-gray-500 dark:text-gray-400",
+                                "(skip approval gate between diagnosis and fix)"
                             }
                         }
                         button {
@@ -672,8 +762,19 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     } else {
                                         (None, None)
                                     };
+                                    let fix_key = selected_fix_model_key.read().clone();
+                                    let (fix_provider, fix_model) = if fix_key != "none" {
+                                        if let Some((p, m)) = fix_key.split_once(':') {
+                                            (Some(p.to_string()), Some(m.to_string()))
+                                        } else {
+                                            (None, None)
+                                        }
+                                    } else {
+                                        (None, None)
+                                    };
+                                    let approve = *auto_approve.read();
                                     async move {
-                                        match start_healer_session(instance_id.clone(), user_msg, provider, model).await {
+                                        match start_healer_session(instance_id.clone(), user_msg, provider, model, fix_provider, fix_model, approve).await {
                                             Ok(sid) => {
                                                 navigator().push(format!("/fleet/{}/healer/{}", instance_id, sid));
                                             }

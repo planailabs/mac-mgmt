@@ -26,6 +26,29 @@ pub struct AutoTriggerConfig {
     pub model: Option<String>,
 }
 
+/// Fetch the per-cluster healer overrides from the latest cluster config.
+async fn cluster_healer_config(
+    pool: &PgPool,
+    cluster_id: Uuid,
+) -> mac_mgmt_common::HealerClusterConfig {
+    let json = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config_json FROM cluster_configs \
+         WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(cluster_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    json.and_then(|v| {
+        v.get("healer")
+            .cloned()
+            .and_then(|h| serde_json::from_value(h).ok())
+    })
+    .unwrap_or_default()
+}
+
 /// Run the auto-trigger background loop. Never returns.
 pub async fn run_auto_trigger_loop(
     pool: PgPool,
@@ -153,8 +176,19 @@ async fn tick(
             continue;
         }
 
+        // Check per-cluster healer overrides.
+        let cluster_healer = cluster_healer_config(pool, cluster_id).await;
+        if cluster_healer.auto_trigger == Some(false) {
+            tracing::debug!(
+                instance_id = %instance_id,
+                cluster_id = %cluster_id,
+                "auto-trigger disabled for this cluster"
+            );
+            continue;
+        }
+
         // Build SpawnRequest from heartbeat data
-        match build_spawn_request(pool, &instance_id, cluster_id, config).await {
+        match build_spawn_request(pool, &instance_id, cluster_id, config, &cluster_healer).await {
             Ok(req) => {
                 match healer.spawn_session(req).await {
                     Ok(session_id) => {
@@ -193,6 +227,7 @@ async fn build_spawn_request(
     instance_id: &str,
     cluster_id: Uuid,
     config: &AutoTriggerConfig,
+    cluster_healer: &mac_mgmt_common::HealerClusterConfig,
 ) -> anyhow::Result<SpawnRequest> {
     #[derive(sqlx::FromRow)]
     struct HbInfo {
@@ -295,6 +330,11 @@ async fn build_spawn_request(
         label: Some("auto-triggered".to_string()),
         token_budget: None,
         proxy_expires: Some(proxy_expires),
-        auto_approve: true,
+        // Priority: cluster config > server global
+        auto_approve: cluster_healer.auto_approve.unwrap_or(true),
+        fix_provider: cluster_healer.fix_provider.clone()
+            .or_else(|| crate::config::load().healer.fix_provider.clone()),
+        fix_model: cluster_healer.fix_model.clone()
+            .or_else(|| crate::config::load().healer.fix_model.clone()),
     })
 }

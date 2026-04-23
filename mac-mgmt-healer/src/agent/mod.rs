@@ -23,6 +23,7 @@ pub fn build_system_prompt(
     shell_commands: &[String],
     resume_context: Option<&str>,
     auto_approve: bool,
+    metrics_summary: &str,
 ) -> String {
     let mut prompt = String::with_capacity(4096);
 
@@ -81,6 +82,15 @@ pub fn build_system_prompt(
         prompt.push_str("\n\n");
     }
 
+    // Prometheus metrics snapshot
+    if !metrics_summary.is_empty() {
+        prompt.push_str("## Prometheus Metrics (snapshot)\n");
+        prompt.push_str("These are the current Prometheus metrics from the instance. Use `get_metrics` to query fresh values during diagnosis.\n\n");
+        prompt.push_str("```\n");
+        prompt.push_str(metrics_summary);
+        prompt.push_str("\n```\n\n");
+    }
+
     // Available tunnels
     prompt.push_str("## Available Tools\n\n");
     prompt.push_str("**IMPORTANT: Only use tools that are provided in the tool definitions. Do not invent tool names or parameters that are not in the definitions.**\n\n");
@@ -112,6 +122,7 @@ pub fn build_system_prompt(
     prompt.push_str("- `set_phase` — transition between phases: `diagnosing`, `remediating`, `verifying`, `done`, `needs_human_attention`\n");
     prompt.push_str("- `name_session` — give this session a short descriptive name once you understand the issue (e.g. \"OOM crash in ollama\"). Call this early, during diagnosis.\n");
     prompt.push_str("- `staff_ping` — notify admins when you need human help or encounter something unexpected\n");
+    prompt.push_str("- `list_staff_pings` — list unresolved staff pings for this instance (check before creating a new one to avoid duplicates)\n");
     prompt.push_str("- `check_node_online` — check if the target node is connected to the relay\n");
     prompt.push_str("- `wait_for_node` — wait for the node to reconnect (e.g. after a reboot)\n");
     prompt.push_str("- `get_probe_status` — query fresh health probe results and system resources from the latest heartbeat\n");

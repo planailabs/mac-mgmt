@@ -101,6 +101,7 @@ pub trait HealerStore: Send + Sync + 'static {
     ) -> Result<Uuid>;
 
     async fn list_staff_pings(&self, cluster_id: Uuid) -> Result<Vec<StaffPing>>;
+    async fn list_instance_pings(&self, instance_id: &str) -> Result<Vec<StaffPing>>;
     async fn list_session_pings(&self, session_id: Uuid) -> Result<Vec<StaffPing>>;
     async fn resolve_staff_ping(&self, ping_id: Uuid, resolved_by: &str) -> Result<()>;
 

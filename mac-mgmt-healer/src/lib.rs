@@ -117,6 +117,10 @@ pub struct SpawnRequest {
     /// When false, the session pauses for human approval before remediation.
     /// Mutating tools are not available until approved. Default: true.
     pub auto_approve: bool,
+    /// Optional provider override for the remediation phase (fix-model).
+    pub fix_provider: Option<String>,
+    /// Optional model override for the remediation phase (fix-model).
+    pub fix_model: Option<String>,
 }
 
 impl HealerState {
@@ -184,6 +188,8 @@ impl HealerState {
             "file_tunnels": req.file_tunnels,
             "shell_tunnels": req.shell_tunnels,
             "sample": req.sample,
+            "fix_provider": req.fix_provider,
+            "fix_model": req.fix_model,
         });
 
         // 2. Create session row
@@ -429,6 +435,8 @@ impl HealerState {
             // resumes (from Paused), keep the original behavior (auto_approve
             // was true for auto-triggered sessions, determined by current state).
             auto_approve: sess.state == SessionState::Remediating || sess.state == SessionState::Verifying,
+            fix_provider: None,
+            fix_model: None,
         };
 
         let state = self.clone();
@@ -504,6 +512,7 @@ impl HealerState {
 
     /// Approve remediation for a session awaiting approval.
     /// Transitions to Remediating and resumes the agent with full tools.
+    /// If a fix-model was configured, the resumed session uses it.
     pub async fn approve_session(&self, session_id: Uuid) -> Result<()> {
         let mut sess = self
             .inner
@@ -517,6 +526,25 @@ impl HealerState {
                 "session {} is in state {:?}, can only approve from AwaitingApproval",
                 session_id,
                 sess.state
+            );
+        }
+
+        // If a fix-model was stored in state_data, override the session's
+        // provider/model so the resumed agent uses the fix-model for remediation.
+        let fix_provider = sess.state_data.get("fix_provider").and_then(|v| v.as_str()).map(String::from);
+        let fix_model = sess.state_data.get("fix_model").and_then(|v| v.as_str()).map(String::from);
+        if fix_provider.is_some() || fix_model.is_some() {
+            if let Some(p) = &fix_provider {
+                sess.provider = Some(p.clone());
+            }
+            if let Some(m) = &fix_model {
+                sess.model = Some(m.clone());
+            }
+            tracing::info!(
+                session_id = %session_id,
+                fix_provider = ?fix_provider,
+                fix_model = ?fix_model,
+                "using fix-model for remediation phase"
             );
         }
 
@@ -718,6 +746,34 @@ async fn run_agent_session(
         None
     };
 
+    // Fetch a metrics snapshot for the system prompt (best-effort).
+    let metrics_summary = if let Some(url) = &req.metrics_url {
+        match reqwest::Client::new()
+            .get(url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                let body = resp.text().await.unwrap_or_default();
+                // Keep only our own metrics, skip comments, truncate to ~10KB.
+                let filtered: String = body
+                    .lines()
+                    .filter(|l| l.starts_with("mac_mgmt_"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if filtered.len() > 10_000 {
+                    filtered[..10_000].to_string()
+                } else {
+                    filtered
+                }
+            }
+            _ => String::new(),
+        }
+    } else {
+        String::new()
+    };
+
     let system_prompt = agent::build_system_prompt(
         &req.cluster_name,
         &req.cluster_id.to_string(),
@@ -730,6 +786,7 @@ async fn run_agent_session(
         &shell_command_names,
         resume_context,
         req.auto_approve,
+        &metrics_summary,
     );
 
     // 5. Transition to Diagnosing

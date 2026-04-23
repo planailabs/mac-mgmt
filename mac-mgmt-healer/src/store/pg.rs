@@ -390,6 +390,19 @@ impl HealerStore for PgHealerStore {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    async fn list_instance_pings(&self, instance_id: &str) -> Result<Vec<StaffPing>> {
+        let rows = sqlx::query_as::<_, StaffPingRow>(
+            "SELECT id, session_id, cluster_id, instance_id, category, message, \
+                    resolved, resolved_by, resolved_at, created_at \
+             FROM healer_staff_pings WHERE instance_id = $1 AND NOT resolved \
+             ORDER BY created_at DESC LIMIT 50",
+        )
+        .bind(instance_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
     async fn list_session_pings(&self, session_id: Uuid) -> Result<Vec<StaffPing>> {
         let rows = sqlx::query_as::<_, StaffPingRow>(
             "SELECT id, session_id, cluster_id, instance_id, category, message, \

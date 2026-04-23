@@ -10,6 +10,30 @@ use uuid::Uuid;
 
 use super::auth::{AdminAuth, SettingAuth};
 
+/// Fetch the per-cluster healer overrides from the latest cluster config.
+/// Returns Default if no config exists or the healer section is absent.
+async fn cluster_healer_config(
+    pool: &PgPool,
+    cluster_id: Uuid,
+) -> mac_mgmt_common::HealerClusterConfig {
+    let json = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT config_json FROM cluster_configs \
+         WHERE cluster_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(cluster_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    json.and_then(|v| {
+        v.get("healer")
+            .cloned()
+            .and_then(|h| serde_json::from_value(h).ok())
+    })
+    .unwrap_or_default()
+}
+
 // ── Request/Response types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -26,6 +50,12 @@ pub struct CreateSessionBody {
     /// Auto-approve remediation (skip approval gate). Default: false.
     #[serde(default)]
     pub auto_approve: bool,
+    /// Provider for the fix-model (remediation phase).
+    #[serde(default)]
+    pub fix_provider: Option<String>,
+    /// Model for the fix-model (remediation phase).
+    #[serde(default)]
+    pub fix_model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +176,10 @@ pub async fn create_session(
     let services_extended: Vec<mac_mgmt_common::ServiceExtState> =
         serde_json::from_value(hb.services_extended.unwrap_or_default()).unwrap_or_default();
 
+    // Per-cluster healer overrides (auto_approve, fix_provider, fix_model).
+    let cluster_healer = cluster_healer_config(pool.inner(), cluster_id).await;
+    let server_cfg = crate::config::load();
+
     // Look up per-model token budget from the configured model list
     let per_model_budget = if let (Some(provider), Some(model)) = (&body.provider, &body.model) {
         let models = if crate::config::load().healer.models.is_empty() {
@@ -181,7 +215,14 @@ pub async fn create_session(
         label: None,
         token_budget: per_model_budget,
         proxy_expires: Some(proxy_expires),
-        auto_approve: body.auto_approve,
+        // Priority: request body > cluster config > server global
+        auto_approve: body.auto_approve || cluster_healer.auto_approve.unwrap_or(false),
+        fix_provider: body.fix_provider
+            .or(cluster_healer.fix_provider)
+            .or_else(|| server_cfg.healer.fix_provider.clone()),
+        fix_model: body.fix_model
+            .or(cluster_healer.fix_model)
+            .or_else(|| server_cfg.healer.fix_model.clone()),
     };
 
     let session_id = healer.spawn_session(req).await.map_err(|e| {

@@ -355,6 +355,18 @@ impl HealerStore for JsonFileStore {
         Ok(pings)
     }
 
+    async fn list_instance_pings(&self, instance_id: &str) -> Result<Vec<StaffPing>> {
+        let mut pings: Vec<StaffPing> = self
+            .all_sessions()?
+            .into_iter()
+            .flat_map(|sf| sf.pings)
+            .filter(|p| p.instance_id == instance_id && !p.resolved)
+            .collect();
+        pings.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        pings.truncate(50);
+        Ok(pings)
+    }
+
     async fn list_session_pings(&self, session_id: Uuid) -> Result<Vec<StaffPing>> {
         Ok(self
             .read_file(session_id)?

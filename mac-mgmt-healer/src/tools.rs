@@ -524,6 +524,24 @@ healer_tool! {
 }
 
 healer_tool! {
+    name: "list_staff_pings",
+    struct_name: ListStaffPingsTool,
+    description: "List unresolved staff pings for this instance. Check this before calling staff_ping to avoid creating duplicates.",
+    handler: |ctx| {
+        match ctx.store.list_instance_pings(&ctx.instance_id).await {
+            Ok(pings) if pings.is_empty() => Ok(ToolOutput::Text("No unresolved staff pings for this instance.".to_string())),
+            Ok(pings) => {
+                let lines: Vec<String> = pings.iter().map(|p| {
+                    format!("- [{}] {} ({})", p.category, p.message, p.created_at.format("%Y-%m-%d %H:%M"))
+                }).collect();
+                Ok(ToolOutput::Text(format!("{} unresolved ping(s):\n{}", pings.len(), lines.join("\n"))))
+            }
+            Err(e) => Ok(ToolOutput::Text(format!("Error listing pings: {e}"))),
+        }
+    }
+}
+
+healer_tool! {
     name: "set_phase",
     struct_name: SetPhaseTool,
     description: "Transition the session to a new phase. Call this when you move between stages of your work. Valid phases: diagnosing (investigating), remediating (applying fixes), verifying (checking if fix worked), done (work complete — whether fixed or not), needs_human_attention (cannot be fixed automatically, requires human intervention).",
@@ -961,6 +979,7 @@ pub fn all_tools(ctx: ToolContext, diagnosis_only: bool) -> Vec<Box<dyn Tool>> {
         ListShellCommandsTool::new(ctx.clone()),
         PinTool::new(ctx.clone()),
         StaffPingTool::new(ctx.clone()),
+        ListStaffPingsTool::new(ctx.clone()),
         SetPhaseTool::new(ctx.clone()),
         NameSessionTool::new(ctx.clone()),
         GetProbeStatusTool::new(ctx.clone()),

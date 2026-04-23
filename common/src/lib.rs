@@ -1008,6 +1008,25 @@ where
     deserialize_one_or_many(deserializer)
 }
 
+// ── Healer per-cluster settings ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HealerClusterConfig {
+    #[schemars(description = "Enable auto-triggered healer sessions for this cluster")]
+    #[serde(default)]
+    pub auto_trigger: Option<bool>,
+    #[schemars(description = "Auto-approve remediation (skip approval gate)")]
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
+    #[schemars(description = "Provider for the fix-model (remediation phase)")]
+    #[serde(default)]
+    pub fix_provider: Option<String>,
+    #[schemars(description = "Model for the fix-model (remediation phase)")]
+    #[serde(default)]
+    pub fix_model: Option<String>,
+}
+
 // ── Cluster Config (what the server manages per-cluster) ──────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -1034,6 +1053,8 @@ pub struct ClusterConfig {
     pub metrics: MetricsConfig,
     #[serde(default)]
     pub relay: RelayConfig,
+    #[serde(default)]
+    pub healer: HealerClusterConfig,
 }
 
 impl OllamaConfig {
