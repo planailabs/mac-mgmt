@@ -792,6 +792,7 @@ async fn run_agent_session(
         &shell_command_names,
         resume_context,
         req.auto_approve,
+        diagnosis_only,
         &metrics_summary,
     );
 

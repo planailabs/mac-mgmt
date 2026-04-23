@@ -23,17 +23,27 @@ pub fn build_system_prompt(
     shell_commands: &[String],
     resume_context: Option<&str>,
     auto_approve: bool,
+    diagnosis_only: bool,
     metrics_summary: &str,
 ) -> String {
     let mut prompt = String::with_capacity(4096);
 
-    prompt.push_str("You are an autonomous server healing agent for the mac-mgmt fleet management system.\n\
-        You run non-interactively over multiple rounds with no human in the loop.\n\
-        Diagnose the issue, apply fixes, verify the result, and mark the session done — all on your own.\n\
-        Do not ask for confirmation or wait for human input. If you get stuck after exhausting your options, \
-        call `staff_ping` and set phase to `needs_human_attention`.\n\n\
-        Always take action by calling tools rather than describing what you would do. \
-        When you are finished, call `set_phase` with `done`.\n\n");
+    if diagnosis_only {
+        prompt.push_str("You are a server diagnosis agent for the mac-mgmt fleet management system.\n\
+            Your job is to **diagnose only** — gather information, identify the root cause, and report findings.\n\
+            Do NOT attempt fixes. A separate remediation step will handle that after your diagnosis is reviewed.\n\n\
+            Always take action by calling tools rather than describing what you would do.\n\
+            When your diagnosis is complete, pin your findings to the \"diagnosis\" slot and \
+            call `set_phase(\"remediating\")` to hand off for approval.\n\n");
+    } else {
+        prompt.push_str("You are an autonomous server healing agent for the mac-mgmt fleet management system.\n\
+            You run non-interactively over multiple rounds with no human in the loop.\n\
+            Diagnose the issue, apply fixes, verify the result, and mark the session done — all on your own.\n\
+            Do not ask for confirmation or wait for human input. If you get stuck after exhausting your options, \
+            call `staff_ping` and set phase to `needs_human_attention`.\n\n\
+            Always take action by calling tools rather than describing what you would do. \
+            When you are finished, call `set_phase` with `done`.\n\n");
+    }
 
     // Target info
     prompt.push_str("## Target\n");
@@ -113,32 +123,33 @@ pub fn build_system_prompt(
         prompt.push_str("- `fetch_cluster_logs` / `run_cluster_command` — for other instances\n");
     }
     prompt.push_str("\n### Session management\n");
-    prompt.push_str("- `pin` — pin key information to the session (three slots):\n");
-    prompt.push_str(
-        "  - `diagnosis` slot: pin once you identify the root cause (include affected services)\n",
-    );
-    prompt.push_str("  - `remediation` slot: pin your remediation plan before applying fixes\n");
-    prompt.push_str("  - `final_report` slot: pin at the end summarizing what was done and any remaining issues\n");
-    prompt.push_str("- `set_phase` — transition between phases: `diagnosing`, `remediating`, `verifying`, `done`, `needs_human_attention`\n");
-    prompt.push_str("- `name_session` — give this session a short descriptive name once you understand the issue (e.g. \"OOM crash in ollama\"). Call this early, during diagnosis.\n");
+    prompt.push_str("- `pin` — pin key information to the session (slots: `diagnosis`");
+    if !diagnosis_only {
+        prompt.push_str(", `remediation`, `final_report`");
+    }
+    prompt.push_str(")\n");
+    prompt.push_str("- `set_phase` — transition between phases\n");
+    prompt.push_str("- `name_session` — give this session a short descriptive name once you understand the issue (e.g. \"OOM crash in ollama\"). Call this early.\n");
     prompt.push_str("- `staff_ping` — notify admins when you need human help or encounter something unexpected\n");
     prompt.push_str("- `list_staff_pings` — list unresolved staff pings for this instance (check before creating a new one to avoid duplicates)\n");
     prompt.push_str("- `check_node_online` — check if the target node is connected to the relay\n");
     prompt.push_str("- `wait_for_node` — wait for the node to reconnect (e.g. after a reboot)\n");
     prompt.push_str("- `get_probe_status` — query fresh health probe results and system resources from the latest heartbeat\n");
-    prompt.push_str(
-        "- `wait` — pause for N seconds (1-300). Use after config changes or restarts.\n",
-    );
-    prompt.push_str(
-        "- `request_assessment` — trigger an immediate health probe run on the instance\n\n",
-    );
-    prompt.push_str("### Cluster config management\n");
-    prompt.push_str("- `get_config` — read the current cluster configuration\n");
-    prompt
-        .push_str("- `patch_config` — merge a JSON patch into the config (only changed fields)\n");
-    prompt.push_str("- `set_config` — replace the entire cluster config\n");
-    prompt.push_str("- `list_skills` / `add_skill` / `remove_skill` — manage cluster skills\n");
-    prompt.push_str("- `list_mcp_servers` / `add_mcp_server` / `remove_mcp_server` — manage cluster MCP servers\n");
+    if !diagnosis_only {
+        prompt.push_str("- `wait` — pause for N seconds (1-300). Use after config changes or restarts.\n");
+        prompt.push_str("- `request_assessment` — trigger an immediate health probe run on the instance\n\n");
+        prompt.push_str("### Cluster config management\n");
+        prompt.push_str("- `get_config` — read the current cluster configuration\n");
+        prompt.push_str("- `patch_config` — merge a JSON patch into the config (only changed fields)\n");
+        prompt.push_str("- `set_config` — replace the entire cluster config\n");
+        prompt.push_str("- `list_skills` / `add_skill` / `remove_skill` — manage cluster skills\n");
+        prompt.push_str("- `list_mcp_servers` / `add_mcp_server` / `remove_mcp_server` — manage cluster MCP servers\n");
+    } else {
+        prompt.push_str("\n### Cluster config (read-only)\n");
+        prompt.push_str("- `get_config` — read the current cluster configuration\n");
+        prompt.push_str("- `list_skills` — list skills assigned to cluster\n");
+        prompt.push_str("- `list_mcp_servers` — list MCP servers assigned to cluster\n");
+    }
     prompt.push('\n');
 
     prompt.push_str("### Documentation\n");
@@ -152,25 +163,41 @@ pub fn build_system_prompt(
     prompt.push_str("- Use skills when you encounter a matching situation — they encode proven procedures from past sessions\n\n");
 
     // Guidelines
-    prompt.push_str("## Guidelines\n\n\
-        You operate in multiple rounds. Each round you should call one or more tools, observe the \
-        results, and decide the next action. Never try to diagnose and fix everything in a single \
-        round — gather information first, then act, then verify.\n\n\
-        ### Workflow\n\
-        1. **Round 1 — Gather**: fetch logs, check probe status, read config. Do NOT skip this.\n\
-        2. **Round 2+ — Diagnose**: analyse the data, pin your `diagnosis`, call `set_phase(\"diagnosing\")`\n\
-        3. **Round 3+ — Remediate**: pin your `remediation` plan, apply fixes, call `set_phase(\"remediating\")`\n\
-        4. **Round 4+ — Verify**: wait for changes to take effect, then call `request_assessment` \
-           and `get_probe_status` to confirm recovery. Call `set_phase(\"verifying\")`\n\
-        5. **Final round — Close**: pin `final_report`, call `set_phase(\"done\")` or `set_phase(\"needs_human_attention\")`\n\n\
-        ### Rules\n\
-        - NEVER make changes without understanding the root cause first\n\
-        - NEVER skip the verification round — always confirm your fix worked before closing\n\
-        - Make minimal, targeted fixes — prefer config changes over restarts\n\
-        - Explain every change you make and why\n\
-        - When a service's configuration format or behavior is unclear, look up its documentation using `read_doc` (for mac-mgmt docs) or Context7 (for third-party service docs) before guessing\n\
-        - If you need a tool or capability that is not available, use `staff_ping` with category `tool_needed` describing what you need and why\n\
-        - If you **cannot** fix the issue after multiple attempts, call `staff_ping`, pin `final_report` documenting your findings, and set phase to `needs_human_attention`\n\n");
+    if diagnosis_only {
+        prompt.push_str("## Guidelines\n\n\
+            You operate in multiple rounds. Each round you should call one or more tools, observe the \
+            results, and decide the next action.\n\n\
+            ### Workflow\n\
+            1. **Round 1 — Gather**: fetch logs, check probe status, read config, check metrics. Do NOT skip this.\n\
+            2. **Round 2+ — Diagnose**: analyse the data, identify the root cause\n\
+            3. **Final round — Report**: pin your findings to the `diagnosis` slot (include affected services), \
+               then call `set_phase(\"remediating\")` to request approval. Do NOT attempt to fix anything.\n\n\
+            ### Rules\n\
+            - Be thorough — check logs, probes, metrics, config, and system resources\n\
+            - When a service's behavior is unclear, look up its documentation using `read_doc` or Context7\n\
+            - If you need a tool or capability that is not available, use `staff_ping` with category `tool_needed`\n\
+            - If you cannot determine the root cause, call `staff_ping` and set phase to `needs_human_attention`\n\n");
+    } else {
+        prompt.push_str("## Guidelines\n\n\
+            You operate in multiple rounds. Each round you should call one or more tools, observe the \
+            results, and decide the next action. Never try to diagnose and fix everything in a single \
+            round — gather information first, then act, then verify.\n\n\
+            ### Workflow\n\
+            1. **Round 1 — Gather**: fetch logs, check probe status, read config. Do NOT skip this.\n\
+            2. **Round 2+ — Diagnose**: analyse the data, pin your `diagnosis`, call `set_phase(\"diagnosing\")`\n\
+            3. **Round 3+ — Remediate**: pin your `remediation` plan, apply fixes, call `set_phase(\"remediating\")`\n\
+            4. **Round 4+ — Verify**: wait for changes to take effect, then call `request_assessment` \
+               and `get_probe_status` to confirm recovery. Call `set_phase(\"verifying\")`\n\
+            5. **Final round — Close**: pin `final_report`, call `set_phase(\"done\")` or `set_phase(\"needs_human_attention\")`\n\n\
+            ### Rules\n\
+            - NEVER make changes without understanding the root cause first\n\
+            - NEVER skip the verification round — always confirm your fix worked before closing\n\
+            - Make minimal, targeted fixes — prefer config changes over restarts\n\
+            - Explain every change you make and why\n\
+            - When a service's configuration format or behavior is unclear, look up its documentation using `read_doc` (for mac-mgmt docs) or Context7 (for third-party service docs) before guessing\n\
+            - If you need a tool or capability that is not available, use `staff_ping` with category `tool_needed` describing what you need and why\n\
+            - If you **cannot** fix the issue after multiple attempts, call `staff_ping`, pin `final_report` documenting your findings, and set phase to `needs_human_attention`\n\n");
+    }
 
     // Staff pings guidance
     prompt.push_str(
@@ -200,15 +227,17 @@ pub fn build_system_prompt(
           `check_node_online` and consider using `staff_ping` with category `network`.\n\n",
     );
 
-    // Remediation procedures
-    let error_classes: Vec<String> = services_extended
-        .iter()
-        .filter(|s| !s.healthy)
-        .filter_map(|_| Some("error".to_string()))
-        .collect();
-    if !error_classes.is_empty() {
-        prompt.push_str("## Remediation Procedures\n");
-        prompt.push_str(&skills::format_skills_for_prompt(&error_classes));
+    // Remediation procedures (skip in diagnosis-only mode — the fix model gets them on resume)
+    if !diagnosis_only {
+        let error_classes: Vec<String> = services_extended
+            .iter()
+            .filter(|s| !s.healthy)
+            .filter_map(|_| Some("error".to_string()))
+            .collect();
+        if !error_classes.is_empty() {
+            prompt.push_str("## Remediation Procedures\n");
+            prompt.push_str(&skills::format_skills_for_prompt(&error_classes));
+        }
     }
 
     // Approval mode
