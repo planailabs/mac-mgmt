@@ -11,14 +11,20 @@ use tokio::sync::Mutex;
 #[cfg(feature = "server")]
 struct RepoCache {
     base_url: &'static str,
+    /// Lower bound for binary search (optimization for large repos).
+    search_lo: u64,
+    /// Upper bound for binary search.
+    search_hi: u64,
     cache: Mutex<HashMap<String, u64>>,
 }
 
 #[cfg(feature = "server")]
 impl RepoCache {
-    fn new(base_url: &'static str) -> Self {
+    fn new(base_url: &'static str, search_lo: u64, search_hi: u64) -> Self {
         Self {
             base_url,
+            search_lo,
+            search_hi,
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -40,7 +46,10 @@ impl RepoCache {
         }
 
         for sha in &to_fetch {
-            if let Some(count) = gitlab_binary_search(&client, self.base_url, sha).await {
+            if let Some(count) =
+                gitlab_binary_search(&client, self.base_url, sha, self.search_lo, self.search_hi)
+                    .await
+            {
                 result.insert(sha.clone(), count);
                 self.cache.lock().await.insert(sha.clone(), count);
             }
@@ -57,6 +66,8 @@ async fn gitlab_binary_search(
     client: &reqwest::Client,
     base_url: &str,
     sha: &str,
+    start_lo: u64,
+    start_hi: u64,
 ) -> Option<u64> {
     let page_has_data = |page: u64| {
         let url = format!("{base_url}?ref_name={sha}&per_page=1&page={page}");
@@ -88,8 +99,13 @@ async fn gitlab_binary_search(
         return None;
     }
 
-    let mut lo: u64 = 1;
-    let mut hi: u64 = 100_000;
+    let mut lo: u64 = start_lo;
+    let mut hi: u64 = start_hi;
+
+    // If start_lo > 1, verify it has data; if not, fall back to 1.
+    if lo > 1 && !page_has_data(lo).await.unwrap_or(false) {
+        lo = 1;
+    }
 
     while lo < hi {
         let mid = lo + (hi - lo + 1) / 2;
@@ -115,6 +131,8 @@ pub async fn mac_mgmt_commit_counts(shas: &HashSet<String>) -> HashMap<String, u
         .get_or_init(|| {
             RepoCache::new(
                 "https://git.plan.ai/api/v4/projects/plan-ai%2Fmac-mgmt/repository/commits",
+                1,
+                100_000,
             )
         })
         .get_or_fetch(shas)
@@ -133,6 +151,8 @@ pub async fn nixpkgs_commit_counts(shas: &HashSet<String>) -> HashMap<String, u6
         .get_or_init(|| {
             RepoCache::new(
                 "https://git.plan.ai/api/v4/projects/plan-ai%2Fnixpkgs/repository/commits",
+                900_000,
+                2_000_000,
             )
         })
         .get_or_fetch(shas)

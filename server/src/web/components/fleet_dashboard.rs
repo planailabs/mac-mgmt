@@ -155,17 +155,9 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         .map_err(|e| ServerFnError::new(e.to_string()))?
     };
 
-    // Collect unique SHAs and fetch commit counts (cached, async).
-    let unique_shas: std::collections::HashSet<String> = rows
-        .iter()
-        .filter_map(|r| r.git_sha.clone())
-        .collect();
-    let commit_counts = super::commit_count::mac_mgmt_commit_counts(&unique_shas).await;
-
     let entries = rows
         .into_iter()
         .map(|r| {
-            let commit_count = r.git_sha.as_ref().and_then(|sha| commit_counts.get(sha).copied());
             FleetEntry {
                 cluster_id: r.cluster_id.to_string(),
                 cluster_name: r.cluster_name,
@@ -174,7 +166,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
                 environment: r.environment,
                 version: r.version,
                 git_sha: r.git_sha,
-                commit_count,
+                commit_count: None, // fetched async in the component
                 services: r.services,
                 tunnels: r.tunnels,
                 relay_proxy_hostname: r.relay_proxy_hostname,
@@ -191,6 +183,12 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         entries,
         stage_label,
     })
+}
+
+#[server]
+async fn get_commit_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
+    let set: std::collections::HashSet<String> = shas.into_iter().collect();
+    Ok(super::commit_count::mac_mgmt_commit_counts(&set).await)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,6 +350,28 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
         }
         None => "...".to_string(),
     };
+
+    // Fetch commit counts async for all unique SHAs in the current data.
+    let commit_counts = use_resource(move || async move {
+        let entries = data.read();
+        let shas: Vec<String> = entries
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|e| e.git_sha.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if shas.is_empty() {
+            return std::collections::HashMap::new();
+        }
+        get_commit_counts(shas).await.unwrap_or_default()
+    });
+    let counts = commit_counts.read();
 
     let snapshot = data.read();
     match snapshot.as_ref() {
@@ -647,7 +667,8 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         {
                                                             let short: String = sha.chars().take(12).collect();
                                                             let url = format!("https://git.plan.ai/plan-ai/mac-mgmt/-/commit/{sha}");
-                                                            let count_label = entry.commit_count
+                                                            let count_label = counts.as_ref()
+                                                                .and_then(|m| m.get(sha))
                                                                 .map(|n| format!(" #{n}"))
                                                                 .unwrap_or_default();
                                                             rsx! {
