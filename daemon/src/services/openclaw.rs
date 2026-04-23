@@ -26,6 +26,17 @@ pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Resu
         anyhow::bail!("openclaw config not found at {}", config_path.display());
     }
 
+    let patch_keys: Vec<&str> = patch
+        .as_object()
+        .map(|o| o.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+    tracing::info!(
+        "merge_and_validate: merging patch with keys [{}] into {}",
+        patch_keys.join(", "),
+        config_path.display()
+    );
+    tracing::debug!("merge_and_validate: patch content: {patch}");
+
     let backup = std::fs::read_to_string(config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))?;
     let mut existing: serde_json::Value =
@@ -35,6 +46,8 @@ pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Resu
 
     let merged =
         serde_json::to_string_pretty(&existing).context("failed to serialize merged config")?;
+
+    tracing::debug!("merge_and_validate: writing merged config ({} bytes)", merged.len());
     std::fs::write(config_path, &merged)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
 

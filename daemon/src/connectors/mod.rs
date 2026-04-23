@@ -101,6 +101,12 @@ pub fn build_connectors(
         connectors.push(Box::new(relay_ollama::RelayOllama));
     }
 
+    tracing::info!(
+        "building connectors: default_agent={}, default_llm={}",
+        global.default_agent.as_str(),
+        global.default_llm.as_str(),
+    );
+
     match global.default_agent {
         AgentProvider::Openclaw => {
             connectors.push(Box::new(relay_openclaw::RelayOpenClaw));
@@ -119,11 +125,25 @@ pub fn build_connectors(
                     }));
                 }
                 LlmProvider::Cloud => {
-                    if cloud_cfgs.iter().any(|c| c.enabled) {
+                    let enabled_count = cloud_cfgs.iter().filter(|c| c.enabled).count();
+                    if enabled_count > 0 {
+                        tracing::info!(
+                            "cloud→openclaw connector enabled ({enabled_count} cloud provider(s))"
+                        );
                         connectors.push(Box::new(cloud_openclaw::CloudOpenClaw));
+                    } else {
+                        tracing::warn!(
+                            "default_llm=cloud but no enabled cloud providers; \
+                             cloud→openclaw connector will not be created"
+                        );
                     }
                 }
-                _ => {}
+                _ => {
+                    tracing::debug!(
+                        "no LLM→openclaw connector for default_llm={}",
+                        global.default_llm.as_str()
+                    );
+                }
             }
         }
         AgentProvider::Opencode => {
@@ -143,15 +163,37 @@ pub fn build_connectors(
                     }));
                 }
                 LlmProvider::Cloud => {
-                    if cloud_cfgs.iter().any(|c| c.enabled) {
+                    let enabled_count = cloud_cfgs.iter().filter(|c| c.enabled).count();
+                    if enabled_count > 0 {
+                        tracing::info!(
+                            "cloud→opencode connector enabled ({enabled_count} cloud provider(s))"
+                        );
                         connectors.push(Box::new(cloud_opencode::CloudOpencode));
+                    } else {
+                        tracing::warn!(
+                            "default_llm=cloud but no enabled cloud providers; \
+                             cloud→opencode connector will not be created"
+                        );
                     }
                 }
-                _ => {}
+                _ => {
+                    tracing::debug!(
+                        "no LLM→opencode connector for default_llm={}",
+                        global.default_llm.as_str()
+                    );
+                }
             }
         }
-        AgentProvider::None => {}
+        AgentProvider::None => {
+            tracing::debug!("default_agent=none, no agent connectors");
+        }
     }
+
+    tracing::info!(
+        "built {} connector(s): [{}]",
+        connectors.len(),
+        connectors.iter().map(|c| c.name()).collect::<Vec<_>>().join(", ")
+    );
 
     connectors
 }

@@ -22,13 +22,22 @@ fn non_empty(s: &Option<String>) -> Option<&str> {
 fn enabled_cloud_configs(
     configs: &std::collections::HashMap<String, serde_json::Value>,
 ) -> Vec<CloudConfig> {
-    configs
-        .get("cloud")
-        .and_then(|v| serde_json::from_value::<Vec<CloudConfig>>(v.clone()).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|c| c.enabled)
-        .collect()
+    let Some(v) = configs.get("cloud") else {
+        tracing::warn!("cloud config not found in config store");
+        return Vec::new();
+    };
+    let all = match serde_json::from_value::<Vec<CloudConfig>>(v.clone()) {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!("failed to deserialize cloud configs: {e}");
+            return Vec::new();
+        }
+    };
+    let enabled: Vec<CloudConfig> = all.into_iter().filter(|c| c.enabled).collect();
+    if enabled.is_empty() {
+        tracing::debug!("no enabled cloud provider entries in config store");
+    }
+    enabled
 }
 
 /// Resolve the model for a provider, falling back to the provider's default
