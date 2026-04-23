@@ -154,6 +154,11 @@ impl HealerState {
         &self.inner.instance_data
     }
 
+    /// Get the session factory (for building instance access).
+    pub fn session_factory(&self) -> &dyn SessionFactory {
+        &*self.inner.session_factory
+    }
+
     /// Set the push callback for sending SSE events to daemons.
     /// Must be called after construction, before spawning sessions.
     pub fn set_push_fn(&mut self, f: tools::PushFn) {

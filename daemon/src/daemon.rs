@@ -41,6 +41,10 @@ struct Daemon {
     initial_assessment_pending: Arc<AtomicBool>,
     #[cfg(feature = "services")]
     svc_mgr: crate::service_mgmt::ServiceManager,
+    #[cfg(feature = "healer")]
+    healer: Arc<mac_mgmt_healer::HealerState>,
+    #[cfg(feature = "healer")]
+    healer_unhealthy_counter: u32,
 }
 
 impl Daemon {
@@ -418,6 +422,106 @@ impl Daemon {
         {
             tracing::warn!("health tick timed out (30s), continuing");
         }
+
+        #[cfg(feature = "healer")]
+        self.maybe_trigger_healer().await;
+    }
+
+    /// Auto-trigger a local healer session when services are persistently unhealthy.
+    #[cfg(feature = "healer")]
+    async fn maybe_trigger_healer(&mut self) {
+        let healer_cfg = &self.current_cfg.healer;
+        if !healer_cfg.auto_trigger.unwrap_or(false) {
+            return;
+        }
+
+        let probes = self.assessor.latest_probes_snapshot();
+        let has_unhealthy = probes.iter().any(|s| !s.healthy);
+
+        if has_unhealthy {
+            self.healer_unhealthy_counter += 1;
+        } else {
+            self.healer_unhealthy_counter = 0;
+            return;
+        }
+
+        // Default threshold: 10 consecutive unhealthy ticks (~10 minutes at 1m interval).
+        let threshold = 10u32;
+        if self.healer_unhealthy_counter < threshold {
+            return;
+        }
+        self.healer_unhealthy_counter = 0;
+
+        let sample = self.assessor.latest_sample_snapshot();
+        let sample_json = sample.as_ref().and_then(|s| serde_json::to_value(s).ok());
+
+        let file_tunnels = serde_json::to_value(self.svc_mgr.collect_file_tunnels()).unwrap_or_default();
+        let shell_tunnels = serde_json::to_value(self.svc_mgr.collect_shell_tunnels()).unwrap_or_default();
+
+        let hostname = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Build instance access from the session factory (uses the same
+        // tunnel registries the relay SSH module manages).
+        let dummy_session = mac_mgmt_healer::session::HealerSession {
+            id: uuid::Uuid::nil(),
+            cluster_id: uuid::Uuid::nil(),
+            instance_id: self.instance_id.clone(),
+            state: mac_mgmt_healer::session::SessionState::Created,
+            state_data: serde_json::json!({}),
+            created_by: String::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            completed_at: None,
+            error_message: None,
+            initial_issues: serde_json::json!([]),
+            provider: None,
+            model: None,
+            label: None,
+        };
+        let access = match self.healer.session_factory().build_access(&dummy_session).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::debug!(err = %e, "healer auto-trigger: failed to build access");
+                return;
+            }
+        };
+
+        let req = mac_mgmt_healer::SpawnRequest {
+            cluster_id: uuid::Uuid::nil(),
+            instance_id: self.instance_id.clone(),
+            created_by: "auto:local-unhealthy".to_string(),
+            user_message: None,
+            instance_access: access.instance,
+            cluster_access: access.cluster,
+            metrics_url: access.metrics_url,
+            services_extended: probes,
+            sample: sample_json,
+            file_tunnels,
+            shell_tunnels,
+            cluster_instances: Vec::new(),
+            cluster_name: String::new(),
+            hostname,
+            skip_cooldown: false,
+            provider: None,
+            model: None,
+            label: Some("auto-triggered (local)".to_string()),
+            token_budget: None,
+            proxy_expires: None,
+            auto_approve: healer_cfg.auto_approve.unwrap_or(true),
+            fix_provider: healer_cfg.fix_provider.clone(),
+            fix_model: healer_cfg.fix_model.clone(),
+        };
+
+        match self.healer.spawn_session(req).await {
+            Ok(sid) => {
+                tracing::info!(session_id = %sid, "auto-triggered local healer session");
+            }
+            Err(e) => {
+                tracing::debug!(err = %e, "local healer auto-trigger skipped");
+            }
+        }
     }
 
     /// Handle a push command. Returns true if SSH keys should be synced.
@@ -748,6 +852,48 @@ pub async fn run(
         None
     };
 
+    // Initialize the healer subsystem (local mode — JSON file store, local tunnels).
+    #[cfg(feature = "healer")]
+    let healer = {
+        let store_dir = config::config_dir().join("healer");
+        let store: mac_mgmt_healer::store::DynStore = std::sync::Arc::new(
+            mac_mgmt_healer::store::json_file::JsonFileStore::open(&store_dir)
+                .context("failed to open healer store")?,
+        );
+        let instance_data: mac_mgmt_healer::DynInstanceData = std::sync::Arc::new(
+            crate::healer_bridge::LocalInstanceDataSource::new(Arc::clone(&assessor), instance_id.clone()),
+        );
+        let cloud_anthropic = cfg.cloud.iter().find(|c| {
+            c.enabled && c.provider == mac_mgmt_common::CloudProvider::Anthropic
+        });
+        let cloud_openrouter = cfg.cloud.iter().find(|c| {
+            c.enabled && c.provider == mac_mgmt_common::CloudProvider::Openrouter
+        });
+        let connector_config = mac_mgmt_healer::connector::ConnectorConfig {
+            ollama_url: Some(format!("http://{}:{}", cfg.ollama.host, cfg.ollama.port)),
+            ollama_model: Some(cfg.ollama.default_model.clone()),
+            anthropic_api_key: cloud_anthropic.and_then(|c| c.api_key.clone()),
+            anthropic_model: None,
+            openrouter_api_key: cloud_openrouter.and_then(|c| c.api_key.clone()),
+            openrouter_model: None,
+            token_budget: 200_000,
+            context7_api_key: None,
+        };
+        let session_factory = std::sync::Arc::new(
+            crate::healer_bridge::LocalSessionFactory::new(
+                relay_mgr.file_tunnel_registry(),
+                relay_mgr.shell_tunnel_registry(),
+                log_buf.clone(),
+            ),
+        );
+        Arc::new(mac_mgmt_healer::HealerState::new(
+            store,
+            instance_data,
+            session_factory,
+            connector_config,
+        ))
+    };
+
     // Build the Daemon struct with all long-lived state.
     let mut daemon = Daemon {
         server_url,
@@ -763,6 +909,10 @@ pub async fn run(
         initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         #[cfg(feature = "services")]
         svc_mgr,
+        #[cfg(feature = "healer")]
+        healer,
+        #[cfg(feature = "healer")]
+        healer_unhealthy_counter: 0,
     };
 
     // Run startup sync in background.

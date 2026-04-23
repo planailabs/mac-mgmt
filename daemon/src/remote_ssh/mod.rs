@@ -166,6 +166,16 @@ impl Manager {
 
     /// Return the relay's proxy hostname (set after registration).
     /// Uses try_read to avoid blocking the main loop.
+    /// Shared file tunnel registry (for healer bridge).
+    pub fn file_tunnel_registry(&self) -> Arc<RwLock<FileTunnelRegistry>> {
+        self.file_tunnel_registry.clone()
+    }
+
+    /// Shared shell tunnel registry (for healer bridge).
+    pub fn shell_tunnel_registry(&self) -> Arc<RwLock<ShellTunnelRegistry>> {
+        self.shell_tunnel_registry.clone()
+    }
+
     pub fn relay_proxy_hostname(&self) -> Option<String> {
         self.relay_proxy_hostname.try_read().ok()?.clone()
     }

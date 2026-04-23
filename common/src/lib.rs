@@ -1163,6 +1163,8 @@ pub struct DaemonConfig {
     pub server: DaemonServerConfig,
     #[serde(default)]
     pub relay: RelayConfig,
+    #[serde(default)]
+    pub healer: HealerClusterConfig,
 }
 
 impl DaemonSettings {

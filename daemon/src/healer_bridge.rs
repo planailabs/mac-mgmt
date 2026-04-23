@@ -4,7 +4,8 @@
 //! healer can operate directly on this daemon's file tunnels, shell commands,
 //! log buffer, and assessment data — no relay or database queries needed.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -56,7 +57,7 @@ impl InstanceAccess for LocalInstanceAccess {
         path: Option<&str>,
     ) -> Result<serde_json::Value> {
         let tunnel = {
-            let registry = self.file_tunnels.read().unwrap();
+            let registry = self.file_tunnels.read().await;
             registry
                 .get(tunnel_name)
                 .ok_or_else(|| anyhow::anyhow!("file tunnel '{tunnel_name}' not found"))?
@@ -76,7 +77,7 @@ impl InstanceAccess for LocalInstanceAccess {
 
     async fn file_read(&self, tunnel_name: &str, path: &str) -> Result<FileReadResult> {
         let tunnel = {
-            let registry = self.file_tunnels.read().unwrap();
+            let registry = self.file_tunnels.read().await;
             registry
                 .get(tunnel_name)
                 .ok_or_else(|| anyhow::anyhow!("file tunnel '{tunnel_name}' not found"))?
@@ -95,7 +96,7 @@ impl InstanceAccess for LocalInstanceAccess {
         expected_mtime: Option<i64>,
     ) -> Result<serde_json::Value> {
         let tunnel = {
-            let registry = self.file_tunnels.read().unwrap();
+            let registry = self.file_tunnels.read().await;
             registry
                 .get(tunnel_name)
                 .ok_or_else(|| anyhow::anyhow!("file tunnel '{tunnel_name}' not found"))?
@@ -114,7 +115,7 @@ impl InstanceAccess for LocalInstanceAccess {
         use tokio::io::AsyncBufReadExt;
 
         let (tunnel, virtual_handler) = {
-            let registry = self.shell_tunnels.read().unwrap();
+            let registry = self.shell_tunnels.read().await;
             let tunnel = registry
                 .get(command_name)
                 .ok_or_else(|| anyhow::anyhow!("shell command '{command_name}' not found"))?
