@@ -28,6 +28,14 @@ token = "xzar-api-token-here"
 # [anthropic]
 # api_key = "sk-ant-xxx"
 
+# Git repo clones for commit count resolution (the #N badges in the UI).
+# Repos are cloned as bare repos into <state_dir>/repos/ and fetched periodically.
+# [git]
+# state_dir = "./state"                                             # directory for bare clones
+# mac_mgmt_url = "https://git.plan.ai/plan-ai/mac-mgmt.git"        # mac-mgmt repo URL
+# nixpkgs_url = "https://git.plan.ai/plan-ai/nixpkgs.git"          # nixpkgs repo URL
+# fetch_interval_secs = 300                                         # how often to git fetch (seconds)
+
 # Healer agent: self-healing AI agent for diagnosing and fixing customer servers.
 # Tries local Ollama first, falls back to Anthropic, then OpenRouter.
 # Sessions auto-resume on server restart.

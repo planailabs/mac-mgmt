@@ -187,6 +187,9 @@ async fn init_server() -> (
         ));
     }
 
+    // Background task: periodic git fetch for commit count resolution.
+    web::components::commit_count::spawn_fetch_loop();
+
     // Initialize healer state
     let healer_connector = mac_mgmt_healer::ConnectorConfig {
         ollama_url: cfg.healer.ollama_url.clone(),

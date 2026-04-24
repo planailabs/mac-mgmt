@@ -17,9 +17,47 @@ pub struct ServerConfig {
     pub healer: HealerConfig,
     #[serde(default)]
     pub sentry: SentryConfig,
+    #[serde(default)]
+    pub git: GitConfig,
 }
 
 pub use mac_mgmt_common::sentry_ext::SentryConfig;
+
+fn default_git_state_dir() -> String {
+    "./state".to_string()
+}
+fn default_mac_mgmt_git_url() -> String {
+    "https://git.plan.ai/plan-ai/mac-mgmt.git".to_string()
+}
+fn default_nixpkgs_git_url() -> String {
+    "https://git.plan.ai/plan-ai/nixpkgs.git".to_string()
+}
+fn default_git_fetch_interval() -> u64 {
+    300
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitConfig {
+    #[serde(default = "default_git_state_dir")]
+    pub state_dir: String,
+    #[serde(default = "default_mac_mgmt_git_url")]
+    pub mac_mgmt_url: String,
+    #[serde(default = "default_nixpkgs_git_url")]
+    pub nixpkgs_url: String,
+    #[serde(default = "default_git_fetch_interval")]
+    pub fetch_interval_secs: u64,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            state_dir: default_git_state_dir(),
+            mac_mgmt_url: default_mac_mgmt_git_url(),
+            nixpkgs_url: default_nixpkgs_git_url(),
+            fetch_interval_secs: default_git_fetch_interval(),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct AnthropicConfig {

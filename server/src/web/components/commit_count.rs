@@ -1,9 +1,11 @@
-//! Fetch commit counts from GitLab APIs via binary search.
-//! Results are cached in the database so they survive restarts.
+//! Resolve commit counts via `git rev-list --count` on local bare clones.
+//! Results are cached in the `commit_counts` database table.
 //! In-flight resolution is deduplicated via a per-repo lock set.
 
 #[cfg(feature = "server")]
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "server")]
+use std::path::PathBuf;
 #[cfg(feature = "server")]
 use std::sync::OnceLock;
 #[cfg(feature = "server")]
@@ -12,29 +14,84 @@ use tokio::sync::Mutex;
 #[cfg(feature = "server")]
 struct RepoCache {
     repo: &'static str,
-    base_url: &'static str,
-    /// Lower bound for binary search (optimization for large repos).
-    search_lo: u64,
-    /// Upper bound for binary search.
-    search_hi: u64,
+    clone_path: PathBuf,
+    git_url: String,
+    /// Guards the initial clone so concurrent callers don't race.
+    cloned: tokio::sync::OnceCell<()>,
     /// SHAs currently being resolved — prevents duplicate in-flight lookups.
     in_flight: Mutex<HashSet<String>>,
 }
 
 #[cfg(feature = "server")]
 impl RepoCache {
-    fn new(repo: &'static str, base_url: &'static str, search_lo: u64, search_hi: u64) -> Self {
+    fn new(repo: &'static str, clone_path: PathBuf, git_url: String) -> Self {
         Self {
             repo,
-            base_url,
-            search_lo,
-            search_hi,
+            clone_path,
+            git_url,
+            cloned: tokio::sync::OnceCell::new(),
             in_flight: Mutex::new(HashSet::new()),
         }
     }
 
+    async fn ensure_clone(&self) {
+        self.cloned
+            .get_or_init(|| async {
+                if self.clone_path.exists() {
+                    return;
+                }
+                if let Some(parent) = self.clone_path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                tracing::info!(
+                    "cloning {} -> {} (first run, this may take a while for large repos)",
+                    self.git_url,
+                    self.clone_path.display()
+                );
+                match tokio::process::Command::new("git")
+                    .args(["clone", "--bare", &self.git_url])
+                    .arg(&self.clone_path)
+                    .output()
+                    .await
+                {
+                    Ok(out) if out.status.success() => {
+                        tracing::info!("cloned {} -> {}", self.git_url, self.clone_path.display());
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        tracing::error!("git clone failed: {stderr}");
+                    }
+                    Err(e) => tracing::error!("git clone error: {e}"),
+                }
+            })
+            .await;
+    }
+
+    async fn fetch(&self) {
+        if !self.clone_path.exists() {
+            return;
+        }
+        match tokio::process::Command::new("git")
+            .args(["fetch", "--all", "--quiet"])
+            .current_dir(&self.clone_path)
+            .output()
+            .await
+        {
+            Ok(out) if out.status.success() => {
+                tracing::debug!("fetched {}", self.repo);
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!("git fetch {} failed: {stderr}", self.repo);
+            }
+            Err(e) => tracing::warn!("git fetch {} error: {e}", self.repo),
+        }
+    }
+
     async fn get_or_fetch(&self, shas: &HashSet<String>) -> HashMap<String, u64> {
-        // Strip "-dirty" suffixes so the API lookup uses a clean SHA,
+        self.ensure_clone().await;
+
+        // Strip "-dirty" suffixes so the lookup uses a clean SHA,
         // then map results back to the original keys.
         let mut clean_to_orig: HashMap<String, Vec<String>> = HashMap::new();
         for sha in shas {
@@ -76,9 +133,6 @@ impl RepoCache {
             }
             drop(flight);
 
-            // For SHAs already in-flight by another caller, wait briefly
-            // then check the DB — the other caller will have stored the
-            // result by then.
             if !waiting.is_empty() {
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 let late_hits = self.db_lookup(&waiting).await;
@@ -96,17 +150,24 @@ impl RepoCache {
 
         if !claimed.is_empty() {
             // 3. Resolve all claimed SHAs in parallel.
-            let client = reqwest::Client::new();
             let mut join_set = tokio::task::JoinSet::new();
             for sha in &claimed {
-                let client = client.clone();
                 let sha = sha.clone();
-                let base_url = self.base_url;
-                let lo = self.search_lo;
-                let hi = self.search_hi;
+                let clone_path = self.clone_path.clone();
                 join_set.spawn(async move {
-                    let count =
-                        gitlab_binary_search(&client, base_url, &sha, lo, hi).await;
+                    let output = tokio::process::Command::new("git")
+                        .args(["rev-list", "--count", &sha])
+                        .current_dir(&clone_path)
+                        .output()
+                        .await
+                        .ok();
+                    let count = output.and_then(|o| {
+                        if o.status.success() {
+                            String::from_utf8_lossy(&o.stdout).trim().parse().ok()
+                        } else {
+                            None
+                        }
+                    });
                     (sha, count)
                 });
             }
@@ -142,9 +203,6 @@ impl RepoCache {
         let Ok(pool) = crate::server_pool() else {
             return HashMap::new();
         };
-        let mut result = HashMap::new();
-        // sqlx doesn't support WHERE IN with slices on all backends,
-        // so use a single query with ANY($1).
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT sha, count FROM commit_counts WHERE repo = $1 AND sha = ANY($2)",
         )
@@ -153,10 +211,7 @@ impl RepoCache {
         .fetch_all(&pool)
         .await
         .unwrap_or_default();
-        for (sha, count) in rows {
-            result.insert(sha, count as u64);
-        }
-        result
+        rows.into_iter().map(|(sha, c)| (sha, c as u64)).collect()
     }
 
     async fn db_store(&self, sha: &str, count: u64) {
@@ -175,81 +230,21 @@ impl RepoCache {
     }
 }
 
-/// Binary search the GitLab commits endpoint to find the total commit count.
-/// Uses per_page=1 and checks if the page has data (~17 requests max for 100K commits).
-#[cfg(feature = "server")]
-async fn gitlab_binary_search(
-    client: &reqwest::Client,
-    base_url: &str,
-    sha: &str,
-    start_lo: u64,
-    start_hi: u64,
-) -> Option<u64> {
-    let page_has_data = |page: u64| {
-        let url = format!("{base_url}?ref_name={sha}&per_page=1&page={page}");
-        let client = client.clone();
-        async move {
-            let resp = client
-                .get(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-                .ok()?;
-            if !resp.status().is_success() {
-                return None;
-            }
-            let next = resp
-                .headers()
-                .get("x-next-page")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            if !next.is_empty() {
-                return Some(true);
-            }
-            let body = resp.text().await.ok()?;
-            Some(body.len() > 2)
-        }
-    };
-
-    if !page_has_data(1).await? {
-        return None;
-    }
-
-    let mut lo: u64 = start_lo;
-    let mut hi: u64 = start_hi;
-
-    // If start_lo > 1, verify it has data; if not, fall back to 1.
-    if lo > 1 && !page_has_data(lo).await.unwrap_or(false) {
-        lo = 1;
-    }
-
-    while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
-        if page_has_data(mid).await? {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-
-    Some(lo)
-}
-
 // ── mac-mgmt ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "server")]
 static MAC_MGMT: OnceLock<RepoCache> = OnceLock::new();
 
-/// Fetch commit counts for mac-mgmt SHAs (git.plan.ai).
+/// Fetch commit counts for mac-mgmt SHAs.
 #[cfg(feature = "server")]
 pub async fn mac_mgmt_commit_counts(shas: &HashSet<String>) -> HashMap<String, u64> {
+    let cfg = &crate::config::config().git;
     MAC_MGMT
         .get_or_init(|| {
             RepoCache::new(
                 "mac-mgmt",
-                "https://git.plan.ai/api/v4/projects/plan-ai%2Fmac-mgmt/repository/commits",
-                1,
-                100_000,
+                PathBuf::from(&cfg.state_dir).join("repos/mac-mgmt.git"),
+                cfg.mac_mgmt_url.clone(),
             )
         })
         .get_or_fetch(shas)
@@ -261,18 +256,37 @@ pub async fn mac_mgmt_commit_counts(shas: &HashSet<String>) -> HashMap<String, u
 #[cfg(feature = "server")]
 static NIXPKGS: OnceLock<RepoCache> = OnceLock::new();
 
-/// Fetch commit counts for nixpkgs SHAs (git.plan.ai/plan-ai/nixpkgs).
+/// Fetch commit counts for nixpkgs SHAs.
 #[cfg(feature = "server")]
 pub async fn nixpkgs_commit_counts(shas: &HashSet<String>) -> HashMap<String, u64> {
+    let cfg = &crate::config::config().git;
     NIXPKGS
         .get_or_init(|| {
             RepoCache::new(
                 "nixpkgs",
-                "https://git.plan.ai/api/v4/projects/plan-ai%2Fnixpkgs/repository/commits",
-                900_000,
-                2_000_000,
+                PathBuf::from(&cfg.state_dir).join("repos/nixpkgs.git"),
+                cfg.nixpkgs_url.clone(),
             )
         })
         .get_or_fetch(shas)
         .await
+}
+
+// ── Background fetch loop ──────────────────────────────────────────────
+
+#[cfg(feature = "server")]
+pub fn spawn_fetch_loop() {
+    let interval_secs = crate::config::config().git.fetch_interval_secs;
+    tokio::spawn(async move {
+        let interval = std::time::Duration::from_secs(interval_secs);
+        loop {
+            tokio::time::sleep(interval).await;
+            if let Some(cache) = MAC_MGMT.get() {
+                cache.fetch().await;
+            }
+            if let Some(cache) = NIXPKGS.get() {
+                cache.fetch().await;
+            }
+        }
+    });
 }
