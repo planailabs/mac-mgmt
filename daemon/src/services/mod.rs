@@ -7,6 +7,7 @@ pub mod ollama;
 pub mod openclaw;
 pub mod opencode;
 pub mod rocm_smi;
+pub mod unsloth;
 
 use anyhow::Result;
 use std::time::Duration;

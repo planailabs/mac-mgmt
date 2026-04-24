@@ -7,17 +7,20 @@ pub mod ollama_opencode;
 pub mod relay_ollama;
 pub mod relay_openclaw;
 pub mod relay_opencode;
+pub mod relay_unsloth;
+pub mod unsloth_openclaw;
+pub mod unsloth_opencode;
 
 use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 use crate::services::{
     apprise::Apprise, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
-    openclaw::OpenClaw, opencode::Opencode, rocm_smi::RocmSmi,
+    openclaw::OpenClaw, opencode::Opencode, rocm_smi::RocmSmi, unsloth::Unsloth,
 };
 use mac_mgmt_common::{
     AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig,
-    OpenClawConfig, OpencodeConfig,
+    OpenClawConfig, OpencodeConfig, UnslothConfig,
 };
 
 /// When a connector runs relative to service startup.
@@ -55,6 +58,7 @@ pub fn build_services(
     opencode_cfg: OpencodeConfig,
     ollama_cfg: OllamaConfig,
     lms_cfg: LmsConfig,
+    unsloth_cfg: UnslothConfig,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
@@ -86,6 +90,13 @@ pub fn build_services(
         tracing::info!("lms disabled");
     }
 
+    if unsloth_cfg.enabled {
+        tracing::info!("unsloth enabled");
+        services.push(Box::new(Unsloth::new(unsloth_cfg)));
+    } else {
+        tracing::info!("unsloth disabled");
+    }
+
     // Cloud providers don't need a local service.
 
     services.push(Box::new(McPorter));
@@ -105,6 +116,7 @@ pub fn build_connectors(
     global: &GlobalConfig,
     ollama_cfg: &OllamaConfig,
     lms_cfg: &LmsConfig,
+    unsloth_cfg: &UnslothConfig,
     cloud_cfgs: &[CloudConfig],
 ) -> Vec<Box<dyn Connector>> {
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
@@ -113,6 +125,11 @@ pub fn build_connectors(
     // Always enabled when ollama is enabled (regardless of default_llm).
     if ollama_cfg.enabled {
         connectors.push(Box::new(relay_ollama::RelayOllama));
+    }
+
+    // Relay→unsloth connector: wires the relay tunnel for Unsloth Studio.
+    if unsloth_cfg.enabled {
+        connectors.push(Box::new(relay_unsloth::RelayUnsloth));
     }
 
     tracing::info!(
@@ -145,6 +162,14 @@ pub fn build_connectors(
                     set_default: global.default_llm == LlmProvider::Lms,
                 }));
             }
+            if unsloth_cfg.enabled {
+                connectors.push(Box::new(unsloth_openclaw::UnslothOpenClaw {
+                    host: unsloth_cfg.host.clone(),
+                    port: unsloth_cfg.port,
+                    default_model: unsloth_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Unsloth,
+                }));
+            }
             if has_enabled_cloud {
                 connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
                     set_default: global.default_llm == LlmProvider::Cloud,
@@ -166,6 +191,14 @@ pub fn build_connectors(
                     port: lms_cfg.port,
                     default_model: lms_cfg.default_model.clone(),
                     set_default: global.default_llm == LlmProvider::Lms,
+                }));
+            }
+            if unsloth_cfg.enabled {
+                connectors.push(Box::new(unsloth_opencode::UnslothOpencode {
+                    host: unsloth_cfg.host.clone(),
+                    port: unsloth_cfg.port,
+                    default_model: unsloth_cfg.default_model.clone(),
+                    set_default: global.default_llm == LlmProvider::Unsloth,
                 }));
             }
             if has_enabled_cloud {

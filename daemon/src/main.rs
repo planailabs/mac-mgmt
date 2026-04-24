@@ -305,7 +305,7 @@ async fn main() -> Result<()> {
             if !failed {
                 let cfg = config::load().await?;
                 let connectors =
-                    connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.cloud);
+                    connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.cloud);
 
                 let configs = std::collections::HashMap::new();
                 for c in &connectors {

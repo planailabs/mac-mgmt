@@ -158,6 +158,7 @@ impl ServiceManager {
         let opencode_cfg = std::mem::take(&mut cfg.opencode);
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
         let lms_cfg = std::mem::take(&mut cfg.lms);
+        let unsloth_cfg = std::mem::take(&mut cfg.unsloth);
         let cloud_cfgs = std::mem::take(&mut cfg.cloud);
 
         let cache_dir = crate::config::config_dir().join("config_providers.json");
@@ -168,6 +169,9 @@ impl ServiceManager {
         }
         if let Ok(v) = serde_json::to_value(&lms_cfg) {
             config_store.set("lms", v);
+        }
+        if let Ok(v) = serde_json::to_value(&unsloth_cfg) {
+            config_store.set("unsloth", v);
         }
         if let Ok(v) = serde_json::to_value(&openclaw_cfg) {
             config_store.set("openclaw", v);
@@ -180,7 +184,7 @@ impl ServiceManager {
         }
 
         let connectors =
-            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &cloud_cfgs);
+            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &unsloth_cfg, &cloud_cfgs);
 
         let all_services = connectors::build_services(
             &global_cfg,
@@ -188,6 +192,7 @@ impl ServiceManager {
             opencode_cfg,
             ollama_cfg,
             lms_cfg,
+            unsloth_cfg,
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
@@ -795,6 +800,9 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&cfg.lms) {
             self.config_store.set("lms", v);
         }
+        if let Ok(v) = serde_json::to_value(&cfg.unsloth) {
+            self.config_store.set("unsloth", v);
+        }
         if let Ok(v) = serde_json::to_value(&cfg.openclaw) {
             self.config_store.set("openclaw", v);
         }
@@ -807,7 +815,7 @@ impl ServiceManager {
 
         // Rebuild the connector list from current config.
         let new_connectors =
-            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.cloud);
+            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.cloud);
         self.connectors = new_connectors
             .into_iter()
             .map(|c| ConnectorState {

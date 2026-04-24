@@ -400,6 +400,7 @@ const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
 pub enum LlmProvider {
     Ollama,
     Lms,
+    Unsloth,
     Cloud,
     None,
 }
@@ -415,6 +416,7 @@ impl LlmProvider {
         match self {
             Self::Ollama => "ollama",
             Self::Lms => "lms",
+            Self::Unsloth => "unsloth",
             Self::Cloud => "cloud",
             Self::None => "none",
         }
@@ -737,6 +739,46 @@ impl LmsConfig {
     }
 }
 
+// ── Unsloth ────────────────────────────────────────────────────────────
+
+fn default_unsloth_port() -> u16 {
+    8888
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UnslothConfig {
+    #[schemars(description = "Whether Unsloth Studio is installed and started")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "Unsloth Studio listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(description = "Unsloth Studio listen port")]
+    #[serde(default = "default_unsloth_port")]
+    pub port: u16,
+    #[schemars(description = "Default model identifier for agents to use")]
+    #[serde(default)]
+    pub default_model: String,
+}
+
+impl Default for UnslothConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_host(),
+            port: default_unsloth_port(),
+            default_model: String::new(),
+        }
+    }
+}
+
+impl UnslothConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
 // ── Cloud LLM providers ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -1052,6 +1094,8 @@ pub struct ClusterConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub lms: LmsConfig,
+    #[serde(default)]
+    pub unsloth: UnslothConfig,
     #[schemars(description = "Cloud LLM provider entries (list of providers)")]
     #[serde(default, deserialize_with = "deserialize_cloud_list")]
     pub cloud: Vec<CloudConfig>,
@@ -1102,6 +1146,9 @@ impl ClusterConfig {
         }
         if self.lms.enabled {
             self.lms.validate().map_err(|e| e.to_string())?;
+        }
+        if self.unsloth.enabled {
+            self.unsloth.validate().map_err(|e| e.to_string())?;
         }
         for (i, c) in self.cloud.iter().enumerate() {
             if c.enabled {
@@ -1161,6 +1208,8 @@ pub struct DaemonConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub lms: LmsConfig,
+    #[serde(default)]
+    pub unsloth: UnslothConfig,
     #[serde(default, deserialize_with = "deserialize_cloud_list")]
     pub cloud: Vec<CloudConfig>,
     #[serde(default)]

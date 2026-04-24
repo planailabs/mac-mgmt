@@ -65,6 +65,7 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
         std::mem::take(&mut cfg.opencode),
         std::mem::take(&mut cfg.ollama),
         std::mem::take(&mut cfg.lms),
+        std::mem::take(&mut cfg.unsloth),
     );
 
     services
