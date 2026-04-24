@@ -464,6 +464,7 @@ pub fn ClusterDetail(id: String) -> Element {
                             onclick: move |_| cloud_init_open.set(true),
                             "Cloud-init…"
                         }
+                        super::push_menu::PushMenu { cluster_id: cid2.clone() }
                     }
                 }
 

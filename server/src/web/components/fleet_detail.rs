@@ -535,6 +535,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                             class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700",
                             "Healer Agent"
                         }
+                        super::push_menu::PushMenu { cluster_id: d.cluster_id.clone() }
                     }
                 }
             } else {
