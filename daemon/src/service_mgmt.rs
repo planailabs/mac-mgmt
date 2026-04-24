@@ -331,20 +331,14 @@ impl ServiceManager {
                 state.registered = true;
                 state.phase = ServicePhase::Starting;
 
-                // Compare the resolved binary path. If it changed (e.g. nix
-                // upgrade swapped the store path), schedule a graceful restart
-                // so the daemon's busy/upgrade-window logic handles it.
+                // Compare the full spawn spec (program, args, env). If
+                // anything changed, schedule a graceful restart so the
+                // daemon's busy/upgrade-window logic handles it.
                 let desired_spec = state.service.spawn_spec();
-                let desired_resolved = which::which(&desired_spec.program)
-                    .ok()
-                    .and_then(|p| std::fs::canonicalize(p).ok());
-                let running_resolved = status.resolved_program.as_deref()
-                    .map(std::path::PathBuf::from);
-                if let (Some(desired), Some(running)) = (&desired_resolved, &running_resolved) {
-                    if desired != running {
+                if let Some(running_spec) = &status.spec {
+                    if *running_spec != desired_spec {
                         tracing::info!(
-                            "{name} binary changed ({} -> {}), scheduling restart",
-                            running.display(), desired.display(),
+                            "{name} spec changed, scheduling restart"
                         );
                         state.restart_pending = true;
                     }

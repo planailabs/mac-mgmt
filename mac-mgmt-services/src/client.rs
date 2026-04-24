@@ -144,6 +144,7 @@ impl Client {
                             pid: None,
                             exe: None,
                             resolved_program: None,
+                            spec: None,
                         })
                         .collect())
                 }

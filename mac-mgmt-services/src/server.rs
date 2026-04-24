@@ -313,6 +313,7 @@ impl SupervisorState {
                             pid,
                             exe,
                             resolved_program: entry.resolved_program.clone(),
+                            spec: Some(entry.spec.clone()),
                         }
                     })
                     .collect();

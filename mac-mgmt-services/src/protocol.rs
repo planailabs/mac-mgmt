@@ -48,6 +48,11 @@ pub struct ServiceStatus {
     /// itself, making store-path drift detection work for shebang wrappers.
     #[serde(default)]
     pub resolved_program: Option<String>,
+    /// The spawn spec the supervisor is currently using for this service.
+    /// Added for spec-change detection on daemon reconnect.
+    // compat: added 2026-04-24, readers tolerate absence via serde(default)
+    #[serde(default)]
+    pub spec: Option<SpawnSpec>,
 }
 
 /// Supervisor → daemon reply.
