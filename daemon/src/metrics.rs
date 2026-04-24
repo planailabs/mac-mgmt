@@ -589,6 +589,7 @@ pub struct Metrics {
     pub service_busy: IntGaugeVec,
     pub assessment: AssessmentMetrics,
     pub daemon_version: String,
+    pub daemon_commit: String,
     pub started_at: std::time::Instant,
     pub heartbeat_last_success: IntGauge,
     pub heartbeat_total: IntCounterVec,
@@ -655,6 +656,20 @@ impl Metrics {
             .register(Box::new(heartbeat_total.clone()))
             .unwrap();
 
+        let daemon_commit = env!("GIT_SHA").to_string();
+        let build_info = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_build_info",
+                "Daemon build metadata, always 1; version and commit on labels",
+            ),
+            &["version", "commit"],
+        )
+        .unwrap();
+        build_info
+            .with_label_values(&[env!("CARGO_PKG_VERSION"), &daemon_commit])
+            .set(1);
+        registry.register(Box::new(build_info)).unwrap();
+
         Metrics {
             registry,
             service_healthy,
@@ -662,6 +677,7 @@ impl Metrics {
             service_busy,
             assessment,
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+            daemon_commit,
             started_at: std::time::Instant::now(),
             heartbeat_last_success,
             heartbeat_total,
