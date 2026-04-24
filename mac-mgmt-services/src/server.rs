@@ -176,16 +176,13 @@ pub async fn run(socket_path: &Path) -> Result<bool> {
 /// the state file written by `save_state_for_reexec`.
 pub fn reexec_self() -> ! {
     use std::os::unix::process::CommandExt;
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("supervisor reexec: current_exe: {e}");
-            std::process::exit(1);
-        }
-    };
+    // Use argv[0] (the symlink path) instead of current_exe() (which
+    // resolves symlinks). After self-update the symlink points to the
+    // new binary, so exec through it picks up the new version.
+    let argv0 = std::env::args().next().unwrap_or_else(|| "mac-mgmt".to_string());
     let args: Vec<String> = std::env::args().skip(1).collect();
-    tracing::info!("supervisor exec {exe:?} {args:?}");
-    let err = std::process::Command::new(&exe).args(&args).exec();
+    tracing::info!("supervisor exec {argv0:?} {args:?}");
+    let err = std::process::Command::new(&argv0).args(&args).exec();
     tracing::error!("supervisor exec failed: {err}");
     std::process::exit(1);
 }

@@ -1086,12 +1086,16 @@ pub async fn run(
 
     // If a self-update completed, exec the new binary now that cleanup is done.
     #[cfg(feature = "self-update")]
-    if let Some(new_bin) = restart_exec_bin {
+    if restart_exec_bin.is_some() {
         use std::os::unix::process::CommandExt;
-        tracing::info!("exec'ing new binary: {}", new_bin.display());
+        // Use argv[0] (the symlink) — it was already updated to point to
+        // the new binary. This way exec goes through the symlink and picks
+        // up the new version, rather than exec'ing the resolved store path.
+        let argv0 = std::env::args().next().unwrap_or_else(|| "mac-mgmt".to_string());
         let args: Vec<String> = std::env::args().skip(1).collect();
-        let err = std::process::Command::new(&new_bin).args(&args).exec();
-        tracing::error!("failed to exec {}: {err}", new_bin.display());
+        tracing::info!("exec'ing via {argv0}");
+        let err = std::process::Command::new(&argv0).args(&args).exec();
+        tracing::error!("failed to exec {argv0}: {err}");
     }
 
     Ok(())
