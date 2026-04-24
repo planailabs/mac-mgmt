@@ -553,11 +553,7 @@ impl Daemon {
             PushCommand::SelfUpdate => {
                 tracing::info!("server push: self-update requested");
                 if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
-                    let u = url.clone();
-                    let t = token.clone();
-                    tokio::spawn(async move {
-                        fetch_target_version(&u, &t).await;
-                    });
+                    fetch_target_version(url, token).await;
                 }
                 if self.in_upgrade_window() {
                     #[cfg(feature = "self-update")]
@@ -913,13 +909,10 @@ pub async fn run(
         healer_unhealthy_counter: 0,
     };
 
-    // Run startup sync in background.
+    // Fetch target version before attempting self-update so check_and_apply
+    // sees the server's target.
     if let (Some(url), Some(token)) = (&daemon.server_url, &daemon.server_token) {
-        let u = url.clone();
-        let t = token.clone();
-        tokio::spawn(async move {
-            fetch_target_version(&u, &t).await;
-        });
+        fetch_target_version(url, token).await;
     }
 
     #[cfg(feature = "self-update")]
