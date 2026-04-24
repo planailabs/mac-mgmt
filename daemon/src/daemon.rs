@@ -1036,6 +1036,12 @@ pub async fn run(
                     #[cfg(not(feature = "relay"))]
                     let _ = needs_ssh_sync;
                 }
+                #[cfg(feature = "self-update")]
+                if let Some(bin) = crate::self_update::take_restart_exec() {
+                    restart_exec_bin = Some(bin);
+                    daemon.handle_shutdown("self-update");
+                    break;
+                }
             }
 
             Some(()) = sync_rx.recv() => {
