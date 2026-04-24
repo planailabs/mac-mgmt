@@ -57,7 +57,7 @@ pub struct CreatedCluster {
 pub struct AdminClusterRow {
     pub id: Uuid,
     pub name: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // present in API response, kept for structural completeness
     pub created_at: DateTime<Utc>,
 }
 
@@ -65,10 +65,10 @@ pub struct AdminClusterRow {
 pub struct RolloutGroupRow {
     pub id: Uuid,
     pub name: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // deserialized from API but not accessed by runner
     #[serde(default)]
     pub description: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // deserialized from API but not accessed by runner
     #[serde(default)]
     pub member_count: i64,
 }

@@ -286,6 +286,7 @@ fn amd_sample() -> Vec<GpuSample> {
 
 /// Parse rocm-smi `--json` inventory output. Schema is `{"card0": {...}, ...}`.
 /// Infallible wrapper kept for unit tests.
+#[cfg(test)]
 fn parse_rocm_json_inventory(json: &str) -> Vec<GpuInfo> {
     parse_rocm_json_inventory_checked(json).unwrap_or_default()
 }

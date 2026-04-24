@@ -175,13 +175,11 @@ impl Daemon {
                 let needs_restart = new_cfg.global.default_llm
                     != self.current_cfg.global.default_llm
                     || new_cfg.global.default_agent != self.current_cfg.global.default_agent
-                    || format!("{:?}", new_cfg.ollama) != format!("{:?}", self.current_cfg.ollama)
-                    || format!("{:?}", new_cfg.openclaw)
-                        != format!("{:?}", self.current_cfg.openclaw)
-                    || format!("{:?}", new_cfg.opencode)
-                        != format!("{:?}", self.current_cfg.opencode)
-                    || format!("{:?}", new_cfg.lms) != format!("{:?}", self.current_cfg.lms)
-                    || format!("{:?}", new_cfg.cloud) != format!("{:?}", self.current_cfg.cloud);
+                    || new_cfg.ollama != self.current_cfg.ollama
+                    || new_cfg.openclaw != self.current_cfg.openclaw
+                    || new_cfg.opencode != self.current_cfg.opencode
+                    || new_cfg.lms != self.current_cfg.lms
+                    || new_cfg.cloud != self.current_cfg.cloud;
 
                 // Update config store and rebuild connectors first so
                 // pre-start connectors patch config files before services
@@ -1103,68 +1101,67 @@ pub async fn run(
 
 // ── Free functions ───────────────────────────────────────────────────
 
-/// Fetch the target version from the server and set it for self-update.
-async fn fetch_target_version(server_url: &str, server_token: &str) {
+/// GET a JSON endpoint on the server with a 10s timeout.
+/// Returns `None` on any failure (timeout, non-2xx, parse error), logging at debug level.
+async fn fetch_server_json<T: serde::de::DeserializeOwned>(
+    server_url: &str,
+    server_token: &str,
+    path: &str,
+    label: &str,
+) -> Option<T> {
     let client = reqwest::Client::new();
-    let system = crate::nix::current_system().unwrap_or("");
-    let url = format!("{server_url}/api/update?system={system}");
+    let url = format!("{server_url}{path}");
     match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         client.get(&url).bearer_auth(server_token).send(),
     )
     .await
     {
-        Ok(Ok(resp)) if resp.status().is_success() => {
-            if let Ok(info) = resp.json::<mac_mgmt_common::UpdateTarget>().await {
-                if let Some(ver) = info.target_version {
-                    tracing::info!(
-                        "server target version: {ver} (store_path: {:?})",
-                        info.store_path
-                    );
-                    #[cfg(feature = "self-update")]
-                    crate::self_update::set_target(ver, info.store_path);
-                } else {
-                    tracing::debug!("no target version set by server");
-                }
-            }
-        }
+        Ok(Ok(resp)) if resp.status().is_success() => resp.json::<T>().await.ok(),
         Ok(Ok(resp)) => {
-            tracing::debug!("update target fetch returned {}", resp.status());
+            tracing::debug!("{label} fetch returned {}", resp.status());
+            None
         }
         Ok(Err(e)) => {
-            tracing::debug!("update target fetch failed: {e}");
+            tracing::debug!("{label} fetch failed: {e}");
+            None
         }
         Err(_) => {
-            tracing::debug!("update target fetch timed out");
+            tracing::debug!("{label} fetch timed out");
+            None
+        }
+    }
+}
+
+/// Fetch the target version from the server and set it for self-update.
+async fn fetch_target_version(server_url: &str, server_token: &str) {
+    let system = crate::nix::current_system().unwrap_or("");
+    let path = format!("/api/update?system={system}");
+    if let Some(info) =
+        fetch_server_json::<mac_mgmt_common::UpdateTarget>(server_url, server_token, &path, "update target")
+            .await
+    {
+        if let Some(ver) = info.target_version {
+            tracing::info!(
+                "server target version: {ver} (store_path: {:?})",
+                info.store_path
+            );
+            #[cfg(feature = "self-update")]
+            crate::self_update::set_target(ver, info.store_path);
+        } else {
+            tracing::debug!("no target version set by server");
         }
     }
 }
 
 /// Fetch the cluster's nixpkgs commit pin from the server and apply it.
 async fn fetch_nixpkgs_pin(server_url: &str, server_token: &str) {
-    let client = reqwest::Client::new();
-    let url = format!("{server_url}/api/nixpkgs");
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        client.get(&url).bearer_auth(server_token).send(),
-    )
-    .await
+    if let Some(pin) =
+        fetch_server_json::<mac_mgmt_common::NixpkgsPin>(server_url, server_token, "/api/nixpkgs", "nixpkgs pin")
+            .await
     {
-        Ok(Ok(resp)) if resp.status().is_success() => {
-            if let Ok(pin) = resp.json::<mac_mgmt_common::NixpkgsPin>().await {
-                tracing::info!("server nixpkgs pin: {:?}", pin.commit);
-                crate::nix::set_nixpkgs_commit(pin.commit);
-            }
-        }
-        Ok(Ok(resp)) => {
-            tracing::debug!("nixpkgs pin fetch returned {}", resp.status());
-        }
-        Ok(Err(e)) => {
-            tracing::debug!("nixpkgs pin fetch failed: {e}");
-        }
-        Err(_) => {
-            tracing::debug!("nixpkgs pin fetch timed out");
-        }
+        tracing::info!("server nixpkgs pin: {:?}", pin.commit);
+        crate::nix::set_nixpkgs_commit(pin.commit);
     }
 }
 

@@ -1,5 +1,3 @@
-#![allow(dead_code)] // scaffolding — items become live as later steps (5–9) land.
-
 //! System assessment module.
 //!
 //! Three tiers of collection, each on its own cadence:

@@ -651,7 +651,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
     #[schemars(description = "Whether this provider is installed and started")]
@@ -701,7 +701,7 @@ fn default_lms_model() -> String {
     "qwen2.5-coder-7b-instruct".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LmsConfig {
     #[schemars(description = "Whether this provider is installed and started")]
@@ -735,6 +735,12 @@ impl Default for LmsConfig {
 
 impl LmsConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.port == 0 {
+            return Err(ValidationError("lms.port must be > 0".into()));
+        }
+        if self.models.iter().any(|m| m.is_empty()) {
+            return Err(ValidationError("lms.models contains an empty string".into()));
+        }
         Ok(())
     }
 }
@@ -745,7 +751,7 @@ fn default_unsloth_port() -> u16 {
     8888
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UnslothConfig {
     #[schemars(description = "Whether Unsloth Studio is installed and started")]
@@ -775,6 +781,9 @@ impl Default for UnslothConfig {
 
 impl UnslothConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.port == 0 {
+            return Err(ValidationError("unsloth.port must be > 0".into()));
+        }
         Ok(())
     }
 }
@@ -805,7 +814,7 @@ fn default_cloud_model() -> String {
     "anthropic/claude-sonnet-4-6".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloudConfig {
     #[schemars(description = "Whether this cloud provider entry is active")]
@@ -833,6 +842,9 @@ pub struct CloudConfig {
 
 impl CloudConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.default_model.is_empty() {
+            return Err(ValidationError("cloud.default_model must not be empty".into()));
+        }
         Ok(())
     }
 }
@@ -847,7 +859,7 @@ fn default_gateway_host() -> String {
     "127.0.0.1".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawGatewayConfig {
     #[schemars(description = "OpenClaw gateway listen port")]
@@ -858,7 +870,7 @@ pub struct OpenClawGatewayConfig {
     pub host: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawSkillsConfig {
     #[schemars(description = "Automatically update skills on the update interval")]
@@ -866,7 +878,7 @@ pub struct OpenClawSkillsConfig {
     pub auto_update: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawTelegramConfig {
     #[schemars(description = "Telegram bot token from @BotFather")]
@@ -879,7 +891,7 @@ pub struct OpenClawTelegramConfig {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
     #[schemars(description = "Whether the OpenClaw agent is installed and started")]
@@ -919,7 +931,7 @@ fn default_opencode_port() -> u16 {
     18790
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpencodeConfig {
     #[schemars(description = "Whether the OpenCode agent is installed and started")]

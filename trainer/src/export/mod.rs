@@ -6,7 +6,18 @@ pub mod dataset;
 pub use extractor::ExportedSession;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::path::Path;
+
+/// Write a slice of serializable items as newline-delimited JSON.
+fn write_jsonl_file<T: Serialize>(path: &Path, items: &[T]) -> Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    for item in items {
+        writeln!(f, "{}", serde_json::to_string(item)?)?;
+    }
+    Ok(())
+}
 
 /// Run the full export pipeline: DB → JSONL files.
 pub async fn run_export(db_url: &str, output_dir: &str, min_messages: usize) -> Result<()> {
@@ -50,16 +61,14 @@ pub async fn run_export(db_url: &str, output_dir: &str, min_messages: usize) -> 
     for session in &sessions {
         // Full session export
         let session_json = serde_json::to_string(session)?;
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&sessions_path)?;
-        use std::io::Write;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&sessions_path)?;
-        writeln!(f, "{session_json}")?;
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&sessions_path)?;
+            writeln!(f, "{session_json}")?;
+        }
 
         // Tool selector samples (one per tool call in the session)
         let ts = features::extract_tool_selector_samples(session, &vocab);
@@ -71,33 +80,19 @@ pub async fn run_export(db_url: &str, output_dir: &str, min_messages: usize) -> 
         }
     }
 
-    // Write tool selector JSONL
-    {
-        use std::io::Write;
-        let mut f = std::fs::File::create(&tool_selector_path)?;
-        for sample in &tool_samples {
-            writeln!(f, "{}", serde_json::to_string(sample)?)?;
-        }
-        tracing::info!(
-            "wrote {} tool selector samples to {}",
-            tool_samples.len(),
-            tool_selector_path.display()
-        );
-    }
+    write_jsonl_file(&tool_selector_path, &tool_samples)?;
+    tracing::info!(
+        "wrote {} tool selector samples to {}",
+        tool_samples.len(),
+        tool_selector_path.display()
+    );
 
-    // Write outcome JSONL
-    {
-        use std::io::Write;
-        let mut f = std::fs::File::create(&outcome_path)?;
-        for sample in &outcome_samples {
-            writeln!(f, "{}", serde_json::to_string(sample)?)?;
-        }
-        tracing::info!(
-            "wrote {} outcome samples to {}",
-            outcome_samples.len(),
-            outcome_path.display()
-        );
-    }
+    write_jsonl_file(&outcome_path, &outcome_samples)?;
+    tracing::info!(
+        "wrote {} outcome samples to {}",
+        outcome_samples.len(),
+        outcome_path.display()
+    );
 
     tracing::info!("export complete → {}", output.display());
     Ok(())

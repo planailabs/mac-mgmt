@@ -26,43 +26,7 @@ pub struct AutoTriggerConfig {
     pub model: Option<String>,
 }
 
-/// Fetch per-cluster healer settings from the dedicated table.
-async fn cluster_healer_config(
-    pool: &PgPool,
-    cluster_id: Uuid,
-) -> mac_mgmt_common::HealerClusterConfig {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        enabled: bool,
-        auto_trigger: Option<bool>,
-        auto_trigger_provider: Option<String>,
-        auto_trigger_model: Option<String>,
-        auto_approve: Option<bool>,
-        fix_provider: Option<String>,
-        fix_model: Option<String>,
-    }
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT enabled, auto_trigger, auto_trigger_provider, auto_trigger_model, \
-                auto_approve, fix_provider, fix_model \
-         FROM healer_cluster_settings WHERE cluster_id = $1",
-    )
-    .bind(cluster_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    match row {
-        Some(r) if r.enabled => mac_mgmt_common::HealerClusterConfig {
-            auto_trigger: r.auto_trigger,
-            auto_trigger_provider: r.auto_trigger_provider,
-            auto_trigger_model: r.auto_trigger_model,
-            auto_approve: r.auto_approve,
-            fix_provider: r.fix_provider,
-            fix_model: r.fix_model,
-        },
-        _ => mac_mgmt_common::HealerClusterConfig::default(),
-    }
-}
+use crate::api::healer_routes::cluster_healer_config;
 
 /// Run the auto-trigger background loop. Never returns.
 pub async fn run_auto_trigger_loop(

@@ -396,24 +396,33 @@ async fn collect_probe_ok_pct_per_instance(
         return Ok(out);
     }
 
+    // Single query for all services — avoids one round-trip per service.
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        service: String,
+        failed: i64,
+    }
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT service, COUNT(*) AS failed FROM ( \
+           SELECT DISTINCT ON (instance_id, service) service, ok \
+           FROM assessment_probes \
+           WHERE instance_id = ANY($1) AND service = ANY($2) \
+             AND collected_at > now() - interval '30 minutes' \
+           ORDER BY instance_id, service, collected_at DESC \
+         ) latest \
+         WHERE NOT ok \
+         GROUP BY service",
+    )
+    .bind(instance_ids)
+    .bind(&services)
+    .fetch_all(pool)
+    .await?;
+    let failed_map: HashMap<&str, u32> = rows
+        .iter()
+        .map(|r| (r.service.as_str(), (r.failed as u32).min(cohort_size)))
+        .collect();
     for service in services {
-        // DISTINCT ON picks the latest row per instance; outer COUNT
-        // tallies how many of those latest rows were a failure.
-        let failed: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM ( \
-               SELECT DISTINCT ON (instance_id) ok \
-               FROM assessment_probes \
-               WHERE instance_id = ANY($1) AND service = $2 \
-                 AND collected_at > now() - interval '30 minutes' \
-               ORDER BY instance_id, collected_at DESC \
-             ) latest \
-             WHERE NOT ok",
-        )
-        .bind(instance_ids)
-        .bind(&service)
-        .fetch_one(pool)
-        .await?;
-        let failed = (failed as u32).min(cohort_size);
+        let failed = failed_map.get(service.as_str()).copied().unwrap_or(0);
         let ok = cohort_size - failed;
         out.insert(service, pct(ok, cohort_size));
     }

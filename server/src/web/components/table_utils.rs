@@ -4,6 +4,23 @@ use dioxus_tabular::*;
 use crate::models::{Bundle, Cluster, McpServer, McpServerBundle, Skill};
 use crate::web::app::Route;
 
+// ── Admin list helper ──────────────────────────────────────────────
+
+/// Load a list of admin-only rows with auth + pool boilerplate.
+#[cfg(feature = "server")]
+pub async fn load_admin_list<T>(query: &str) -> Result<Vec<T>, ServerFnError>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+{
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    sqlx::query_as::<_, T>(query)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
 // ── Searchable trait ────────────────────────────────────────────────
 
 pub trait Searchable {

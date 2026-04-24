@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::auth::{AdminAuth, SettingAuth};
 
 /// Fetch per-cluster healer settings from the dedicated table.
-async fn cluster_healer_config(
+pub(crate) async fn cluster_healer_config(
     pool: &PgPool,
     cluster_id: Uuid,
 ) -> mac_mgmt_common::HealerClusterConfig {
@@ -131,7 +131,7 @@ pub async fn create_session(
 
     // Look up instance from heartbeats
     let hb = sqlx::query_as::<_, HeartbeatRow>(
-        "SELECT instance_id, relay_proxy_url, services_extended, \
+        "SELECT relay_proxy_url, services_extended, \
                 file_tunnels, shell_tunnels, sample, hostname \
          FROM daemon_heartbeats WHERE cluster_id = $1 AND instance_id = $2",
     )
@@ -599,8 +599,6 @@ pub async fn stream_session(
 
 #[derive(sqlx::FromRow)]
 struct HeartbeatRow {
-    #[allow(dead_code)]
-    instance_id: String,
     relay_proxy_url: Option<String>,
     services_extended: Option<serde_json::Value>,
     file_tunnels: Option<serde_json::Value>,

@@ -7,19 +7,9 @@ use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
-#[cfg(feature = "server")]
-use crate::web::user::current_user;
-
 #[server]
 async fn list_bundles() -> Result<Vec<Bundle>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let bundles = sqlx::query_as::<_, Bundle>("SELECT * FROM bundles ORDER BY slug")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(bundles)
+    load_admin_list::<Bundle>("SELECT * FROM bundles ORDER BY slug").await
 }
 
 #[component]

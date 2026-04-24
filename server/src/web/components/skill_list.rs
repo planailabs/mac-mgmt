@@ -8,17 +8,9 @@ use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
-
 #[server]
 async fn list_skills() -> Result<Vec<Skill>, ServerFnError> {
-    let user = current_user().await?;
-    user.require_admin()?;
-    let pool = crate::server_pool()?;
-    let skills = sqlx::query_as::<_, Skill>("SELECT * FROM skills ORDER BY slug")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(skills)
+    load_admin_list::<Skill>("SELECT * FROM skills ORDER BY slug").await
 }
 
 /// Sync result returned to the UI.
