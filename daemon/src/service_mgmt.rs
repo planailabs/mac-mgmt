@@ -301,8 +301,36 @@ impl ServiceManager {
         if !self.ensure_client().await {
             return;
         }
+
+        // Check which services are already running in the supervisor
+        // (e.g. adopted after a reexec). Don't re-register those — the
+        // daemon's busy/upgrade system will handle spec changes gracefully.
+        let already_running: std::collections::HashSet<String> =
+            if let Some(client) = self.client.as_mut() {
+                client
+                    .list()
+                    .await
+                    .map(|statuses| {
+                        statuses
+                            .into_iter()
+                            .filter(|s| s.pid.is_some())
+                            .map(|s| s.name)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                std::collections::HashSet::new()
+            };
+
         for i in 0..self.services.len() {
-            self.register_service(i).await;
+            let name = &self.services[i].name;
+            if already_running.contains(name) {
+                tracing::info!("{name} already running in supervisor, adopting");
+                self.services[i].registered = true;
+                self.services[i].phase = ServicePhase::Starting;
+            } else {
+                self.register_service(i).await;
+            }
         }
         self.refresh_running_store_paths().await;
     }
