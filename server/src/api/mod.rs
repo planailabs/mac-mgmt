@@ -1,5 +1,6 @@
 mod auth;
 pub(crate) mod healer_routes;
+pub(crate) mod metrics_routes;
 pub mod push;
 pub(crate) mod routes;
 
@@ -298,6 +299,8 @@ pub fn build_rocket(
                 healer_routes::get_healer_settings,
                 healer_routes::put_healer_settings,
                 healer_routes::stream_session,
+                // Metrics
+                metrics_routes::get_metrics,
             ],
         )
         .mount(

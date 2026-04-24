@@ -181,6 +181,57 @@ fn parse_cluster_id_header(req: &Request<'_>) -> Result<Uuid, (Status, &'static 
         .map_err(|_| (Status::BadRequest, "X-Cluster-Id must be a valid UUID"))
 }
 
+/// Scope resolved from a metrics-capable token.
+pub enum MetricsScope {
+    /// Single-cluster setting token.
+    Cluster(Uuid),
+    /// Org-scoped setting token — caller sees all clusters in the org.
+    Organization(Uuid),
+    /// Admin token — global view.
+    All,
+}
+
+/// Guard that allows setting tokens (cluster or org-scoped) and admin tokens
+/// for the `/metrics` endpoint. Unlike `SettingAuth`, no `X-Cluster-Id`
+/// header is required — the scope is derived entirely from the token.
+pub struct MetricsAuth {
+    pub scope: MetricsScope,
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for MetricsAuth {
+    type Error = &'static str;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        match AuthenticatedToken::from_request(req).await {
+            Outcome::Success(auth) if auth.token_kind == "setting" => {
+                if let Some(cid) = auth.cluster_id {
+                    Outcome::Success(MetricsAuth {
+                        scope: MetricsScope::Cluster(cid),
+                    })
+                } else if let Some(org_id) = auth.organization_id {
+                    Outcome::Success(MetricsAuth {
+                        scope: MetricsScope::Organization(org_id),
+                    })
+                } else {
+                    Outcome::Error((
+                        Status::Forbidden,
+                        "setting token requires a cluster or organization",
+                    ))
+                }
+            }
+            Outcome::Success(auth) if auth.token_kind == "admin" => Outcome::Success(MetricsAuth {
+                scope: MetricsScope::All,
+            }),
+            Outcome::Success(_) => {
+                Outcome::Error((Status::Forbidden, "setting or admin token required"))
+            }
+            Outcome::Error(e) => Outcome::Error(e),
+            Outcome::Forward(f) => Outcome::Forward(f),
+        }
+    }
+}
+
 /// Guard that only allows admin tokens.
 pub struct AdminAuth;
 
