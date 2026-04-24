@@ -303,9 +303,10 @@ impl ServiceManager {
         }
 
         // Check which services are already running in the supervisor
-        // (e.g. adopted after a reexec). Don't re-register those — the
-        // daemon's busy/upgrade system will handle spec changes gracefully.
-        let already_running: std::collections::HashSet<String> =
+        // (e.g. adopted after a reexec). Adopt them without re-registering
+        // to avoid killing running processes. If the spec changed, schedule
+        // a restart via the daemon's busy/upgrade system instead.
+        let running_services: std::collections::HashMap<String, mac_mgmt_services::ServiceStatus> =
             if let Some(client) = self.client.as_mut() {
                 client
                     .list()
@@ -314,20 +315,40 @@ impl ServiceManager {
                         statuses
                             .into_iter()
                             .filter(|s| s.pid.is_some())
-                            .map(|s| s.name)
+                            .map(|s| (s.name.clone(), s))
                             .collect()
                     })
                     .unwrap_or_default()
             } else {
-                std::collections::HashSet::new()
+                std::collections::HashMap::new()
             };
 
         for i in 0..self.services.len() {
-            let name = &self.services[i].name;
-            if already_running.contains(name) {
-                tracing::info!("{name} already running in supervisor, adopting");
-                self.services[i].registered = true;
-                self.services[i].phase = ServicePhase::Starting;
+            let state = &mut self.services[i];
+            let name = &state.name;
+            if let Some(status) = running_services.get(name.as_str()) {
+                tracing::info!("{name} already running in supervisor (pid {:?}), adopting", status.pid);
+                state.registered = true;
+                state.phase = ServicePhase::Starting;
+
+                // Compare the resolved binary path. If it changed (e.g. nix
+                // upgrade swapped the store path), schedule a graceful restart
+                // so the daemon's busy/upgrade-window logic handles it.
+                let desired_spec = state.service.spawn_spec();
+                let desired_resolved = which::which(&desired_spec.program)
+                    .ok()
+                    .and_then(|p| std::fs::canonicalize(p).ok());
+                let running_resolved = status.resolved_program.as_deref()
+                    .map(std::path::PathBuf::from);
+                if let (Some(desired), Some(running)) = (&desired_resolved, &running_resolved) {
+                    if desired != running {
+                        tracing::info!(
+                            "{name} binary changed ({} -> {}), scheduling restart",
+                            running.display(), desired.display(),
+                        );
+                        state.restart_pending = true;
+                    }
+                }
             } else {
                 self.register_service(i).await;
             }
