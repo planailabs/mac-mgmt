@@ -7,6 +7,12 @@ use crate::web::components::table_utils::{Searchable, SortState, SortableTh, Tab
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
+#[server]
+async fn get_cluster_nixpkgs_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
+    let set: std::collections::HashSet<String> = shas.into_iter().collect();
+    Ok(super::commit_count::nixpkgs_commit_counts(&set).await)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ClusterRow {
     id: String,
@@ -122,6 +128,24 @@ pub fn ClusterList() -> Element {
                 let limit = use_signal(|| 20usize);
                 let sort = use_signal::<SortState>(|| ("name".to_string(), true));
 
+                let list_for_counts = list.clone();
+                let nix_counts = use_resource(move || {
+                    let list = list_for_counts.clone();
+                    async move {
+                        let shas: Vec<String> = list
+                            .iter()
+                            .filter_map(|c| c.nixpkgs_commit.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        if shas.is_empty() {
+                            return std::collections::HashMap::new();
+                        }
+                        get_cluster_nixpkgs_counts(shas).await.unwrap_or_default()
+                    }
+                });
+                let counts = nix_counts.read();
+
                 let list_clone = list.clone();
                 let filtered = use_memo(move || {
                     let q = search.read().to_lowercase();
@@ -189,8 +213,21 @@ pub fn ClusterList() -> Element {
                                         td { class: "px-6 py-4",
                                             if let Some(commit) = &cluster.nixpkgs_commit {
                                                 {
-                                                    let short: String = commit.chars().take(7).collect();
-                                                    rsx! { span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", "{short}" } }
+                                                    let short: String = commit.chars().take(12).collect();
+                                                    let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{commit}");
+                                                    let count_label = counts.as_ref()
+                                                        .and_then(|m| m.get(commit))
+                                                        .map(|n| format!(" #{n}"))
+                                                        .unwrap_or_default();
+                                                    rsx! {
+                                                        a {
+                                                            class: "text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400",
+                                                            href: "{url}",
+                                                            target: "_blank",
+                                                            title: "{commit}",
+                                                            "{short}{count_label}"
+                                                        }
+                                                    }
                                                 }
                                             } else {
                                                 span { class: "text-gray-400 dark:text-gray-500 text-sm", "-" }

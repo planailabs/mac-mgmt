@@ -110,6 +110,13 @@ struct SampleSummaryView {
 }
 
 #[server]
+async fn get_nixpkgs_commit_count_rollout(sha: String) -> Result<Option<u64>, ServerFnError> {
+    let shas = std::collections::HashSet::from([sha.clone()]);
+    let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+    Ok(counts.get(&sha).copied())
+}
+
+#[server]
 async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
@@ -1971,7 +1978,31 @@ pub fn RolloutDetail(id: String) -> Element {
                         p { span { class: "font-medium", "Version: " } "{ver}" }
                     }
                     if let Some(commit) = &info.nixpkgs_commit {
-                        p { span { class: "font-medium", "Nixpkgs commit: " } code { class: "font-mono", "{commit}" } }
+                        {
+                            let short: String = commit.chars().take(12).collect();
+                            let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{commit}");
+                            let sha_for_count = commit.clone();
+                            let count_res = use_resource(move || {
+                                let s = sha_for_count.clone();
+                                async move { get_nixpkgs_commit_count_rollout(s).await.ok().flatten() }
+                            });
+                            let count_label = count_res.read().as_ref()
+                                .and_then(|n| n.as_ref())
+                                .map(|n| format!(" #{n}"))
+                                .unwrap_or_default();
+                            rsx! {
+                                p {
+                                    span { class: "font-medium", "Nixpkgs commit: " }
+                                    a {
+                                        class: "font-mono text-sm hover:text-blue-600 dark:hover:text-blue-400",
+                                        href: "{url}",
+                                        target: "_blank",
+                                        title: "{commit}",
+                                        "{short}{count_label}"
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1985,7 +2016,31 @@ pub fn RolloutDetail(id: String) -> Element {
                             p { span { class: "font-medium", "Version: " } "{ver}" }
                         }
                         if let Some(commit) = &info.baseline_nixpkgs_commit {
-                            p { span { class: "font-medium", "Nixpkgs commit: " } code { class: "font-mono", "{commit}" } }
+                            {
+                                let short: String = commit.chars().take(12).collect();
+                                let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{commit}");
+                                let sha_for_count = commit.clone();
+                                let count_res = use_resource(move || {
+                                    let s = sha_for_count.clone();
+                                    async move { get_nixpkgs_commit_count_rollout(s).await.ok().flatten() }
+                                });
+                                let count_label = count_res.read().as_ref()
+                                    .and_then(|n| n.as_ref())
+                                    .map(|n| format!(" #{n}"))
+                                    .unwrap_or_default();
+                                rsx! {
+                                    p {
+                                        span { class: "font-medium", "Nixpkgs commit: " }
+                                        a {
+                                            class: "font-mono text-sm hover:text-blue-600 dark:hover:text-blue-400",
+                                            href: "{url}",
+                                            target: "_blank",
+                                            title: "{commit}",
+                                            "{short}{count_label}"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

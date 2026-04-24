@@ -33,3 +33,5 @@ relay.toml
 
 # Test scripts
 test-*.sh
+
+state

@@ -21,6 +21,8 @@ struct FleetEntry {
     /// Number of commits leading up to git_sha (fetched from GitLab).
     #[serde(default)]
     commit_count: Option<u64>,
+    #[serde(default)]
+    nixpkgs_commit: Option<String>,
     services: serde_json::Value,
     tunnels: serde_json::Value,
     relay_proxy_hostname: Option<String>,
@@ -61,6 +63,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         environment: String,
         version: String,
         git_sha: Option<String>,
+        nixpkgs_commit: Option<String>,
         services: serde_json::Value,
         tunnels: serde_json::Value,
         relay_proxy_hostname: Option<String>,
@@ -133,7 +136,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 
     let rows = if let Some(ids) = effective {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, c.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              WHERE dh.cluster_id = ANY($1) \
@@ -145,7 +148,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, c.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              ORDER BY dh.reported_at DESC",
@@ -167,6 +170,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
                 version: r.version,
                 git_sha: r.git_sha,
                 commit_count: None, // fetched async in the component
+                nixpkgs_commit: r.nixpkgs_commit,
                 services: r.services,
                 tunnels: r.tunnels,
                 relay_proxy_hostname: r.relay_proxy_hostname,
@@ -189,6 +193,12 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 async fn get_commit_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
     Ok(super::commit_count::mac_mgmt_commit_counts(&set).await)
+}
+
+#[server]
+async fn get_nixpkgs_commit_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
+    let set: std::collections::HashSet<String> = shas.into_iter().collect();
+    Ok(super::commit_count::nixpkgs_commit_counts(&set).await)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,6 +383,27 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     });
     let counts = commit_counts.read();
 
+    let nixpkgs_counts = use_resource(move || async move {
+        let entries = data.read();
+        let shas: Vec<String> = entries
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|e| e.nixpkgs_commit.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if shas.is_empty() {
+            return std::collections::HashMap::new();
+        }
+        get_nixpkgs_commit_counts(shas).await.unwrap_or_default()
+    });
+    let nix_counts = nixpkgs_counts.read();
+
     let snapshot = data.read();
     match snapshot.as_ref() {
         Some(Ok(entries)) => {
@@ -500,6 +531,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                     SortableTh { label: "Hostname".to_string(), sort_key: "hostname".to_string(), sort }
                                     SortableTh { label: "Env".to_string(), sort_key: "env".to_string(), sort }
                                     SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Nixpkgs" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Status" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Load" }
                                     th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Services" }
@@ -677,6 +709,27 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                     href: "{url}",
                                                                     target: "_blank",
                                                                     title: "{sha}",
+                                                                    "{short}{count_label}"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                td { class: "px-6 py-4 text-sm",
+                                                    if let Some(nix_sha) = &entry.nixpkgs_commit {
+                                                        {
+                                                            let short: String = nix_sha.chars().take(12).collect();
+                                                            let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{nix_sha}");
+                                                            let count_label = nix_counts.as_ref()
+                                                                .and_then(|m| m.get(nix_sha))
+                                                                .map(|n| format!(" #{n}"))
+                                                                .unwrap_or_default();
+                                                            rsx! {
+                                                                a {
+                                                                    class: "text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400",
+                                                                    href: "{url}",
+                                                                    target: "_blank",
+                                                                    title: "{nix_sha}",
                                                                     "{short}{count_label}"
                                                                 }
                                                             }

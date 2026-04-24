@@ -176,6 +176,48 @@ async fn create_rollout(
         }
     }
 
+    // Nixpkgs rollback protection: block if new commit is older than any in the cohort.
+    if let Some(nix) = &nixpkgs_commit {
+        let current_commits: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT c.nixpkgs_commit \
+             FROM unnest($1::uuid[]) AS gid \
+             JOIN LATERAL ( \
+               SELECT cluster_id FROM rollout_group_members WHERE group_id = gid \
+               UNION ALL \
+               SELECT id FROM clusters WHERE gid = '00000000-0000-0000-0000-000000000000'::uuid \
+             ) rgm ON true \
+             JOIN clusters c ON c.id = rgm.cluster_id \
+             WHERE c.nixpkgs_commit IS NOT NULL",
+        )
+        .bind(&resolved)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        if !current_commits.is_empty() {
+            let mut all_shas: std::collections::HashSet<String> =
+                current_commits.iter().cloned().collect();
+            all_shas.insert(nix.clone());
+            let counts = super::commit_count::nixpkgs_commit_counts(&all_shas).await;
+
+            let new_count = counts.get(nix).ok_or_else(|| {
+                ServerFnError::new(format!("cannot resolve commit count for {nix}"))
+            })?;
+            for cur in &current_commits {
+                let cur_count = counts.get(cur).ok_or_else(|| {
+                    ServerFnError::new(format!("cannot resolve commit count for current {cur}"))
+                })?;
+                if new_count < cur_count {
+                    let short_new: String = nix.chars().take(12).collect();
+                    let short_cur: String = cur.chars().take(12).collect();
+                    return Err(ServerFnError::new(format!(
+                        "nixpkgs {short_new} (#{new_count}) is older than current {short_cur} (#{cur_count}); use rollback to downgrade"
+                    )));
+                }
+            }
+        }
+    }
+
     let rollout_id = Uuid::new_v4();
     sqlx::query("INSERT INTO rollouts (id, target_version, nixpkgs_commit) VALUES ($1, $2, $3)")
         .bind(rollout_id)

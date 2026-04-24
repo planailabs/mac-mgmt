@@ -163,6 +163,33 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
         if !valid {
             return Err(ServerFnError::new("commit must be 7-40 hex chars"));
         }
+
+        // Rollback protection: block if the new commit is older than current.
+        let current_commit: Option<String> =
+            sqlx::query_scalar("SELECT nixpkgs_commit FROM clusters WHERE id = $1")
+                .bind(uuid)
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if let Some(ref current) = current_commit {
+            let shas: std::collections::HashSet<String> =
+                [c.clone(), current.clone()].into_iter().collect();
+            let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+            let new_count = counts.get(&c).ok_or_else(|| {
+                ServerFnError::new(format!("cannot resolve commit count for {c}"))
+            })?;
+            let cur_count = counts.get(current).ok_or_else(|| {
+                ServerFnError::new(format!("cannot resolve commit count for current {current}"))
+            })?;
+            if new_count < cur_count {
+                let short_new: String = c.chars().take(12).collect();
+                let short_cur: String = current.chars().take(12).collect();
+                return Err(ServerFnError::new(format!(
+                    "nixpkgs {short_new} (#{new_count}) is older than current {short_cur} (#{cur_count}); use rollback to downgrade"
+                )));
+            }
+        }
+
         sqlx::query("UPDATE clusters SET nixpkgs_commit = $1 WHERE id = $2")
             .bind(&c)
             .bind(uuid)
