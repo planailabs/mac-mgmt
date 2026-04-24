@@ -331,16 +331,31 @@ impl ServiceManager {
                 state.registered = true;
                 state.phase = ServicePhase::Starting;
 
-                // Compare the full spawn spec (program, args, env). If
-                // anything changed, schedule a graceful restart so the
-                // daemon's busy/upgrade-window logic handles it.
+                // Compare the full spawn spec (program, args, env) and
+                // the resolved binary path. Schedule a graceful restart
+                // if either changed (e.g. args changed, or nix upgrade
+                // installed a new store path for the same program name).
                 let desired_spec = state.service.spawn_spec();
                 if let Some(running_spec) = &status.spec {
                     if *running_spec != desired_spec {
-                        tracing::info!(
-                            "{name} spec changed, scheduling restart"
-                        );
+                        tracing::info!("{name} spec changed, scheduling restart");
                         state.restart_pending = true;
+                    }
+                }
+                if !state.restart_pending {
+                    let desired_resolved = which::which(&desired_spec.program)
+                        .ok()
+                        .and_then(|p| std::fs::canonicalize(p).ok());
+                    let running_resolved = status.resolved_program.as_deref()
+                        .map(std::path::PathBuf::from);
+                    if let (Some(desired), Some(running)) = (&desired_resolved, &running_resolved) {
+                        if desired != running {
+                            tracing::info!(
+                                "{name} binary changed ({} -> {}), scheduling restart",
+                                running.display(), desired.display(),
+                            );
+                            state.restart_pending = true;
+                        }
                     }
                 }
             } else {
