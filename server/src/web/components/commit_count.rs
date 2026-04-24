@@ -30,17 +30,27 @@ impl RepoCache {
     }
 
     async fn get_or_fetch(&self, shas: &HashSet<String>) -> HashMap<String, u64> {
+        // Strip "-dirty" suffixes so the API lookup uses a clean SHA,
+        // then map results back to the original keys.
+        let mut clean_to_orig: HashMap<String, Vec<String>> = HashMap::new();
+        for sha in shas {
+            let clean = sha.strip_suffix("-dirty").unwrap_or(sha).to_string();
+            clean_to_orig.entry(clean).or_default().push(sha.clone());
+        }
+
         let client = reqwest::Client::new();
         let mut result = HashMap::new();
         let mut to_fetch = Vec::new();
 
         {
             let cached = self.cache.lock().await;
-            for sha in shas {
-                if let Some(&count) = cached.get(sha) {
-                    result.insert(sha.clone(), count);
+            for clean in clean_to_orig.keys() {
+                if let Some(&count) = cached.get(clean) {
+                    for orig in &clean_to_orig[clean] {
+                        result.insert(orig.clone(), count);
+                    }
                 } else {
-                    to_fetch.push(sha.clone());
+                    to_fetch.push(clean.clone());
                 }
             }
         }
@@ -50,8 +60,10 @@ impl RepoCache {
                 gitlab_binary_search(&client, self.base_url, sha, self.search_lo, self.search_hi)
                     .await
             {
-                result.insert(sha.clone(), count);
                 self.cache.lock().await.insert(sha.clone(), count);
+                for orig in &clean_to_orig[sha] {
+                    result.insert(orig.clone(), count);
+                }
             }
         }
 

@@ -74,12 +74,13 @@ impl Daemon {
     // ── Event handlers ───────────────────────────────────────────────
 
     async fn handle_update(&mut self) {
-        // Network-heavy operations run in background tasks.
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+            // Await the target version fetch so check_and_apply sees the
+            // server's target. Nixpkgs pin can run in the background.
+            fetch_target_version(url, token).await;
             let u = url.clone();
             let t = token.clone();
             tokio::spawn(async move {
-                fetch_target_version(&u, &t).await;
                 fetch_nixpkgs_pin(&u, &t).await;
             });
         }
@@ -563,6 +564,8 @@ impl Daemon {
                             tokio::task::spawn_blocking(crate::self_update::check_and_apply),
                         )
                         .await;
+                        #[cfg(feature = "services")]
+                        self.svc_mgr.send_update_self().await;
                     }
                 } else {
                     tracing::info!("outside upgrade window, deferring self-update");
@@ -1394,13 +1397,8 @@ pub async fn run_sim(
         healer_unhealthy_counter: 0,
     };
 
-    // Run startup sync in background.
     if let (Some(url), Some(token)) = (&daemon.server_url, &daemon.server_token) {
-        let u = url.clone();
-        let t = token.clone();
-        tokio::spawn(async move {
-            fetch_target_version(&u, &t).await;
-        });
+        fetch_target_version(url, token).await;
     }
 
     daemon.spawn_sync_skills_and_mcp();
