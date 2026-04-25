@@ -362,47 +362,46 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     };
 
     // Fetch commit counts async for all unique SHAs in the current data.
-    let commit_counts = use_resource(move || async move {
+    // Both mac-mgmt and nixpkgs counts are fetched in a single resource
+    // to avoid double-borrowing the data signal.
+    type CountPair = (std::collections::HashMap<String, u64>, std::collections::HashMap<String, u64>);
+    let all_counts = use_resource(move || async move {
         let entries = data.read();
-        let shas: Vec<String> = entries
+        let (git_shas, nix_shas): (Vec<String>, Vec<String>) = entries
             .as_ref()
             .and_then(|r| r.as_ref().ok())
             .map(|entries| {
-                entries
+                let git: Vec<String> = entries
                     .iter()
                     .filter_map(|e| e.git_sha.clone())
                     .collect::<std::collections::HashSet<_>>()
                     .into_iter()
-                    .collect()
-            })
-            .unwrap_or_default();
-        if shas.is_empty() {
-            return std::collections::HashMap::new();
-        }
-        get_commit_counts(shas).await.unwrap_or_default()
-    });
-    let counts = commit_counts.read();
-
-    let nixpkgs_counts = use_resource(move || async move {
-        let entries = data.read();
-        let shas: Vec<String> = entries
-            .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .map(|entries| {
-                entries
+                    .collect();
+                let nix: Vec<String> = entries
                     .iter()
                     .filter_map(|e| e.nixpkgs_commit.clone())
                     .collect::<std::collections::HashSet<_>>()
                     .into_iter()
-                    .collect()
+                    .collect();
+                (git, nix)
             })
             .unwrap_or_default();
-        if shas.is_empty() {
-            return std::collections::HashMap::new();
-        }
-        get_nixpkgs_commit_counts(shas).await.unwrap_or_default()
+        let git_counts = if git_shas.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            get_commit_counts(git_shas).await.unwrap_or_default()
+        };
+        let nix_counts = if nix_shas.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            get_nixpkgs_commit_counts(nix_shas).await.unwrap_or_default()
+        };
+        (git_counts, nix_counts) as CountPair
     });
-    let nix_counts = nixpkgs_counts.read();
+    let counts_read = all_counts.read();
+    let (counts, nix_counts) = counts_read.as_ref()
+        .map(|(g, n)| (Some(g), Some(n)))
+        .unwrap_or((None, None));
 
     let snapshot = data.read();
     match snapshot.as_ref() {
