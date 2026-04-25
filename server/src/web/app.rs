@@ -123,6 +123,8 @@ pub enum Route {
     DocPage { slug: String },
 }
 
+const WASM_LOADING_INNER: &str = r#"<style>@media(prefers-color-scheme:dark){#wasm-loading{background:#1a1f2e!important;color:#7b9fe0!important;border-bottom-color:#2a3040!important}}#wasm-loading svg{animation:wasm-spin 1s linear infinite;width:16px;height:16px}@keyframes wasm-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25"/><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" opacity="0.75"/></svg>Loading&hellip;"#;
+
 const THEME_INIT_SCRIPT: &str = r#"
 (function(){
     try {
@@ -154,6 +156,14 @@ pub fn App() -> Element {
         // Script FIRST: sets .dark class + inline bg before CSS even loads
         script { dangerous_inner_html: THEME_INIT_SCRIPT }
         document::Link { rel: "stylesheet", href: "{css_href}" }
+
+        // SSR-rendered loading banner — visible until WASM hydrates, then removed
+        // by use_effect above.
+        div { id: "wasm-loading",
+            style: "position:fixed;top:0;left:0;right:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;background:#f0f4ff;color:#3b5998;font-family:system-ui,-apple-system,sans-serif;font-size:13px;z-index:9999;border-bottom:1px solid #d0d8e8",
+            dangerous_inner_html: WASM_LOADING_INNER,
+        }
+
         Router::<Route> {}
     }
 }
