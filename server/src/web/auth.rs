@@ -323,10 +323,12 @@ fn login_redirect() -> Redirect {
 pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
     let path = request.uri().path();
 
-    // Pass through auth routes and static assets
+    // Pass through auth routes and static assets (including WASM/JS bundles)
     if path.starts_with("/auth")
         || path.starts_with("/assets/")
         || path.starts_with("/public/")
+        || path.starts_with("/wasm/")
+        || path.starts_with("/snippets/")
         || path == "/favicon.ico"
     {
         return next.run(request).await;
