@@ -128,6 +128,10 @@ fn default_web_port() -> u16 {
 #[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     pub cookie_secret: String,
+    /// External base URL of the web UI (e.g. "https://mgmt.example.com").
+    /// Used to derive OIDC callback URLs (`{external_url}/auth/{slug}/callback`).
+    #[serde(default = "default_auth_external_url")]
+    pub external_url: String,
     /// Optional Redis URL for session cache. If absent, PostgreSQL is used.
     pub redis_url: Option<String>,
     /// Emails that are automatically granted admin on first login.
@@ -149,8 +153,6 @@ pub struct OidcProviderConfig {
     pub issuer: Option<String>,
     pub client_id: String,
     pub client_secret: String,
-    /// Explicit redirect URI. If omitted, derived from server web port + slug.
-    pub redirect_uri: Option<String>,
     #[serde(default)]
     pub allowed_domains: Vec<String>,
     #[serde(default)]
@@ -161,6 +163,10 @@ pub struct OidcProviderConfig {
     /// Organization names to auto-add users to on login (with "read" role).
     #[serde(default)]
     pub auto_join_orgs: Vec<String>,
+}
+
+fn default_auth_external_url() -> String {
+    "http://localhost:8080".to_string()
 }
 
 fn default_token_budget() -> u64 {

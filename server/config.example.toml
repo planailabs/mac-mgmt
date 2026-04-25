@@ -11,8 +11,9 @@ port = 7377
 
 [auth]
 cookie_secret = "generate-with-openssl-rand-hex-32"
-# redis_url = "redis://localhost:6379"    # optional, uses PostgreSQL if absent
-# admin_emails = ["admin@example.com"]    # auto-granted admin on first login
+external_url = "http://localhost:8080"        # used to derive OIDC callback URLs ({external_url}/auth/{slug}/callback)
+# redis_url = "redis://localhost:6379"        # optional, uses PostgreSQL if absent
+# admin_emails = ["admin@example.com"]        # auto-granted admin on first login
 
 [[auth.providers]]
 slug = "google"
@@ -20,7 +21,6 @@ name = "Google"
 issuer = "https://accounts.google.com"
 client_id = "xxx.apps.googleusercontent.com"
 client_secret = "GOCSPX-xxx"
-# redirect_uri = "http://localhost:7377/auth/google/callback"  # auto-derived if omitted
 allowed_domains = ["example.com"]
 # allowed_emails = ["admin@other.com"]    # optional, individual email allowlist
 # auto_join_orgs = ["my-org"]             # auto-add users to these orgs on login

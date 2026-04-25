@@ -105,17 +105,14 @@ pub async fn build_auth_layers(
     };
 
     // --- per-provider auth layers -----------------------------------------------
-    let web_port = config::config().web.port;
+    let base_url = auth.external_url.trim_end_matches('/').to_string();
     let logout_handler = Arc::new(DefaultLogoutHandler);
     let mut layers = Vec::new();
     let mut metas = Vec::new();
 
     for provider in &auth.providers {
         let base_path = format!("/auth/{}", provider.slug);
-
-        let redirect_uri = provider.redirect_uri.clone().unwrap_or_else(|| {
-            format!("http://localhost:{web_port}/auth/{}/callback", provider.slug)
-        });
+        let redirect_uri = format!("{base_url}/auth/{}/callback", provider.slug);
 
         let mut builder = OAuthConfigurationBuilder::default();
 
