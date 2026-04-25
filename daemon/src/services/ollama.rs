@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::managed_service::{FileTunnelDef, ManagedService, TunnelDef};
+use crate::managed_service::{DataPath, FileTunnelDef, ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OllamaConfig;
 
@@ -236,6 +236,21 @@ impl ManagedService for Ollama {
 
     fn collect_metrics(&self) {
         self.loaded_models.set(self.loaded_model_count() as i64);
+    }
+
+    fn data_paths(&self, home: &std::path::Path) -> Vec<DataPath> {
+        vec![
+            DataPath {
+                name: "data",
+                path: home.join(".ollama"),
+                backup: true,
+            },
+            DataPath {
+                name: "models",
+                path: home.join(".ollama/models"),
+                backup: false,
+            },
+        ]
     }
 
     fn expose_tunnels(&self) -> Vec<TunnelDef> {

@@ -223,6 +223,123 @@ impl Daemon {
         }
     }
 
+    /// Run a restic backup cycle: backup → forget+prune.
+    #[cfg(feature = "services")]
+    async fn handle_backup(&self) {
+        use crate::services::restic::Restic;
+        let cfg = &self.current_cfg.backup;
+        if !cfg.enabled || cfg.repository.is_empty() {
+            return;
+        }
+
+        let includes_path = config::config_dir().join("restic-includes.txt");
+        if !includes_path.exists() {
+            tracing::warn!("backup: restic-includes.txt not found, skipping");
+            return;
+        }
+
+        let password_file = Restic::password_file_path(cfg);
+        if !password_file.exists() {
+            tracing::warn!("backup: password file not found at {}, skipping", password_file.display());
+            return;
+        }
+
+        let repo = cfg.repository.clone();
+        let pw = password_file.to_string_lossy().into_owned();
+        let inc = includes_path.to_string_lossy().into_owned();
+        let excludes: Vec<String> = cfg.exclude.clone();
+        let keep_within = cfg.keep_within.clone();
+        let env: std::collections::HashMap<String, String> = cfg.env.clone();
+        let dispatcher = self.dispatcher.clone();
+
+        tracing::info!("backup: starting restic backup");
+        sentry_ext::breadcrumb("backup", "starting restic backup", &[("repository", &repo)]);
+
+        let start = std::time::Instant::now();
+
+        // Run in a blocking task — restic can take a long time.
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            use std::process::Command;
+
+            // 1. Backup
+            let mut cmd = Command::new("restic");
+            cmd.args(["backup", "--files-from", &inc])
+                .args(["--repo", &repo])
+                .args(["--password-file", &pw])
+                .args(["--json"])
+                .envs(&env);
+            for pattern in &excludes {
+                cmd.args(["--exclude", pattern]);
+            }
+
+            let backup_timeout = std::time::Duration::from_secs(3600);
+            let output = crate::cmd::output_with_timeout(&mut cmd, backup_timeout)
+                .context("failed to run restic backup")?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("restic backup failed: {}", stderr.trim());
+            }
+
+            // Extract snapshot_id from the JSON summary line.
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let snapshot_id = stdout
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .find(|j| j.get("message_type").and_then(|v| v.as_str()) == Some("summary"))
+                .and_then(|j| j.get("snapshot_id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // 2. Forget + prune
+            let forget_output = crate::cmd::output_with_timeout(
+                Command::new("restic")
+                    .args(["forget", "--prune", "--keep-within", &keep_within])
+                    .args(["--repo", &repo])
+                    .args(["--password-file", &pw])
+                    .envs(&env),
+                backup_timeout,
+            );
+            if let Ok(out) = forget_output {
+                if !out.status.success() {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    tracing::warn!("restic forget/prune failed: {}", stderr.trim());
+                }
+            }
+
+            Ok(snapshot_id)
+        })
+        .await;
+
+        let elapsed = start.elapsed().as_secs();
+
+        match result {
+            Ok(Ok(snapshot_id)) => {
+                tracing::info!("backup completed: snapshot {snapshot_id} in {elapsed}s");
+                sentry_ext::breadcrumb(
+                    "backup",
+                    &format!("backup completed: {snapshot_id}"),
+                    &[("duration_secs", &elapsed.to_string())],
+                );
+                dispatcher.dispatch(&DaemonEvent::BackupCompleted {
+                    snapshot_id,
+                    duration_secs: elapsed,
+                });
+            }
+            Ok(Err(e)) => {
+                tracing::error!("backup failed: {e:#}");
+                sentry_ext::breadcrumb("backup", &format!("backup failed: {e}"), &[]);
+                dispatcher.dispatch(&DaemonEvent::BackupFailed {
+                    error: format!("{e:#}"),
+                });
+            }
+            Err(e) => {
+                tracing::error!("backup task panicked: {e}");
+                dispatcher.dispatch(&DaemonEvent::BackupFailed {
+                    error: format!("task panicked: {e}"),
+                });
+            }
+        }
+    }
+
     fn handle_shutdown(&self, signal: &str) {
         tracing::info!("received {signal}, shutting down");
         sentry_ext::breadcrumb("daemon", &format!("{signal} received, shutting down"), &[]);
@@ -886,6 +1003,14 @@ pub async fn run(
         assessment::DEFAULT_PROBE_INTERVAL,
         120,
     ));
+    let backup_interval = if cfg.backup.enabled {
+        humantime::parse_duration(&cfg.backup.interval)
+            .unwrap_or(std::time::Duration::from_secs(6 * 3600))
+    } else {
+        // Effectively never — backup is disabled.
+        std::time::Duration::from_secs(365 * 24 * 3600)
+    };
+    let mut backup_tick = time::interval(backup_interval);
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to register SIGTERM handler")?;
@@ -1109,6 +1234,11 @@ pub async fn run(
 
             _ = assessment_probe_tick.tick() => {
                 daemon.run_assessment_probes();
+            }
+
+            _ = backup_tick.tick() => {
+                #[cfg(feature = "services")]
+                daemon.handle_backup().await;
             }
 
             _ = crate::config_watch::recv_debounced(&mut config_rx) => {

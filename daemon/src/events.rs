@@ -21,6 +21,13 @@ pub enum DaemonEvent {
         service: String,
         error: String,
     },
+    BackupCompleted {
+        snapshot_id: String,
+        duration_secs: u64,
+    },
+    BackupFailed {
+        error: String,
+    },
 }
 
 impl DaemonEvent {
@@ -33,6 +40,8 @@ impl DaemonEvent {
             Self::ServiceRecovered { .. } => "service_recovered",
             Self::UpgradeInstalled { .. } => "upgrade_installed",
             Self::UpgradeFailed { .. } => "upgrade_failed",
+            Self::BackupCompleted { .. } => "backup_completed",
+            Self::BackupFailed { .. } => "backup_failed",
         }
     }
 }
@@ -60,6 +69,15 @@ impl fmt::Display for DaemonEvent {
             }
             Self::UpgradeFailed { service, error } => {
                 write!(f, "{service} upgrade failed: {error}")
+            }
+            Self::BackupCompleted {
+                snapshot_id,
+                duration_secs,
+            } => {
+                write!(f, "backup completed (snapshot {snapshot_id}, {duration_secs}s)")
+            }
+            Self::BackupFailed { error } => {
+                write!(f, "backup failed: {error}")
             }
         }
     }

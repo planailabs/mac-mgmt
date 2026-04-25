@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod cloud_openclaw;
 pub mod cloud_opencode;
 pub mod lms_openclaw;
@@ -16,10 +17,10 @@ use anyhow::Result;
 use crate::managed_service::ManagedService;
 use crate::services::{
     apprise::Apprise, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
-    openclaw::OpenClaw, opencode::Opencode, rocm_smi::RocmSmi, unsloth::Unsloth,
+    openclaw::OpenClaw, opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
 };
 use mac_mgmt_common::{
-    AgentProvider, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig,
+    AgentProvider, BackupConfig, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig,
     OpenClawConfig, OpencodeConfig, UnslothConfig,
 };
 
@@ -59,6 +60,7 @@ pub fn build_services(
     ollama_cfg: OllamaConfig,
     lms_cfg: LmsConfig,
     unsloth_cfg: UnslothConfig,
+    backup_cfg: BackupConfig,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
@@ -105,6 +107,14 @@ pub fn build_services(
     // its vendor's PCI ID so GPU-less hosts don't pull the nix package.
     services.push(Box::new(NvidiaSmi));
     services.push(Box::new(RocmSmi));
+
+    if backup_cfg.enabled {
+        tracing::info!("backup enabled (restic)");
+        services.push(Box::new(Restic::new(backup_cfg)));
+    } else {
+        tracing::info!("backup disabled");
+    }
+
     services
 }
 
@@ -118,6 +128,7 @@ pub fn build_connectors(
     lms_cfg: &LmsConfig,
     unsloth_cfg: &UnslothConfig,
     cloud_cfgs: &[CloudConfig],
+    backup_cfg: &BackupConfig,
 ) -> Vec<Box<dyn Connector>> {
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
@@ -210,6 +221,10 @@ pub fn build_connectors(
         AgentProvider::None => {
             tracing::debug!("default_agent=none, no agent connectors");
         }
+    }
+
+    if backup_cfg.enabled {
+        connectors.push(Box::new(backup::BackupConnector));
     }
 
     tracing::info!(

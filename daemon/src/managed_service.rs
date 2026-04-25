@@ -1,9 +1,23 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 
 pub use mac_mgmt_services::SpawnSpec;
+
+/// A named path that a service owns — config files, data dirs, model caches.
+/// Used for backup path collection and unmanaged service presence detection.
+#[derive(Debug, Clone)]
+pub struct DataPath {
+    /// Short label (e.g. "config", "data", "models", "cache").
+    pub name: &'static str,
+    /// Absolute path on disk.
+    pub path: PathBuf,
+    /// Whether this path should be included in backups.
+    /// Large model caches (e.g. ollama models) default to false.
+    pub backup: bool,
+}
 
 /// A TCP tunnel that a managed service exposes for proxying through the relay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,5 +357,13 @@ pub trait ManagedService: Send + Sync {
         &self,
     ) -> Pin<Box<dyn Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
         Box::pin(std::future::ready(Vec::new()))
+    }
+
+    /// Return the data paths this service owns — config files, data dirs,
+    /// model caches. Used for backup path collection and unmanaged service
+    /// presence detection. Paths with `backup: false` are excluded from
+    /// backups unless `include_models` is set.
+    fn data_paths(&self, _home: &std::path::Path) -> Vec<DataPath> {
+        Vec::new()
     }
 }

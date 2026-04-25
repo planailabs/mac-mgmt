@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::connectors::merge_json;
-use crate::managed_service::{FileTunnelDef, ManagedService, TunnelDef};
+use crate::managed_service::{DataPath, FileTunnelDef, ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OpencodeConfig;
 
@@ -174,6 +174,21 @@ impl ManagedService for Opencode {
         crate::nix::profile_install("opencode", true)?;
         tracing::info!("opencode upgraded, restart pending until idle");
         Ok(true)
+    }
+
+    fn data_paths(&self, home: &std::path::Path) -> Vec<DataPath> {
+        vec![
+            DataPath {
+                name: "config",
+                path: home.join(".config/opencode/config.json"),
+                backup: true,
+            },
+            DataPath {
+                name: "data",
+                path: home.join(".local/share/opencode"),
+                backup: true,
+            },
+        ]
     }
 
     fn expose_tunnels(&self) -> Vec<TunnelDef> {

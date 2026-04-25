@@ -160,6 +160,7 @@ impl ServiceManager {
         let lms_cfg = std::mem::take(&mut cfg.lms);
         let unsloth_cfg = std::mem::take(&mut cfg.unsloth);
         let cloud_cfgs = std::mem::take(&mut cfg.cloud);
+        let backup_cfg = std::mem::take(&mut cfg.backup);
 
         let cache_dir = crate::config::config_dir().join("config_providers.json");
         let mut config_store = ConfigStore::new(Some(cache_dir));
@@ -182,9 +183,12 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&cloud_cfgs) {
             config_store.set("cloud", v);
         }
+        if let Ok(v) = serde_json::to_value(&backup_cfg) {
+            config_store.set("backup", v);
+        }
 
         let connectors =
-            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &unsloth_cfg, &cloud_cfgs);
+            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &unsloth_cfg, &cloud_cfgs, &backup_cfg);
 
         let all_services = connectors::build_services(
             &global_cfg,
@@ -193,6 +197,7 @@ impl ServiceManager {
             ollama_cfg,
             lms_cfg,
             unsloth_cfg,
+            backup_cfg,
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
@@ -234,6 +239,10 @@ impl ServiceManager {
             });
         }
 
+        // Collect backup-worthy paths from all services and store in config
+        // store so the BackupConnector can write restic-includes.txt.
+        Self::update_backup_paths(&mut config_store, &services, &install_only);
+
         let mut connectors: Vec<ConnectorState> = connectors
             .into_iter()
             .map(|c| ConnectorState {
@@ -257,6 +266,41 @@ impl ServiceManager {
             config_store,
             inprocess,
         })
+    }
+
+    /// Collect backup-worthy paths from all services and store them in the
+    /// config store as the `"backup_paths"` provider. The BackupConnector
+    /// reads these to write `restic-includes.txt`.
+    fn update_backup_paths(
+        config_store: &mut ConfigStore,
+        services: &[ServiceState],
+        install_only: &[Box<dyn ManagedService>],
+    ) {
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/root"));
+        let mut paths: Vec<serde_json::Value> = Vec::new();
+        for s in services {
+            for dp in s.service.data_paths(&home) {
+                paths.push(serde_json::json!({
+                    "service": s.name,
+                    "name": dp.name,
+                    "path": dp.path.to_string_lossy(),
+                    "backup": dp.backup,
+                }));
+            }
+        }
+        for svc in install_only {
+            for dp in svc.data_paths(&home) {
+                paths.push(serde_json::json!({
+                    "service": svc.name(),
+                    "name": dp.name,
+                    "path": dp.path.to_string_lossy(),
+                    "backup": dp.backup,
+                }));
+            }
+        }
+        if let Ok(v) = serde_json::to_value(&paths) {
+            config_store.set("backup_paths", v);
+        }
     }
 
     /// Register service-specific Prometheus metrics with the given Metrics instance.
@@ -812,10 +856,16 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&cfg.cloud) {
             self.config_store.set("cloud", v);
         }
+        if let Ok(v) = serde_json::to_value(&cfg.backup) {
+            self.config_store.set("backup", v);
+        }
+
+        // Refresh backup paths in the config store.
+        Self::update_backup_paths(&mut self.config_store, &self.services, &self.install_only);
 
         // Rebuild the connector list from current config.
         let new_connectors =
-            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.cloud);
+            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.cloud, &cfg.backup);
         self.connectors = new_connectors
             .into_iter()
             .map(|c| ConnectorState {

@@ -1200,6 +1200,88 @@ pub struct HealerClusterConfig {
     pub fix_model: Option<String>,
 }
 
+// ── Backup (restic) ───────────────────────────────────────────────────
+
+fn default_backup_interval() -> String {
+    "6h".to_string()
+}
+
+fn default_backup_keep() -> String {
+    "7d".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BackupConfig {
+    #[schemars(description = "Whether restic backups are enabled")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(
+        description = "Restic repository path or URL (e.g. /backup/restic, s3:bucket/prefix, sftp:host:/path)"
+    )]
+    #[serde(default)]
+    pub repository: String,
+    #[schemars(description = "Path to the restic password/key file for repository encryption. Auto-generated if omitted.")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_file: Option<String>,
+    #[schemars(description = "How often to run backups (e.g. \"6h\", \"1d\")")]
+    #[serde(default = "default_backup_interval")]
+    pub interval: String,
+    #[schemars(description = "Retention policy: keep snapshots from the last N duration (e.g. \"7d\", \"30d\")")]
+    #[serde(default = "default_backup_keep")]
+    pub keep_within: String,
+    #[schemars(description = "Extra paths to include in backups (beyond auto-detected service paths)")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_paths: Vec<String>,
+    #[schemars(description = "Glob patterns to exclude from backups")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    #[schemars(description = "Whether to include large model caches (ollama models, lm-studio cache). Default false.")]
+    #[serde(default)]
+    pub include_models: bool,
+    #[schemars(description = "Environment variables for restic (e.g. AWS_ACCESS_KEY_ID for S3 backends)")]
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub env: std::collections::HashMap<String, String>,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            repository: String::new(),
+            password_file: None,
+            interval: default_backup_interval(),
+            keep_within: default_backup_keep(),
+            extra_paths: Vec::new(),
+            exclude: Vec::new(),
+            include_models: false,
+            env: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl BackupConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.enabled && self.repository.is_empty() {
+            return Err(ValidationError(
+                "backup.repository must be set when backup is enabled".into(),
+            ));
+        }
+        if self.enabled {
+            humantime::parse_duration(&self.interval).map_err(|e| {
+                ValidationError(format!("invalid backup.interval '{}': {e}", self.interval))
+            })?;
+            humantime::parse_duration(&self.keep_within).map_err(|e| {
+                ValidationError(format!(
+                    "invalid backup.keep_within '{}': {e}",
+                    self.keep_within
+                ))
+            })?;
+        }
+        Ok(())
+    }
+}
+
 // ── Cluster Config (what the server manages per-cluster) ──────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -1232,6 +1314,8 @@ pub struct ClusterConfig {
     pub ai_proxy: AiProxyConfig,
     #[serde(default)]
     pub healer: HealerClusterConfig,
+    #[serde(default)]
+    pub backup: BackupConfig,
 }
 
 impl OllamaConfig {
@@ -1284,6 +1368,9 @@ impl ClusterConfig {
         }
         if self.ai_proxy.enabled {
             self.ai_proxy.validate().map_err(|e| e.to_string())?;
+        }
+        if self.backup.enabled {
+            self.backup.validate().map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -1357,6 +1444,8 @@ pub struct DaemonConfig {
     pub ai_proxy: AiProxyConfig,
     #[serde(default)]
     pub healer: HealerClusterConfig,
+    #[serde(default)]
+    pub backup: BackupConfig,
 }
 
 impl DaemonSettings {

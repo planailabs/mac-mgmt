@@ -6,6 +6,7 @@ pub mod nvidia_smi;
 pub mod ollama;
 pub mod openclaw;
 pub mod opencode;
+pub mod restic;
 pub mod rocm_smi;
 pub mod unsloth;
 

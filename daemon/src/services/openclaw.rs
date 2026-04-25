@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::connectors::merge_json;
-use crate::managed_service::{FileTunnelDef, FileValidator, ManagedService, TunnelDef};
+use crate::managed_service::{DataPath, FileTunnelDef, FileValidator, ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OpenClawConfig;
 
@@ -432,6 +432,21 @@ impl ManagedService for OpenClaw {
     fn collect_metrics(&self) {
         self.active_sessions
             .set(Self::active_session_count() as i64);
+    }
+
+    fn data_paths(&self, home: &std::path::Path) -> Vec<DataPath> {
+        vec![
+            DataPath {
+                name: "config",
+                path: home.join(".openclaw/openclaw.json"),
+                backup: true,
+            },
+            DataPath {
+                name: "data",
+                path: home.join(".openclaw"),
+                backup: true,
+            },
+        ]
     }
 
     fn expose_tunnels(&self) -> Vec<TunnelDef> {

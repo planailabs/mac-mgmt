@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
-use crate::managed_service::{ManagedService, TunnelDef};
+use crate::managed_service::{DataPath, ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::LmsConfig;
 
@@ -149,6 +149,14 @@ impl ManagedService for Lms {
             tracing::debug!("lms is idle");
         }
         Ok(busy)
+    }
+
+    fn data_paths(&self, home: &std::path::Path) -> Vec<DataPath> {
+        vec![DataPath {
+            name: "cache",
+            path: home.join(".cache/lm-studio"),
+            backup: false,
+        }]
     }
 
     fn expose_shell_commands(&self) -> Vec<crate::managed_service::ShellCommandDef> {

@@ -58,7 +58,6 @@ impl UnmanagedService {
 pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<UnmanagedService> {
     use crate::connectors::build_services;
 
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
     let services = build_services(
         &cfg.global,
         std::mem::take(&mut cfg.openclaw),
@@ -66,63 +65,30 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
         std::mem::take(&mut cfg.ollama),
         std::mem::take(&mut cfg.lms),
         std::mem::take(&mut cfg.unsloth),
+        std::mem::take(&mut cfg.backup),
     );
+
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
 
     services
         .into_iter()
         .map(|svc| {
-            let (strategy, paths) = match svc.name() {
-                "openclaw" => (
-                    ServiceStrategy::BuiltInDaemon {
-                        install_cmd: vec!["openclaw".into(), "install".into()],
-                        uninstall_cmd: vec!["openclaw".into(), "uninstall".into()],
-                    },
-                    vec![
-                        ServicePath {
-                            name: "config",
-                            path: home.join(".openclaw/openclaw.json"),
-                        },
-                        ServicePath {
-                            name: "data",
-                            path: home.join(".openclaw"),
-                        },
-                    ],
-                ),
-                "ollama" => (
-                    ServiceStrategy::GeneratedUnit,
-                    vec![
-                        ServicePath {
-                            name: "data",
-                            path: home.join(".ollama"),
-                        },
-                        ServicePath {
-                            name: "models",
-                            path: home.join(".ollama/models"),
-                        },
-                    ],
-                ),
-                "lms" => (
-                    ServiceStrategy::GeneratedUnit,
-                    vec![ServicePath {
-                        name: "cache",
-                        path: home.join(".cache/lm-studio"),
-                    }],
-                ),
-                "opencode" => (
-                    ServiceStrategy::GeneratedUnit,
-                    vec![
-                        ServicePath {
-                            name: "config",
-                            path: home.join(".config/opencode/config.json"),
-                        },
-                        ServicePath {
-                            name: "data",
-                            path: home.join(".local/share/opencode"),
-                        },
-                    ],
-                ),
-                _ => (ServiceStrategy::InstallOnly, vec![]),
+            let strategy = match svc.name() {
+                "openclaw" => ServiceStrategy::BuiltInDaemon {
+                    install_cmd: vec!["openclaw".into(), "install".into()],
+                    uninstall_cmd: vec!["openclaw".into(), "uninstall".into()],
+                },
+                "ollama" | "lms" | "opencode" | "unsloth" => ServiceStrategy::GeneratedUnit,
+                _ => ServiceStrategy::InstallOnly,
             };
+            let paths: Vec<ServicePath> = svc
+                .data_paths(&home)
+                .into_iter()
+                .map(|dp| ServicePath {
+                    name: dp.name,
+                    path: dp.path,
+                })
+                .collect();
             UnmanagedService {
                 svc,
                 strategy,

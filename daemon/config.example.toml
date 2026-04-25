@@ -112,6 +112,8 @@ flavour = "cpu"
 #   service_recovered    — a previously unhealthy service is healthy again
 #   upgrade_installed    — a nix package upgrade was applied
 #   upgrade_failed       — a nix package upgrade failed
+#   backup_completed     — a restic backup completed successfully
+#   backup_failed        — a restic backup failed
 #   daemon_started       — the mac-mgmt daemon started
 #   daemon_stopped       — the mac-mgmt daemon is shutting down
 #
@@ -178,6 +180,41 @@ flavour = "cpu"
 # token_budget = 1000000              # 0 = unlimited
 # budget_window = "24h"               # sliding window (humantime format)
 # enabled = true
+
+# ── Backup (restic) ─────────────────────────────────────────────────
+# Periodic backups of service data using restic.
+# Automatically discovers paths from managed services (config, data dirs).
+# [backup]
+# enabled = false
+# Restic repository path or URL.
+# Local: "/backup/restic"
+# S3:    "s3:bucket-name/prefix"
+# SFTP:  "sftp:user@host:/path"
+# repository = "/backup/restic"
+#
+# Path to password/key file for repository encryption.
+# If omitted, a random key is auto-generated at ~/.config/mac-mgmt/restic-key
+# password_file = "/path/to/restic-key"
+#
+# How often to run backups. Default: "6h"
+# interval = "6h"
+#
+# Retention policy: keep snapshots from the last N duration. Default: "7d"
+# keep_within = "7d"
+#
+# Extra paths to include beyond auto-detected service paths.
+# extra_paths = ["/home/user/important-data"]
+#
+# Glob patterns to exclude from backups.
+# exclude = ["*.tmp", "*.log"]
+#
+# Include large model caches (ollama models, lm-studio cache). Default: false
+# include_models = false
+#
+# Environment variables for restic (e.g. S3 credentials).
+# [backup.env]
+# AWS_ACCESS_KEY_ID = "..."
+# AWS_SECRET_ACCESS_KEY = "..."
 
 # ── Cloud LLM providers ─────────────────────────────────────────────
 # Cloud providers are registered with the configured agent (OpenClaw/OpenCode).
