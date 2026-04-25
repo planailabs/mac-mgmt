@@ -109,6 +109,31 @@ enum Commands {
     /// unmanaged manifest without modifying anything on disk.
     #[cfg(feature = "services")]
     ImportServices,
+    /// Talk directly to the managed-services supervisor process
+    Supervisor {
+        #[command(subcommand)]
+        action: SupervisorCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum SupervisorCmd {
+    /// List all registered services and their status
+    List,
+    /// Show detailed info for a specific service
+    Info {
+        /// Service name
+        name: String,
+    },
+    /// Stop and remove a service from the supervisor
+    Unregister {
+        /// Service name
+        name: String,
+    },
+    /// Request the supervisor to re-exec itself (pick up new binary)
+    Reexec,
+    /// Shut down the supervisor and all its children
+    Shutdown,
 }
 
 fn write_ssh_fifo(command: &str) -> Result<()> {
@@ -277,6 +302,77 @@ async fn main() -> Result<()> {
                     std::process::exit(1);
                 }
                 println!("config OK");
+            }
+        }
+        Commands::Supervisor { action } => {
+            let socket_path = mac_mgmt_services::default_socket_path();
+            let mut client = mac_mgmt_services::Client::connect(
+                &socket_path,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!(
+                "cannot connect to supervisor at {}: {e}\n\
+                 Is the daemon running?",
+                socket_path.display()
+            ))?;
+
+            match action {
+                SupervisorCmd::List => {
+                    let services = client.list().await?;
+                    if services.is_empty() {
+                        println!("no services registered");
+                    } else {
+                        println!("{:<20} {:<8} {}", "NAME", "PID", "EXECUTABLE");
+                        for s in &services {
+                            let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
+                            let exe = s.exe.as_deref()
+                                .or(s.resolved_program.as_deref())
+                                .unwrap_or("-");
+                            println!("{:<20} {:<8} {}", s.name, pid, exe);
+                        }
+                        println!("\n{} service(s)", services.len());
+                    }
+                }
+                SupervisorCmd::Info { name } => {
+                    let services = client.list().await?;
+                    let svc = services.iter().find(|s| s.name == name);
+                    match svc {
+                        Some(s) => {
+                            println!("Name:    {}", s.name);
+                            println!("PID:     {}", s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into()));
+                            println!("Exe:     {}", s.exe.as_deref().unwrap_or("-"));
+                            println!("Program: {}", s.resolved_program.as_deref().unwrap_or("-"));
+                            if let Some(spec) = &s.spec {
+                                println!("Command: {} {}", spec.program, spec.args.join(" "));
+                                if !spec.env.is_empty() {
+                                    println!("Env:");
+                                    let mut keys: Vec<_> = spec.env.keys().collect();
+                                    keys.sort();
+                                    for k in keys {
+                                        println!("  {}={}", k, spec.env[k]);
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            eprintln!("service '{name}' not found");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SupervisorCmd::Unregister { name } => {
+                    client.unregister(&name).await?;
+                    println!("unregistered '{name}'");
+                }
+                SupervisorCmd::Reexec => {
+                    client.update_self().await?;
+                    println!("supervisor re-exec requested");
+                }
+                SupervisorCmd::Shutdown => {
+                    client.shutdown().await?;
+                    println!("supervisor shutdown requested");
+                }
             }
         }
         #[cfg(feature = "services")]
