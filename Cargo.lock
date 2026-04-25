@@ -792,7 +792,7 @@ version = "4.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7eff00be299a18769011411c9def0d827e8f2d7bf0c3dbf53633147a8867fd1f"
 dependencies = [
- "no_std_io2",
+ "no_std_io2 0.9.3",
 ]
 
 [[package]]
@@ -5094,7 +5094,7 @@ dependencies = [
  "js-sys",
  "log 0.4.29",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -5965,6 +5965,7 @@ dependencies = [
  "mac-mgmt-healer",
  "mac-mgmt-services",
  "mac-mgmt-ws",
+ "multihash",
  "notify",
  "prometheus",
  "ramhorns",
@@ -6004,6 +6005,26 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mac-mgmt-executor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "rand 0.9.4",
+ "reqwest 0.13.2",
+ "rmcp",
+ "rustls 0.23.38",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
@@ -6112,6 +6133,7 @@ dependencies = [
  "jsonschema",
  "mac-mgmt-common",
  "mac-mgmt-healer",
+ "multihash",
  "pulldown-cmark 0.12.2",
  "rand 0.9.4",
  "reqwest 0.13.2",
@@ -6484,6 +6506,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "multihash"
+version = "0.19.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89ace881e3f514092ce9efbcb8f413d0ad9763860b828981c2de51ddc666936c"
+dependencies = [
+ "no_std_io2 0.8.1",
+ "unsigned-varint",
+]
+
+[[package]]
 name = "mustache"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6642,6 +6674,15 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+]
+
+[[package]]
+name = "no_std_io2"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a3564ce7035b1e4778d8cb6cacebb5d766b5e8fe5a75b9e441e33fb61a872c6"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -7704,6 +7745,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "process-wrap"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e842efad9119158434d193c6682e2ebee4b44d6ad801d7b349623b3f57cdf55"
+dependencies = [
+ "futures",
+ "indexmap",
+ "nix 0.31.2",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "profiling"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8599,6 +8654,7 @@ dependencies = [
  "http 1.4.0",
  "pastey 0.2.1",
  "pin-project-lite",
+ "process-wrap",
  "reqwest 0.13.2",
  "rmcp-macros",
  "schemars",
@@ -11609,6 +11665,12 @@ dependencies = [
  "crypto-common 0.1.7",
  "subtle",
 ]
+
+[[package]]
+name = "unsigned-varint"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb066959b24b5196ae73cb057f45598450d2c5f71460e98c49b738086eff9c06"
 
 [[package]]
 name = "untrusted"

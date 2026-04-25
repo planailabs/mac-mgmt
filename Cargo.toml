@@ -1,5 +1,5 @@
 [workspace]
-members = ["common", "daemon", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
+members = ["common", "daemon", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
 resolver = "3"
 
 [workspace.dependencies]
