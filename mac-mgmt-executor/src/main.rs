@@ -1,5 +1,4 @@
 mod backend;
-mod incus_cli;
 mod incus_common;
 mod incus_https;
 mod incus_unix;
@@ -14,7 +13,6 @@ use clap::Parser;
 use rmcp::ServiceExt;
 
 use crate::backend::IncusBackend;
-use crate::incus_cli::CliBackend;
 use crate::incus_https::HttpsBackend;
 use crate::incus_unix::UnixBackend;
 use crate::server::ExecutorServer;
@@ -33,7 +31,6 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Logs go to stderr -- stdout is reserved for MCP JSON-RPC.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -52,10 +49,6 @@ async fn main() -> Result<()> {
             tracing::info!("using Unix socket backend");
             Arc::new(UnixBackend::new(cli.project.clone()))
         }
-        "cli" => {
-            tracing::info!("using CLI backend");
-            Arc::new(CliBackend::new(cli.project.clone()))
-        }
         "https" => {
             tracing::info!("using HTTPS backend");
             Arc::new(
@@ -63,13 +56,12 @@ async fn main() -> Result<()> {
                     .map_err(|e| anyhow::anyhow!("failed to initialize HTTPS backend: {e}"))?,
             )
         }
-        other => bail!("unknown INCUS_BACKEND value: '{other}' (expected 'unix', 'cli', or 'https')"),
+        other => bail!("unknown INCUS_BACKEND value: '{other}' (expected 'unix' or 'https')"),
     };
 
     let state = SharedState::new(backend);
     let server = ExecutorServer::new(state.clone());
 
-    // Register cleanup on shutdown signal.
     let cleanup_state = state.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -82,13 +74,9 @@ async fn main() -> Result<()> {
 
     let transport = rmcp::transport::io::stdio();
     let server_handle = server.serve(transport).await?;
-
-    // Wait for the MCP transport to close.
     server_handle.waiting().await?;
 
-    // Cleanup on normal exit.
     cleanup_all(&state).await;
-
     Ok(())
 }
 
