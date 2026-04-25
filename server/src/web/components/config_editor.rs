@@ -75,6 +75,29 @@ async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
     Ok(value)
 }
 
+/// Generate a random API key and return (raw_key, hex-encoded multihash).
+/// The raw key is shown once to the user; only the multihash is stored.
+#[server]
+async fn generate_ai_proxy_key() -> Result<(String, String), ServerFnError> {
+    use rand::RngCore;
+    use sha2::{Digest, Sha256};
+
+    const SHA2_256: u64 = 0x12;
+
+    // Generate 32 random bytes, encode as "sk-" prefixed hex for UX.
+    let mut key_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut key_bytes);
+    let raw_key = format!("sk-{}", hex::encode(key_bytes));
+
+    // SHA2-256 multihash of the raw key string.
+    let digest = Sha256::digest(raw_key.as_bytes());
+    let mh = multihash::Multihash::<32>::wrap(SHA2_256, &digest)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let key_hash = hex::encode(mh.to_bytes());
+
+    Ok((raw_key, key_hash))
+}
+
 #[component]
 pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
@@ -447,6 +470,90 @@ fn render_section_fields(
                     }
                 };
             }
+
+            // Special-case: key_hash under ai_proxy.keys gets a "Generate" button.
+            if field_name == "key_hash" && path.len() >= 2 && path.get(path.len() - 2).map(|s| s.as_str()) == Some("keys") {
+                let mut field_path = path.clone();
+                field_path.push(field_name.clone());
+                let fp = field_path.clone();
+                let fp2 = field_path.clone();
+                let key = field_path.join(".");
+                let val_str = get_at_path(&form_values.read(), &field_path)
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default();
+                let sync_c = sync_to_json.clone();
+                let sync_gen = sync_to_json.clone();
+                let mut generated_key = use_signal(|| None::<String>);
+                return rsx! {
+                    div { class: "flex flex-col gap-0.5",
+                        key: "{key}",
+                        label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "key_hash" }
+                        p { class: "text-xs text-gray-500 dark:text-gray-400",
+                            "Hex-encoded multihash of the API key (the raw key is only shown once on generation)"
+                        }
+                        div { class: "flex gap-2",
+                            input {
+                                r#type: "text",
+                                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm font-mono",
+                                value: val_str,
+                                oninput: move |evt| {
+                                    let v = evt.value();
+                                    if v.is_empty() {
+                                        remove_at_path(&mut form_values, &fp2);
+                                    } else {
+                                        set_at_path(&mut form_values, &fp2,
+                                            serde_json::Value::String(v));
+                                    }
+                                    sync_c();
+                                },
+                            }
+                            button {
+                                r#type: "button",
+                                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 whitespace-nowrap",
+                                onclick: move |evt| {
+                                    evt.prevent_default();
+                                    evt.stop_propagation();
+                                    let fp = fp.clone();
+                                    let sync_gen = sync_gen.clone();
+                                    spawn(async move {
+                                        match generate_ai_proxy_key().await {
+                                            Ok((raw_key, key_hash)) => {
+                                                set_at_path(&mut form_values, &fp,
+                                                    serde_json::Value::String(key_hash));
+                                                sync_gen();
+                                                generated_key.set(Some(raw_key));
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("key generation failed: {e}");
+                                            }
+                                        }
+                                    });
+                                },
+                                "Generate"
+                            }
+                        }
+                        if let Some(raw_key) = generated_key.read().as_ref() {
+                            div { class: "mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded",
+                                p { class: "text-xs font-semibold text-yellow-800 dark:text-yellow-200 mb-1",
+                                    "Save this key now — it will not be shown again:"
+                                }
+                                code { class: "block text-sm font-mono bg-white dark:bg-gray-800 p-2 rounded border select-all break-all",
+                                    "{raw_key}"
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: "mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 underline",
+                                    onclick: move |_| {
+                                        generated_key.set(None);
+                                    },
+                                    "Dismiss"
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+
             let resolved = resolve_ref(&field_schema, defs);
             // Description may be on the field schema itself (for $ref fields)
             // or on the resolved type definition
