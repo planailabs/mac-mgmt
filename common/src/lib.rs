@@ -1062,6 +1062,117 @@ where
     deserialize_one_or_many(deserializer)
 }
 
+// ── AI API Proxy ──────────────────────────────────────────────────────
+
+fn default_ai_proxy_port() -> u16 {
+    18900
+}
+
+fn default_budget_window() -> String {
+    "24h".to_string()
+}
+
+/// Concrete wrapper for `AiProxyKeyConfig` lists.
+fn deserialize_ai_proxy_key_list<'de, D>(
+    deserializer: D,
+) -> Result<Vec<AiProxyKeyConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_one_or_many(deserializer)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiProxyConfig {
+    #[schemars(description = "Whether the AI API proxy is enabled")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "Proxy listen port")]
+    #[serde(default = "default_ai_proxy_port")]
+    pub port: u16,
+    #[schemars(description = "Proxy listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(description = "API keys with per-key token budgets")]
+    #[serde(default, deserialize_with = "deserialize_ai_proxy_key_list")]
+    pub keys: Vec<AiProxyKeyConfig>,
+}
+
+impl Default for AiProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_ai_proxy_port(),
+            host: default_host(),
+            keys: Vec::new(),
+        }
+    }
+}
+
+impl AiProxyConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.port == 0 {
+            return Err(ValidationError("ai_proxy.port must be > 0".into()));
+        }
+        for (i, key) in self.keys.iter().enumerate() {
+            key.validate()
+                .map_err(|e| ValidationError(format!("ai_proxy.keys[{i}]: {e}")))?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiProxyKeyConfig {
+    #[schemars(description = "Human-readable label for this key")]
+    #[serde(default)]
+    pub name: String,
+    #[schemars(description = "The API key value (Bearer token)")]
+    pub key: String,
+    #[schemars(description = "Maximum total tokens (input+output) within the budget window. 0 = unlimited")]
+    #[serde(default)]
+    pub token_budget: i64,
+    #[schemars(
+        description = "Sliding window duration for the token budget (e.g. \"24h\", \"7d\", \"1h\")"
+    )]
+    #[serde(default = "default_budget_window")]
+    pub budget_window: String,
+    #[schemars(description = "Whether this key is active")]
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for AiProxyKeyConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            key: String::new(),
+            token_budget: 0,
+            budget_window: default_budget_window(),
+            enabled: true,
+        }
+    }
+}
+
+impl AiProxyKeyConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.key.is_empty() {
+            return Err(ValidationError("key must not be empty".into()));
+        }
+        if self.token_budget < 0 {
+            return Err(ValidationError("token_budget must be >= 0".into()));
+        }
+        if !self.budget_window.is_empty() {
+            humantime::parse_duration(&self.budget_window).map_err(|e| {
+                ValidationError(format!("invalid budget_window '{}': {e}", self.budget_window))
+            })?;
+        }
+        Ok(())
+    }
+}
+
 // ── Healer per-cluster settings ────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -1116,6 +1227,8 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub relay: RelayConfig,
     #[serde(default)]
+    pub ai_proxy: AiProxyConfig,
+    #[serde(default)]
     pub healer: HealerClusterConfig,
 }
 
@@ -1166,6 +1279,9 @@ impl ClusterConfig {
             if c.enabled {
                 c.validate().map_err(|e| format!("cloud[{i}]: {e}"))?;
             }
+        }
+        if self.ai_proxy.enabled {
+            self.ai_proxy.validate().map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -1230,6 +1346,8 @@ pub struct DaemonConfig {
     pub server: DaemonServerConfig,
     #[serde(default)]
     pub relay: RelayConfig,
+    #[serde(default)]
+    pub ai_proxy: AiProxyConfig,
     #[serde(default)]
     pub healer: HealerClusterConfig,
 }

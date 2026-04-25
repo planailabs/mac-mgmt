@@ -41,6 +41,8 @@ struct Daemon {
     initial_assessment_pending: Arc<AtomicBool>,
     #[cfg(feature = "services")]
     svc_mgr: crate::service_mgmt::ServiceManager,
+    #[cfg(feature = "services")]
+    ai_proxy_handle: Option<crate::ai_proxy::AiProxyHandle>,
     #[cfg(feature = "healer")]
     healer: Arc<mac_mgmt_healer::HealerState>,
     #[cfg(feature = "healer")]
@@ -201,6 +203,18 @@ impl Daemon {
                 if new_cfg.daemon.log_level != self.current_cfg.daemon.log_level {
                     tracing::info!("log_level changed to {}", new_cfg.daemon.log_level);
                     set_log_level(&new_cfg.daemon.log_level);
+                }
+
+                // Reload AI proxy config if running.
+                #[cfg(feature = "services")]
+                if let Some(ref handle) = self.ai_proxy_handle {
+                    handle
+                        .reload_config(
+                            &new_cfg.ai_proxy,
+                            &new_cfg.ollama,
+                            &new_cfg.unsloth,
+                        )
+                        .await;
                 }
 
                 self.assessor.update_config(new_cfg.clone()).await;
@@ -600,7 +614,15 @@ impl Daemon {
 
     #[cfg(all(feature = "services", feature = "relay"))]
     fn update_relay_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
-        let td = self.svc_mgr.collect_tunnels();
+        let mut td = self.svc_mgr.collect_tunnels();
+        // Expose AI proxy as a tunnel if enabled.
+        if self.current_cfg.ai_proxy.enabled {
+            td.push(crate::managed_service::TunnelDef {
+                name: "ai-proxy".into(),
+                host: self.current_cfg.ai_proxy.host.clone(),
+                tcp_port: self.current_cfg.ai_proxy.port,
+            });
+        }
         relay_mgr.update_tunnel_defs(td);
     }
 
@@ -786,6 +808,47 @@ pub async fn run(
     });
     tracing::info!("metrics server started on port {metrics_port}");
 
+    // Spawn the AI API proxy if enabled.
+    #[cfg(feature = "services")]
+    let ai_proxy_handle = if current_cfg.ai_proxy.enabled {
+        let usage_path = crate::config::config_dir().join("ai-proxy-usage.jsonl");
+        let usage_tracker =
+            std::sync::Arc::new(crate::ai_proxy::usage::UsageTracker::new(usage_path));
+        let state = std::sync::Arc::new(crate::ai_proxy::AiProxyState::new(
+            &current_cfg.ai_proxy,
+            &current_cfg.ollama,
+            &current_cfg.unsloth,
+            std::sync::Arc::clone(&usage_tracker),
+        ));
+        let handle = crate::ai_proxy::AiProxyHandle::new(std::sync::Arc::clone(&state));
+        let proxy_port = current_cfg.ai_proxy.port;
+        let proxy_host = current_cfg.ai_proxy.host.clone();
+
+        // Periodic usage flush (every 30s)
+        let flush_tracker = std::sync::Arc::clone(&usage_tracker);
+        tokio::spawn(async move {
+            let mut interval = time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                flush_tracker.flush();
+            }
+        });
+
+        tokio::spawn(async move {
+            if let Err(e) = crate::ai_proxy::server::build_rocket(state, proxy_port, &proxy_host)
+                .launch()
+                .await
+            {
+                tracing::error!("AI proxy server failed: {e}");
+                sentry_ext::capture_error(&format!("AI proxy server failed: {e}"), &[]);
+            }
+        });
+        tracing::info!("AI proxy started on port {proxy_port}");
+        Some(handle)
+    } else {
+        None
+    };
+
     let mut update_tick = time::interval(update_interval);
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
@@ -906,6 +969,8 @@ pub async fn run(
         initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         #[cfg(feature = "services")]
         svc_mgr,
+        #[cfg(feature = "services")]
+        ai_proxy_handle,
         #[cfg(feature = "healer")]
         healer,
         #[cfg(feature = "healer")]
@@ -1394,6 +1459,8 @@ pub async fn run_sim(
         initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         #[cfg(feature = "services")]
         svc_mgr,
+        #[cfg(feature = "services")]
+        ai_proxy_handle: None,
         #[cfg(feature = "healer")]
         healer: healer_sim,
         #[cfg(feature = "healer")]
@@ -1662,6 +1729,7 @@ pub async fn run_sim_with_services(
         assessor,
         initial_assessment_pending: Arc::new(AtomicBool::new(true)),
         svc_mgr,
+        ai_proxy_handle: None,
         #[cfg(feature = "healer")]
         healer,
         #[cfg(feature = "healer")]
