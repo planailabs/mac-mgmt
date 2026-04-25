@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mac_mgmt_services::{Client as SupervisorClient, Notification};
 
@@ -37,6 +37,8 @@ enum ServicePhase {
     Healthy,
     /// Running, health checks failing.
     Unhealthy,
+    /// Crashed — waiting for backoff to expire before attempting repair + restart.
+    CrashBackoff,
 }
 
 impl ServicePhase {
@@ -50,6 +52,7 @@ impl ServicePhase {
             Self::Starting => "starting",
             Self::Healthy => "healthy",
             Self::Unhealthy => "unhealthy",
+            Self::CrashBackoff => "crash_backoff",
         }
     }
 }
@@ -68,6 +71,9 @@ struct ServiceState {
     /// Whether we've already sent an initial Register for this service on the
     /// current client connection.
     registered: bool,
+    /// When `phase == CrashBackoff`, the earliest `Instant` at which the
+    /// service may be repaired and restarted.
+    restart_at: Option<Instant>,
 }
 
 struct ConnectorState {
@@ -132,6 +138,7 @@ impl ServiceManager {
                     consecutive_crashes: 0,
                     running_store_path: None,
                     registered: false,
+                    restart_at: None,
                 }
             })
             .collect();
@@ -245,6 +252,7 @@ impl ServiceManager {
                 consecutive_crashes: 0,
                 running_store_path: None,
                 registered: false,
+                restart_at: None,
             });
         }
 
@@ -520,13 +528,18 @@ impl ServiceManager {
                     });
                     if let Some(s) = self.services.iter_mut().find(|s| s.name == name) {
                         s.consecutive_crashes += 1;
-                        s.phase = ServicePhase::Unhealthy;
                         s.post_start_done = false;
-                        if s.consecutive_crashes >= 2 {
-                            if let Err(e) = s.service.repair() {
-                                tracing::error!("{name} repair failed: {e}");
-                            }
-                        }
+                        // Exponential backoff: 5s, 10s, 20s, … capped at 60s.
+                        let delay = Duration::from_secs(
+                            5u64.saturating_mul(1 << s.consecutive_crashes.min(4).saturating_sub(1)),
+                        )
+                        .min(Duration::from_secs(60));
+                        s.restart_at = Some(Instant::now() + delay);
+                        s.phase = ServicePhase::CrashBackoff;
+                        tracing::info!(
+                            "{name} entering crash backoff ({} crashes, delay {delay:?})",
+                            s.consecutive_crashes,
+                        );
                     }
                 }
             }
@@ -606,6 +619,30 @@ impl ServiceManager {
 
         self.drain_notifications();
 
+        // Phase 0: handle crash backoff expiry — repair and reregister.
+        let now = Instant::now();
+        let mut crash_reregisters: Vec<usize> = Vec::new();
+        for (i, state) in self.services.iter_mut().enumerate() {
+            if state.phase == ServicePhase::CrashBackoff {
+                let ready = state.restart_at.map_or(true, |t| now >= t);
+                if !ready {
+                    continue;
+                }
+                let name = state.name.clone();
+                if state.consecutive_crashes >= 2 {
+                    tracing::info!("{name} crash backoff expired, attempting repair");
+                    if let Err(e) = state.service.repair() {
+                        tracing::error!("{name} repair failed: {e}");
+                    }
+                }
+                state.restart_at = None;
+                crash_reregisters.push(i);
+            }
+        }
+        for i in crash_reregisters {
+            self.reregister_service(i).await;
+        }
+
         // Phase 1: lifecycle management.
         let mut busy_flags = vec![false; self.services.len()];
         let mut pending_reregisters: Vec<usize> = Vec::new();
@@ -613,6 +650,11 @@ impl ServiceManager {
         for (i, state) in self.services.iter_mut().enumerate() {
             let name = state.name.clone();
             sentry_ext::set_tag("service", &name);
+
+            // Services in crash backoff skip normal lifecycle processing.
+            if state.phase == ServicePhase::CrashBackoff {
+                continue;
+            }
 
             let busy = state.service.is_busy().unwrap_or(false);
             busy_flags[i] = busy;
@@ -829,6 +871,7 @@ impl ServiceManager {
                 ServicePhase::Starting => 1,
                 ServicePhase::Healthy => 2,
                 ServicePhase::Unhealthy => 3,
+                ServicePhase::CrashBackoff => 4,
             });
     }
 
