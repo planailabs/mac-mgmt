@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::process::Command;
 
 use crate::managed_service::{ManagedService, SpawnSpec, TunnelDef};
@@ -32,6 +32,61 @@ impl Unsloth {
 
     fn base_url(&self) -> String {
         format!("http://{}:{}", self.effective_host(), self.effective_port())
+    }
+
+    async fn http_get(&self, path: &str) -> Result<String> {
+        super::http_get(self.effective_host(), self.effective_port(), path).await
+    }
+
+    /// Liveliness: `/api/health` returns `{"status": "healthy"}`.
+    /// Functional: `/api/system` returns valid system info (backend subsystems up).
+    async fn check_health_impl(&self) -> Result<bool> {
+        // ── liveliness ──
+        let health_body = match self.http_get("/api/health").await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("unsloth liveliness probe failed at {}: {e}", self.base_url());
+                return Ok(false);
+            }
+        };
+
+        let health_json: serde_json::Value = match serde_json::from_str(&health_body) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("unsloth health response not valid JSON: {e}");
+                return Ok(false);
+            }
+        };
+
+        let alive = health_json
+            .get("status")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s == "healthy");
+        if !alive {
+            tracing::warn!("unsloth reports unhealthy: {health_json}");
+            return Ok(false);
+        }
+
+        // ── functional: verify backend subsystems respond ──
+        match self.http_get("/api/system").await {
+            Ok(body) => {
+                let ok = serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .and_then(|v| v.get("platform").cloned())
+                    .is_some();
+                if !ok {
+                    tracing::warn!("unsloth /api/system returned unexpected payload");
+                    return Ok(false);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("unsloth functional probe (/api/system) failed: {e}");
+                return Ok(false);
+            }
+        }
+
+        tracing::debug!("unsloth is healthy at {}", self.base_url());
+        Ok(true)
     }
 }
 
@@ -80,27 +135,15 @@ impl ManagedService for Unsloth {
     }
 
     fn check_health(&self) -> Result<bool> {
-        let output = crate::cmd::output_with_timeout(
-            Command::new("curl")
-                .args(["-sf", &format!("{}/api/health", self.base_url())]),
-            crate::cmd::DEFAULT_TIMEOUT,
-        )
-        .context("failed to check unsloth health")?;
-        if !output.status.success() {
-            return Ok(false);
-        }
-        let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .context("failed to parse unsloth health response")?;
-        let healthy = json
-            .get("status")
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| s == "healthy");
-        if healthy {
-            tracing::debug!("unsloth is healthy at {}", self.base_url());
-        } else {
-            tracing::warn!("unsloth health check reports unhealthy: {}", json);
-        }
-        Ok(healthy)
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.check_health_impl())
+        })
+    }
+
+    fn check_health_async(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + '_>> {
+        Box::pin(self.check_health_impl())
     }
 
     fn repair(&self) -> Result<()> {
@@ -231,6 +274,38 @@ impl ManagedService for Unsloth {
                 }
             }
             entries
+        })
+    }
+
+    fn service_security(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>>
+    {
+        use mac_mgmt_common::{FindingSeverity, SecurityFinding};
+        Box::pin(async move {
+            let mut findings = Vec::new();
+
+            // Check whether the default bootstrap password is still active.
+            // Unsloth stores a one-time password at this well-known path;
+            // if the file still exists the admin likely never changed it.
+            let bootstrap_path = dirs::home_dir()
+                .map(|h| h.join(".unsloth/studio/auth/.bootstrap_password"));
+            let bootstrap_exists = bootstrap_path
+                .as_ref()
+                .is_some_and(|p| p.exists());
+
+            findings.push(SecurityFinding {
+                id: "unsloth_bootstrap_password".into(),
+                severity: FindingSeverity::High,
+                message: if bootstrap_exists {
+                    "Unsloth Studio still has the default bootstrap password — change it via `unsloth studio reset-password`".into()
+                } else {
+                    "Unsloth Studio bootstrap password has been changed".into()
+                },
+                pass: !bootstrap_exists,
+            });
+
+            findings
         })
     }
 }
