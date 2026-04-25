@@ -295,7 +295,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                     // Right side: Profile & Theme (Desktop & Mobile share some parts)
                     div { class: "flex space-x-1 items-center",
 
-                        // Desktop user icon
+                        // Desktop user icon + logout
                         if !display_name.is_empty() {
                             div { class: "hidden xl:flex items-center",
                                 Link {
@@ -315,6 +315,23 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                         }
                                     }
                                     "{display_name}"
+                                }
+                                a {
+                                    href: "/auth/logout",
+                                    class: "ml-1 p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
+                                    title: "Sign out",
+                                    svg {
+                                        class: "h-5 w-5",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "1.5",
+                                        view_box: "0 0 24 24",
+                                        path {
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            d: "M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3-3h-9m9 0-3-3m3 3-3 3",
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -387,11 +404,18 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                     }
                                     div { class: "flex flex-col overflow-hidden",
                                         span { class: "text-sm font-medium text-gray-900 dark:text-white truncate block", "{display_name}" }
-                                        Link {
-                                            to: Route::Profile {},
-                                            class: "text-xs text-blue-600 dark:text-blue-400 hover:underline block",
-                                            onclick: move |_| is_open.set(false),
-                                            "View Profile"
+                                        div { class: "flex gap-3",
+                                            Link {
+                                                to: Route::Profile {},
+                                                class: "text-xs text-blue-600 dark:text-blue-400 hover:underline block",
+                                                onclick: move |_| is_open.set(false),
+                                                "View Profile"
+                                            }
+                                            a {
+                                                href: "/auth/logout",
+                                                class: "text-xs text-red-600 dark:text-red-400 hover:underline block",
+                                                "Sign out"
+                                            }
                                         }
                                     }
                                 }
