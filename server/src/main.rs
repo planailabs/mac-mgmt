@@ -199,6 +199,9 @@ async fn init_server() -> (
         anthropic_model: cfg.healer.anthropic_model.clone(),
         openrouter_api_key: cfg.healer.openrouter_api_key.clone(),
         openrouter_model: cfg.healer.openrouter_model.clone(),
+        openai_compat_api_key: cfg.healer.openai_compat_api_key.clone(),
+        openai_compat_url: cfg.healer.openai_compat_url.clone(),
+        openai_compat_model: cfg.healer.openai_compat_model.clone(),
         token_budget: cfg.healer.token_budget,
         context7_api_key: cfg.healer.context7_api_key.clone(),
     };

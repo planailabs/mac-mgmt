@@ -191,6 +191,15 @@ pub struct HealerConfig {
     /// OpenRouter model override (default: anthropic/claude-sonnet-4).
     #[serde(default)]
     pub openrouter_model: Option<String>,
+    /// Generic OpenAI-compatible API key.
+    #[serde(default)]
+    pub openai_compat_api_key: Option<String>,
+    /// Generic OpenAI-compatible base URL (e.g. "http://my-vllm:8000/v1").
+    #[serde(default)]
+    pub openai_compat_url: Option<String>,
+    /// Default model for the OpenAI-compatible provider.
+    #[serde(default)]
+    pub openai_compat_model: Option<String>,
     /// Max input+output tokens per cloud session before auto-pause. 0 = unlimited.
     #[serde(default = "default_token_budget")]
     pub token_budget: u64,
@@ -328,6 +337,7 @@ impl HealerModelEntry {
                 "ollama" => "Ollama",
                 "anthropic" => "Anthropic",
                 "openrouter" => "OpenRouter",
+                "openai_compat" => "plan.ai Hosted",
                 other => other,
             };
             format!("{} ({})", self.name, suffix)

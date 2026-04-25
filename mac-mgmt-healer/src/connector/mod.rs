@@ -17,6 +17,12 @@ pub struct ConnectorConfig {
     pub openrouter_api_key: Option<String>,
     /// OpenRouter model. Defaults to `anthropic/claude-sonnet-4`.
     pub openrouter_model: Option<String>,
+    /// Generic OpenAI-compatible API key.
+    pub openai_compat_api_key: Option<String>,
+    /// Generic OpenAI-compatible base URL (e.g. "http://my-vllm:8000/v1").
+    pub openai_compat_url: Option<String>,
+    /// Default model for the OpenAI-compatible provider.
+    pub openai_compat_model: Option<String>,
     /// Max input+output tokens per session when using a cloud provider.
     /// Session auto-pauses when exceeded. 0 = unlimited.
     pub token_budget: u64,
@@ -33,6 +39,9 @@ impl Default for ConnectorConfig {
             anthropic_model: None,
             openrouter_api_key: None,
             openrouter_model: None,
+            openai_compat_api_key: None,
+            openai_compat_url: None,
+            openai_compat_model: None,
             token_budget: 200_000,
             context7_api_key: None,
         }
@@ -62,6 +71,7 @@ pub enum LlmProvider {
     Ollama(swiftide::integrations::ollama::Ollama),
     Anthropic(swiftide::integrations::anthropic::Anthropic),
     OpenRouter(swiftide::integrations::openai::OpenAI),
+    OpenAICompat(swiftide::integrations::openai::OpenAI),
 }
 
 /// Which provider was actually resolved.
@@ -70,6 +80,7 @@ pub enum ResolvedProvider {
     Ollama,
     Anthropic,
     OpenRouter,
+    OpenAICompat,
 }
 
 impl ResolvedProvider {
@@ -78,6 +89,7 @@ impl ResolvedProvider {
             Self::Ollama => "ollama",
             Self::Anthropic => "anthropic",
             Self::OpenRouter => "openrouter",
+            Self::OpenAICompat => "openai_compat",
         }
     }
 }
@@ -101,6 +113,7 @@ pub async fn resolve_llm(
     let try_ollama = forced_provider.is_none() || forced_provider == Some("ollama");
     let try_anthropic = forced_provider.is_none() || forced_provider == Some("anthropic");
     let try_openrouter = forced_provider.is_none() || forced_provider == Some("openrouter");
+    let try_openai_compat = forced_provider == Some("openai_compat");
 
     let ollama_url = config
         .ollama_url
@@ -273,6 +286,45 @@ pub async fn resolve_llm(
         } else if forced_provider == Some("openrouter") {
             anyhow::bail!("OpenRouter requested but no API key configured");
         }
+    }
+
+    // 4. Try generic OpenAI-compatible provider (only when explicitly requested)
+    if try_openai_compat {
+        let base_url = config
+            .openai_compat_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("openai_compat requested but no base URL configured"))?;
+        let api_key = config
+            .openai_compat_api_key
+            .as_deref()
+            .unwrap_or("no-key");
+
+        let model = forced_model
+            .map(String::from)
+            .or_else(|| config.openai_compat_model.clone())
+            .ok_or_else(|| anyhow::anyhow!("openai_compat requested but no model specified"))?;
+
+        tracing::info!(model = %model, url = %base_url, "using OpenAI-compatible provider for healer agent");
+
+        let openai_config = async_openai::config::OpenAIConfig::default()
+            .with_api_key(api_key)
+            .with_api_base(base_url);
+
+        let client = async_openai::Client::with_config(openai_config);
+
+        // No on_usage_async callback — token tracking is intentionally skipped.
+        let oai = swiftide::integrations::openai::OpenAI::builder()
+            .client(client)
+            .default_prompt_model(&model)
+            .build()
+            .context("failed to build OpenAI-compatible integration")?;
+
+        return Ok(LlmHandle {
+            provider: LlmProvider::OpenAICompat(oai),
+            is_cloud: false,
+            resolved_provider: ResolvedProvider::OpenAICompat,
+            resolved_model: model,
+        });
     }
 
     anyhow::bail!(

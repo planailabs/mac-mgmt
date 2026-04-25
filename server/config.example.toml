@@ -62,12 +62,15 @@ token = "xzar-api-token-here"
 # anthropic_model = "claude-sonnet-4-6"         # default; used when Ollama is unavailable
 # openrouter_api_key = "sk-or-xxx"              # optional; enables OpenRouter as a cloud provider
 # openrouter_model = "anthropic/claude-sonnet-4" # default OpenRouter model
+# openai_compat_api_key = "sk-xxx"              # optional; generic OpenAI-compatible provider
+# openai_compat_url = "http://my-vllm:8000/v1"  # base URL for the OpenAI-compatible API
+# openai_compat_model = "meta-llama/Llama-3.3-70B-Instruct"  # default model
 # token_budget = 200000                          # global max tokens per cloud session (0 = unlimited)
 # context7_api_key = "c7-..."                   # optional; enables Context7 MCP for documentation lookup
 #
 # Models shown in the UI model picker. If omitted, built-in defaults are used.
 # Each entry has: name (display label), model (provider identifier),
-# provider ("ollama", "anthropic", or "openrouter"), and optional token_budget override.
+# provider ("ollama", "anthropic", "openrouter", or "openai_compat"), and optional token_budget override.
 # [[healer.models]]
 # name = "Gemma 4"
 # model = "gemma4"
@@ -82,6 +85,10 @@ token = "xzar-api-token-here"
 # model = "openai/gpt-4.1"
 # provider = "openrouter"
 # token_budget = 200000
+# [[healer.models]]
+# name = "Llama 3.3 (vLLM)"
+# model = "meta-llama/Llama-3.3-70B-Instruct"
+# provider = "openai_compat"
 #
 # Auto-trigger: automatically start healer sessions for persistently unhealthy instances.
 # auto_trigger = false                            # default: disabled

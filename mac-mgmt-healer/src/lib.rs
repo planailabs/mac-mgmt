@@ -226,7 +226,12 @@ impl HealerState {
         let running_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
 
         // Set initial token budget on the session row.
-        let effective_budget = req.token_budget.unwrap_or(self.inner.connector_config.token_budget);
+        // openai_compat has no token tracking, so skip budget entirely.
+        let effective_budget = if req.provider.as_deref() == Some("openai_compat") {
+            0
+        } else {
+            req.token_budget.unwrap_or(self.inner.connector_config.token_budget)
+        };
         if effective_budget > 0 {
             self.inner.store.set_token_budget(session_id, effective_budget).await.ok();
         }
@@ -846,6 +851,9 @@ async fn run_agent_session(
                 builder.llm(a);
             }
             connector::LlmProvider::OpenRouter(o) => {
+                builder.llm(o);
+            }
+            connector::LlmProvider::OpenAICompat(o) => {
                 builder.llm(o);
             }
         }

@@ -1093,6 +1093,9 @@ pub async fn run(
             anthropic_model: None,
             openrouter_api_key: cloud_openrouter.and_then(|c| c.api_key.clone()),
             openrouter_model: None,
+            openai_compat_api_key: None,
+            openai_compat_url: None,
+            openai_compat_model: None,
             token_budget: 200_000,
             context7_api_key: None,
         };
