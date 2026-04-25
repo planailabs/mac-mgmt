@@ -136,7 +136,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 
     let rows = if let Some(ids) = effective {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, c.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              WHERE dh.cluster_id = ANY($1) \
@@ -148,7 +148,7 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
         .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, Row>(
-            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, c.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
+            "SELECT c.id AS cluster_id, c.name AS cluster_name, dh.instance_id, dh.hostname, dh.environment, dh.version, dh.git_sha, dh.nixpkgs_commit, dh.services, dh.tunnels, dh.relay_proxy_hostname, dh.relay_proxy_url, dh.reported_at, dh.sample, dh.services_extended \
              FROM daemon_heartbeats dh \
              JOIN clusters c ON c.id = dh.cluster_id \
              ORDER BY dh.reported_at DESC",
