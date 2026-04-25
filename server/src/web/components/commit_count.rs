@@ -20,6 +20,8 @@ struct RepoCache {
     cloned: tokio::sync::OnceCell<()>,
     /// SHAs currently being resolved — prevents duplicate in-flight lookups.
     in_flight: Mutex<HashSet<String>>,
+    /// Guards `git remote update` so concurrent callers coalesce into one fetch.
+    fetching: Mutex<()>,
 }
 
 #[cfg(feature = "server")]
@@ -31,6 +33,7 @@ impl RepoCache {
             git_url,
             cloned: tokio::sync::OnceCell::new(),
             in_flight: Mutex::new(HashSet::new()),
+            fetching: Mutex::new(()),
         }
     }
 
@@ -67,10 +70,15 @@ impl RepoCache {
             .await;
     }
 
+    /// Run `git remote update`. Waits for any in-progress fetch to finish
+    /// first so callers that need fresh refs (on-demand SHA resolution) see
+    /// them. Concurrent callers coalesce on the lock rather than spawning
+    /// parallel git processes.
     async fn fetch(&self) {
         if !self.clone_path.exists() {
             return;
         }
+        let _guard = self.fetching.lock().await;
         tracing::info!("fetching {}", self.repo);
         match tokio::process::Command::new("git")
             .args(["remote", "update", "--prune"])
@@ -89,10 +97,16 @@ impl RepoCache {
         }
     }
 
+    /// Best-effort `git gc --auto`. Skips if a fetch or gc is already
+    /// running — gc is non-critical and shouldn't block other operations.
     async fn gc(&self) {
         if !self.clone_path.exists() {
             return;
         }
+        let Ok(_guard) = self.fetching.try_lock() else {
+            tracing::debug!("gc {} skipped, fetch/gc in progress", self.repo);
+            return;
+        };
         match tokio::process::Command::new("git")
             .args(["gc", "--auto", "--quiet"])
             .current_dir(&self.clone_path)
