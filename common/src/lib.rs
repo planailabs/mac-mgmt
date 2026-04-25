@@ -1129,8 +1129,10 @@ pub struct AiProxyKeyConfig {
     #[schemars(description = "Human-readable label for this key")]
     #[serde(default)]
     pub name: String,
-    #[schemars(description = "The API key value (Bearer token)")]
-    pub key: String,
+    #[schemars(
+        description = "Hex-encoded multihash of the API key (the raw key is only shown once on generation)"
+    )]
+    pub key_hash: String,
     #[schemars(description = "Maximum total tokens (input+output) within the budget window. 0 = unlimited")]
     #[serde(default)]
     pub token_budget: i64,
@@ -1148,7 +1150,7 @@ impl Default for AiProxyKeyConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
-            key: String::new(),
+            key_hash: String::new(),
             token_budget: 0,
             budget_window: default_budget_window(),
             enabled: true,
@@ -1158,8 +1160,8 @@ impl Default for AiProxyKeyConfig {
 
 impl AiProxyKeyConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.key.is_empty() {
-            return Err(ValidationError("key must not be empty".into()));
+        if self.key_hash.is_empty() {
+            return Err(ValidationError("key_hash must not be empty".into()));
         }
         if self.token_budget < 0 {
             return Err(ValidationError("token_budget must be >= 0".into()));

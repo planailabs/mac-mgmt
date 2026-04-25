@@ -165,18 +165,15 @@ flavour = "cpu"
 # host = "127.0.0.1"
 #
 # API keys — each key gets its own token budget and sliding window.
+# Keys are stored as hex-encoded SHA2-256 multihashes; the raw key is
+# only shown once on generation (via the web UI or CLI).
+# Generate a key_hash with:
+#   echo -n "your-secret-key" | sha256sum  (then wrap as multihash)
 # [[ai_proxy.keys]]
 # name = "dev-team"
-# key = "sk-my-secret-key"
+# key_hash = "1220..."                # hex-encoded multihash of the API key
 # token_budget = 1000000              # 0 = unlimited
 # budget_window = "24h"               # sliding window (humantime format)
-# enabled = true
-#
-# [[ai_proxy.keys]]
-# name = "ci-pipeline"
-# key = "sk-ci-key"
-# token_budget = 500000
-# budget_window = "7d"
 # enabled = true
 
 # ── Cloud LLM providers ─────────────────────────────────────────────

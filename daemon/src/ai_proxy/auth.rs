@@ -1,10 +1,12 @@
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome, Request};
 
-use super::{AiProxyState, key_hash};
+use super::{AiProxyState, multihash_key};
 
 /// Authenticated API key — extracted from `Authorization: Bearer <key>`.
-/// Budget is checked during extraction; requests over budget are rejected.
+/// The incoming key is hashed with SHA2-256 multihash and compared against
+/// the stored `key_hash` in the config. Budget is checked during extraction;
+/// requests over budget are rejected.
 pub struct AuthedKey {
     pub key_hash: String,
     pub key_name: String,
@@ -47,9 +49,10 @@ impl<'r> FromRequest<'r> for AuthedKey {
             return Outcome::Error((Status::Unauthorized, "empty bearer token"));
         }
 
-        let hash = key_hash(token);
+        // Hash the incoming key and compare against stored multihashes
+        let hash = multihash_key(token);
 
-        // Look up key
+        // Look up key by multihash
         let keys = state.keys.read().await;
         let entry = match keys.iter().find(|k| k.key_hash == hash) {
             Some(e) => e,

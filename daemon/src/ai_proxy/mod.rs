@@ -8,6 +8,9 @@ use mac_mgmt_common::{AiProxyConfig, OllamaConfig, UnslothConfig};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// SHA2-256 multihash code per the multiformats table.
+const SHA2_256: u64 = 0x12;
+
 /// Shared state for the AI proxy, held behind Arc for sharing with Rocket.
 pub struct AiProxyState {
     pub keys: Arc<RwLock<Vec<KeyEntry>>>,
@@ -16,8 +19,9 @@ pub struct AiProxyState {
     pub client: reqwest::Client,
 }
 
-/// Pre-computed key entry for O(1) lookup by hash.
+/// Pre-computed key entry for O(1) lookup by multihash.
 pub struct KeyEntry {
+    /// Hex-encoded multihash of the API key (from config).
     pub key_hash: String,
     pub name: String,
     pub token_budget: i64,
@@ -72,10 +76,13 @@ impl AiProxyState {
     }
 }
 
-fn key_hash(key: &str) -> String {
+/// Compute the hex-encoded SHA2-256 multihash of a raw API key.
+pub fn multihash_key(key: &str) -> String {
     use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(key.as_bytes());
-    hex::encode(&hash[..8])
+    let digest = Sha256::digest(key.as_bytes());
+    let mh = multihash::Multihash::<32>::wrap(SHA2_256, &digest)
+        .expect("SHA2-256 digest fits in 32 bytes");
+    hex::encode(mh.to_bytes())
 }
 
 fn build_key_entries(keys: &[mac_mgmt_common::AiProxyKeyConfig]) -> Vec<KeyEntry> {
@@ -84,7 +91,7 @@ fn build_key_entries(keys: &[mac_mgmt_common::AiProxyKeyConfig]) -> Vec<KeyEntry
             let window = humantime::parse_duration(&k.budget_window)
                 .unwrap_or(std::time::Duration::from_secs(86400));
             KeyEntry {
-                key_hash: key_hash(&k.key),
+                key_hash: k.key_hash.clone(),
                 name: k.name.clone(),
                 token_budget: k.token_budget,
                 budget_window: window,
