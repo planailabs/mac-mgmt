@@ -188,6 +188,7 @@ async fn init_server() -> (
     }
 
     // Background task: periodic git fetch for commit count resolution.
+    #[cfg(feature = "webui")]
     web::components::commit_count::spawn_fetch_loop();
 
     // Initialize healer state
