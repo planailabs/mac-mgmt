@@ -323,13 +323,31 @@ async fn main() -> Result<()> {
                     if services.is_empty() {
                         println!("no services registered");
                     } else {
-                        println!("{:<20} {:<8} {}", "NAME", "PID", "EXECUTABLE");
+                        // Fetch daemon status for lifecycle phase info (best-effort).
+                        let daemon_phases: std::collections::HashMap<String, String> = {
+                            let port = config::read_metrics_port();
+                            let url = format!("http://[::1]:{port}/status");
+                            async {
+                                let client = mac_mgmt_daemon::local_client::build().ok()?;
+                                let resp = client.get(&url).send().await.ok()?;
+                                let s: mac_mgmt_common::StatusResponse = resp.json().await.ok()?;
+                                Some(s.services.into_iter().map(|svc| (svc.name, svc.phase)).collect::<std::collections::HashMap<_, _>>())
+                            }
+                            .await
+                            .unwrap_or_default()
+                        };
+
+                        println!("{:<20} {:<10} {:<8} {}", "NAME", "PHASE", "PID", "EXECUTABLE");
                         for s in &services {
                             let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
                             let exe = s.exe.as_deref()
                                 .or(s.resolved_program.as_deref())
                                 .unwrap_or("-");
-                            println!("{:<20} {:<8} {}", s.name, pid, exe);
+                            let phase = daemon_phases
+                                .get(&s.name)
+                                .map(|p| p.as_str())
+                                .unwrap_or(if s.pid.is_some() { "running" } else { "stopped" });
+                            println!("{:<20} {:<10} {:<8} {}", s.name, phase, pid, exe);
                         }
                         println!("\n{} service(s)", services.len());
                     }

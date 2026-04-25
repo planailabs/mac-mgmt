@@ -38,14 +38,19 @@ pub async fn print_status(port: Option<u16>) -> Result<()> {
     }
 
     println!(
-        "{:<12} {:<9} {:<9} {}",
-        "SERVICE", "HEALTHY", "UPGRADE", "BUSY"
+        "{:<12} {:<10} {:<9} {:<9} {}",
+        "SERVICE", "PHASE", "UPGRADE", "BUSY", "HEALTHY"
     );
     for svc in &status.services {
-        let healthy = if svc.healthy { "yes" } else { "NO" };
+        let phase = if svc.phase.is_empty() {
+            if svc.healthy { "healthy" } else { "unhealthy" }
+        } else {
+            &svc.phase
+        };
         let upgrade = if svc.upgrade_pending { "pending" } else { "-" };
         let busy = if svc.busy { "yes" } else { "-" };
-        println!("{:<12} {:<9} {:<9} {}", svc.name, healthy, upgrade, busy);
+        let healthy = if svc.healthy { "yes" } else { "NO" };
+        println!("{:<12} {:<10} {:<9} {:<9} {}", svc.name, phase, upgrade, busy, healthy);
     }
 
     Ok(())

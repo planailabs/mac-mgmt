@@ -587,6 +587,7 @@ pub struct Metrics {
     pub service_healthy: IntGaugeVec,
     pub service_upgrade_pending: IntGaugeVec,
     pub service_busy: IntGaugeVec,
+    pub service_phase: IntGaugeVec,
     pub assessment: AssessmentMetrics,
     pub daemon_version: String,
     pub daemon_commit: String,
@@ -634,6 +635,18 @@ impl Metrics {
             .unwrap();
         registry.register(Box::new(service_busy.clone())).unwrap();
 
+        let service_phase = IntGaugeVec::new(
+            Opts::new(
+                "mac_mgmt_service_phase",
+                "Service lifecycle phase (0=stopped, 1=starting, 2=healthy, 3=unhealthy)",
+            ),
+            &["service"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(service_phase.clone()))
+            .unwrap();
+
         let assessment = AssessmentMetrics::new(&registry);
 
         let heartbeat_last_success = IntGauge::new(
@@ -675,6 +688,7 @@ impl Metrics {
             service_healthy,
             service_upgrade_pending,
             service_busy,
+            service_phase,
             assessment,
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             daemon_commit,
@@ -705,7 +719,7 @@ impl Metrics {
         self.registry.register(collector)
     }
 
-    pub fn status(&self) -> (String, u64, Vec<(String, bool, bool, bool)>) {
+    pub fn status(&self) -> (String, u64, Vec<(String, bool, bool, bool, &'static str)>) {
         let uptime = self.started_at.elapsed().as_secs();
         let families = self.registry.gather();
         let mut service_names: Vec<String> = Vec::new();
@@ -725,6 +739,14 @@ impl Metrics {
         let services = service_names
             .iter()
             .map(|name| {
+                let phase_int = self.service_phase.with_label_values(&[name]).get();
+                let phase = match phase_int {
+                    0 => "stopped",
+                    1 => "starting",
+                    2 => "healthy",
+                    3 => "unhealthy",
+                    _ => "unknown",
+                };
                 (
                     name.clone(),
                     self.service_healthy.with_label_values(&[name]).get() == 1,
@@ -733,6 +755,7 @@ impl Metrics {
                         .get()
                         == 1,
                     self.service_busy.with_label_values(&[name]).get() == 1,
+                    phase,
                 )
             })
             .collect();

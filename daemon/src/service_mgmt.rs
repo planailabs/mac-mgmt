@@ -43,6 +43,15 @@ impl ServicePhase {
     fn is_healthy(self) -> bool {
         self == Self::Healthy
     }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Starting => "starting",
+            Self::Healthy => "healthy",
+            Self::Unhealthy => "unhealthy",
+        }
+    }
 }
 
 struct ServiceState {
@@ -579,7 +588,7 @@ impl ServiceManager {
         }
         if !self.ensure_client().await {
             for s in &mut self.services {
-                Self::update_metrics(metrics, &s.name, false, s.upgrade_pending, false);
+                Self::update_metrics(metrics, &s.name, false, s.upgrade_pending, false, s.phase);
             }
             return;
         }
@@ -716,6 +725,7 @@ impl ServiceManager {
                 state.phase.is_healthy(),
                 state.upgrade_pending,
                 busy_flags[i],
+                state.phase,
             );
         }
     }
@@ -797,6 +807,7 @@ impl ServiceManager {
         healthy: bool,
         upgrade_pending: bool,
         busy: bool,
+        phase: ServicePhase,
     ) {
         metrics
             .service_healthy
@@ -810,6 +821,15 @@ impl ServiceManager {
             .service_busy
             .with_label_values(&[name])
             .set(if busy { 1 } else { 0 });
+        metrics
+            .service_phase
+            .with_label_values(&[name])
+            .set(match phase {
+                ServicePhase::Stopped => 0,
+                ServicePhase::Starting => 1,
+                ServicePhase::Healthy => 2,
+                ServicePhase::Unhealthy => 3,
+            });
     }
 
     // ── Schedule restart ─────────────────────────────────────────────
@@ -899,6 +919,7 @@ impl ServiceManager {
                     "healthy": s.phase.is_healthy(),
                     "upgrade_pending": s.upgrade_pending,
                     "busy": false,
+                    "phase": s.phase.as_str(),
                 })
             })
             .collect()

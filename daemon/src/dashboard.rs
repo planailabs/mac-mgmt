@@ -95,7 +95,7 @@ pub fn render(metrics: &Arc<Metrics>, assessor: &Arc<Assessor>) -> String {
 
     let services: Vec<ServiceRow> = svc_list
         .into_iter()
-        .map(|(name, healthy, upgrade_pending, busy)| ServiceRow {
+        .map(|(name, healthy, upgrade_pending, busy, _phase)| ServiceRow {
             name,
             healthy,
             unhealthy: !healthy,

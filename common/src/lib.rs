@@ -390,6 +390,9 @@ pub struct ServiceStatus {
     pub healthy: bool,
     pub upgrade_pending: bool,
     pub busy: bool,
+    /// Lifecycle phase: "stopped", "starting", "healthy", "unhealthy".
+    #[serde(default)]
+    pub phase: String,
 }
 
 const VALID_FLAVOURS: &[&str] = &["cpu", "rocm", "cuda", "vulkan"];
