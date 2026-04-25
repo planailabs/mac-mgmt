@@ -10,79 +10,83 @@ use dioxus::fullstack::axum::{
     body::Body,
     extract::Request,
     middleware::Next,
-    response::{IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 use super::user::{OrgMembership, WebUser};
 use crate::config;
 
-/// Extract the email from a JWT ID token's payload (base64url-decoded, no verification needed
-/// since the OIDC client already validated it).
-fn email_from_id_token(id_token: &str) -> Option<String> {
+/// Provider metadata stored at startup for use by `require_auth` and the login page.
+pub struct ProviderMeta {
+    pub slug: String,
+    pub name: String,
+    pub issuer: Option<String>,
+    pub allowed_domains: Vec<String>,
+    pub allowed_emails: Vec<String>,
+    pub auto_join_orgs: Vec<String>,
+}
+
+/// Providers populated during `build_auth_layers()`.
+static AUTH_PROVIDERS: OnceLock<Vec<ProviderMeta>> = OnceLock::new();
+
+/// Decode the JWT payload (base64url, no verification — already validated by the OIDC client).
+fn jwt_claims(id_token: &str) -> Option<serde_json::Value> {
     let parts: Vec<&str> = id_token.split('.').collect();
     if parts.len() != 3 {
         return None;
     }
-
     use base64::Engine;
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let payload = engine.decode(parts[1]).ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
-    claims.get("email")?.as_str().map(String::from)
+    serde_json::from_slice(&payload).ok()
+}
+
+/// Extract the email from a JWT ID token's payload.
+fn email_from_id_token(id_token: &str) -> Option<String> {
+    jwt_claims(id_token)?.get("email")?.as_str().map(String::from)
 }
 
 /// Extract the user's display name from the JWT ID token payload.
 fn name_from_id_token(id_token: &str) -> Option<String> {
-    let parts: Vec<&str> = id_token.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    use base64::Engine;
-    let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let payload = engine.decode(parts[1]).ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
-    claims.get("name")?.as_str().map(String::from)
+    jwt_claims(id_token)?.get("name")?.as_str().map(String::from)
 }
 
-/// Build the OIDC AuthLayer and session cache from config.
-pub async fn build_auth_layer(db_url: &str) -> (AuthLayer, Arc<dyn AuthCache + Send + Sync>) {
-    let cfg = config::config()
-        .oidc
+/// Extract the issuer (`iss`) claim from the JWT ID token payload.
+fn issuer_from_id_token(id_token: &str) -> Option<String> {
+    jwt_claims(id_token)?.get("iss")?.as_str().map(String::from)
+}
+
+/// Find the provider that issued this token by matching the JWT `iss` claim.
+fn provider_for_issuer(iss: &str) -> Option<&'static ProviderMeta> {
+    let providers = AUTH_PROVIDERS.get()?;
+    // Normalise trailing slashes for comparison.
+    let iss_norm = iss.trim_end_matches('/');
+    providers.iter().find(|p| {
+        p.issuer
+            .as_deref()
+            .is_some_and(|i| i.trim_end_matches('/') == iss_norm)
+    })
+}
+
+/// Build OIDC AuthLayers (one per provider) and a shared session cache.
+pub async fn build_auth_layers(
+    db_url: &str,
+) -> (Vec<AuthLayer>, Arc<dyn AuthCache + Send + Sync>) {
+    let auth = config::config()
+        .auth
         .as_ref()
-        .expect("build_auth_layer called without OIDC config");
+        .expect("build_auth_layers called without [auth] config");
 
-    let oauth_config = OAuthConfigurationBuilder::default()
-        .with_issuer("https://accounts.google.com")
-        .await
-        .expect("failed to discover Google OIDC endpoints")
-        .with_client_id(&cfg.client_id)
-        .with_client_secret(&cfg.client_secret)
-        .with_redirect_uri(&cfg.redirect_uri)
-        .with_private_cookie_key(&cfg.cookie_secret)
-        .with_scopes(vec!["openid", "email", "profile"])
-        .with_post_logout_redirect_uri("/auth/login")
-        // axum-oidc-client 0.3.0 has a units bug: handle_default calls
-        // extend_auth_session(id, session_max_age) which treats the value as
-        // seconds, while with_session_max_age is documented as minutes. We pass
-        // 21600 so the server-side cache row lives for 6h sliding (21600 sec).
-        // The cookie max_age becomes Duration::minutes(21600) ≈ 15 days, but
-        // the cache row is the real gate.
-        .with_session_max_age(21600)
-        .build()
-        .expect("failed to build OIDC configuration");
-
-    let cache: Arc<dyn AuthCache + Send + Sync> = if let Some(redis_url) = &cfg.redis_url {
-        // Redis L2 with Moka L1
+    // --- shared session cache ---------------------------------------------------
+    let cache: Arc<dyn AuthCache + Send + Sync> = if let Some(redis_url) = &auth.redis_url {
         let redis_cache = axum_oidc_client::redis::AuthCache::new(redis_url, 28800);
         Arc::new(
             TwoTierAuthCache::new(Some(Arc::new(redis_cache)), TwoTierCacheConfig::default())
                 .expect("failed to create two-tier cache with Redis"),
         )
     } else {
-        // PostgreSQL L2 with Moka L1
         let sql_config = SqlCacheConfig {
             connection_string: db_url.to_string(),
             ..Default::default()
@@ -100,23 +104,81 @@ pub async fn build_auth_layer(db_url: &str) -> (AuthLayer, Arc<dyn AuthCache + S
         )
     };
 
+    // --- per-provider auth layers -----------------------------------------------
+    let web_port = config::config().web.port;
     let logout_handler = Arc::new(DefaultLogoutHandler);
-    let auth_layer = AuthLayer::new(Arc::new(oauth_config), cache.clone(), logout_handler);
+    let mut layers = Vec::new();
+    let mut metas = Vec::new();
 
-    (auth_layer, cache)
+    for provider in &auth.providers {
+        let base_path = format!("/auth/{}", provider.slug);
+
+        let redirect_uri = provider.redirect_uri.clone().unwrap_or_else(|| {
+            format!("http://localhost:{web_port}/auth/{}/callback", provider.slug)
+        });
+
+        let mut builder = OAuthConfigurationBuilder::default();
+
+        if let Some(issuer) = &provider.issuer {
+            builder = builder
+                .with_issuer(issuer)
+                .await
+                .unwrap_or_else(|e| panic!("OIDC discovery failed for {}: {e}", provider.slug));
+        }
+
+        let scopes: Vec<&str> = provider
+            .scopes
+            .as_ref()
+            .map(|s| s.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_else(|| vec!["openid", "email", "profile"]);
+
+        let oauth_config = builder
+            .with_client_id(&provider.client_id)
+            .with_client_secret(&provider.client_secret)
+            .with_redirect_uri(&redirect_uri)
+            .with_private_cookie_key(&auth.cookie_secret)
+            .with_scopes(scopes)
+            .with_base_path(&base_path)
+            .with_post_logout_redirect_uri("/auth/login")
+            // axum-oidc-client 0.3.0 units bug: value is treated as seconds
+            // despite being documented as minutes. 21600 sec = 6h sliding window.
+            .with_session_max_age(21600)
+            .build()
+            .unwrap_or_else(|e| panic!("failed to build OIDC config for {}: {e}", provider.slug));
+
+        let layer = AuthLayer::new(
+            Arc::new(oauth_config),
+            cache.clone(),
+            logout_handler.clone(),
+        );
+        layers.push(layer);
+
+        metas.push(ProviderMeta {
+            slug: provider.slug.clone(),
+            name: provider.name.clone(),
+            issuer: provider.issuer.clone(),
+            allowed_domains: provider.allowed_domains.clone(),
+            allowed_emails: provider.allowed_emails.clone(),
+            auto_join_orgs: provider.auto_join_orgs.clone(),
+        });
+    }
+
+    let _ = AUTH_PROVIDERS.set(metas);
+
+    (layers, cache)
 }
 
-/// Upsert the user record and load org memberships.
+/// Upsert the user record, auto-join orgs, and load org memberships.
 async fn resolve_user(
     pool: &sqlx::PgPool,
     email: &str,
     name: Option<&str>,
+    auto_join_orgs: &[String],
 ) -> Result<WebUser, sqlx::Error> {
-    let oidc = config::config().oidc.as_ref();
-    let is_admin_email = oidc.is_some_and(|o| o.admin_emails.contains(&email.to_string()));
+    let auth = config::config().auth.as_ref();
+    let is_admin_email = auth.is_some_and(|a| a.admin_emails.contains(&email.to_string()));
 
     // Upsert user: create on first login, update name on subsequent logins.
-    // If the email is in admin_emails, ensure is_admin is set to true.
     let display_name = name.unwrap_or("");
     let user = if is_admin_email {
         sqlx::query_as::<_, (Uuid, String, String, bool)>(
@@ -139,6 +201,27 @@ async fn resolve_user(
         .fetch_one(pool)
         .await?
     };
+
+    // Auto-join organizations for this provider (idempotent).
+    for org_name in auto_join_orgs {
+        let org_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM organizations WHERE name = $1",
+        )
+        .bind(org_name)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(org_id) = org_id {
+            sqlx::query(
+                "INSERT INTO organization_members (organization_id, user_id, role) \
+                 VALUES ($1, $2, 'read') ON CONFLICT DO NOTHING",
+            )
+            .bind(org_id)
+            .bind(user.0)
+            .execute(pool)
+            .await?;
+        }
+    }
 
     // Load organization memberships with roles
     let org_memberships = sqlx::query_as::<_, (Uuid, String)>(
@@ -222,13 +305,21 @@ async fn try_impersonate(
     }
 }
 
-/// Middleware that enforces authentication and allowed_emails on all non-auth, non-asset routes.
+/// Return the redirect target for unauthenticated requests.
+fn login_redirect() -> Redirect {
+    let providers = AUTH_PROVIDERS.get();
+    match providers.map(|p| p.as_slice()) {
+        Some([only]) => Redirect::to(&format!("/auth/{}", only.slug)),
+        _ => Redirect::to("/auth/login"),
+    }
+}
+
+/// Middleware that enforces authentication on all non-auth, non-asset routes.
 ///
-/// axum-oidc-client's AuthLayer handles /auth, /auth/callback, /auth/logout and sets the
-/// session cookie, but does not block unauthenticated requests on other routes.
-/// This middleware reads the session from the cache, decodes the ID token to extract the
-/// email, checks against the allowed_emails list, upserts the user record, and injects
-/// `WebUser` into request extensions.
+/// For each authenticated session it extracts the JWT `iss` claim to determine
+/// which provider issued the token, then checks only that provider's
+/// `allowed_domains`/`allowed_emails`. The user is upserted and auto-joined to
+/// the provider's `auto_join_orgs`.
 pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
     let path = request.uri().path();
 
@@ -310,24 +401,39 @@ pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
                 AuthCache::get_auth_session(cache.as_ref(), &session_id).await
             {
                 if let Some(email) = email_from_id_token(&session.id_token) {
-                    let oidc = config::config().oidc.as_ref();
-                    let domain_ok = oidc.is_some_and(|o| {
-                        o.allowed_domains
+                    // Determine which provider issued this token and check its
+                    // allowed_domains / allowed_emails.
+                    let issuer = issuer_from_id_token(&session.id_token);
+                    let provider = issuer.as_deref().and_then(provider_for_issuer);
+
+                    let (allowed, auto_join_orgs) = if let Some(p) = provider {
+                        let domain_ok = p
+                            .allowed_domains
                             .iter()
-                            .any(|d| email.ends_with(&format!("@{d}")))
-                    });
-                    let email_ok = oidc.is_some_and(|o| o.allowed_emails.contains(&email));
-                    if domain_ok || email_ok {
-                        // Resolve user from database and inject into extensions
+                            .any(|d| email.ends_with(&format!("@{d}")));
+                        let email_ok = p.allowed_emails.contains(&email);
+                        (domain_ok || email_ok, p.auto_join_orgs.as_slice())
+                    } else {
+                        (false, [].as_slice())
+                    };
+
+                    if allowed {
                         let pool = crate::server_pool();
                         if let Ok(pool) = pool {
                             let display_name = name_from_id_token(&session.id_token);
-                            match resolve_user(&pool, &email, display_name.as_deref()).await {
+                            match resolve_user(
+                                &pool,
+                                &email,
+                                display_name.as_deref(),
+                                auto_join_orgs,
+                            )
+                            .await
+                            {
                                 Ok(mut web_user) => {
-                                    // Impersonation: if admin, check for impersonate cookie
                                     if web_user.is_admin {
                                         let imp_id = get_impersonate_cookie(&request);
-                                        web_user = try_impersonate(&pool, web_user, imp_id).await;
+                                        web_user =
+                                            try_impersonate(&pool, web_user, imp_id).await;
                                     }
                                     request.extensions_mut().insert(web_user);
                                 }
@@ -338,11 +444,100 @@ pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
                         }
                         return next.run(request).await;
                     }
-                    tracing::warn!("access denied for {email}");
+                    tracing::warn!(
+                        "access denied for {email} (issuer: {})",
+                        issuer.as_deref().unwrap_or("unknown")
+                    );
                 }
             }
         }
     }
 
-    Redirect::to("/auth").into_response()
+    login_redirect().into_response()
+}
+
+/// Login page shown when multiple OIDC providers are configured.
+pub async fn login_page() -> impl IntoResponse {
+    let providers = AUTH_PROVIDERS.get().map(|p| p.as_slice()).unwrap_or(&[]);
+
+    // Single provider: skip the page and redirect directly.
+    if let [only] = providers {
+        return Redirect::to(&format!("/auth/{}", only.slug)).into_response();
+    }
+
+    let buttons: String = providers
+        .iter()
+        .map(|p| {
+            format!(
+                r#"<a href="/auth/{slug}" class="login-btn">{name}</a>"#,
+                slug = p.slug,
+                name = p.name,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n            ");
+
+    Html(format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in</title>
+    <style>
+        body {{ font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+        .container {{ text-align: center; max-width: 400px; width: 100%; padding: 2rem; }}
+        h1 {{ font-size: 1.5rem; margin-bottom: 2rem; font-weight: 600; }}
+        .login-btn {{ display: block; padding: 0.75rem 1.5rem; margin: 0.75rem 0; background: #1e293b; color: #e2e8f0; text-decoration: none; border-radius: 0.5rem; border: 1px solid #334155; font-size: 1rem; transition: background 0.15s; }}
+        .login-btn:hover {{ background: #334155; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sign in</h1>
+        {buttons}
+    </div>
+</body>
+</html>"#
+    ))
+    .into_response()
+}
+
+/// Generic logout handler: clears the session cookie and redirects to the login page.
+/// Works regardless of which provider was used for login.
+pub async fn logout_handler(request: Request<Body>) -> Response {
+    let configuration = request
+        .extensions()
+        .get::<Arc<OAuthConfiguration>>()
+        .cloned();
+    let cache = request
+        .extensions()
+        .get::<Arc<dyn AuthCache + Send + Sync>>()
+        .cloned();
+
+    if let (Some(conf), Some(cache)) = (configuration, cache) {
+        use axum_extra::extract::cookie::{Cookie, PrivateCookieJar};
+        let jar =
+            PrivateCookieJar::from_headers(request.headers(), conf.private_cookie_key.clone());
+
+        // Invalidate session in cache
+        if let Some(session_cookie) = jar.get(SESSION_KEY) {
+            let _ = cache
+                .invalidate_auth_session(session_cookie.value())
+                .await;
+        }
+
+        // Remove the session cookie
+        let jar = jar.remove(
+            Cookie::build(SESSION_KEY)
+                .path("/")
+                .http_only(true)
+                .same_site(axum_extra::extract::cookie::SameSite::Strict)
+                .secure(true),
+        );
+
+        return (jar, login_redirect()).into_response();
+    }
+
+    login_redirect().into_response()
 }

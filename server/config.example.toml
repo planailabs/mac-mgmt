@@ -9,14 +9,31 @@ port = 7378
 [web]
 port = 7377
 
-[oidc]
+[auth]
+cookie_secret = "generate-with-openssl-rand-hex-32"
+# redis_url = "redis://localhost:6379"    # optional, uses PostgreSQL if absent
+# admin_emails = ["admin@example.com"]    # auto-granted admin on first login
+
+[[auth.providers]]
+slug = "google"
+name = "Google"
+issuer = "https://accounts.google.com"
 client_id = "xxx.apps.googleusercontent.com"
 client_secret = "GOCSPX-xxx"
-redirect_uri = "http://localhost:7377/auth/callback"
+# redirect_uri = "http://localhost:7377/auth/google/callback"  # auto-derived if omitted
 allowed_domains = ["example.com"]
-# allowed_emails = ["admin@other.com"]  # optional, individual email allowlist
-cookie_secret = "generate-with-openssl-rand-hex-32"
-# redis_url = "redis://localhost:6379"  # optional, uses PostgreSQL if absent
+# allowed_emails = ["admin@other.com"]    # optional, individual email allowlist
+# auto_join_orgs = ["my-org"]             # auto-add users to these orgs on login
+
+# Add more providers:
+# [[auth.providers]]
+# slug = "github"
+# name = "GitHub"
+# issuer = "https://token.actions.githubusercontent.com"
+# client_id = "Iv1.xxx"
+# client_secret = "xxx"
+# allowed_emails = ["dev@github.com"]
+# auto_join_orgs = ["github-team"]
 
 [xzar]
 url = "https://xzar.example.com"

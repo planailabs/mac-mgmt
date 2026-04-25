@@ -355,7 +355,7 @@ fn main() {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
         use std::sync::OnceLock;
 
-        static INIT: OnceLock<Option<axum_oidc_client::auth::AuthLayer>> = OnceLock::new();
+        static INIT: OnceLock<Option<Vec<axum_oidc_client::auth::AuthLayer>>> = OnceLock::new();
 
         // Set PORT env var for dioxus if not already set.
         // SAFETY: called before any threads are spawned.
@@ -401,13 +401,13 @@ fn main() {
 
         dioxus::serve(move || async move {
             let dev_no_auth = std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
-            let auth_layer = if let Some(layer) = INIT.get() {
-                layer.clone()
+            let auth_layers = if let Some(layers) = INIT.get() {
+                layers.clone()
             } else {
                 let (_pool, api_rocket, _healer_state) = init_server().await;
                 let cfg = config::load();
 
-                let auth_layer = if dev_no_auth {
+                let auth_layers = if dev_no_auth {
                     tracing::warn!("DEV_ONLY_NO_AUTH=1 — OIDC disabled, using dev admin user");
                     // Insert dev user once at startup.
                     if let Ok(pool) = crate::server_pool() {
@@ -421,11 +421,11 @@ fn main() {
                         }
                     }
                     None
-                } else if cfg.oidc.is_some() {
-                    let (layer, _cache) = web::auth::build_auth_layer(&cfg.database.url).await;
-                    Some(layer)
+                } else if cfg.auth.is_some() {
+                    let (layers, _cache) = web::auth::build_auth_layers(&cfg.database.url).await;
+                    Some(layers)
                 } else {
-                    tracing::warn!("OIDC not configured — web authentication disabled");
+                    tracing::warn!("[auth] not configured — web authentication disabled");
                     None
                 };
 
@@ -436,8 +436,8 @@ fn main() {
                     }
                 });
 
-                let _ = INIT.set(auth_layer.clone());
-                auth_layer
+                let _ = INIT.set(auth_layers.clone());
+                auth_layers
             };
 
             let mut router = axum::Router::new()
@@ -460,10 +460,14 @@ fn main() {
                 },
             ));
 
-            if let Some(auth_layer) = auth_layer {
+            if let Some(auth_layers) = auth_layers {
                 router = router
-                    .layer(axum::middleware::from_fn(web::auth::require_auth))
-                    .layer(auth_layer);
+                    .route("/auth/login", axum::routing::get(web::auth::login_page))
+                    .route("/auth/logout", axum::routing::get(web::auth::logout_handler))
+                    .layer(axum::middleware::from_fn(web::auth::require_auth));
+                for layer in auth_layers {
+                    router = router.layer(layer);
+                }
             } else if dev_no_auth {
                 // DEV mode: add require_auth middleware (for dev user injection) without OIDC layer
                 router = router.layer(axum::middleware::from_fn(web::auth::require_auth));

@@ -10,7 +10,7 @@ pub struct ServerConfig {
     pub api: ApiConfig,
     #[serde(default)]
     pub web: WebConfig,
-    pub oidc: Option<OidcConfig>,
+    pub auth: Option<AuthConfig>,
     pub xzar: Option<XzarConfig>,
     pub anthropic: Option<AnthropicConfig>,
     #[serde(default)]
@@ -126,20 +126,41 @@ fn default_web_port() -> u16 {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OidcConfig {
-    pub client_id: String,
-    pub client_secret: String,
-    pub redirect_uri: String,
-    #[serde(default)]
-    pub allowed_domains: Vec<String>,
-    #[serde(default)]
-    pub allowed_emails: Vec<String>,
+pub struct AuthConfig {
     pub cookie_secret: String,
     /// Optional Redis URL for session cache. If absent, PostgreSQL is used.
     pub redis_url: Option<String>,
     /// Emails that are automatically granted admin on first login.
     #[serde(default)]
     pub admin_emails: Vec<String>,
+    /// OIDC providers. Each gets its own auth routes and access control.
+    pub providers: Vec<OidcProviderConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OidcProviderConfig {
+    /// URL slug used in auth routes: /auth/{slug}, /auth/{slug}/callback
+    pub slug: String,
+    /// Human-readable name shown on the login page.
+    pub name: String,
+    /// OIDC issuer URL for auto-discovery (e.g. "https://accounts.google.com").
+    /// If omitted, authorization_endpoint and token_endpoint must be set manually.
+    pub issuer: Option<String>,
+    pub client_id: String,
+    pub client_secret: String,
+    /// Explicit redirect URI. If omitted, derived from server web port + slug.
+    pub redirect_uri: Option<String>,
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+    #[serde(default)]
+    pub allowed_emails: Vec<String>,
+    /// OAuth scopes to request. Defaults to ["openid", "email", "profile"].
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
+    /// Organization names to auto-add users to on login (with "read" role).
+    #[serde(default)]
+    pub auto_join_orgs: Vec<String>,
 }
 
 fn default_token_budget() -> u64 {
@@ -318,11 +339,11 @@ pub fn load() -> &'static ServerConfig {
 
         #[cfg(feature = "webui")]
         if cfg!(not(debug_assertions))
-            && config.oidc.is_none()
+            && config.auth.is_none()
             && std::env::var("DEV_ONLY_NO_AUTH").as_deref() != Ok("1")
         {
             panic!(
-                "[oidc] section is required in release builds (set DEV_ONLY_NO_AUTH=1 to bypass)"
+                "[auth] section is required in release builds (set DEV_ONLY_NO_AUTH=1 to bypass)"
             );
         }
 
