@@ -47,6 +47,11 @@ struct Daemon {
     healer: Arc<mac_mgmt_healer::HealerState>,
     #[cfg(feature = "healer")]
     healer_unhealthy_counter: u32,
+    /// Skip sending update-self to the supervisor on the first update tick.
+    /// The daemon already ran check_and_apply during startup; telling the
+    /// supervisor to reexec before the daemon itself has restarted is
+    /// premature and causes a needless supervisor cycle.
+    first_update: bool,
 }
 
 impl Daemon {
@@ -97,8 +102,12 @@ impl Daemon {
                 .await;
                 // Tell the supervisor to reexec so it picks up the new binary too.
                 // Children survive the reexec — they're reparented seamlessly.
+                // Skip on the first tick: the daemon itself hasn't restarted yet,
+                // so asking the supervisor to reexec now is premature.
                 #[cfg(feature = "services")]
-                self.svc_mgr.send_update_self().await;
+                if !self.first_update {
+                    self.svc_mgr.send_update_self().await;
+                }
             }
             #[cfg(not(feature = "sim"))]
             tokio::task::spawn_blocking(upgrade_nix);
@@ -112,6 +121,8 @@ impl Daemon {
             #[cfg(all(feature = "services", not(feature = "sim")))]
             self.svc_mgr.check_upgrades();
         }
+
+        self.first_update = false;
     }
 
     async fn handle_config_reload(
@@ -1135,6 +1146,7 @@ pub async fn run(
         healer,
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
+        first_update: true,
     };
 
     // Fetch target version before attempting self-update so check_and_apply
@@ -1638,6 +1650,7 @@ pub async fn run_sim(
         healer: healer_sim,
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
+        first_update: true,
     };
 
     if let (Some(url), Some(token)) = (&daemon.server_url, &daemon.server_token) {
@@ -1915,6 +1928,7 @@ pub async fn run_sim_with_services(
         healer,
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
+        first_update: true,
     };
 
     daemon.spawn_sync_skills_and_mcp();
