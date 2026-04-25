@@ -78,7 +78,7 @@ impl RepoCache {
             .await
         {
             Ok(out) if out.status.success() => {
-                tracing::debug!("fetched {}", self.repo);
+                tracing::info!("fetched {}", self.repo);
             }
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
