@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>mac-mgmt</title>
+        <meta content="text/html;charset=utf-8" http-equiv="Content-Type">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta charset="UTF-8">
+        <style>
+            #wasm-loading {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                padding: 10px;
+                background: #f0f4ff;
+                color: #3b5998;
+                font-family: system-ui, -apple-system, sans-serif;
+                font-size: 13px;
+                z-index: 9999;
+                border-bottom: 1px solid #d0d8e8;
+            }
+            @media (prefers-color-scheme: dark) {
+                #wasm-loading {
+                    background: #1a1f2e;
+                    color: #7b9fe0;
+                    border-bottom-color: #2a3040;
+                }
+            }
+            #wasm-loading svg {
+                animation: wasm-spin 1s linear infinite;
+                width: 16px;
+                height: 16px;
+            }
+            @keyframes wasm-spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+            /* Hide the banner once Dioxus has rendered into #main */
+            #main:not(:empty) ~ #wasm-loading {
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="main"></div>
+        <div id="wasm-loading">
+            <svg viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25"/>
+                <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" opacity="0.75"/>
+            </svg>
+            Loading…
+        </div>
+        <script type="module" async src="/./wasm/mac-mgmt-server.js"></script>
+    </body>
+</html>
