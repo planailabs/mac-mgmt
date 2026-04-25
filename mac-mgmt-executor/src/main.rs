@@ -1,6 +1,8 @@
 mod backend;
 mod incus_cli;
+mod incus_common;
 mod incus_https;
+mod incus_unix;
 mod server;
 mod state;
 mod types;
@@ -14,6 +16,7 @@ use rmcp::ServiceExt;
 use crate::backend::IncusBackend;
 use crate::incus_cli::CliBackend;
 use crate::incus_https::HttpsBackend;
+use crate::incus_unix::UnixBackend;
 use crate::server::ExecutorServer;
 use crate::state::SharedState;
 
@@ -42,9 +45,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let backend_type =
-        std::env::var("INCUS_BACKEND").unwrap_or_else(|_| "cli".to_string());
+        std::env::var("INCUS_BACKEND").unwrap_or_else(|_| "unix".to_string());
 
     let backend: Arc<dyn IncusBackend> = match backend_type.as_str() {
+        "unix" => {
+            tracing::info!("using Unix socket backend");
+            Arc::new(UnixBackend::new(cli.project.clone()))
+        }
         "cli" => {
             tracing::info!("using CLI backend");
             Arc::new(CliBackend::new(cli.project.clone()))
@@ -56,7 +63,7 @@ async fn main() -> Result<()> {
                     .map_err(|e| anyhow::anyhow!("failed to initialize HTTPS backend: {e}"))?,
             )
         }
-        other => bail!("unknown INCUS_BACKEND value: '{other}' (expected 'cli' or 'https')"),
+        other => bail!("unknown INCUS_BACKEND value: '{other}' (expected 'unix', 'cli', or 'https')"),
     };
 
     let state = SharedState::new(backend);

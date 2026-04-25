@@ -7,6 +7,11 @@ use tokio::process::Command;
 use crate::backend::IncusBackend;
 use crate::types::{ExecOutput, OsImage};
 
+/// Backend that shells out to the `incus` CLI binary.
+///
+/// Only used for `exec` and `file push/pull` operations that are awkward
+/// over the REST API (exec requires websockets). Instance lifecycle and
+/// image listing go through [`crate::incus_unix::UnixBackend`] instead.
 pub struct CliBackend {
     project: Option<String>,
 }
@@ -22,6 +27,14 @@ impl CliBackend {
             None => vec![],
         }
     }
+
+    fn cmd(&self) -> Command {
+        let mut cmd = Command::new("incus");
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd
+    }
 }
 
 #[async_trait]
@@ -35,7 +48,8 @@ impl IncusBackend for CliBackend {
         ];
         args.extend(self.project_args());
 
-        let output = Command::new("incus")
+        let output = self
+            .cmd()
             .args(&args)
             .output()
             .await
@@ -69,14 +83,7 @@ impl IncusBackend for CliBackend {
             command.to_string(),
         ]);
 
-        let result = tokio::time::timeout(
-            timeout,
-            Command::new("incus")
-                .args(&args)
-                .stdin(std::process::Stdio::null())
-                .output(),
-        )
-        .await;
+        let result = tokio::time::timeout(timeout, self.cmd().args(&args).output()).await;
 
         match result {
             Ok(Ok(output)) => {
@@ -102,7 +109,8 @@ impl IncusBackend for CliBackend {
         ];
         args.extend(self.project_args());
 
-        let output = Command::new("incus")
+        let output = self
+            .cmd()
             .args(&args)
             .output()
             .await
@@ -110,7 +118,6 @@ impl IncusBackend for CliBackend {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            // Ignore "not found" errors during cleanup.
             if !stderr.contains("not found") {
                 bail!("incus delete failed: {stderr}");
             }
@@ -121,13 +128,14 @@ impl IncusBackend for CliBackend {
     async fn status(&self, name: &str) -> Result<Option<String>> {
         let mut args = vec![
             "list".to_string(),
-            name.to_string(),
+            format!("^{name}$"),
             "--format".to_string(),
             "json".to_string(),
         ];
         args.extend(self.project_args());
 
-        let output = Command::new("incus")
+        let output = self
+            .cmd()
             .args(&args)
             .output()
             .await
@@ -138,8 +146,7 @@ impl IncusBackend for CliBackend {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let entries: Vec<serde_json::Value> =
-            serde_json::from_str(&stdout).unwrap_or_default();
+        let entries: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap_or_default();
 
         for entry in &entries {
             if entry.get("name").and_then(|n| n.as_str()) == Some(name) {
@@ -162,7 +169,8 @@ impl IncusBackend for CliBackend {
         ];
         args.extend(self.project_args());
 
-        let output = Command::new("incus")
+        let output = self
+            .cmd()
             .args(&args)
             .output()
             .await
@@ -177,94 +185,13 @@ impl IncusBackend for CliBackend {
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).context("failed to parse image list JSON")?;
 
-        let current_arch = std::env::consts::ARCH;
-        let incus_arch = match current_arch {
-            "x86_64" => "amd64",
-            "aarch64" => "arm64",
-            other => other,
-        };
-
-        let mut images = Vec::new();
-        for entry in &entries {
-            let props = match entry.get("properties") {
-                Some(p) => p,
-                None => continue,
-            };
-
-            // Filter to current architecture and container type.
-            let arch = props
-                .get("architecture")
-                .and_then(|a| a.as_str())
-                .unwrap_or("");
-            if arch != incus_arch {
-                continue;
-            }
-
-            let image_type = entry
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("");
-            if image_type != "container" {
-                continue;
-            }
-
-            let aliases = entry.get("aliases").and_then(|a| a.as_array());
-            let alias = aliases
-                .and_then(|a| {
-                    a.iter()
-                        .filter_map(|e| e.get("name").and_then(|n| n.as_str()))
-                        // Prefer the shortest alias (e.g. "ubuntu/24.04" over "ubuntu/24.04/amd64").
-                        .min_by_key(|n| n.len())
-                })
-                .unwrap_or("");
-
-            if alias.is_empty() {
-                continue;
-            }
-
-            let description = props
-                .get("description")
-                .and_then(|d| d.as_str())
-                .unwrap_or("")
-                .to_string();
-            let os = props
-                .get("os")
-                .and_then(|o| o.as_str())
-                .unwrap_or("")
-                .to_string();
-            let release = props
-                .get("release")
-                .and_then(|r| r.as_str())
-                .unwrap_or("")
-                .to_string();
-            let variant = props
-                .get("variant")
-                .and_then(|v| v.as_str())
-                .unwrap_or("default")
-                .to_string();
-
-            images.push(OsImage {
-                alias: alias.to_string(),
-                description,
-                os,
-                release,
-                variant,
-                image_type: image_type.to_string(),
-            });
-        }
-
-        // Deduplicate by alias (some images have multiple fingerprints).
-        images.sort_by(|a, b| a.alias.cmp(&b.alias));
-        images.dedup_by(|a, b| a.alias == b.alias);
-
-        Ok(images)
+        Ok(crate::incus_common::parse_image_list(&entries))
     }
 
     async fn file_push(&self, name: &str, path: &str, content: &[u8]) -> Result<()> {
         let mut args = vec!["file".to_string(), "push".to_string(), "-".to_string()];
         args.extend(self.project_args());
         args.push(format!("{name}/{path}"));
-        // Create parent directories.
         args.push("--create-dirs".to_string());
 
         let mut child = Command::new("incus")
@@ -295,14 +222,12 @@ impl IncusBackend for CliBackend {
     }
 
     async fn file_pull(&self, name: &str, path: &str) -> Result<String> {
-        let mut args = vec![
-            "file".to_string(),
-            "pull".to_string(),
-        ];
+        let mut args = vec!["file".to_string(), "pull".to_string()];
         args.extend(self.project_args());
         args.extend([format!("{name}/{path}"), "-".to_string()]);
 
-        let output = Command::new("incus")
+        let output = self
+            .cmd()
             .args(&args)
             .output()
             .await
