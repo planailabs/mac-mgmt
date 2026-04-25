@@ -145,11 +145,14 @@ const THEME_INIT_SCRIPT: &str = r#"
 #[component]
 pub fn App() -> Element {
     let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
+    // Remove the pre-hydration loading banner once WASM has hydrated.
+    use_effect(|| {
+        document::eval("document.getElementById('wasm-loading')?.remove();");
+    });
+
     rsx! {
         // Script FIRST: sets .dark class + inline bg before CSS even loads
         script { dangerous_inner_html: THEME_INIT_SCRIPT }
-        // Remove the pre-hydration loading banner
-        script { dangerous_inner_html: "document.getElementById('wasm-loading')?.remove();" }
         document::Link { rel: "stylesheet", href: "{css_href}" }
         Router::<Route> {}
     }
