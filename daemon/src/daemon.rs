@@ -522,7 +522,7 @@ impl Daemon {
     }
 
     /// Fire-and-forget: run all deep probes.
-    fn run_assessment_probes(&self) {
+    fn run_assessment_probes(&self, kind: Option<crate::assessment::probes::ProbeKind>) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
             let u = url.clone();
             let t = token.clone();
@@ -530,7 +530,9 @@ impl Daemon {
             let hk = Arc::clone(&self.host_key);
             let assessor = Arc::clone(&self.assessor);
             tokio::spawn(async move {
-                assessor.run_probes(&u, &t, &iid, &hk).await;
+                assessor
+                    .run_probes_filtered(&u, &t, &iid, &hk, kind)
+                    .await;
             });
         }
     }
@@ -999,8 +1001,12 @@ pub async fn run(
     // config changes even when the SSE SyncConfig push is missed or unavailable.
     let mut config_poll_tick = time::interval(update_interval);
     let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut assessment_probe_tick = time::interval(assessment::jittered(
-        assessment::DEFAULT_PROBE_INTERVAL,
+    let mut liveness_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_LIVENESS_INTERVAL,
+        10,
+    ));
+    let mut functional_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_FUNCTIONAL_INTERVAL,
         120,
     ));
     let backup_interval = if cfg.backup.enabled {
@@ -1232,8 +1238,12 @@ pub async fn run(
                 daemon.send_assessment_inventory().await;
             }
 
-            _ = assessment_probe_tick.tick() => {
-                daemon.run_assessment_probes();
+            _ = liveness_probe_tick.tick() => {
+                daemon.run_assessment_probes(Some(assessment::probes::ProbeKind::Liveness));
+            }
+
+            _ = functional_probe_tick.tick() => {
+                daemon.run_assessment_probes(Some(assessment::probes::ProbeKind::Functional));
             }
 
             _ = backup_tick.tick() => {
@@ -1557,8 +1567,12 @@ pub async fn run_sim(
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
     let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut assessment_probe_tick = time::interval(assessment::jittered(
-        assessment::DEFAULT_PROBE_INTERVAL,
+    let mut liveness_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_LIVENESS_INTERVAL,
+        10,
+    ));
+    let mut functional_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_FUNCTIONAL_INTERVAL,
         120,
     ));
 
@@ -1699,8 +1713,12 @@ pub async fn run_sim(
                 daemon.send_assessment_inventory().await;
             }
 
-            _ = assessment_probe_tick.tick() => {
-                daemon.run_assessment_probes();
+            _ = liveness_probe_tick.tick() => {
+                daemon.run_assessment_probes(Some(assessment::probes::ProbeKind::Liveness));
+            }
+
+            _ = functional_probe_tick.tick() => {
+                daemon.run_assessment_probes(Some(assessment::probes::ProbeKind::Functional));
             }
 
             Some(cmd) = async {
@@ -1804,8 +1822,12 @@ pub async fn run_sim_with_services(
     let mut health_tick = time::interval(health_interval);
     let mut heartbeat_tick = time::interval(health_interval);
     let mut assessment_inventory_tick = time::interval(assessment::DEFAULT_INVENTORY_INTERVAL);
-    let mut assessment_probe_tick = time::interval(assessment::jittered(
-        assessment::DEFAULT_PROBE_INTERVAL,
+    let mut liveness_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_LIVENESS_INTERVAL,
+        10,
+    ));
+    let mut functional_probe_tick = time::interval(assessment::jittered(
+        assessment::DEFAULT_FUNCTIONAL_INTERVAL,
         120,
     ));
 
@@ -1934,8 +1956,12 @@ pub async fn run_sim_with_services(
                 daemon.send_assessment_inventory().await;
             }
 
-            _ = assessment_probe_tick.tick() => {
-                daemon.run_assessment_probes();
+            _ = liveness_probe_tick.tick() => {
+                daemon.run_assessment_probes(Some(assessment::probes::ProbeKind::Liveness));
+            }
+
+            _ = functional_probe_tick.tick() => {
+                daemon.run_assessment_probes(Some(assessment::probes::ProbeKind::Functional));
             }
 
             Some(cmd) = async {

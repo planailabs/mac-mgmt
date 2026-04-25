@@ -5,9 +5,9 @@
 //! * **Sample** — cheap dynamic numbers (CPU/mem/disk/net) piggybacked on every heartbeat.
 //! * **Inventory** — static facts + security posture, refreshed every ~6h, on startup,
 //!   and on `PushCommand::RequestAssessment`. Delivered via `POST /api/assessment`.
-//! * **Probe** — functional end-to-end round-trips through managed services (full-prompt
-//!   canaries for LLM backends, etc.). Every ~15 min (jittered). Delivered via
-//!   `POST /api/assessment/probe`.
+//! * **Probe** — two tiers: *liveness* (pid/port, every ~1 min) and *functional*
+//!   (full-prompt canaries for LLM backends, every ~30 min). Both jittered.
+//!   Delivered via `POST /api/assessment/probe`.
 
 pub mod gpu;
 pub mod inventory;
@@ -28,8 +28,10 @@ use mac_mgmt_common::{
 
 use crate::metrics::Metrics;
 
-/// Default cadence for deep probes. Jittered ±2min.
-pub const DEFAULT_PROBE_INTERVAL: Duration = Duration::from_secs(15 * 60);
+/// Default cadence for liveness probes (cheap pid/port checks). Jittered ±10s.
+pub const DEFAULT_LIVENESS_INTERVAL: Duration = Duration::from_secs(60);
+/// Default cadence for functional probes (full LLM round-trips). Jittered ±2min.
+pub const DEFAULT_FUNCTIONAL_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// Default cadence for full inventory refresh.
 pub const DEFAULT_INVENTORY_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -155,6 +157,19 @@ impl Assessor {
         instance_id: &str,
         host_key: &russh::keys::PrivateKey,
     ) {
+        self.run_probes_filtered(server_url, server_token, instance_id, host_key, None)
+            .await;
+    }
+
+    /// Run probes matching `kind_filter` (or all if `None`) and send results.
+    pub async fn run_probes_filtered(
+        &self,
+        server_url: &str,
+        server_token: &str,
+        instance_id: &str,
+        host_key: &russh::keys::PrivateKey,
+        kind_filter: Option<probes::ProbeKind>,
+    ) {
         let cfg = match self.config.read().await.clone() {
             Some(c) => c,
             None => {
@@ -163,7 +178,11 @@ impl Assessor {
             }
         };
         let ctx = probes::ProbeCtx::default();
-        let probes = probes::registry(&cfg);
+        let all_probes = probes::registry(&cfg);
+        let probes: Vec<Box<dyn probes::Probe>> = match kind_filter {
+            Some(k) => all_probes.into_iter().filter(|p| p.kind() == k).collect(),
+            None => all_probes,
+        };
         let mut summaries: Vec<ServiceExtState> = Vec::with_capacity(probes.len());
 
         let metrics = self.metrics.read().await.clone();
