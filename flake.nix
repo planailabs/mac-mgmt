@@ -57,6 +57,7 @@
             toolchain
             cargo-edit
             cargo-zigbuild
+            cargo-flamegraph
             zig
             rsync
 
