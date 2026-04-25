@@ -977,10 +977,13 @@ pub async fn run(
             _ = update_tick.tick() => {
                 daemon.handle_update().await;
                 #[cfg(feature = "self-update")]
-                if let Some(bin) = crate::self_update::take_restart_exec() {
-                    restart_exec_bin = Some(bin);
-                    daemon.handle_shutdown("self-update");
-                    break;
+                {
+                    crate::self_update::check_binary_changed();
+                    if let Some(bin) = crate::self_update::take_restart_exec() {
+                        restart_exec_bin = Some(bin);
+                        daemon.handle_shutdown("self-update");
+                        break;
+                    }
                 }
                 #[cfg(feature = "relay")]
                 relay_mgr.sync_ssh_keys();

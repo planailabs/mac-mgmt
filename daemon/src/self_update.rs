@@ -303,6 +303,33 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Check if the install symlink now resolves to a different binary than
+/// the one we're running. This catches external updates (e.g. `nix profile
+/// upgrade`, manual symlink swap) that bypassed the self-update flow.
+/// If a change is detected, sets `RESTART_EXEC` so the main loop restarts.
+pub fn check_binary_changed() -> bool {
+    let Ok(install) = install_bin_path() else {
+        return false;
+    };
+    // Resolve the symlink to its final target.
+    let Ok(target) = std::fs::canonicalize(&install) else {
+        return false;
+    };
+    let Ok(running) = std::env::current_exe() else {
+        return false;
+    };
+    if target != running {
+        tracing::info!(
+            "binary changed: running={} install symlink now points to {}",
+            running.display(),
+            target.display()
+        );
+        *RESTART_EXEC.write().unwrap() = Some(target);
+        return true;
+    }
+    false
+}
+
 /// Ensure the running binary is a symlink into the nix store.
 ///
 /// On first install the binary is often a plain file (copied manually or
