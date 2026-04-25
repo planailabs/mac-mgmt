@@ -706,6 +706,94 @@ async fn request_stage_assessment(
     })
 }
 
+#[server]
+async fn trigger_stage_self_update(
+    _rollout_id: String,
+    stage_id: String,
+) -> Result<RequestAssessmentResult, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let sid: Uuid = stage_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct StageRow { group_id: Uuid }
+    let stage: StageRow = sqlx::query_as("SELECT group_id FROM rollout_stages WHERE id = $1")
+        .bind(sid)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let cohort: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \
+         UNION ALL \
+         SELECT id FROM clusters WHERE $1 = '00000000-0000-0000-0000-000000000000'::uuid",
+    )
+    .bind(stage.group_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cohort_size = cohort.len() as u32;
+
+    let channels = crate::push_channels()?;
+    let map = channels.read().await;
+    let mut dispatched = 0u32;
+    for cid in cohort {
+        if let Some(tx) = map.get(&cid) {
+            if tx.send(crate::api::push::PushMessage::SelfUpdate).is_ok() {
+                dispatched += 1;
+            }
+        }
+    }
+    Ok(RequestAssessmentResult { cohort_size, dispatched })
+}
+
+#[server]
+async fn trigger_stage_sync_nixpkgs(
+    _rollout_id: String,
+    stage_id: String,
+) -> Result<RequestAssessmentResult, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let sid: Uuid = stage_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct StageRow { group_id: Uuid }
+    let stage: StageRow = sqlx::query_as("SELECT group_id FROM rollout_stages WHERE id = $1")
+        .bind(sid)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let cohort: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT cluster_id FROM rollout_group_members WHERE group_id = $1 \
+         UNION ALL \
+         SELECT id FROM clusters WHERE $1 = '00000000-0000-0000-0000-000000000000'::uuid",
+    )
+    .bind(stage.group_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let cohort_size = cohort.len() as u32;
+
+    let channels = crate::push_channels()?;
+    let map = channels.read().await;
+    let mut dispatched = 0u32;
+    for cid in cohort {
+        if let Some(tx) = map.get(&cid) {
+            if tx.send(crate::api::push::PushMessage::SyncNixpkgs).is_ok() {
+                dispatched += 1;
+            }
+        }
+    }
+    Ok(RequestAssessmentResult { cohort_size, dispatched })
+}
+
 /// Re-evaluate this stage *and every other rolling stage* of the same
 /// rollout. A per-stage button suggests per-stage scope, but the rollout
 /// detail page renders both a stage panel and a rollout-wide summary
@@ -1134,6 +1222,8 @@ pub fn RolloutDetail(id: String) -> Element {
             let rid = info.id.to_string();
             let status = info.status.clone();
             let created = info.created_at.format("%Y-%m-%d %H:%M").to_string();
+            let has_version_update = info.target_version.is_some();
+            let has_nixpkgs_update = info.nixpkgs_commit.is_some();
 
             let status_badge = match info.status.as_str() {
                 "rolling" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
@@ -1570,6 +1660,66 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                     }
                                                                 },
                                                                 "Request fresh assessment"
+                                                            }
+                                                            if has_version_update {
+                                                                button {
+                                                                    class: "px-2 py-1 text-xs rounded bg-orange-100 dark:bg-orange-900 hover:bg-orange-200 dark:hover:bg-orange-800 text-orange-800 dark:text-orange-200",
+                                                                    onclick: {
+                                                                        let rid = rid_clone.clone();
+                                                                        let sid = stage_id_str.clone();
+                                                                        move |_| {
+                                                                            let rid = rid.clone();
+                                                                            let sid = sid.clone();
+                                                                            request_status.set(Some((sid.clone(), "triggering…".into(), false)));
+                                                                            async move {
+                                                                                match trigger_stage_self_update(rid, sid.clone()).await {
+                                                                                    Ok(r) => {
+                                                                                        let msg = if r.dispatched == 0 {
+                                                                                            format!("0 of {} daemons reachable", r.cohort_size)
+                                                                                        } else {
+                                                                                            format!("pushed to {} of {} daemons", r.dispatched, r.cohort_size)
+                                                                                        };
+                                                                                        request_status.set(Some((sid, msg, r.dispatched == 0)));
+                                                                                    }
+                                                                                    Err(e) => {
+                                                                                        request_status.set(Some((sid, e.to_string(), true)));
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    "Trigger self-update"
+                                                                }
+                                                            }
+                                                            if has_nixpkgs_update {
+                                                                button {
+                                                                    class: "px-2 py-1 text-xs rounded bg-purple-100 dark:bg-purple-900 hover:bg-purple-200 dark:hover:bg-purple-800 text-purple-800 dark:text-purple-200",
+                                                                    onclick: {
+                                                                        let rid = rid_clone.clone();
+                                                                        let sid = stage_id_str.clone();
+                                                                        move |_| {
+                                                                            let rid = rid.clone();
+                                                                            let sid = sid.clone();
+                                                                            request_status.set(Some((sid.clone(), "triggering…".into(), false)));
+                                                                            async move {
+                                                                                match trigger_stage_sync_nixpkgs(rid, sid.clone()).await {
+                                                                                    Ok(r) => {
+                                                                                        let msg = if r.dispatched == 0 {
+                                                                                            format!("0 of {} daemons reachable", r.cohort_size)
+                                                                                        } else {
+                                                                                            format!("pushed to {} of {} daemons", r.dispatched, r.cohort_size)
+                                                                                        };
+                                                                                        request_status.set(Some((sid, msg, r.dispatched == 0)));
+                                                                                    }
+                                                                                    Err(e) => {
+                                                                                        request_status.set(Some((sid, e.to_string(), true)));
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    "Trigger sync nixpkgs"
+                                                                }
                                                             }
                                                             Link {
                                                                 to: Route::FleetDashboard { stage_id: Some(stage_id_str.clone()) },

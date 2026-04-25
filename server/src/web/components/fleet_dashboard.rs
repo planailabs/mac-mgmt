@@ -437,7 +437,30 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                             .environment
                             .to_lowercase()
                             .cmp(&b.environment.to_lowercase()),
-                        "version" => a.version.cmp(&b.version),
+                        "version" => {
+                            // Parse semver components for numeric ordering,
+                            // then tie-break on git commit count (higher = newer).
+                            let parse_semver = |v: &str| -> (u64, u64, u64) {
+                                let mut parts = v.split('.');
+                                let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                                let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                                let patch = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                                (major, minor, patch)
+                            };
+                            let av = parse_semver(&a.version);
+                            let bv = parse_semver(&b.version);
+                            av.cmp(&bv).then_with(|| {
+                                let ac = a.git_sha.as_ref()
+                                    .and_then(|sha| counts.and_then(|m| m.get(sha)))
+                                    .copied()
+                                    .unwrap_or(0);
+                                let bc = b.git_sha.as_ref()
+                                    .and_then(|sha| counts.and_then(|m| m.get(sha)))
+                                    .copied()
+                                    .unwrap_or(0);
+                                ac.cmp(&bc)
+                            })
+                        }
                         _ => {
                             // Default "last seen" sort: group online hosts first,
                             // alphabetical (hostname, then cluster name) within them
