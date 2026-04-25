@@ -177,7 +177,44 @@ impl RepoCache {
                 resolved.push(item);
             }
 
-            // 4. Store results in DB and populate return map.
+            // 4. If any SHAs failed, fetch new commits and retry once.
+            let failed: Vec<String> = resolved
+                .iter()
+                .filter(|(_, c)| c.is_none())
+                .map(|(sha, _)| sha.clone())
+                .collect();
+            if !failed.is_empty() {
+                self.fetch().await;
+                let mut retry_set = tokio::task::JoinSet::new();
+                for sha in &failed {
+                    let sha = sha.clone();
+                    let clone_path = self.clone_path.clone();
+                    retry_set.spawn(async move {
+                        let output = tokio::process::Command::new("git")
+                            .args(["rev-list", "--count", &sha])
+                            .current_dir(&clone_path)
+                            .output()
+                            .await
+                            .ok();
+                        let count = output.and_then(|o| {
+                            if o.status.success() {
+                                String::from_utf8_lossy(&o.stdout).trim().parse().ok()
+                            } else {
+                                None
+                            }
+                        });
+                        (sha, count)
+                    });
+                }
+                while let Some(Ok(item)) = retry_set.join_next().await {
+                    // Overwrite the failed entry with the retry result.
+                    if let Some(pos) = resolved.iter().position(|(s, _)| *s == item.0) {
+                        resolved[pos] = item;
+                    }
+                }
+            }
+
+            // 5. Store results in DB and populate return map.
             for (sha, count) in &resolved {
                 if let Some(count) = count {
                     self.db_store(sha, *count).await;
@@ -189,7 +226,7 @@ impl RepoCache {
                 }
             }
 
-            // 5. Release in-flight claims.
+            // 6. Release in-flight claims.
             let mut flight = self.in_flight.lock().await;
             for (sha, _) in &resolved {
                 flight.remove(sha);
