@@ -337,17 +337,17 @@ async fn main() -> Result<()> {
                             .unwrap_or_default()
                         };
 
-                        println!("{:<20} {:<10} {:<8} {}", "NAME", "PHASE", "PID", "EXECUTABLE");
+                        println!("{:<20} {:<10} {:<8} {}", "NAME", "PHASE", "PID", "PROGRAM");
                         for s in &services {
                             let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
-                            let exe = s.exe.as_deref()
-                                .or(s.resolved_program.as_deref())
+                            let program = s.spec.as_ref()
+                                .map(|sp| sp.program.as_str())
                                 .unwrap_or("-");
                             let phase = daemon_phases
                                 .get(&s.name)
                                 .map(|p| p.as_str())
                                 .unwrap_or(if s.pid.is_some() { "running" } else { "stopped" });
-                            println!("{:<20} {:<10} {:<8} {}", s.name, phase, pid, exe);
+                            println!("{:<20} {:<10} {:<8} {}", s.name, phase, pid, program);
                         }
                         println!("\n{} service(s)", services.len());
                     }
