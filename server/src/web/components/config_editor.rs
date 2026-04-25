@@ -317,6 +317,95 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
 
 /// Resolve a `$ref` pointer in the schema, including `anyOf` wrappers
 /// from `Option<T>` which schemars generates as `anyOf: [{$ref: ...}, {type: "null"}]`.
+/// Dedicated component for the `key_hash` field so `use_signal` is safe
+/// (hooks cannot be called inside iterator closures).
+#[component]
+fn KeyHashField(
+    field_path: Vec<String>,
+    mut form_values: Signal<serde_json::Value>,
+    mut json_text: Signal<String>,
+) -> Element {
+    let mut generated_key = use_signal(|| None::<String>);
+    let fp2 = field_path.clone();
+    let fp_gen = field_path.clone();
+
+    let mut sync = move || {
+        let json = form_values.read().clone();
+        json_text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+    };
+
+    let val_str = get_at_path(&form_values.read(), &field_path)
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+
+    rsx! {
+        div { class: "flex flex-col gap-0.5",
+            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "key_hash" }
+            p { class: "text-xs text-gray-500 dark:text-gray-400",
+                "Hex-encoded multihash of the API key (the raw key is only shown once on generation)"
+            }
+            div { class: "flex gap-2",
+                input {
+                    r#type: "text",
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm font-mono",
+                    value: val_str,
+                    oninput: move |evt| {
+                        let v = evt.value();
+                        if v.is_empty() {
+                            remove_at_path(&mut form_values, &fp2);
+                        } else {
+                            set_at_path(&mut form_values, &fp2,
+                                serde_json::Value::String(v));
+                        }
+                        sync();
+                    },
+                }
+                button {
+                    r#type: "button",
+                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 whitespace-nowrap",
+                    onclick: move |evt| {
+                        evt.prevent_default();
+                        evt.stop_propagation();
+                        let fp = fp_gen.clone();
+                        spawn(async move {
+                            match generate_ai_proxy_key().await {
+                                Ok((raw_key, key_hash)) => {
+                                    set_at_path(&mut form_values, &fp,
+                                        serde_json::Value::String(key_hash));
+                                    sync();
+                                    generated_key.set(Some(raw_key));
+                                }
+                                Err(e) => {
+                                    tracing::error!("key generation failed: {e}");
+                                }
+                            }
+                        });
+                    },
+                    "Generate"
+                }
+            }
+            if let Some(raw_key) = generated_key.read().as_ref() {
+                div { class: "mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded",
+                    p { class: "text-xs font-semibold text-yellow-800 dark:text-yellow-200 mb-1",
+                        "Save this key now — it will not be shown again:"
+                    }
+                    code { class: "block text-sm font-mono bg-white dark:bg-gray-800 p-2 rounded border select-all break-all",
+                        "{raw_key}"
+                    }
+                    button {
+                        r#type: "button",
+                        class: "mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 underline",
+                        onclick: move |_| {
+                            generated_key.set(None);
+                        },
+                        "Dismiss"
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_json::Value {
     // Direct $ref
     if let Some(r) = schema.get("$ref").and_then(|r| r.as_str()) {
@@ -475,81 +564,13 @@ fn render_section_fields(
             if field_name == "key_hash" && path.len() >= 2 && path.get(path.len() - 2).map(|s| s.as_str()) == Some("keys") {
                 let mut field_path = path.clone();
                 field_path.push(field_name.clone());
-                let fp = field_path.clone();
-                let fp2 = field_path.clone();
                 let key = field_path.join(".");
-                let val_str = get_at_path(&form_values.read(), &field_path)
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_default();
-                let sync_c = sync_to_json.clone();
-                let sync_gen = sync_to_json.clone();
-                let mut generated_key = use_signal(|| None::<String>);
                 return rsx! {
-                    div { class: "flex flex-col gap-0.5",
+                    KeyHashField {
                         key: "{key}",
-                        label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "key_hash" }
-                        p { class: "text-xs text-gray-500 dark:text-gray-400",
-                            "Hex-encoded multihash of the API key (the raw key is only shown once on generation)"
-                        }
-                        div { class: "flex gap-2",
-                            input {
-                                r#type: "text",
-                                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm font-mono",
-                                value: val_str,
-                                oninput: move |evt| {
-                                    let v = evt.value();
-                                    if v.is_empty() {
-                                        remove_at_path(&mut form_values, &fp2);
-                                    } else {
-                                        set_at_path(&mut form_values, &fp2,
-                                            serde_json::Value::String(v));
-                                    }
-                                    sync_c();
-                                },
-                            }
-                            button {
-                                r#type: "button",
-                                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 whitespace-nowrap",
-                                onclick: move |evt| {
-                                    evt.prevent_default();
-                                    evt.stop_propagation();
-                                    let fp = fp.clone();
-                                    let sync_gen = sync_gen.clone();
-                                    spawn(async move {
-                                        match generate_ai_proxy_key().await {
-                                            Ok((raw_key, key_hash)) => {
-                                                set_at_path(&mut form_values, &fp,
-                                                    serde_json::Value::String(key_hash));
-                                                sync_gen();
-                                                generated_key.set(Some(raw_key));
-                                            }
-                                            Err(e) => {
-                                                tracing::error!("key generation failed: {e}");
-                                            }
-                                        }
-                                    });
-                                },
-                                "Generate"
-                            }
-                        }
-                        if let Some(raw_key) = generated_key.read().as_ref() {
-                            div { class: "mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded",
-                                p { class: "text-xs font-semibold text-yellow-800 dark:text-yellow-200 mb-1",
-                                    "Save this key now — it will not be shown again:"
-                                }
-                                code { class: "block text-sm font-mono bg-white dark:bg-gray-800 p-2 rounded border select-all break-all",
-                                    "{raw_key}"
-                                }
-                                button {
-                                    r#type: "button",
-                                    class: "mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 underline",
-                                    onclick: move |_| {
-                                        generated_key.set(None);
-                                    },
-                                    "Dismiss"
-                                }
-                            }
-                        }
+                        field_path,
+                        form_values,
+                        json_text,
                     }
                 };
             }
