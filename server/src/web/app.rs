@@ -148,6 +148,8 @@ pub fn App() -> Element {
     rsx! {
         // Script FIRST: sets .dark class + inline bg before CSS even loads
         script { dangerous_inner_html: THEME_INIT_SCRIPT }
+        // Remove the pre-hydration loading banner
+        script { dangerous_inner_html: "document.getElementById('wasm-loading')?.remove();" }
         document::Link { rel: "stylesheet", href: "{css_href}" }
         Router::<Route> {}
     }
