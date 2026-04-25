@@ -73,7 +73,7 @@ impl RepoCache {
         }
         tracing::info!("fetching {}", self.repo);
         match tokio::process::Command::new("git")
-            .args(["fetch", "--all", "--quiet"])
+            .args(["fetch", "--quiet"])
             .current_dir(&self.clone_path)
             .output()
             .await
