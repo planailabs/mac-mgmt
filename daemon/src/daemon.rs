@@ -240,64 +240,78 @@ impl Daemon {
             #[cfg(not(feature = "services"))]
             let services: Vec<serde_json::Value> = vec![];
 
+            let tunnels_enabled = self.current_cfg.relay.tunnels_enabled;
+
             #[cfg(feature = "services")]
-            let tunnels: Vec<serde_json::Value> = self
-                .svc_mgr
-                .collect_tunnels()
-                .iter()
-                .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
-                .collect();
+            let tunnels: Vec<serde_json::Value> = if tunnels_enabled {
+                self.svc_mgr
+                    .collect_tunnels()
+                    .iter()
+                    .map(|t| serde_json::json!({ "name": t.name, "port": t.tcp_port }))
+                    .collect()
+            } else {
+                vec![]
+            };
             #[cfg(not(feature = "services"))]
             let tunnels: Vec<serde_json::Value> = vec![];
 
             #[cfg(feature = "services")]
-            let file_tunnels: Vec<serde_json::Value> = self
-                .svc_mgr
-                .collect_file_tunnels()
-                .iter()
-                .map(|ft| {
-                    let mut val = serde_json::json!({
-                        "name": ft.name(),
-                        "service": ft.service,
-                        "path": ft.path(),
-                        "writable": ft.writable(),
-                        "description": ft.description(),
-                    });
-                    if let crate::managed_service::FileTunnelDef::Folder { include, .. } = &ft.def {
-                        val.as_object_mut()
-                            .unwrap()
-                            .insert("kind".into(), "directory".into());
-                        val.as_object_mut().unwrap().insert(
-                            "include".into(),
-                            serde_json::to_value(include).unwrap_or(serde_json::Value::Null),
-                        );
-                    } else {
-                        val.as_object_mut()
-                            .unwrap()
-                            .insert("kind".into(), "file".into());
-                    }
-                    val
-                })
-                .collect();
+            let file_tunnels: Vec<serde_json::Value> = if tunnels_enabled {
+                self.svc_mgr
+                    .collect_file_tunnels()
+                    .iter()
+                    .map(|ft| {
+                        let mut val = serde_json::json!({
+                            "name": ft.name(),
+                            "service": ft.service,
+                            "path": ft.path(),
+                            "writable": ft.writable(),
+                            "description": ft.description(),
+                        });
+                        if let crate::managed_service::FileTunnelDef::Folder { include, .. } =
+                            &ft.def
+                        {
+                            val.as_object_mut()
+                                .unwrap()
+                                .insert("kind".into(), "directory".into());
+                            val.as_object_mut().unwrap().insert(
+                                "include".into(),
+                                serde_json::to_value(include)
+                                    .unwrap_or(serde_json::Value::Null),
+                            );
+                        } else {
+                            val.as_object_mut()
+                                .unwrap()
+                                .insert("kind".into(), "file".into());
+                        }
+                        val
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
             #[cfg(not(feature = "services"))]
             let file_tunnels: Vec<serde_json::Value> = vec![];
 
             #[cfg(feature = "services")]
-            let shell_tunnels: Vec<serde_json::Value> = self
-                .svc_mgr
-                .collect_shell_tunnels()
-                .iter()
-                .map(|st| {
-                    serde_json::json!({
-                        "name": st.def.name,
-                        "service": st.service,
-                        "description": st.def.description,
-                        "requires_arg": st.def.arg_template.is_some(),
-                        "arg_label": st.def.arg_template.as_ref().map(|t| &t.label),
-                        "arg_placeholder": st.def.arg_template.as_ref().map(|t| &t.placeholder),
+            let shell_tunnels: Vec<serde_json::Value> = if tunnels_enabled {
+                self.svc_mgr
+                    .collect_shell_tunnels()
+                    .iter()
+                    .map(|st| {
+                        serde_json::json!({
+                            "name": st.def.name,
+                            "service": st.service,
+                            "description": st.def.description,
+                            "requires_arg": st.def.arg_template.is_some(),
+                            "arg_label": st.def.arg_template.as_ref().map(|t| &t.label),
+                            "arg_placeholder": st.def.arg_template.as_ref().map(|t| &t.placeholder),
+                        })
                     })
-                })
-                .collect();
+                    .collect()
+            } else {
+                vec![]
+            };
             #[cfg(not(feature = "services"))]
             let shell_tunnels: Vec<serde_json::Value> = vec![];
 
@@ -614,6 +628,10 @@ impl Daemon {
 
     #[cfg(all(feature = "services", feature = "relay"))]
     fn update_relay_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+        if !self.current_cfg.relay.tunnels_enabled {
+            relay_mgr.update_tunnel_defs(vec![]);
+            return;
+        }
         let mut td = self.svc_mgr.collect_tunnels();
         // Expose AI proxy as a tunnel if enabled.
         if self.current_cfg.ai_proxy.enabled {
@@ -628,12 +646,20 @@ impl Daemon {
 
     #[cfg(all(feature = "services", feature = "relay"))]
     fn update_relay_file_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+        if !self.current_cfg.relay.tunnels_enabled {
+            relay_mgr.update_file_tunnel_defs(vec![]);
+            return;
+        }
         let fd = self.svc_mgr.collect_file_tunnels();
         relay_mgr.update_file_tunnel_defs(fd);
     }
 
     #[cfg(all(feature = "services", feature = "relay"))]
     fn update_relay_shell_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+        if !self.current_cfg.relay.tunnels_enabled {
+            relay_mgr.update_shell_tunnel_defs(vec![]);
+            return;
+        }
         let sd = self.svc_mgr.collect_shell_tunnels();
         relay_mgr.update_shell_tunnel_defs(sd);
     }

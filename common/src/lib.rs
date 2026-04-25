@@ -1305,6 +1305,11 @@ pub struct RelayConfig {
     #[schemars(description = "Whether remote SSH access is enabled on startup")]
     #[serde(default)]
     pub remote_ssh_enabled: bool,
+    #[schemars(
+        description = "Whether to expose service tunnels (TCP, file, shell) via the relay"
+    )]
+    #[serde(default = "default_true")]
+    pub tunnels_enabled: bool,
 }
 
 impl RelayConfig {
