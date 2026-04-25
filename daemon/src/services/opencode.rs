@@ -247,4 +247,39 @@ impl ManagedService for Opencode {
             entries
         })
     }
+
+    fn service_security(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<mac_mgmt_common::SecurityFinding>> + Send + '_>> {
+        use mac_mgmt_common::{FindingSeverity, SecurityFinding};
+        Box::pin(async move {
+            let mut findings = Vec::new();
+
+            // Check if the opencode server has a password configured.
+            if let Ok(path) = config_path() {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let has_password = cfg
+                            .get("server")
+                            .and_then(|s| s.get("password"))
+                            .and_then(|p| p.as_str())
+                            .is_some_and(|p| !p.is_empty());
+
+                        findings.push(SecurityFinding {
+                            id: "opencode_server_password".into(),
+                            severity: FindingSeverity::High,
+                            message: if has_password {
+                                "OpenCode server password is set".into()
+                            } else {
+                                "OpenCode server has no password — anyone with network access can use it".into()
+                            },
+                            pass: has_password,
+                        });
+                    }
+                }
+            }
+
+            findings
+        })
+    }
 }
