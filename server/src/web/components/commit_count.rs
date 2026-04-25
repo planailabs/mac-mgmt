@@ -88,6 +88,27 @@ impl RepoCache {
         }
     }
 
+    async fn gc(&self) {
+        if !self.clone_path.exists() {
+            return;
+        }
+        match tokio::process::Command::new("git")
+            .args(["gc", "--auto", "--quiet"])
+            .current_dir(&self.clone_path)
+            .output()
+            .await
+        {
+            Ok(out) if out.status.success() => {
+                tracing::debug!("git gc {}", self.repo);
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!("git gc {} failed: {stderr}", self.repo);
+            }
+            Err(e) => tracing::warn!("git gc {} error: {e}", self.repo),
+        }
+    }
+
     async fn get_or_fetch(&self, shas: &HashSet<String>) -> HashMap<String, u64> {
         self.ensure_clone().await;
 
@@ -315,14 +336,20 @@ pub async fn nixpkgs_commit_counts(shas: &HashSet<String>) -> HashMap<String, u6
 pub fn spawn_fetch_loop() {
     let interval_secs = crate::config::config().git.fetch_interval_secs;
     tokio::spawn(async move {
-        let interval = std::time::Duration::from_secs(interval_secs);
+        let fetch_interval = std::time::Duration::from_secs(interval_secs);
+        // Run git gc every 6 hours.
+        let gc_every = std::time::Duration::from_secs(6 * 3600);
+        let mut last_gc = tokio::time::Instant::now();
         loop {
-            tokio::time::sleep(interval).await;
-            if let Some(cache) = MAC_MGMT.get() {
+            tokio::time::sleep(fetch_interval).await;
+            for cache in [MAC_MGMT.get(), NIXPKGS.get()].into_iter().flatten() {
                 cache.fetch().await;
             }
-            if let Some(cache) = NIXPKGS.get() {
-                cache.fetch().await;
+            if last_gc.elapsed() >= gc_every {
+                last_gc = tokio::time::Instant::now();
+                for cache in [MAC_MGMT.get(), NIXPKGS.get()].into_iter().flatten() {
+                    cache.gc().await;
+                }
             }
         }
     });
