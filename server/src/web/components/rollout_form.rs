@@ -176,7 +176,7 @@ async fn create_rollout(
         }
     }
 
-    // Nixpkgs rollback protection: block if new commit is older than any in the cohort.
+    // Verify the nixpkgs commit exists and protect against rollback.
     if let Some(nix) = &nixpkgs_commit {
         let current_commits: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT c.nixpkgs_commit \
@@ -194,26 +194,23 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-        if !current_commits.is_empty() {
-            let mut all_shas: std::collections::HashSet<String> =
-                current_commits.iter().cloned().collect();
-            all_shas.insert(nix.clone());
-            let counts = super::commit_count::nixpkgs_commit_counts(&all_shas).await;
+        let mut all_shas: std::collections::HashSet<String> = [nix.clone()].into_iter().collect();
+        all_shas.extend(current_commits.iter().cloned());
+        let counts = super::commit_count::nixpkgs_commit_counts(&all_shas).await;
 
-            let new_count = counts.get(nix).ok_or_else(|| {
-                ServerFnError::new(format!("cannot resolve commit count for {nix}"))
+        let new_count = counts.get(nix).ok_or_else(|| {
+            ServerFnError::new(format!("unknown nixpkgs commit {nix}"))
+        })?;
+        for cur in &current_commits {
+            let cur_count = counts.get(cur).ok_or_else(|| {
+                ServerFnError::new(format!("cannot resolve commit count for current {cur}"))
             })?;
-            for cur in &current_commits {
-                let cur_count = counts.get(cur).ok_or_else(|| {
-                    ServerFnError::new(format!("cannot resolve commit count for current {cur}"))
-                })?;
-                if new_count < cur_count {
-                    let short_new: String = nix.chars().take(12).collect();
-                    let short_cur: String = cur.chars().take(12).collect();
-                    return Err(ServerFnError::new(format!(
-                        "nixpkgs {short_new} (#{new_count}) is older than current {short_cur} (#{cur_count}); use rollback to downgrade"
-                    )));
-                }
+            if new_count < cur_count {
+                let short_new: String = nix.chars().take(12).collect();
+                let short_cur: String = cur.chars().take(12).collect();
+                return Err(ServerFnError::new(format!(
+                    "nixpkgs {short_new} (#{new_count}) is older than current {short_cur} (#{cur_count}); use rollback to downgrade"
+                )));
             }
         }
     }
