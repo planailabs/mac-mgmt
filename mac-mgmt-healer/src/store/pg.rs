@@ -876,21 +876,33 @@ impl PgHealerStore {
         cluster_id: Uuid,
         organization_id: Option<Uuid>,
     ) -> Result<(String, DateTime<Utc>)> {
+        self.mint_proxy_token_scoped(cluster_id, organization_id, None)
+            .await
+    }
+
+    pub async fn mint_proxy_token_scoped(
+        &self,
+        cluster_id: Uuid,
+        organization_id: Option<Uuid>,
+        scopes: Option<&[&str]>,
+    ) -> Result<(String, DateTime<Utc>)> {
         use rand::Rng;
         use sha2::{Digest, Sha256};
 
         let raw_token = hex::encode(rand::rng().random::<[u8; 32]>());
         let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
         let expires_at = Utc::now() + chrono::Duration::hours(6);
+        let scopes_json = scopes.map(|s| serde_json::json!(s));
 
         sqlx::query(
-            "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at) \
-             VALUES ($1, $2, $3, 'healer', 'proxy', $4)",
+            "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at, scopes) \
+             VALUES ($1, $2, $3, 'healer', 'proxy', $4, $5)",
         )
         .bind(cluster_id)
         .bind(organization_id)
         .bind(&hash)
         .bind(expires_at)
+        .bind(&scopes_json)
         .execute(&self.pool)
         .await
         .context("failed to mint proxy token")?;

@@ -144,8 +144,9 @@ pub async fn create_session(
 
     let relay_url = hb.relay_proxy_url.ok_or(Status::BadRequest)?;
 
+    let healer_scopes: &[&str] = &["files:read", "files:write", "shell:exec", "logs:read"];
     let (proxy_token, proxy_expires) = pg_store
-        .mint_proxy_token(cluster_id, None)
+        .mint_proxy_token_scoped(cluster_id, None, Some(healer_scopes))
         .await
         .map_err(|_| Status::InternalServerError)?;
     let relay_client = std::sync::Arc::new(

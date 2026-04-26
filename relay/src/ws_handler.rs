@@ -97,6 +97,9 @@ pub struct SelfInfo {
     /// All cluster IDs this token can access.
     #[serde(default)]
     pub cluster_ids: Vec<Uuid>,
+    /// Proxy token scopes. Empty means wildcard (all scopes).
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 pub async fn validate_token(server_api_url: &str, token: &str) -> Result<SelfInfo, StatusCode> {

@@ -50,13 +50,15 @@ pub async fn get_shell_context(instance_id: String) -> Result<ShellContext, Serv
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
     let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
 
+    let scopes = serde_json::json!(["shell:exec"]);
     sqlx::query(
-        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at) \
-         VALUES ($1, $2, 'shell-tunnel', 'proxy', $3)",
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at, scopes) \
+         VALUES ($1, $2, 'shell-tunnel', 'proxy', $3, $4)",
     )
     .bind(hb.cluster_id)
     .bind(&hash)
     .bind(expires_at)
+    .bind(&scopes)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;

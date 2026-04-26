@@ -104,9 +104,10 @@ impl mac_mgmt_healer::SessionFactory for ServerSessionFactory {
             .await?
             .ok_or_else(|| anyhow::anyhow!("no relay URL for instance {}", session.instance_id))?;
 
+        let healer_scopes: &[&str] = &["files:read", "files:write", "shell:exec", "logs:read"];
         let (proxy_token, proxy_expires) = self
             .pg_store
-            .mint_proxy_token(session.cluster_id, None)
+            .mint_proxy_token_scoped(session.cluster_id, None, Some(healer_scopes))
             .await?;
 
         let relay_client = std::sync::Arc::new(

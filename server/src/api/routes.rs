@@ -25,6 +25,9 @@ pub(crate) struct SelfInfo {
     token_kind: String,
     /// All cluster IDs this token can access.
     cluster_ids: Vec<Uuid>,
+    /// Proxy token scopes. Empty means wildcard (all scopes).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    scopes: Vec<String>,
 }
 
 #[utoipa::path(
@@ -83,6 +86,7 @@ pub async fn get_self(
         organization_id: auth.organization_id,
         token_kind: auth.token_kind,
         cluster_ids,
+        scopes: auth.scopes.unwrap_or_default(),
     }))
 }
 
@@ -2383,61 +2387,125 @@ runcmd:
 
 // ── Proxy token creation ─────────────────────────────────────────────
 
+/// Valid proxy token scopes.
+const VALID_SCOPES: &[&str] = &[
+    "files:read",
+    "files:write",
+    "shell:exec",
+    "logs:read",
+    "tcp:*",
+];
+
+/// Check if a scope string is valid (exact match from VALID_SCOPES, or tcp:{name}).
+fn is_valid_scope(s: &str) -> bool {
+    VALID_SCOPES.contains(&s)
+        || (s.starts_with("tcp:") && s.len() > 4 && s != "tcp:*")
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct CreateProxyTokenBody {
+    /// Scopes for the proxy token. If empty or omitted, defaults to all scopes.
+    /// Valid scopes: files:read, files:write, shell:exec, logs:read, tcp:*, tcp:{name}
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct ProxyTokenResponse {
     pub proxy_token: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
+    /// The scopes granted to this token. Empty means all scopes (wildcard).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
 }
 
 /// Create a short-lived proxy token for browser-based tunnel access.
 /// Accepts admin or setting tokens. The proxy token inherits the cluster
-/// scope of the creating token.
+/// scope of the creating token. Optionally accepts a list of scopes to
+/// restrict the token's capabilities.
 #[utoipa::path(
     post,
     path = "/api/proxy-token",
     tag = "Common",
     summary = "Create a temporary proxy token",
-    description = "Creates a short-lived token (15 minutes) for accessing TCP tunnels through the relay proxy.",
+    description = "Creates a short-lived token (6 hours) for accessing tunnels through the relay proxy. \
+                   Optionally specify scopes to restrict access (e.g. files:read, tcp:ollama).",
     security(("bearer" = [])),
+    request_body(content = CreateProxyTokenBody, description = "Optional scopes"),
     responses(
         (status = 201, description = "Proxy token created", body = ProxyTokenResponse),
+        (status = 400, description = "Invalid scope"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
     ),
 )]
-#[rocket::post("/proxy-token")]
+#[rocket::post("/proxy-token", data = "<body>")]
 pub async fn create_proxy_token(
     auth: AuthenticatedToken,
     pool: &State<PgPool>,
-) -> Result<(Status, Json<ProxyTokenResponse>), Status> {
+    body: Json<CreateProxyTokenBody>,
+) -> Result<(Status, Json<ProxyTokenResponse>), (Status, &'static str)> {
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
     if auth.token_kind != "admin" && auth.token_kind != "setting" {
-        return Err(Status::Forbidden);
+        return Err((Status::Forbidden, "admin or setting token required"));
+    }
+
+    // Validate requested scopes.
+    for scope in &body.scopes {
+        if !is_valid_scope(scope) {
+            return Err((Status::BadRequest, "invalid scope"));
+        }
+    }
+
+    // If the creating token is itself a proxy token with scopes, the new token's
+    // scopes must be a subset. (Admin/setting tokens can grant any scope.)
+    if auth.token_kind == "proxy" {
+        if let Some(ref parent_scopes) = auth.scopes {
+            if !parent_scopes.is_empty() {
+                for scope in &body.scopes {
+                    let allowed = parent_scopes.iter().any(|ps| {
+                        ps == "*"
+                            || ps == scope
+                            || (scope.starts_with("tcp:") && ps == "tcp:*")
+                    });
+                    if !allowed {
+                        return Err((Status::Forbidden, "scope exceeds parent token"));
+                    }
+                }
+            }
+        }
     }
 
     let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
     let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
+    let scopes_json: Option<serde_json::Value> = if body.scopes.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!(&body.scopes))
+    };
 
     sqlx::query(
-        "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at) \
-         VALUES ($1, $2, $3, 'proxy', 'proxy', $4)",
+        "INSERT INTO tokens (cluster_id, organization_id, token_hash, label, kind, expires_at, scopes) \
+         VALUES ($1, $2, $3, 'proxy', 'proxy', $4, $5)",
     )
     .bind(auth.cluster_id)
     .bind(auth.organization_id)
     .bind(&hash)
     .bind(expires_at)
+    .bind(&scopes_json)
     .execute(pool.inner())
     .await
-    .map_err(|_| Status::InternalServerError)?;
+    .map_err(|_| (Status::InternalServerError, "database error"))?;
 
     Ok((
         Status::Created,
         Json(ProxyTokenResponse {
             proxy_token: raw_token,
             expires_at,
+            scopes: body.into_inner().scopes,
         }),
     ))
 }

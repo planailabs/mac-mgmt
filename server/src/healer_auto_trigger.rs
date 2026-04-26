@@ -234,8 +234,9 @@ async fn build_spawn_request(
 
     // Build relay access for the session
     let pg_store = mac_mgmt_healer::store::pg::PgHealerStore::new(pool.clone());
+    let healer_scopes: &[&str] = &["files:read", "files:write", "shell:exec", "logs:read"];
     let (proxy_token, proxy_expires) = pg_store
-        .mint_proxy_token(cluster_id, None)
+        .mint_proxy_token_scoped(cluster_id, None, Some(healer_scopes))
         .await?;
     let relay_client = std::sync::Arc::new(
         mac_mgmt_healer::relay_client::RelayClient::new(relay_url.clone(), proxy_token),

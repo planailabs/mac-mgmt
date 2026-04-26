@@ -323,8 +323,9 @@ pub async fn start_healer_session(
         .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL"))?;
 
     let pg_store = crate::server_state::pg_healer_store()?;
+    let healer_scopes: &[&str] = &["files:read", "files:write", "shell:exec", "logs:read"];
     let (proxy_token, proxy_expires) = pg_store
-        .mint_proxy_token(hb.cluster_id, None)
+        .mint_proxy_token_scoped(hb.cluster_id, None, Some(healer_scopes))
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     let relay_client = std::sync::Arc::new(

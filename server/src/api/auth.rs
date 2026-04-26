@@ -8,6 +8,8 @@ pub struct AuthenticatedToken {
     pub cluster_id: Option<Uuid>,
     pub organization_id: Option<Uuid>,
     pub token_kind: String,
+    /// Proxy token scopes. `None` means wildcard (all scopes).
+    pub scopes: Option<Vec<String>>,
 }
 
 #[rocket::async_trait]
@@ -32,8 +34,8 @@ impl<'r> FromRequest<'r> for AuthenticatedToken {
 
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
 
-        let result = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>, String)>(
-            "SELECT cluster_id, organization_id, kind FROM tokens \
+        let result = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>, String, Option<serde_json::Value>)>(
+            "SELECT cluster_id, organization_id, kind, scopes FROM tokens \
              WHERE token_hash = $1 AND NOT revoked \
              AND (expires_at IS NULL OR expires_at > now())",
         )
@@ -42,11 +44,17 @@ impl<'r> FromRequest<'r> for AuthenticatedToken {
         .await;
 
         match result {
-            Ok(Some((cluster_id, organization_id, kind))) => Outcome::Success(AuthenticatedToken {
-                cluster_id,
-                organization_id,
-                token_kind: kind,
-            }),
+            Ok(Some((cluster_id, organization_id, kind, scopes_json))) => {
+                let scopes = scopes_json.and_then(|v| {
+                    serde_json::from_value::<Vec<String>>(v).ok()
+                });
+                Outcome::Success(AuthenticatedToken {
+                    cluster_id,
+                    organization_id,
+                    token_kind: kind,
+                    scopes,
+                })
+            }
             Ok(None) => Outcome::Error((Status::Unauthorized, "invalid or revoked token")),
             Err(_) => Outcome::Error((Status::InternalServerError, "database error")),
         }
