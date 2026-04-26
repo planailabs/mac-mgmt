@@ -1070,6 +1070,7 @@ pub async fn run(
         Arc::clone(&host_key),
         metrics_port,
         cfg.relay.remote_ssh_enabled,
+        cfg.relay.fake_origin_local,
     );
 
     // Start server push WebSocket if server is configured.
@@ -1604,6 +1605,7 @@ pub async fn run_sim(
         Arc::clone(&host_key),
         metrics_port,
         cfg.relay.remote_ssh_enabled,
+        cfg.relay.fake_origin_local,
     );
 
     // Start server push SSE if server is configured.
@@ -1859,6 +1861,7 @@ pub async fn run_sim_with_services(
         Arc::clone(&host_key),
         metrics_port,
         cfg.relay.remote_ssh_enabled,
+        cfg.relay.fake_origin_local,
     );
 
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {

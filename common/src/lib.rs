@@ -1400,6 +1400,11 @@ pub struct RelayConfig {
     )]
     #[serde(default = "default_true")]
     pub tunnels_enabled: bool,
+    #[schemars(
+        description = "Rewrite the Host header to localhost:<port> when proxying TCP tunnels. Useful for services that reject requests with non-local Host headers."
+    )]
+    #[serde(default)]
+    pub fake_origin_local: bool,
 }
 
 impl RelayConfig {

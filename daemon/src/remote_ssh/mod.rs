@@ -55,6 +55,7 @@ impl Manager {
         host_key: Arc<PrivateKey>,
         metrics_port: u16,
         remote_ssh_enabled: bool,
+        fake_origin_local: bool,
     ) -> (Self, tokio::sync::mpsc::Receiver<()>) {
         let ssh_allowed = Arc::new(AtomicBool::new(remote_ssh_enabled));
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
@@ -110,6 +111,7 @@ impl Manager {
                     wstx,
                     ftreg,
                     streg,
+                    fake_origin_local,
                 )
                 .await
                 {

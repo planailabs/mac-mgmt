@@ -96,6 +96,7 @@ fn build_proxy_request(
     target: &TunnelTarget,
     method: &str,
     path: &str,
+    fake_origin_local: bool,
 ) -> reqwest::RequestBuilder {
     let url = format!("http://{}:{}{path}", target.host, target.port);
     let mut req = match method {
@@ -106,18 +107,26 @@ fn build_proxy_request(
         "HEAD" => client.head(&url),
         _ => client.get(&url),
     };
-    req = req.header("host", format!("{}:{}", target.host, target.port));
+    if fake_origin_local {
+        req = req.header("host", format!("{}:{}", target.host, target.port));
+    }
     req
 }
 
 /// Apply request headers from a Vec, filtering hop-by-hop headers.
+/// When `fake_origin_local` is true, the Host header is also stripped
+/// (it was already set by `build_proxy_request`).
 fn apply_headers_vec(
     mut req: reqwest::RequestBuilder,
     headers: &[(String, String)],
+    fake_origin_local: bool,
 ) -> reqwest::RequestBuilder {
     for (k, v) in headers {
         let lk = k.to_lowercase();
-        if lk == "connection" || lk == "transfer-encoding" || lk == "host" {
+        if lk == "connection" || lk == "transfer-encoding" {
+            continue;
+        }
+        if fake_origin_local && lk == "host" {
             continue;
         }
         req = req.header(k.as_str(), v.as_str());
@@ -126,14 +135,19 @@ fn apply_headers_vec(
 }
 
 /// Apply request headers from a JSON object, filtering hop-by-hop headers.
+/// When `fake_origin_local` is true, the Host header is also stripped.
 fn apply_headers_json(
     mut req: reqwest::RequestBuilder,
     headers: &serde_json::Value,
+    fake_origin_local: bool,
 ) -> reqwest::RequestBuilder {
     if let Some(hdrs) = headers.as_object() {
         for (k, v) in hdrs {
             let lk = k.to_lowercase();
-            if lk == "connection" || lk == "transfer-encoding" || lk == "host" {
+            if lk == "connection" || lk == "transfer-encoding" {
+                continue;
+            }
+            if fake_origin_local && lk == "host" {
                 continue;
             }
             if let Some(val) = v.as_str() {
@@ -173,6 +187,7 @@ pub async fn run(
     ws_outgoing_tx: Arc<RwLock<Option<mpsc::Sender<String>>>>,
     file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
     shell_tunnel_registry: Arc<RwLock<ShellTunnelRegistry>>,
+    fake_origin_local: bool,
 ) -> Result<()> {
     let russh_config = Arc::new(russh::server::Config {
         keys: vec![host_key],
@@ -310,6 +325,7 @@ pub async fn run(
                         &path,
                         headers,
                         body,
+                        fake_origin_local,
                     )
                     .await;
                 });
@@ -337,6 +353,7 @@ pub async fn run(
                         &path,
                         headers,
                         body,
+                        fake_origin_local,
                     )
                     .await;
                 });
@@ -364,6 +381,7 @@ pub async fn run(
                         target,
                         &mode,
                         &path,
+                        fake_origin_local,
                     )
                     .await
                     {
@@ -597,6 +615,7 @@ async fn handle_proxy_request(
     path: &str,
     headers: Vec<(String, String)>,
     body: Option<String>,
+    fake_origin_local: bool,
 ) {
     let Some(target) = target else {
         let msg = serde_json::json!({
@@ -611,8 +630,8 @@ async fn handle_proxy_request(
     };
 
     let client = reqwest::Client::new();
-    let req = build_proxy_request(&client, &target, method, path);
-    let req = apply_headers_vec(req, &headers);
+    let req = build_proxy_request(&client, &target, method, path, fake_origin_local);
+    let req = apply_headers_vec(req, &headers, fake_origin_local);
     let req = apply_body_b64(req, body);
 
     let (status, resp_headers, resp_body) = match req.timeout(Duration::from_secs(60)).send().await
@@ -662,6 +681,7 @@ async fn handle_proxy_stream_request(
     path: &str,
     headers_json: serde_json::Value,
     body_b64: Option<String>,
+    fake_origin_local: bool,
 ) {
     let Some(target) = target else {
         let msg = serde_json::json!({
@@ -683,8 +703,8 @@ async fn handle_proxy_stream_request(
     };
 
     let client = reqwest::Client::new();
-    let req = build_proxy_request(&client, &target, method, path);
-    let req = apply_headers_json(req, &headers_json);
+    let req = build_proxy_request(&client, &target, method, path, fake_origin_local);
+    let req = apply_headers_json(req, &headers_json, fake_origin_local);
     let req = apply_body_b64(req, body_b64);
 
     let resp = match req.send().await {
@@ -788,6 +808,7 @@ async fn handle_proxy_session(
     target: Option<TunnelTarget>,
     mode: &str,
     path: &str,
+    fake_origin_local: bool,
 ) -> anyhow::Result<()> {
     let Some(target) = target else {
         anyhow::bail!("tunnel not found");
@@ -809,7 +830,7 @@ async fn handle_proxy_session(
 
     match mode {
         "websocket" => proxy_session_websocket(data_ws, &target, path).await,
-        "stream" => proxy_session_stream(data_ws, &target, path).await,
+        "stream" => proxy_session_stream(data_ws, &target, path, fake_origin_local).await,
         _ => anyhow::bail!("unknown proxy session mode: {mode}"),
     }
 }
@@ -845,6 +866,7 @@ async fn proxy_session_stream(
     data_ws: mac_mgmt_ws::ClientWs,
     target: &TunnelTarget,
     path: &str,
+    fake_origin_local: bool,
 ) -> anyhow::Result<()> {
     use futures_util::{SinkExt, StreamExt};
 
@@ -866,8 +888,8 @@ async fn proxy_session_stream(
     let req_path = req_json["path"].as_str().unwrap_or(path);
 
     let client = reqwest::Client::new();
-    let mut req = build_proxy_request(&client, &target, method, req_path);
-    req = apply_headers_json(req, &req_json["headers"]);
+    let mut req = build_proxy_request(&client, &target, method, req_path, fake_origin_local);
+    req = apply_headers_json(req, &req_json["headers"], fake_origin_local);
 
     // Collect request body chunks from data WS until "end_request"
     let has_body = req_json
