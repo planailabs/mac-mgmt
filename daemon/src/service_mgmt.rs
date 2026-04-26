@@ -619,16 +619,19 @@ impl ServiceManager {
 
         self.drain_notifications();
 
-        // Phase 0: handle crash backoff expiry — repair and reregister.
+        // Phase 0: handle crash backoff expiry.
+        // The supervisor auto-restarts crashed processes, so we don't
+        // reregister here — that would kill the already-restarted process.
+        // We just run repair (if needed) and transition back to Starting so
+        // the next tick promotes to Healthy and resumes health checks.
         let now = Instant::now();
-        let mut crash_reregisters: Vec<usize> = Vec::new();
-        for (i, state) in self.services.iter_mut().enumerate() {
+        for state in self.services.iter_mut() {
             if state.phase == ServicePhase::CrashBackoff {
                 let ready = state.restart_at.map_or(true, |t| now >= t);
                 if !ready {
                     continue;
                 }
-                let name = state.name.clone();
+                let name = &state.name;
                 if state.consecutive_crashes >= 2 {
                     tracing::info!("{name} crash backoff expired, attempting repair");
                     if let Err(e) = state.service.repair() {
@@ -636,11 +639,9 @@ impl ServiceManager {
                     }
                 }
                 state.restart_at = None;
-                crash_reregisters.push(i);
+                state.phase = ServicePhase::Starting;
+                state.post_start_done = false;
             }
-        }
-        for i in crash_reregisters {
-            self.reregister_service(i).await;
         }
 
         // Phase 1: lifecycle management.
