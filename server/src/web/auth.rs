@@ -23,6 +23,7 @@ pub struct ProviderMeta {
     pub slug: String,
     pub name: String,
     pub issuer: Option<String>,
+    pub allow_all: bool,
     pub allowed_domains: Vec<String>,
     pub allowed_emails: Vec<String>,
     pub auto_join_orgs: Vec<String>,
@@ -111,6 +112,15 @@ pub async fn build_auth_layers(
     let mut metas = Vec::new();
 
     for provider in &auth.providers {
+        if provider.allow_all
+            && (!provider.allowed_domains.is_empty() || !provider.allowed_emails.is_empty())
+        {
+            panic!(
+                "provider {}: allow_all is mutually exclusive with allowed_domains/allowed_emails",
+                provider.slug
+            );
+        }
+
         let base_path = format!("/auth/{}", provider.slug);
         let redirect_uri = format!("{base_url}/auth/{}/callback", provider.slug);
 
@@ -154,6 +164,7 @@ pub async fn build_auth_layers(
             slug: provider.slug.clone(),
             name: provider.name.clone(),
             issuer: provider.issuer.clone(),
+            allow_all: provider.allow_all,
             allowed_domains: provider.allowed_domains.clone(),
             allowed_emails: provider.allowed_emails.clone(),
             auto_join_orgs: provider.auto_join_orgs.clone(),
@@ -409,7 +420,7 @@ pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
                             .iter()
                             .any(|d| email.ends_with(&format!("@{d}")));
                         let email_ok = p.allowed_emails.contains(&email);
-                        (domain_ok || email_ok, p.auto_join_orgs.as_slice())
+                        (p.allow_all || domain_ok || email_ok, p.auto_join_orgs.as_slice())
                     } else {
                         (false, [].as_slice())
                     };

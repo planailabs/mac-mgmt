@@ -23,6 +23,7 @@ client_id = "xxx.apps.googleusercontent.com"
 client_secret = "GOCSPX-xxx"
 allowed_domains = ["example.com"]
 # allowed_emails = ["admin@other.com"]    # optional, individual email allowlist
+# allow_all = true                        # allow any authenticated user (exclusive with allowed_domains/allowed_emails)
 # auto_join_orgs = ["my-org"]             # auto-add users to these orgs on login
 
 # Add more providers:

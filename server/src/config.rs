@@ -153,6 +153,10 @@ pub struct OidcProviderConfig {
     pub issuer: Option<String>,
     pub client_id: String,
     pub client_secret: String,
+    /// Allow any authenticated user from this provider. Mutually exclusive
+    /// with `allowed_domains` / `allowed_emails`.
+    #[serde(default)]
+    pub allow_all: bool,
     #[serde(default)]
     pub allowed_domains: Vec<String>,
     #[serde(default)]
