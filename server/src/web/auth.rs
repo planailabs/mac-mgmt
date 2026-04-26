@@ -1,5 +1,7 @@
 use axum_oidc_client::{
-    auth::{AuthLayer, OAuthConfiguration, SESSION_KEY},
+    auth::{
+        router::handle_callback::AccessTokenResponse, AuthLayer, OAuthConfiguration, SESSION_KEY,
+    },
     auth_builder::OAuthConfigurationBuilder,
     auth_cache::AuthCache,
     auth_session::AuthSession,
@@ -34,18 +36,8 @@ static AUTH_PROVIDERS: OnceLock<Vec<ProviderMeta>> = OnceLock::new();
 
 /// Per-provider OAuth configs stored during `build_auth_layers()` for the
 /// `authorization_id` callback middleware.
-struct CallbackConfig {
-    slug: String,
-    token_endpoint: String,
-    client_id: String,
-    client_secret: String,
-    redirect_uri: String,
-    cookie_key: axum_extra::extract::cookie::Key,
-    token_max_age: Option<i64>,
-}
-
-static CALLBACK_CONFIGS: OnceLock<Vec<CallbackConfig>> = OnceLock::new();
-static CALLBACK_CACHE: OnceLock<Arc<dyn AuthCache + Send + Sync>> = OnceLock::new();
+static PROVIDER_CONFIGS: OnceLock<Vec<(String, Arc<OAuthConfiguration>)>> = OnceLock::new();
+static PROVIDER_CACHE: OnceLock<Arc<dyn AuthCache + Send + Sync>> = OnceLock::new();
 
 /// Decode the JWT payload (base64url, no verification — already validated by the OIDC client).
 fn jwt_claims(id_token: &str) -> Option<serde_json::Value> {
@@ -125,7 +117,7 @@ pub async fn build_auth_layers(
     let logout_handler = Arc::new(DefaultLogoutHandler);
     let mut layers = Vec::new();
     let mut metas = Vec::new();
-    let mut callback_configs = Vec::new();
+    let mut provider_configs = Vec::new();
 
     for provider in &auth.providers {
         let base_path = format!("/auth/{}", provider.slug);
@@ -168,15 +160,7 @@ pub async fn build_auth_layers(
         );
         layers.push(layer);
 
-        callback_configs.push(CallbackConfig {
-            slug: provider.slug.clone(),
-            token_endpoint: oauth_config.token_endpoint.clone(),
-            client_id: oauth_config.client_id.clone(),
-            client_secret: oauth_config.client_secret.clone(),
-            redirect_uri: oauth_config.redirect_uri.clone(),
-            cookie_key: oauth_config.private_cookie_key.clone(),
-            token_max_age: oauth_config.token_max_age,
-        });
+        provider_configs.push((provider.slug.clone(), oauth_config.clone()));
 
         metas.push(ProviderMeta {
             slug: provider.slug.clone(),
@@ -189,153 +173,90 @@ pub async fn build_auth_layers(
     }
 
     let _ = AUTH_PROVIDERS.set(metas);
-    let _ = CALLBACK_CONFIGS.set(callback_configs);
-    let _ = CALLBACK_CACHE.set(cache.clone());
+    let _ = PROVIDER_CONFIGS.set(provider_configs);
+    let _ = PROVIDER_CACHE.set(cache.clone());
 
     (layers, cache)
-}
-
-/// Token response from the OAuth2 token endpoint. Mirrors the library's
-/// internal `AccessTokenResponse` which isn't publicly exported.
-#[derive(serde::Deserialize)]
-struct TokenResponse {
-    id_token: String,
-    access_token: String,
-    token_type: String,
-    #[serde(default)]
-    expires_in: Option<i64>,
-    #[serde(default)]
-    refresh_token: Option<String>,
-    #[serde(default)]
-    scope: Option<String>,
 }
 
 /// Middleware that intercepts OAuth callbacks with `authorization_id` instead of
 /// the standard `code` + `state` parameters (e.g. Supabase SSO flow).
 ///
 /// Must be layered **after** the `AuthLayer`s so it runs outermost (first).
-/// When it sees `authorization_id` on a callback path, it exchanges it directly
-/// with the provider's token endpoint, creates a session, and sets the cookie.
 pub async fn authorization_id_callback(request: Request<Body>, next: Next) -> Response {
-    let path = request.uri().path().to_string();
+    let path = request.uri().path();
     let query = request.uri().query().unwrap_or("");
 
-    // Only intercept callback paths that have authorization_id (and no code).
-    let is_callback = path.ends_with("/callback") && path.starts_with("/auth/");
-    let has_auth_id = query.contains("authorization_id=");
-    let has_code = query.contains("code=");
-
-    if !is_callback || !has_auth_id || has_code {
-        return next.run(request).await;
-    }
-
-    // Extract authorization_id from query string.
-    let authorization_id = match query
-        .split('&')
-        .find_map(|p| p.strip_prefix("authorization_id="))
-    {
-        Some(id) => id.to_string(),
-        None => return next.run(request).await,
-    };
-
-    // Determine which provider this callback is for by matching the slug in the path.
+    // Only intercept /auth/{slug}/callback with authorization_id (and no code).
     let slug = path
         .strip_prefix("/auth/")
-        .and_then(|rest| rest.strip_suffix("/callback"));
-    let slug = match slug {
-        Some(s) => s,
-        None => return next.run(request).await,
-    };
-
-    let configs = match CALLBACK_CONFIGS.get() {
-        Some(c) => c,
-        None => return next.run(request).await,
-    };
-    let cache = match CALLBACK_CACHE.get() {
-        Some(c) => c,
-        None => return next.run(request).await,
-    };
-    let conf = match configs.iter().find(|c| c.slug == slug) {
-        Some(c) => c,
-        None => return next.run(request).await,
-    };
-
-    // Exchange authorization_id with the token endpoint.
-    fn url_encode(s: &str) -> String {
-        s.bytes()
-            .flat_map(|b| match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    format!("{}", b as char).into_bytes()
-                }
-                _ => format!("%{b:02X}").into_bytes(),
-            })
-            .map(|b| b as char)
-            .collect()
+        .and_then(|r| r.strip_suffix("/callback"));
+    if slug.is_none() || !query.contains("authorization_id=") || query.contains("code=") {
+        return next.run(request).await;
     }
-    let form_body = format!(
-        "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}",
-        url_encode(&authorization_id),
-        url_encode(&conf.redirect_uri),
-        url_encode(&conf.client_id),
-    );
+    let slug = slug.unwrap();
 
+    let auth_id = match query.split('&').find_map(|p| p.strip_prefix("authorization_id=")) {
+        Some(id) => id,
+        None => return next.run(request).await,
+    };
+
+    let configs = PROVIDER_CONFIGS.get();
+    let cache = PROVIDER_CACHE.get();
+    let conf = configs.and_then(|c| c.iter().find(|(s, _)| s == slug).map(|(_, c)| c));
+    let (Some(cache), Some(conf)) = (cache, conf) else {
+        return next.run(request).await;
+    };
+
+    // Exchange authorization_id with the token endpoint (no PKCE — provider
+    // didn't return state, so there's no verifier to look up).
     let mut token_req = reqwest::Client::new()
         .post(&conf.token_endpoint)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body(form_body);
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", auth_id),
+            ("redirect_uri", conf.redirect_uri.as_str()),
+            ("client_id", conf.client_id.as_str()),
+        ]);
     if !conf.client_secret.is_empty() {
         use base64::Engine;
-        let credentials = base64::engine::general_purpose::STANDARD
+        let creds = base64::engine::general_purpose::STANDARD
             .encode(format!("{}:{}", conf.client_id, conf.client_secret));
-        token_req = token_req.header("authorization", format!("Basic {credentials}"));
+        token_req = token_req.header("authorization", format!("Basic {creds}"));
     }
 
+    let fail = || Redirect::to("/auth/login").into_response();
     let res = match token_req.send().await {
-        Ok(r) => r,
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            let s = r.status();
+            let b = r.text().await.unwrap_or_default();
+            tracing::error!("authorization_id token exchange returned {s}: {b}");
+            return fail();
+        }
         Err(e) => {
             tracing::error!("authorization_id token exchange failed: {e}");
-            return Redirect::to("/auth/login").into_response();
+            return fail();
         }
     };
 
-    if !res.status().is_success() {
-        let status = res.status();
-        let body = res.text().await.unwrap_or_default();
-        tracing::error!("authorization_id token exchange returned {status}: {body}");
-        return Redirect::to("/auth/login").into_response();
-    }
-
-    let token: TokenResponse = match res.json().await {
+    let token: AccessTokenResponse = match res.json().await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("failed to parse token response: {e}");
-            return Redirect::to("/auth/login").into_response();
+            return fail();
         }
     };
 
-    // Build session and store it.
-    let expires = axum_oidc_client::auth::calculate_token_expiration(
-        token.expires_in,
-        conf.token_max_age,
-    );
-    let session = AuthSession {
-        id_token: token.id_token,
-        access_token: token.access_token,
-        token_type: token.token_type,
-        refresh_token: token.refresh_token,
-        scope: token.scope,
-        expires,
-    };
-
+    let session = AuthSession::new(&token, conf);
     let session_id = Uuid::new_v4().to_string();
     if let Err(e) = cache.set_auth_session(&session_id, session).await {
         tracing::error!("failed to store session: {e}");
-        return Redirect::to("/auth/login").into_response();
+        return fail();
     }
 
-    // Set the session cookie (session-scoped; server-side cache manages TTL).
     use axum_extra::extract::cookie::{Cookie, PrivateCookieJar};
-    let jar = PrivateCookieJar::from_headers(request.headers(), conf.cookie_key.clone());
+    let jar = PrivateCookieJar::from_headers(request.headers(), conf.private_cookie_key.clone());
     let jar = jar.add(
         Cookie::build((SESSION_KEY, session_id))
             .path("/")
@@ -344,12 +265,7 @@ pub async fn authorization_id_callback(request: Request<Body>, next: Next) -> Re
             .secure(true),
     );
 
-    (
-        jar,
-        Html(
-            r#"<head><meta http-equiv="Refresh" content="0; URL=/" /></head>"#,
-        ),
-    )
+    (jar, Html(r#"<head><meta http-equiv="Refresh" content="0; URL=/" /></head>"#))
         .into_response()
 }
 
