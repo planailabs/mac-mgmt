@@ -829,7 +829,7 @@ async fn handle_proxy_session(
     tracing::debug!("proxy session {session_id} data WS connected");
 
     match mode {
-        "websocket" => proxy_session_websocket(data_ws, &target, path).await,
+        "websocket" => proxy_session_websocket(data_ws, &target, path, fake_origin_local).await,
         "stream" => proxy_session_stream(data_ws, &target, path, fake_origin_local).await,
         _ => anyhow::bail!("unknown proxy session mode: {mode}"),
     }
@@ -840,9 +840,15 @@ async fn proxy_session_websocket(
     data_ws: mac_mgmt_ws::ClientWs,
     target: &TunnelTarget,
     path: &str,
+    fake_origin_local: bool,
 ) -> anyhow::Result<()> {
     let local_url = format!("ws://{}:{}{path}", target.host, target.port);
-    let local_ws = WsConnect::new(&local_url)
+    let mut ws_builder = WsConnect::new(&local_url);
+    if fake_origin_local {
+        ws_builder = ws_builder
+            .header("Origin", format!("http://{}:{}", target.host, target.port));
+    }
+    let local_ws = ws_builder
         .connect()
         .await
         .context("local WS connect failed")?;
