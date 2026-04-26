@@ -242,6 +242,12 @@ pub fn build_rocket(
         port,
         address,
         log_level: rocket::config::LogLevel::Off,
+        shutdown: rocket::config::Shutdown {
+            ctrlc: false,
+            #[cfg(unix)]
+            signals: std::collections::HashSet::new(),
+            ..Default::default()
+        },
         ..rocket::Config::default()
     };
 

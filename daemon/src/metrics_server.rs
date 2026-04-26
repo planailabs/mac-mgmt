@@ -105,6 +105,12 @@ pub fn build_rocket(
         port,
         address: std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
         log_level: rocket::config::LogLevel::Off,
+        shutdown: rocket::config::Shutdown {
+            ctrlc: false,
+            #[cfg(unix)]
+            signals: std::collections::HashSet::new(),
+            ..Default::default()
+        },
         ..rocket::Config::default()
     };
 
