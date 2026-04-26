@@ -18,6 +18,7 @@ fn init_tracing() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supervisor_mock_service_heartbeat() {
     init_tracing();
+    sim_tests::ensure_tls_provider();
     let (addr, state) = sim_tests::start_mock_server().await;
 
     let mock_svc = MockManagedService::new("test-svc")
@@ -78,6 +79,7 @@ async fn supervisor_mock_service_heartbeat() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supervisor_multiple_services() {
     init_tracing();
+    sim_tests::ensure_tls_provider();
     let (addr, state) = sim_tests::start_mock_server().await;
 
     let svc_a = MockManagedService::new("svc-alpha").with_tunnel("alpha-api", "127.0.0.1", 8001);

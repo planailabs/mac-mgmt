@@ -14,6 +14,15 @@ pub mod timeline;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+/// Install the rustls crypto provider required by reqwest.
+///
+/// The daemon creates reqwest clients which need a TLS provider even for
+/// plain HTTP. In production this is done in `main()`; in sim-tests we
+/// call this before spawning a daemon. Safe to call multiple times.
+pub fn ensure_tls_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// Start a mock server and return its address + state handle.
 pub async fn start_mock_server() -> (SocketAddr, Arc<mock_server::MockServerState>) {
     mock_server::start().await
@@ -66,6 +75,8 @@ pub async fn start_sim_daemon(
 pub async fn start_sim_daemon_with_config(
     cfg: mac_mgmt_common::DaemonConfig,
 ) -> (tokio::sync::oneshot::Sender<()>, String) {
+    ensure_tls_provider();
+
     let host_key = generate_host_key();
     let instance_id = mac_mgmt_daemon::host_keys::fingerprint_hex(&host_key);
     let host_key = std::sync::Arc::new(host_key);

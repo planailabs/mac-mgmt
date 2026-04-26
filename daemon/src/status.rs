@@ -96,6 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn connection_refused_gives_helpful_error() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let result = print_status(Some(19999)).await; // unlikely to be in use
         let err = result.unwrap_err();
         assert!(err.to_string().contains("daemon not running"), "got: {err}");
