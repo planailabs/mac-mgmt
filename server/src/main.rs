@@ -472,11 +472,6 @@ fn main() {
                 for layer in auth_layers {
                     router = router.layer(layer);
                 }
-                // Outermost: intercept non-standard callbacks (e.g. Supabase
-                // authorization_id) before AuthLayer tries to parse them.
-                router = router.layer(axum::middleware::from_fn(
-                    web::auth::authorization_id_callback,
-                ));
             } else if dev_no_auth {
                 // DEV mode: add require_auth middleware (for dev user injection) without OIDC layer
                 router = router.layer(axum::middleware::from_fn(web::auth::require_auth));

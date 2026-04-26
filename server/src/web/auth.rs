@@ -1,10 +1,7 @@
 use axum_oidc_client::{
-    auth::{
-        router::handle_callback::AccessTokenResponse, AuthLayer, OAuthConfiguration, SESSION_KEY,
-    },
+    auth::{AuthLayer, OAuthConfiguration, SESSION_KEY},
     auth_builder::OAuthConfigurationBuilder,
     auth_cache::AuthCache,
-    auth_session::AuthSession,
     cache::{TwoTierAuthCache, config::TwoTierCacheConfig},
     logout::handle_default_logout::DefaultLogoutHandler,
     sql_cache::{SqlAuthCache, SqlCacheConfig},
@@ -33,11 +30,6 @@ pub struct ProviderMeta {
 
 /// Providers populated during `build_auth_layers()`.
 static AUTH_PROVIDERS: OnceLock<Vec<ProviderMeta>> = OnceLock::new();
-
-/// Per-provider OAuth configs stored during `build_auth_layers()` for the
-/// `authorization_id` callback middleware.
-static PROVIDER_CONFIGS: OnceLock<Vec<(String, Arc<OAuthConfiguration>)>> = OnceLock::new();
-static PROVIDER_CACHE: OnceLock<Arc<dyn AuthCache + Send + Sync>> = OnceLock::new();
 
 /// Decode the JWT payload (base64url, no verification — already validated by the OIDC client).
 fn jwt_claims(id_token: &str) -> Option<serde_json::Value> {
@@ -117,7 +109,6 @@ pub async fn build_auth_layers(
     let logout_handler = Arc::new(DefaultLogoutHandler);
     let mut layers = Vec::new();
     let mut metas = Vec::new();
-    let mut provider_configs = Vec::new();
 
     for provider in &auth.providers {
         let base_path = format!("/auth/{}", provider.slug);
@@ -152,15 +143,12 @@ pub async fn build_auth_layers(
             .build()
             .unwrap_or_else(|e| panic!("failed to build OIDC config for {}: {e}", provider.slug));
 
-        let oauth_config = Arc::new(oauth_config);
         let layer = AuthLayer::new(
-            oauth_config.clone(),
+            Arc::new(oauth_config),
             cache.clone(),
             logout_handler.clone(),
         );
         layers.push(layer);
-
-        provider_configs.push((provider.slug.clone(), oauth_config.clone()));
 
         metas.push(ProviderMeta {
             slug: provider.slug.clone(),
@@ -173,100 +161,8 @@ pub async fn build_auth_layers(
     }
 
     let _ = AUTH_PROVIDERS.set(metas);
-    let _ = PROVIDER_CONFIGS.set(provider_configs);
-    let _ = PROVIDER_CACHE.set(cache.clone());
 
     (layers, cache)
-}
-
-/// Middleware that intercepts OAuth callbacks with `authorization_id` instead of
-/// the standard `code` + `state` parameters (e.g. Supabase SSO flow).
-///
-/// Must be layered **after** the `AuthLayer`s so it runs outermost (first).
-pub async fn authorization_id_callback(request: Request<Body>, next: Next) -> Response {
-    let path = request.uri().path();
-    let query = request.uri().query().unwrap_or("");
-
-    // Only intercept /auth/{slug}/callback with authorization_id (and no code).
-    let slug = path
-        .strip_prefix("/auth/")
-        .and_then(|r| r.strip_suffix("/callback"));
-    if slug.is_none() || !query.contains("authorization_id=") || query.contains("code=") {
-        return next.run(request).await;
-    }
-    let slug = slug.unwrap();
-
-    let auth_id = match query.split('&').find_map(|p| p.strip_prefix("authorization_id=")) {
-        Some(id) => id,
-        None => return next.run(request).await,
-    };
-
-    let configs = PROVIDER_CONFIGS.get();
-    let cache = PROVIDER_CACHE.get();
-    let conf = configs.and_then(|c| c.iter().find(|(s, _)| s == slug).map(|(_, c)| c));
-    let (Some(cache), Some(conf)) = (cache, conf) else {
-        return next.run(request).await;
-    };
-
-    // Exchange authorization_id with the token endpoint (no PKCE — provider
-    // didn't return state, so there's no verifier to look up).
-    let mut token_req = reqwest::Client::new()
-        .post(&conf.token_endpoint)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", auth_id),
-            ("redirect_uri", conf.redirect_uri.as_str()),
-            ("client_id", conf.client_id.as_str()),
-        ]);
-    if !conf.client_secret.is_empty() {
-        use base64::Engine;
-        let creds = base64::engine::general_purpose::STANDARD
-            .encode(format!("{}:{}", conf.client_id, conf.client_secret));
-        token_req = token_req.header("authorization", format!("Basic {creds}"));
-    }
-
-    let fail = || Redirect::to("/auth/login").into_response();
-    let res = match token_req.send().await {
-        Ok(r) if r.status().is_success() => r,
-        Ok(r) => {
-            let s = r.status();
-            let b = r.text().await.unwrap_or_default();
-            tracing::error!("authorization_id token exchange returned {s}: {b}");
-            return fail();
-        }
-        Err(e) => {
-            tracing::error!("authorization_id token exchange failed: {e}");
-            return fail();
-        }
-    };
-
-    let token: AccessTokenResponse = match res.json().await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("failed to parse token response: {e}");
-            return fail();
-        }
-    };
-
-    let session = AuthSession::new(&token, conf);
-    let session_id = Uuid::new_v4().to_string();
-    if let Err(e) = cache.set_auth_session(&session_id, session).await {
-        tracing::error!("failed to store session: {e}");
-        return fail();
-    }
-
-    use axum_extra::extract::cookie::{Cookie, PrivateCookieJar};
-    let jar = PrivateCookieJar::from_headers(request.headers(), conf.private_cookie_key.clone());
-    let jar = jar.add(
-        Cookie::build((SESSION_KEY, session_id))
-            .path("/")
-            .http_only(true)
-            .same_site(axum_extra::extract::cookie::SameSite::Strict)
-            .secure(true),
-    );
-
-    (jar, Html(r#"<head><meta http-equiv="Refresh" content="0; URL=/" /></head>"#))
-        .into_response()
 }
 
 /// Upsert the user record, auto-join orgs, and load org memberships.

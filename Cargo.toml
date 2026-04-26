@@ -3,7 +3,7 @@ members = ["common", "daemon", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt
 resolver = "3"
 
 [workspace.dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query", "form"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 sentry = { version = "0.47", default-features = false, features = ["reqwest", "panic", "backtrace", "contexts", "debug-images"] }
 which = "7"
