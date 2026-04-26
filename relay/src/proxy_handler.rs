@@ -249,12 +249,24 @@ fn extract_cookie_token(headers: &HeaderMap) -> Option<String> {
         })
 }
 
+/// Check whether a token's scopes include the required scope.
+/// Empty scopes vec means wildcard (all scopes allowed, for backwards compat).
+fn has_scope(scopes: &[String], required: &str) -> bool {
+    scopes.is_empty()
+        || scopes.iter().any(|s| {
+            s == "*"
+                || s == required
+                || (required.starts_with("tcp:") && s == "tcp:*")
+        })
+}
+
 /// Validate the proxy token (from Bearer header or cookie) and check cluster scoping.
+/// Returns the SelfInfo so callers can check scopes.
 async fn authenticate_proxy(
     headers: &HeaderMap,
     state: &ProxyState,
     instance_id: &str,
-) -> Result<(), axum::response::Response> {
+) -> Result<SelfInfo, axum::response::Response> {
     let token = extract_token(headers)
         .ok_or_else(|| {
             (StatusCode::UNAUTHORIZED, "Missing proxy_token. Use Authorization: Bearer <token> or visit /proxy?proxy_token=TOKEN first.").into_response()
@@ -277,6 +289,20 @@ async fn authenticate_proxy(
         return Err(StatusCode::FORBIDDEN.into_response());
     }
 
+    Ok(self_info)
+}
+
+/// Authenticate and require a specific scope. Returns 403 if the scope is missing.
+async fn authenticate_proxy_scoped(
+    headers: &HeaderMap,
+    state: &ProxyState,
+    instance_id: &str,
+    required_scope: &str,
+) -> Result<(), axum::response::Response> {
+    let self_info = authenticate_proxy(headers, state, instance_id).await?;
+    if !has_scope(&self_info.scopes, required_scope) {
+        return Err((StatusCode::FORBIDDEN, "insufficient scope").into_response());
+    }
     Ok(())
 }
 
@@ -366,7 +392,11 @@ const PROXY_BOOTSTRAP_HTML: &str = r#"<!DOCTYPE html>
 /// Handles all non-special requests by proxying them to the daemon's tunnel.
 /// Detects WebSocket upgrades and routes them through proxy sessions.
 /// Regular HTTP (including SSE) is streamed via a proxy session.
-async fn proxy_catchall(State(state): State<ProxyState>, req: Request) -> axum::response::Response {
+async fn proxy_catchall(
+    State(state): State<ProxyState>,
+    connect_info: axum::extract::ConnectInfo<std::net::SocketAddr>,
+    req: Request,
+) -> axum::response::Response {
     let headers = req.headers().clone();
     let method = req.method().clone();
     let path = req
@@ -379,8 +409,13 @@ async fn proxy_catchall(State(state): State<ProxyState>, req: Request) -> axum::
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
-        return resp;
+    let self_info = match authenticate_proxy(&headers, &state, &instance_id).await {
+        Ok(info) => info,
+        Err(resp) => return resp,
+    };
+    let required_scope = format!("tcp:{tunnel_name}");
+    if !has_scope(&self_info.scopes, &required_scope) {
+        return (StatusCode::FORBIDDEN, "insufficient scope").into_response();
     }
 
     let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
@@ -431,7 +466,7 @@ async fn proxy_catchall(State(state): State<ProxyState>, req: Request) -> axum::
     }
 
     // Collect request headers to forward
-    let fwd_headers: Vec<(String, String)> = headers
+    let mut fwd_headers: Vec<(String, String)> = headers
         .iter()
         .filter_map(|(k, v)| {
             let lk = k.as_str().to_lowercase();
@@ -441,6 +476,20 @@ async fn proxy_catchall(State(state): State<ProxyState>, req: Request) -> axum::
             Some((k.to_string(), v.to_str().unwrap_or("").to_string()))
         })
         .collect();
+
+    // Add reverse-proxy headers (X-Real-IP, X-Forwarded-For, X-Forwarded-Proto)
+    let client_ip = connect_info.0.ip().to_string();
+    fwd_headers.push(("x-real-ip".to_string(), client_ip.clone()));
+    let xff = match headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        Some(existing) => format!("{existing}, {client_ip}"),
+        None => client_ip,
+    };
+    fwd_headers.push(("x-forwarded-for".to_string(), xff));
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    fwd_headers.push(("x-forwarded-proto".to_string(), proto.to_string()));
 
     // Collect request body
     let body_bytes = match axum::body::to_bytes(req.into_body(), 16 * 1024 * 1024).await {
@@ -551,6 +600,11 @@ async fn proxy_request(
         }
     }
 
+    let required_scope = format!("tcp:{tunnel_name}");
+    if !has_scope(&self_info.scopes, &required_scope) {
+        return (StatusCode::FORBIDDEN, "insufficient scope").into_response();
+    }
+
     let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     };
@@ -611,7 +665,7 @@ async fn file_list(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await {
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
@@ -670,7 +724,7 @@ async fn file_read(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await {
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
@@ -803,7 +857,7 @@ async fn file_write(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:write").await {
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
@@ -954,7 +1008,7 @@ async fn shell_exec(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "shell:exec").await {
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
@@ -1048,8 +1102,8 @@ async fn daemon_ping(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
-        return resp;
+    if authenticate_proxy(&headers, &state, &instance_id).await.is_err() {
+        return StatusCode::UNAUTHORIZED.into_response();
     }
     let online = state.registry.resolve_control_tx(&instance_id).is_some();
     tracing::debug!(instance = %instance_id, online, "daemon_ping");
@@ -1069,7 +1123,7 @@ async fn log_proxy(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy(&headers, &state, &instance_id).await {
+    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "logs:read").await {
         return resp;
     }
     let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
