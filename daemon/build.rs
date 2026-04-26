@@ -16,6 +16,7 @@ fn main() {
     let sha = std::env::var("GIT_SHA")
         .ok()
         .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().trim_end_matches("-dirty").to_string())
         .or_else(|| {
             let output = std::process::Command::new("git")
                 .args(["rev-parse", "HEAD"])
@@ -24,17 +25,9 @@ fn main() {
             if !output.status.success() {
                 return None;
             }
-            let mut sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if sha.is_empty() {
                 return None;
-            }
-            let dirty = std::process::Command::new("git")
-                .args(["status", "--porcelain"])
-                .output()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
-            if dirty {
-                sha.push_str("-dirty");
             }
             Some(sha)
         })
