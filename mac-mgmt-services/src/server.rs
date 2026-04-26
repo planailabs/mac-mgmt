@@ -487,10 +487,14 @@ async fn monitor_adopted(
     // just tails the same file from the current position.
     let tail_handle = spawn_log_tailer(&name, &socket_path, notif_tx.clone());
 
-    // Wait for the adopted process to exit by polling kill(pid, 0).
+    // Wait for the adopted process to exit by polling waitpid(WNOHANG).
+    // We can't use kill(pid,0) because zombies still exist in the process
+    // table — kill returns success for them, so we'd never detect the exit.
+    // waitpid both detects AND reaps the zombie in one call.
     let exited = loop {
-        let alive = unsafe { libc::kill(adopted_pid as i32, 0) } == 0;
-        if !alive {
+        let status = unsafe { libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
+        // status > 0: child reaped; status == 0: still running; status < 0: not our child / gone
+        if status != 0 {
             break true;
         }
         tokio::select! {
@@ -500,9 +504,13 @@ async fn monitor_adopted(
                 tracing::info!("supervisor: stopping adopted {name} (pid {adopted_pid})");
                 unsafe { libc::kill(adopted_pid as i32, libc::SIGTERM) };
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                let still_alive = unsafe { libc::kill(adopted_pid as i32, 0) } == 0;
-                if still_alive {
+                let reaped = unsafe {
+                    libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), libc::WNOHANG)
+                };
+                if reaped == 0 {
+                    // Still running after grace period — force kill and reap.
                     unsafe { libc::kill(adopted_pid as i32, libc::SIGKILL) };
+                    unsafe { libc::waitpid(adopted_pid as i32, std::ptr::null_mut(), 0) };
                 }
                 pid.store(0, Ordering::Relaxed);
                 tail_handle.abort();
