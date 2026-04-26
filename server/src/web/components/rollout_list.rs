@@ -11,6 +11,8 @@ use crate::web::user::current_user;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutEntry {
     id: Uuid,
+    #[serde(default)]
+    name: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
     stage_count: i64,
@@ -47,13 +49,14 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
     #[derive(sqlx::FromRow)]
     struct Row {
         id: Uuid,
+        name: Option<String>,
         status: String,
         created_at: DateTime<Utc>,
         stage_count: i64,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT r.id, r.status, r.created_at, COUNT(rs.id) AS stage_count \
+        "SELECT r.id, r.name, r.status, r.created_at, COUNT(rs.id) AS stage_count \
          FROM rollouts r LEFT JOIN rollout_stages rs ON rs.rollout_id = r.id \
          GROUP BY r.id ORDER BY r.created_at DESC",
     )
@@ -138,6 +141,7 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
             };
             RolloutEntry {
                 id: r.id,
+                name: r.name,
                 status: r.status,
                 created_at: r.created_at,
                 stage_count: r.stage_count,
@@ -177,6 +181,7 @@ async fn delete_rollout(id: String) -> Result<(), ServerFnError> {
 impl Searchable for RolloutEntry {
     fn matches_search(&self, query: &str) -> bool {
         self.id.to_string().to_lowercase().contains(query)
+            || self.name.as_deref().unwrap_or("").to_lowercase().contains(query)
             || self.status.to_lowercase().contains(query)
     }
 }
@@ -306,7 +311,7 @@ pub fn RolloutList() -> Element {
                             let (key, asc) = sort.read().clone();
                             filtered.sort_by(|a, b| {
                                 let ord = match key.as_str() {
-                                    "id" => a.id.to_string().cmp(&b.id.to_string()),
+                                    "name" => a.name.as_deref().unwrap_or("").cmp(b.name.as_deref().unwrap_or("")),
                                     "status" => a.status.cmp(&b.status),
                                     "stages" => a.stage_count.cmp(&b.stage_count),
                                     _ => a.created_at.cmp(&b.created_at),
@@ -326,7 +331,7 @@ pub fn RolloutList() -> Element {
                                 table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                     thead { class: "bg-gray-50 dark:bg-gray-700",
                                         tr {
-                                            SortableTh { label: "ID".to_string(), sort_key: "id".to_string(), sort }
+                                            SortableTh { label: "Name".to_string(), sort_key: "name".to_string(), sort }
                                             SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
                                             SortableTh { label: "Stages".to_string(), sort_key: "stages".to_string(), sort }
                                             th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Health" }
@@ -354,8 +359,12 @@ pub fn RolloutList() -> Element {
                                                                 to: Route::RolloutDetail {
                                                                     id: rid.clone(),
                                                                 },
-                                                                class: "text-blue-600 dark:text-blue-400 hover:underline font-mono text-xs",
-                                                                "{rid}"
+                                                                class: "text-blue-600 dark:text-blue-400 hover:underline",
+                                                                if let Some(ref name) = r.name {
+                                                                    span { "{name}" }
+                                                                } else {
+                                                                    span { class: "font-mono text-xs", "{rid}" }
+                                                                }
                                                             }
                                                         }
                                                         td { class: "px-6 py-4 text-sm",

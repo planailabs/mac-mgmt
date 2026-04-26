@@ -3347,6 +3347,9 @@ pub async fn admin_remove_group_member(
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CreateRolloutBody {
+    /// Optional human-friendly name for this rollout.
+    #[serde(default)]
+    name: Option<String>,
     /// Optional target version to roll out (semver, e.g., "0.1.6"). If null,
     /// the rollout only changes the nixpkgs pin.
     #[serde(default)]
@@ -3453,8 +3456,10 @@ pub async fn admin_create_rollout(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
-    sqlx::query("INSERT INTO rollouts (id, target_version, nixpkgs_commit) VALUES ($1, $2, $3)")
+    let name = body.name.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    sqlx::query("INSERT INTO rollouts (id, name, target_version, nixpkgs_commit) VALUES ($1, $2, $3, $4)")
         .bind(rollout_id)
+        .bind(&name)
         .bind(&target_version)
         .bind(&nixpkgs_commit)
         .execute(&mut *tx)
@@ -3489,6 +3494,8 @@ pub async fn admin_create_rollout(
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RolloutRow {
     id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     status: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -3513,6 +3520,7 @@ pub async fn admin_list_rollouts(
     #[derive(sqlx::FromRow)]
     struct Row {
         id: Uuid,
+        name: Option<String>,
         status: String,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -3520,7 +3528,7 @@ pub async fn admin_list_rollouts(
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT r.id, r.status, r.created_at, r.updated_at, COUNT(rs.id) AS stage_count \
+        "SELECT r.id, r.name, r.status, r.created_at, r.updated_at, COUNT(rs.id) AS stage_count \
          FROM rollouts r \
          LEFT JOIN rollout_stages rs ON rs.rollout_id = r.id \
          GROUP BY r.id ORDER BY r.created_at DESC",
@@ -3533,6 +3541,7 @@ pub async fn admin_list_rollouts(
         rows.into_iter()
             .map(|r| RolloutRow {
                 id: r.id,
+                name: r.name,
                 status: r.status,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
@@ -3545,6 +3554,8 @@ pub async fn admin_list_rollouts(
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RolloutDetail {
     id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     target_version: Option<String>,
     nixpkgs_commit: Option<String>,
     status: String,
@@ -3585,6 +3596,7 @@ pub async fn admin_get_rollout(
     #[derive(sqlx::FromRow)]
     struct RolloutRow2 {
         id: Uuid,
+        name: Option<String>,
         target_version: Option<String>,
         nixpkgs_commit: Option<String>,
         status: String,
@@ -3592,7 +3604,7 @@ pub async fn admin_get_rollout(
         updated_at: DateTime<Utc>,
     }
 
-    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, target_version, nixpkgs_commit, status, created_at, updated_at FROM rollouts WHERE id = $1")
+    let rollout = sqlx::query_as::<_, RolloutRow2>("SELECT id, name, target_version, nixpkgs_commit, status, created_at, updated_at FROM rollouts WHERE id = $1")
         .bind(rid)
         .fetch_optional(pool.inner())
         .await
@@ -3621,6 +3633,7 @@ pub async fn admin_get_rollout(
 
     Ok(Json(RolloutDetail {
         id: rollout.id,
+        name: rollout.name,
         target_version: rollout.target_version,
         nixpkgs_commit: rollout.nixpkgs_commit,
         status: rollout.status,

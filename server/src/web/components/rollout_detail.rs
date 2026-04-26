@@ -11,6 +11,8 @@ use crate::web::user::current_user;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutInfo {
     id: Uuid,
+    #[serde(default)]
+    name: Option<String>,
     target_version: Option<String>,
     nixpkgs_commit: Option<String>,
     /// Captured majority version from the cohort at start-time; null when
@@ -128,6 +130,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     #[derive(sqlx::FromRow)]
     struct RRow {
         id: Uuid,
+        name: Option<String>,
         target_version: Option<String>,
         nixpkgs_commit: Option<String>,
         baseline_version: Option<String>,
@@ -137,7 +140,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
     }
 
     let rollout = sqlx::query_as::<_, RRow>(
-        "SELECT id, target_version, nixpkgs_commit, baseline_version, baseline_nixpkgs_commit, status, created_at FROM rollouts WHERE id = $1",
+        "SELECT id, name, target_version, nixpkgs_commit, baseline_version, baseline_nixpkgs_commit, status, created_at FROM rollouts WHERE id = $1",
     )
     .bind(rid)
     .fetch_one(&pool)
@@ -252,6 +255,7 @@ async fn get_rollout_detail(id: String) -> Result<RolloutInfo, ServerFnError> {
 
     Ok(RolloutInfo {
         id: rollout.id,
+        name: rollout.name,
         target_version: rollout.target_version,
         nixpkgs_commit: rollout.nixpkgs_commit,
         baseline_version: rollout.baseline_version,
@@ -1236,10 +1240,11 @@ pub fn RolloutDetail(id: String) -> Element {
                 _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
             };
 
+            let display_name = info.name.clone().unwrap_or_else(|| format!("Rollout {}", &rid[..8]));
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
                     div {
-                        h2 { class: "text-2xl font-bold mb-1", "Rollout" }
+                        h2 { class: "text-2xl font-bold mb-1", "{display_name}" }
                         div { class: "flex items-center gap-2",
                             span { class: "px-2 py-0.5 rounded text-xs font-medium {status_badge}",
                                 "{status}"

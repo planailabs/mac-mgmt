@@ -65,6 +65,7 @@ async fn get_group_options() -> Result<Vec<GroupOption>, ServerFnError> {
 /// the sentinel is present instead of joining through `rollout_group_members`.
 #[server]
 async fn create_rollout(
+    name: Option<String>,
     target_version: Option<String>,
     stage_ids: Vec<String>,
     nixpkgs_commit: Option<String>,
@@ -215,9 +216,11 @@ async fn create_rollout(
         }
     }
 
+    let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
     let rollout_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO rollouts (id, target_version, nixpkgs_commit) VALUES ($1, $2, $3)")
+    sqlx::query("INSERT INTO rollouts (id, name, target_version, nixpkgs_commit) VALUES ($1, $2, $3, $4)")
         .bind(rollout_id)
+        .bind(&name)
         .bind(&target_version)
         .bind(&nixpkgs_commit)
         .execute(&mut *tx)
@@ -252,6 +255,7 @@ async fn create_rollout(
 pub fn RolloutForm() -> Element {
     let groups = use_server_future(move || async move { get_group_options().await })?;
     let versions = use_server_future(move || async move { get_available_versions().await })?;
+    let mut name = use_signal(String::new);
     let mut target_version = use_signal(String::new);
     let mut nixpkgs_commit = use_signal(String::new);
     let mut selected_stages = use_signal(Vec::<String>::new);
@@ -273,6 +277,20 @@ pub fn RolloutForm() -> Element {
                 }
 
                 div { class: "space-y-4",
+                    div {
+                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
+                            "Name (optional)"
+                        }
+                        input {
+                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm dark:bg-gray-700 dark:text-white",
+                            placeholder: "e.g. v0.2.0 rollout, nixpkgs security update",
+                            value: "{name}",
+                            oninput: move |e| name.set(e.value()),
+                        }
+                        p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
+                            "A short label to identify this rollout. Shown in the list and detail views."
+                        }
+                    }
                     div {
                         label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
                             "Target Version"
@@ -557,6 +575,10 @@ pub fn RolloutForm() -> Element {
                     button {
                         class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                         onclick: move |_| {
+                            let rollout_name = {
+                                let n = name.read().trim().to_string();
+                                if n.is_empty() { None } else { Some(n) }
+                            };
                             let ver = {
                                 let v = target_version.read().trim().to_string();
                                 if v.is_empty() { None } else { Some(v) }
@@ -576,7 +598,7 @@ pub fn RolloutForm() -> Element {
                                     error.set(Some("Select at least one stage".into()));
                                     return;
                                 }
-                                match create_rollout(ver, stages, commit, Some(gate_input)).await {
+                                match create_rollout(rollout_name, ver, stages, commit, Some(gate_input)).await {
                                     Ok(id) => {
                                         nav.push(Route::RolloutDetail { id });
                                     }
