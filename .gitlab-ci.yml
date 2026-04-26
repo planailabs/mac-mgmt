@@ -11,5 +11,6 @@ build:
     - nix flake check -L
     - bash xzar-install.sh
     - nix develop -c bash xzar.sh
+    - ./docker-push.sh
   environment: production
   resource_group: production

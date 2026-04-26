@@ -114,7 +114,19 @@
             env.GIT_SHA = gitSha;
           }; */
         };
-      } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
+        let images = import ./docker.nix {
+          inherit pkgs mac-mgmt-server mac-mgmt-relay mac-mgmt-runner;
+          mac-mgmt-relay-ssh = relay-ssh;
+          tag = gitSha;
+        };
+        in {
+          packages.docker-server = images.server;
+          packages.docker-relay = images.relay;
+          packages.docker-runner = images.runner;
+          packages.docker-relay-ssh = images.relay-ssh;
+        }
+      ) // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
           mkdir -p $out pack
           cp ${mac-mgmt}/bin/mac-mgmt pack/mac-mgmt
