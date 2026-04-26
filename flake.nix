@@ -83,12 +83,33 @@
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
         };
 
-        packages.default = mac-mgmt;
-        packages.server = mac-mgmt-server;
-        packages.relay = mac-mgmt-relay;
-        packages.runner = mac-mgmt-runner;
-        packages.relay-ssh = relay-ssh;
-        packages.macosx-sdk = macosx-sdk;
+        packages = {
+          default = mac-mgmt;
+          server = mac-mgmt-server;
+          relay = mac-mgmt-relay;
+          runner = mac-mgmt-runner;
+          relay-ssh = relay-ssh;
+          macosx-sdk = macosx-sdk;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
+          let images = import ./docker.nix {
+            inherit pkgs mac-mgmt-server mac-mgmt-relay mac-mgmt-runner;
+            mac-mgmt-relay-ssh = relay-ssh;
+            tag = gitSha;
+          };
+          in {
+            docker-server = images.server;
+            docker-relay = images.relay;
+            docker-runner = images.runner;
+            docker-relay-ssh = images.relay-ssh;
+          }
+        ) // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
+            mkdir -p $out pack
+            cp ${mac-mgmt}/bin/mac-mgmt pack/mac-mgmt
+            cd pack
+            tar czf $out/mac-mgmt.tar.gz mac-mgmt
+          '';
+        };
 
         checks = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           relay-integration = pkgs.callPackage ./tests/relay.nix {
@@ -114,24 +135,5 @@
             env.GIT_SHA = gitSha;
           }; */
         };
-      } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
-        let images = import ./docker.nix {
-          inherit pkgs mac-mgmt-server mac-mgmt-relay mac-mgmt-runner;
-          mac-mgmt-relay-ssh = relay-ssh;
-          tag = gitSha;
-        };
-        in {
-          packages.docker-server = images.server;
-          packages.docker-relay = images.relay;
-          packages.docker-runner = images.runner;
-          packages.docker-relay-ssh = images.relay-ssh;
-        }
-      ) // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
-        packages.tarball = pkgs.runCommand "mac-mgmt-tarball" {} ''
-          mkdir -p $out pack
-          cp ${mac-mgmt}/bin/mac-mgmt pack/mac-mgmt
-          cd pack
-          tar czf $out/mac-mgmt.tar.gz mac-mgmt
-        '';
       });
 }
