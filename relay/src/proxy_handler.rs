@@ -231,6 +231,20 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
     extract_cookie_token(headers)
 }
 
+/// Remove the proxy_token cookie from a cookie header value, keeping the rest.
+fn strip_proxy_cookie(cookie_header: &str) -> String {
+    cookie_header
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|pair| {
+            pair.split_once('=')
+                .map(|(name, _)| name.trim() != PROXY_TOKEN_COOKIE)
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// Extract proxy_token from cookie.
 fn extract_cookie_token(headers: &HeaderMap) -> Option<String> {
     headers
@@ -465,13 +479,23 @@ async fn proxy_catchall(
             .into_response();
     }
 
-    // Collect request headers to forward
+    // Collect request headers to forward.
+    // Strip hop-by-hop headers. For cookies, remove our proxy_token but
+    // forward the rest so upstream services keep their session cookies.
     let mut fwd_headers: Vec<(String, String)> = headers
         .iter()
         .filter_map(|(k, v)| {
             let lk = k.as_str().to_lowercase();
-            if lk == "connection" || lk == "transfer-encoding" || lk == "cookie" {
+            if lk == "connection" || lk == "transfer-encoding" {
                 return None;
+            }
+            if lk == "cookie" {
+                let filtered = strip_proxy_cookie(v.to_str().unwrap_or(""));
+                return if filtered.is_empty() {
+                    None
+                } else {
+                    Some(("cookie".to_string(), filtered))
+                };
             }
             Some((k.to_string(), v.to_str().unwrap_or("").to_string()))
         })
