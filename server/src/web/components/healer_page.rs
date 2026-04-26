@@ -574,99 +574,6 @@ pub async fn get_session_meta(session_id: String) -> Result<SessionMeta, ServerF
     })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct HealerSettings {
-    pub auto_trigger: Option<bool>,
-    pub auto_trigger_provider: Option<String>,
-    pub auto_trigger_model: Option<String>,
-    pub auto_approve: Option<bool>,
-    pub fix_provider: Option<String>,
-    pub fix_model: Option<String>,
-}
-
-#[server]
-pub async fn get_healer_settings(cluster_id: String) -> Result<HealerSettings, ServerFnError> {
-    let _user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid cluster id"))?;
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        auto_trigger: Option<bool>,
-        auto_trigger_provider: Option<String>,
-        auto_trigger_model: Option<String>,
-        auto_approve: Option<bool>,
-        fix_provider: Option<String>,
-        fix_model: Option<String>,
-    }
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT auto_trigger, auto_trigger_provider, auto_trigger_model, \
-                auto_approve, fix_provider, fix_model \
-         FROM healer_cluster_settings WHERE cluster_id = $1",
-    )
-    .bind(cid)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(row
-        .map(|r| HealerSettings {
-            auto_trigger: r.auto_trigger,
-            auto_trigger_provider: r.auto_trigger_provider,
-            auto_trigger_model: r.auto_trigger_model,
-            auto_approve: r.auto_approve,
-            fix_provider: r.fix_provider,
-            fix_model: r.fix_model,
-        })
-        .unwrap_or_default())
-}
-
-#[server]
-pub async fn save_healer_settings(
-    cluster_id: String,
-    auto_trigger: Option<bool>,
-    auto_trigger_provider: Option<String>,
-    auto_trigger_model: Option<String>,
-    auto_approve: Option<bool>,
-    fix_provider: Option<String>,
-    fix_model: Option<String>,
-) -> Result<(), ServerFnError> {
-    let user = current_user().await?;
-    let pool = crate::server_pool()?;
-    let cid: uuid::Uuid = cluster_id
-        .parse()
-        .map_err(|_| ServerFnError::new("invalid cluster id"))?;
-    user.require_cluster_write(&pool, cid).await?;
-
-    sqlx::query(
-        "INSERT INTO healer_cluster_settings \
-            (cluster_id, auto_trigger, auto_trigger_provider, auto_trigger_model, \
-             auto_approve, fix_provider, fix_model, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now()) \
-         ON CONFLICT (cluster_id) DO UPDATE SET \
-            auto_trigger = EXCLUDED.auto_trigger, \
-            auto_trigger_provider = EXCLUDED.auto_trigger_provider, \
-            auto_trigger_model = EXCLUDED.auto_trigger_model, \
-            auto_approve = EXCLUDED.auto_approve, \
-            fix_provider = EXCLUDED.fix_provider, \
-            fix_model = EXCLUDED.fix_model, \
-            updated_at = now()",
-    )
-    .bind(cid)
-    .bind(auto_trigger)
-    .bind(&auto_trigger_provider)
-    .bind(&auto_trigger_model)
-    .bind(auto_approve)
-    .bind(&fix_provider)
-    .bind(&fix_model)
-    .execute(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(())
-}
-
 // ── Component ──────────────────────────────────────────────────────────
 
 #[component]
@@ -700,35 +607,6 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let mut selected_fix_model_key = use_signal(|| "none".to_string());
     let mut auto_approve = use_signal(|| false);
     let mut settings_open = use_signal(|| false);
-    let mut settings_saving = use_signal(|| false);
-
-    // Load per-cluster healer settings.
-    let cluster_id_for_settings = ctx.cluster_id.clone();
-    let mut settings_future = use_server_future(move || {
-        let cid = cluster_id_for_settings.clone();
-        async move { get_healer_settings(cid).await }
-    })?;
-    let healer_settings = settings_future
-        .read()
-        .as_ref()
-        .and_then(|r| r.as_ref().ok())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut s_auto_trigger = use_signal(move || healer_settings.auto_trigger.unwrap_or(false));
-    let mut s_auto_trigger_model_key = use_signal(move || {
-        match (&healer_settings.auto_trigger_provider, &healer_settings.auto_trigger_model) {
-            (Some(p), Some(m)) => format!("{p}:{m}"),
-            _ => "none".to_string(),
-        }
-    });
-    let mut s_auto_approve = use_signal(move || healer_settings.auto_approve.unwrap_or(false));
-    let mut s_fix_model_key = use_signal(move || {
-        match (&healer_settings.fix_provider, &healer_settings.fix_model) {
-            (Some(p), Some(m)) => format!("{p}:{m}"),
-            _ => "none".to_string(),
-        }
-    });
     let models = ctx.models.clone();
 
     let unhealthy: Vec<String> = ctx
@@ -763,86 +641,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     button {
                         class: "text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1",
                         onclick: move |_| { let v = *settings_open.read(); settings_open.set(!v); },
-                        if *settings_open.read() { "Settings" } else { "Settings" }
+                        "Settings"
                         span { class: "text-xs", if *settings_open.read() { "\u{25BC}" } else { "\u{25B6}" } }
                     }
                     if *settings_open.read() {
                         div { class: "mt-2 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 border border-gray-200 dark:border-gray-700",
-                            div { class: "grid grid-cols-1 md:grid-cols-2 gap-4",
-                                // Auto-trigger toggle
-                                div { class: "flex items-center gap-2",
-                                    input {
-                                        r#type: "checkbox",
-                                        id: "s-auto-trigger",
-                                        class: "rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700",
-                                        checked: *s_auto_trigger.read(),
-                                        onchange: move |e| s_auto_trigger.set(e.checked()),
-                                    }
-                                    label {
-                                        r#for: "s-auto-trigger",
-                                        class: "text-sm text-gray-700 dark:text-gray-300",
-                                        "Auto-trigger healer sessions"
-                                    }
-                                }
-                                // Auto-approve toggle
-                                div { class: "flex items-center gap-2",
-                                    input {
-                                        r#type: "checkbox",
-                                        id: "s-auto-approve",
-                                        class: "rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700",
-                                        checked: *s_auto_approve.read(),
-                                        onchange: move |e| s_auto_approve.set(e.checked()),
-                                    }
-                                    label {
-                                        r#for: "s-auto-approve",
-                                        class: "text-sm text-gray-700 dark:text-gray-300",
-                                        "Auto-approve remediation"
-                                    }
-                                }
-                                // Auto-trigger model
-                                div {
-                                    label { class: "block text-sm text-gray-700 dark:text-gray-300 mb-1", "Auto-trigger model" }
-                                    {render_model_select("s-at-model", &models, &s_auto_trigger_model_key.read(), move |v| s_auto_trigger_model_key.set(v))}
-                                }
-                                // Fix model
-                                div {
-                                    label { class: "block text-sm text-gray-700 dark:text-gray-300 mb-1", "Fix model (remediation)" }
-                                    {render_model_select("s-fix-model", &models, &s_fix_model_key.read(), move |v| s_fix_model_key.set(v))}
-                                }
-                            }
-                            div { class: "mt-3 flex items-center gap-2",
-                                button {
-                                    class: "px-3 py-1 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50",
-                                    disabled: *settings_saving.read(),
-                                    onclick: {
-                                        let cluster_id = cluster_id.clone();
-                                        move |_| {
-                                            let cid = cluster_id.clone();
-                                            let at = *s_auto_trigger.read();
-                                            let aa = *s_auto_approve.read();
-                                            let at_key = s_auto_trigger_model_key.read().clone();
-                                            let fix_key = s_fix_model_key.read().clone();
-                                            let (atp, atm) = parse_model_key(&at_key);
-                                            let (fp, fm) = parse_model_key(&fix_key);
-                                            settings_saving.set(true);
-                                            async move {
-                                                let _ = save_healer_settings(
-                                                    cid,
-                                                    if at { Some(true) } else { None },
-                                                    atp, atm,
-                                                    if aa { Some(true) } else { None },
-                                                    fp, fm,
-                                                ).await;
-                                                settings_saving.set(false);
-                                                settings_future.restart();
-                                            }
-                                        }
-                                    },
-                                    if *settings_saving.read() { "Saving..." } else { "Save" }
-                                }
-                                p { class: "text-xs text-gray-500 dark:text-gray-400",
-                                    "Per-cluster healer settings."
-                                }
+                            super::cluster_healer_settings::ClusterHealerSettings {
+                                cluster_id: cluster_id,
+                                read_only: false,
                             }
                         }
                     }
@@ -1531,70 +1337,6 @@ fn reason_display(reason: &str) -> &str {
         "proxy_token_expiring" => "proxy token expiring",
         "server_shutdown" => "server shutdown",
         other => other,
-    }
-}
-
-/// Parse a "provider:model" key into (Option<provider>, Option<model>).
-/// Returns (None, None) for "none" or empty.
-fn parse_model_key(key: &str) -> (Option<String>, Option<String>) {
-    if key == "none" || key.is_empty() {
-        return (None, None);
-    }
-    if let Some((p, m)) = key.split_once(':') {
-        (Some(p.to_string()), Some(m.to_string()))
-    } else {
-        (None, None)
-    }
-}
-
-/// Render a model selector dropdown with optgroups by provider.
-fn render_model_select(
-    id: &str,
-    models: &[ModelEntry],
-    current_value: &str,
-    mut on_change: impl FnMut(String) + 'static,
-) -> Element {
-    let ollama: Vec<_> = models.iter().filter(|m| m.provider == "ollama").collect();
-    let anthropic: Vec<_> = models.iter().filter(|m| m.provider == "anthropic").collect();
-    let openrouter: Vec<_> = models.iter().filter(|m| m.provider == "openrouter").collect();
-    let id = id.to_string();
-    let current = current_value.to_string();
-
-    rsx! {
-        select {
-            id: "{id}",
-            class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
-            value: "{current}",
-            onchange: move |e| on_change(e.value()),
-            option { value: "none", "Server default" }
-            if !ollama.is_empty() {
-                optgroup { label: "Ollama (local)",
-                    for m in ollama.iter() {
-                        { let key = format!("{}:{}", m.provider, m.model); rsx! {
-                            option { value: "{key}", "{m.name}" }
-                        }}
-                    }
-                }
-            }
-            if !anthropic.is_empty() {
-                optgroup { label: "Anthropic",
-                    for m in anthropic.iter() {
-                        { let key = format!("{}:{}", m.provider, m.model); rsx! {
-                            option { value: "{key}", "{m.name}" }
-                        }}
-                    }
-                }
-            }
-            if !openrouter.is_empty() {
-                optgroup { label: "OpenRouter",
-                    for m in openrouter.iter() {
-                        { let key = format!("{}:{}", m.provider, m.model); rsx! {
-                            option { value: "{key}", "{m.name}" }
-                        }}
-                    }
-                }
-            }
-        }
     }
 }
 
