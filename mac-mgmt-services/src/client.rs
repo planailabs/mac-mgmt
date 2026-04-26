@@ -84,6 +84,11 @@ impl Client {
         })
     }
 
+    /// Timeout for individual RPC calls. Prevents a single slow supervisor
+    /// response from blocking the entire health tick (which would stop phase
+    /// transitions and health checks from running).
+    const RPC_TIMEOUT: Duration = Duration::from_secs(10);
+
     async fn send(&mut self, req: Request) -> Result<Response> {
         let mut line = serde_json::to_string(&Message::Request(req)).context("serialize")?;
         line.push('\n');
@@ -92,9 +97,9 @@ impl Client {
             .await
             .context("write")?;
         self.writer.flush().await.context("flush")?;
-        self.resp_rx
-            .recv()
+        tokio::time::timeout(Self::RPC_TIMEOUT, self.resp_rx.recv())
             .await
+            .map_err(|_| anyhow::anyhow!("supervisor RPC timed out ({}s)", Self::RPC_TIMEOUT.as_secs()))?
             .context("supervisor closed connection")
     }
 

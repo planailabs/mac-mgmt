@@ -756,6 +756,14 @@ impl ServiceManager {
                 }
                 Err(e) => {
                     tracing::warn!("{name} health check failed: {e}");
+                    // Treat errors (including timeouts) as unhealthy so the
+                    // phase doesn't silently stay Healthy while checks fail.
+                    if prev_phase != ServicePhase::Unhealthy {
+                        state.phase = ServicePhase::Unhealthy;
+                        self.dispatcher.dispatch(&DaemonEvent::ServiceUnhealthy {
+                            service: name.clone(),
+                        });
+                    }
                 }
             }
         }
