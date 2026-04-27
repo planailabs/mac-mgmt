@@ -3,6 +3,12 @@
 
 set -euxo pipefail
 
+# Ensure skopeo trust policy exists (CI runners may lack it).
+mkdir -p /etc/containers 2>/dev/null || mkdir -p "$HOME/.config/containers"
+POLICY_DIR="/etc/containers"
+[ -w "$POLICY_DIR" ] || POLICY_DIR="$HOME/.config/containers"
+[ -f "$POLICY_DIR/policy.json" ] || echo '{"default":[{"type":"insecureAcceptAnything"}]}' > "$POLICY_DIR/policy.json"
+
 REGISTRY="${CI_REGISTRY:-git.plan.ai:5050}"
 PROJECT="${CI_PROJECT_PATH:-plan-ai/mac-mgmt}"
 TAG="${CI_COMMIT_SHORT_SHA:-latest}"
