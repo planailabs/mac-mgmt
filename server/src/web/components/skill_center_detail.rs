@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use super::skill_center_list::SkillCenterRow;
 use crate::web::app::Route;
@@ -238,7 +239,7 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                             editing.set(true);
                                         },
                                         class: "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-gray-600",
-                                        "Edit"
+                                        {t!("edit")}
                                     }
                                     button {
                                         onclick: {
@@ -256,7 +257,7 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                             }
                                         },
                                         class: "bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 px-3 py-1.5 rounded text-sm hover:bg-red-200 dark:hover:bg-red-800",
-                                        "Delete"
+                                        {t!("delete")}
                                     }
                                 }
                             }
@@ -291,7 +292,7 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                     p { class: "text-red-600 text-sm", "{err}" }
                                 }
                                 div {
-                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Name" }
+                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("name")} }
                                     input {
                                         r#type: "text",
                                         value: "{draft_name}",
@@ -300,7 +301,7 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                     }
                                 }
                                 div {
-                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "URL" }
+                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("skill-center-detail-url")} }
                                     input {
                                         r#type: "text",
                                         value: "{draft_url}",
@@ -309,17 +310,17 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                     }
                                 }
                                 div {
-                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Federation Token" }
+                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("skill-center-detail-token-label")} }
                                     input {
                                         r#type: "password",
                                         value: "{draft_token}",
                                         oninput: move |e| draft_token.set(e.value()),
                                         class: "w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
-                                        placeholder: "Leave empty to keep current token",
+                                        placeholder: t!("skill-center-detail-token-hint"),
                                     }
                                 }
                                 div {
-                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Priority" }
+                                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("skill-center-detail-priority")} }
                                     input {
                                         r#type: "number",
                                         value: "{draft_priority}",
@@ -335,41 +336,41 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                         class: "rounded border-gray-300 dark:border-gray-600",
                                         id: "edit-enabled",
                                     }
-                                    label { r#for: "edit-enabled", class: "text-sm text-gray-700 dark:text-gray-300", "Enabled" }
+                                    label { r#for: "edit-enabled", class: "text-sm text-gray-700 dark:text-gray-300", {t!("skill-center-detail-enabled")} }
                                 }
                                 div { class: "flex gap-2",
                                     button {
                                         r#type: "submit",
                                         class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                                        "Save"
+                                        {t!("save")}
                                     }
                                     button {
                                         r#type: "button",
                                         onclick: move |_| { editing.set(false); error.set(None); },
                                         class: "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 rounded text-sm hover:bg-gray-200 dark:hover:bg-gray-600",
-                                        "Cancel"
+                                        {t!("cancel")}
                                     }
                                 }
                             }
                         } else {
                             dl { class: "grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-4",
-                                dt { class: "font-medium dark:text-gray-300", "URL" }
+                                dt { class: "font-medium dark:text-gray-300", {t!("skill-center-detail-url")} }
                                 dd { class: "dark:text-gray-400", "{center_url_display}" }
-                                dt { class: "font-medium dark:text-gray-300", "Priority" }
+                                dt { class: "font-medium dark:text-gray-300", {t!("skill-center-detail-priority")} }
                                 dd { class: "dark:text-gray-400", "{center_priority}" }
-                                dt { class: "font-medium dark:text-gray-300", "Enabled" }
+                                dt { class: "font-medium dark:text-gray-300", {t!("skill-center-detail-enabled")} }
                                 dd { class: "dark:text-gray-400",
-                                    if center_enabled { "Yes" } else { "No" }
+                                    if center_enabled { {t!("yes")} } else { {t!("no")} }
                                 }
-                                dt { class: "font-medium dark:text-gray-300", "Created" }
+                                dt { class: "font-medium dark:text-gray-300", {t!("skill-center-detail-created")} }
                                 dd { class: "dark:text-gray-400", "{center.created_at}" }
-                                dt { class: "font-medium dark:text-gray-300", "Updated" }
+                                dt { class: "font-medium dark:text-gray-300", {t!("skill-center-detail-updated")} }
                                 dd { class: "dark:text-gray-400", "{center.updated_at}" }
                             }
 
                             // Cached catalog summary
                             div { class: "flex items-center justify-between mt-6 mb-3",
-                                h3 { class: "text-lg font-semibold dark:text-white", "Cached Catalog" }
+                                h3 { class: "text-lg font-semibold dark:text-white", {t!("skill-center-detail-catalog")} }
                                 {
                                     let is_syncing = *syncing.read();
                                     let sync_id = id3.clone();
@@ -393,7 +394,7 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                                     syncing.set(false);
                                                 });
                                             },
-                                            if is_syncing { "Syncing..." } else { "Sync Now" }
+                                            if is_syncing { {t!("skill-center-detail-syncing")} } else { {t!("skill-center-detail-sync-now")} }
                                         }
                                     }
                                 }
@@ -404,42 +405,42 @@ pub fn SkillCenterDetail(id: String) -> Element {
                             {match &*catalog_summary.read() {
                                 Some(Ok(summary)) => {
                                     if summary.skill_channels == 0 && summary.bundles == 0 && summary.mcp_servers == 0 && summary.mcp_bundles == 0 {
-                                        rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "No catalog data cached yet. The catalog will be fetched automatically." } }
+                                        rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("skill-center-detail-no-catalog")} } }
                                     } else {
                                         rsx! {
                                             div { class: "grid grid-cols-2 sm:grid-cols-4 gap-4",
                                                 div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
                                                     p { class: "text-2xl font-bold dark:text-white", "{summary.skill_channels}" }
-                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "Skill Channels" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", {t!("skill-center-detail-skill-channels")} }
                                                 }
                                                 div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
                                                     p { class: "text-2xl font-bold dark:text-white", "{summary.bundles}" }
-                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "Bundles" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", {t!("skill-center-detail-bundles")} }
                                                 }
                                                 div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
                                                     p { class: "text-2xl font-bold dark:text-white", "{summary.mcp_servers}" }
-                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "MCP Servers" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", {t!("skill-center-detail-mcp-servers")} }
                                                 }
                                                 div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
                                                     p { class: "text-2xl font-bold dark:text-white", "{summary.mcp_bundles}" }
-                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "MCP Bundles" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", {t!("skill-center-detail-mcp-bundles")} }
                                                 }
                                             }
                                             if let Some(ref ts) = summary.fetched_at {
-                                                p { class: "text-xs text-gray-500 dark:text-gray-400 mt-2", "Last synced: {ts}" }
+                                                p { class: "text-xs text-gray-500 dark:text-gray-400 mt-2", {t!("skill-center-detail-last-synced", time: ts)} }
                                             }
                                         }
                                     }
                                 },
-                                Some(Err(e)) => rsx! { p { class: "text-red-500 text-sm", "Failed to load catalog summary: {e}" } },
-                                None => rsx! { p { class: "text-gray-500 text-sm", "Loading catalog..." } },
+                                Some(Err(e)) => rsx! { p { class: "text-red-500 text-sm", {t!("skill-center-detail-catalog-error", error: e.to_string())} } },
+                                None => rsx! { p { class: "text-gray-500 text-sm", {t!("skill-center-detail-loading-catalog")} } },
                             }}
                         }
                     }
                 },
-                Some(Ok(None)) => rsx! { p { class: "text-red-500", "Skill center not found." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-500", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500", "Loading..." } },
+                Some(Ok(None)) => rsx! { p { class: "text-red-500", {t!("skill-center-detail-not-found")} } },
+                Some(Err(e)) => rsx! { p { class: "text-red-500", {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { class: "text-gray-500", {t!("loading")} } },
             }
         }
     }

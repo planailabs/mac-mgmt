@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -154,7 +155,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
     })?;
 
     let Some(Ok(data)) = &*data_future.read() else {
-        return rsx! { p { class: "text-sm text-gray-500", "Loading..." } };
+        return rsx! { p { class: "text-sm text-gray-500", {t!("loading")} } };
     };
 
     let models = data.models.clone();
@@ -182,9 +183,9 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                     checked: is_enabled,
                     onchange: move |e| enabled.set(e.checked()),
                 }
-                span { class: "text-sm font-medium", "Override server defaults" }
+                span { class: "text-sm font-medium", {t!("healer-settings-override")} }
                 if !is_enabled {
-                    span { class: "text-xs text-gray-400 dark:text-gray-500", "(using server defaults)" }
+                    span { class: "text-xs text-gray-400 dark:text-gray-500", {t!("healer-settings-using-defaults")} }
                 }
             }
 
@@ -198,17 +199,17 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             checked: *auto_trigger.read(),
                             onchange: move |e| auto_trigger.set(e.checked()),
                         }
-                        span { class: "text-sm", "Auto-trigger" }
+                        span { class: "text-sm", {t!("healer-settings-auto-trigger")} }
                     }
                     // Auto-trigger model
                     div {
-                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", "Auto-trigger model" }
+                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", {t!("healer-settings-auto-trigger-model")} }
                         select {
                             class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
                             disabled: fields_disabled,
                             value: "{auto_trigger_key}",
                             onchange: move |e| auto_trigger_key.set(e.value()),
-                            option { value: "none", "Server default" }
+                            option { value: "none", {t!("healer-settings-server-default")} }
                             {model_optgroups(&ollama, &anthropic, &openrouter)}
                         }
                     }
@@ -220,17 +221,17 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             checked: *auto_approve.read(),
                             onchange: move |e| auto_approve.set(e.checked()),
                         }
-                        span { class: "text-sm", "Auto-approve remediation" }
+                        span { class: "text-sm", {t!("healer-settings-auto-approve")} }
                     }
                     // Fix model
                     div {
-                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", "Fix model (remediation)" }
+                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", {t!("healer-settings-fix-model")} }
                         select {
                             class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
                             disabled: fields_disabled,
                             value: "{fix_model_key}",
                             onchange: move |e| fix_model_key.set(e.value()),
-                            option { value: "none", "Same as diagnosis" }
+                            option { value: "none", {t!("healer-settings-same-as-diagnosis")} }
                             {model_optgroups(&ollama, &anthropic, &openrouter)}
                         }
                     }
@@ -260,7 +261,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             }
                         }
                     },
-                    if *saving.read() { "Saving..." } else { "Save" }
+                    if *saving.read() { {t!("healer-settings-saving")} } else { {t!("save")} }
                 }
             }
         }
@@ -274,21 +275,21 @@ fn model_optgroups(
 ) -> Element {
     rsx! {
         if !ollama.is_empty() {
-            optgroup { label: "Ollama (local)",
+            optgroup { label: t!("healer-settings-ollama"),
                 for m in ollama.iter() {
                     option { value: "{m.key}", "{m.name}" }
                 }
             }
         }
         if !anthropic.is_empty() {
-            optgroup { label: "Anthropic",
+            optgroup { label: t!("healer-settings-anthropic"),
                 for m in anthropic.iter() {
                     option { value: "{m.key}", "{m.name}" }
                 }
             }
         }
         if !openrouter.is_empty() {
-            optgroup { label: "OpenRouter",
+            optgroup { label: t!("healer-settings-openrouter"),
                 for m in openrouter.iter() {
                     option { value: "{m.key}", "{m.name}" }
                 }

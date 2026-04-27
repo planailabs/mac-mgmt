@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::models::Token;
 #[cfg(feature = "server")]
@@ -139,7 +140,7 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
         if !read_only {
             if let Some(raw) = &*new_token.read() {
                 div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
-                    p { class: "text-sm font-medium text-green-800 dark:text-green-300", "New token (copy now, shown once):" }
+                    p { class: "text-sm font-medium text-green-800 dark:text-green-300", {t!("setting-token-new")} }
                     code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
                 }
             }
@@ -149,14 +150,14 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                     class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
                     r#type: "text",
                     required: true,
-                    placeholder: "Setting token label",
+                    placeholder: t!("setting-token-label"),
                     value: "{label}",
                     oninput: move |evt| label.set(evt.value()),
                 }
                 button {
                     class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                     r#type: "submit",
-                    "Create Setting Token"
+                    {t!("setting-token-create")}
                 }
             }
         }
@@ -167,7 +168,7 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                     for token in list {
                         {
                             let display_label = if token.label.is_empty() {
-                                "(no label)".to_string()
+                                t!("no-label")
                             } else {
                                 token.label.clone()
                             };
@@ -175,10 +176,11 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                             let revoked = token.revoked;
                             let expired = token.expires_at.is_some_and(|e| e < chrono::Utc::now());
                             let expires_label = token.expires_at.map(|e| {
+                                let date = e.format("%Y-%m-%d %H:%M").to_string();
                                 if expired {
-                                    format!("expired {}", e.format("%Y-%m-%d %H:%M"))
+                                    t!("setting-token-expired", date: date)
                                 } else {
-                                    format!("expires {}", e.format("%Y-%m-%d %H:%M"))
+                                    t!("setting-token-expires", date: date)
                                 }
                             });
                             let tid = token.id.to_string();
@@ -195,7 +197,7 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                                             }
                                         }
                                         if revoked {
-                                            span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
+                                            span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", {t!("revoked")} }
                                         }
                                     }
                                     if !revoked && !expired && !read_only {
@@ -209,7 +211,7 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                                                     }
                                                 });
                                             },
-                                            "Revoke"
+                                            {t!("setting-token-revoke")}
                                         }
                                     }
                                 }
@@ -218,8 +220,8 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
         }}
     }
 }

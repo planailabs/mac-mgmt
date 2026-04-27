@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -130,12 +131,12 @@ fn AudienceBadge(audience: String) -> Element {
     match audience.as_str() {
         "admin" => rsx! {
             span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-                "Admin"
+                {t!("docs-badge-admin")}
             }
         },
         "user" => rsx! {
             span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-                "User"
+                {t!("docs-badge-user")}
             }
         },
         _ => rsx! {},
@@ -148,7 +149,7 @@ pub fn DocList() -> Element {
 
     rsx! {
         div {
-            h2 { class: "text-2xl font-bold mb-4", "Documentation" }
+            h2 { class: "text-2xl font-bold mb-4", {t!("docs-title")} }
             {match &*docs.read() {
                 Some(Ok(entries)) => {
                     let user_docs: Vec<_> = entries.iter().filter(|e| e.audience == "user").collect();
@@ -156,7 +157,7 @@ pub fn DocList() -> Element {
                     let other_docs: Vec<_> = entries.iter().filter(|e| e.audience != "user" && e.audience != "admin").collect();
                     rsx! {
                         if !user_docs.is_empty() {
-                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", "User Guides" }
+                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", {t!("docs-user-guides")} }
                             div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700 mb-6",
                                 for entry in &user_docs {
                                     Link {
@@ -173,7 +174,7 @@ pub fn DocList() -> Element {
                             }
                         }
                         if !admin_docs.is_empty() {
-                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", "Administration" }
+                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", {t!("docs-administration")} }
                             div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700 mb-6",
                                 for entry in &admin_docs {
                                     Link {
@@ -207,18 +208,17 @@ pub fn DocList() -> Element {
                         if entries.is_empty() {
                             div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
                                 p { class: "px-6 py-8 text-gray-500 dark:text-gray-400 text-center",
-                                    "No documentation pages found. Add "
-                                    code { ".md" }
-                                    " files to the "
-                                    code { "server/docs/" }
-                                    " directory."
+                                    {t!("docs-none-prefix")}
+                                    code { {t!("docs-none-md")} }
+                                    " "
+                                    code { {t!("docs-none-suffix")} }
                                 }
                             }
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-                None => rsx! { p { "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { {t!("loading")} } },
             }}
         }
     }
@@ -234,7 +234,7 @@ pub fn DocPage(slug: String) -> Element {
             Link {
                 to: Route::DocList {},
                 class: "text-sm text-blue-600 dark:text-blue-400 hover:underline mb-4 inline-block",
-                "\u{2190} Back to docs"
+                {t!("docs-back")}
             }
             {match &*doc.read() {
                 Some(Ok((_, html_content, audience))) => rsx! {
@@ -250,8 +250,8 @@ pub fn DocPage(slug: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-                None => rsx! { p { "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { {t!("loading")} } },
             }}
         }
     }

@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::anthropic::{GenerateAllItem, generate_name_desc, save_generated_name_desc};
 
@@ -109,17 +110,17 @@ pub fn GenerateAllButton(items: Vec<GenerateAllItem>, on_complete: EventHandler<
                     });
                 },
                 if is_running {
-                    "Generating..."
+                    {t!("generate-all-generating")}
                 } else if pending_count == 0 {
-                    "All have descriptions"
+                    {t!("generate-all-done")}
                 } else {
-                    "Generate all ({pending_count})"
+                    {t!("generate-all-pending", count: pending_count)}
                 }
             }
             if is_running {
                 div { class: "w-48 mt-1",
                     div { class: "flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1",
-                        span { "{done_val} / {total_val}" }
+                        span { {t!("generate-all-progress", done: done_val, total: total_val)} }
                         if let Some(slug) = &*current_slug.read() {
                             span { class: "truncate ml-1 text-purple-600 dark:text-purple-400", "{slug}" }
                         }

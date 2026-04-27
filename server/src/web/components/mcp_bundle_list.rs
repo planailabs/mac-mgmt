@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use dioxus_tabular::*;
 
 use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
@@ -77,7 +78,7 @@ pub fn McpBundleList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", "MCP Bundles" }
+            h2 { class: "text-2xl font-bold", {t!("mcp-bundle-list-title")} }
             div { class: "flex items-center gap-2",
                 {match &*bundles.read() {
                     Some(Ok(list)) => {
@@ -102,7 +103,7 @@ pub fn McpBundleList() -> Element {
                 Link {
                     to: Route::McpBundleForm {},
                     class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                    "New MCP Bundle"
+                    {t!("mcp-bundle-list-new")}
                 }
             }
         }
@@ -147,8 +148,8 @@ pub fn McpBundleList() -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
     }
 }

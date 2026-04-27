@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc};
@@ -200,20 +201,20 @@ fn McpServerFormFields(
 ) -> Element {
     rsx! {
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Slug" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("slug")} }
             input {
                 class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono dark:bg-gray-700 dark:text-white",
                 class: if slug_readonly { "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400" } else { "" },
                 r#type: "text",
                 required: true,
                 readonly: slug_readonly,
-                placeholder: "my-server",
+                placeholder: t!("mcp-server-slug-placeholder"),
                 value: "{slug}",
                 oninput: move |evt| slug.set(evt.value()),
             }
         }
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Name" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("name")} }
             input {
                 class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                 r#type: "text",
@@ -223,7 +224,7 @@ fn McpServerFormFields(
             }
         }
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Description" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("description")} }
             textarea {
                 class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                 rows: "2",
@@ -232,7 +233,7 @@ fn McpServerFormFields(
             }
         }
         div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Config JSON" }
+            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("mcp-server-config-json")} }
             textarea {
                 class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono text-sm dark:bg-gray-700 dark:text-white",
                 rows: "10",
@@ -248,7 +249,7 @@ fn McpServerFormFields(
                     checked: "{hide_from_public_catalog}",
                     oninput: move |evt| hide_from_public_catalog.set(evt.value() == "true"),
                 }
-                "Hide from public catalog"
+                {t!("mcp-server-hide")}
             }
         }
     }
@@ -293,7 +294,7 @@ pub fn McpServerDetail(id: String) -> Element {
                     Link {
                         to: Route::McpServerEdit { id: sid },
                         class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
-                        "Edit"
+                        {t!("edit")}
                     }
                     button {
                         class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400",
@@ -306,16 +307,16 @@ pub fn McpServerDetail(id: String) -> Element {
                                 }
                             });
                         },
-                        "Delete"
+                        {t!("delete")}
                     }
                 }
                 if !s.description.is_empty() {
                     p { class: "text-gray-600 dark:text-gray-300 mb-2", "{s.description}" }
                 }
-                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", "Created: {created}" }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", {t!("cluster-detail-created", date: created)} }
 
                 div { class: "mb-6",
-                    h3 { class: "text-lg font-semibold mb-3", "Config JSON" }
+                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-server-config-json")} }
                     pre { class: "bg-gray-100 dark:bg-gray-700 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap",
                         "{config_str}"
                     }
@@ -323,7 +324,7 @@ pub fn McpServerDetail(id: String) -> Element {
 
                 // Nix packages section
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", "Nix Dependencies" }
+                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-server-nix-deps")} }
                     form {
                         class: "flex gap-2 mb-4",
                         onsubmit: move |evt: FormEvent| {
@@ -342,18 +343,18 @@ pub fn McpServerDetail(id: String) -> Element {
                         input {
                             class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
                             r#type: "text",
-                            placeholder: "package-name",
+                            placeholder: t!("mcp-server-nix-placeholder"),
                             value: "{new_pkg}",
                             oninput: move |e| new_pkg.set(e.value()),
                         }
                         button {
                             class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                             r#type: "submit",
-                            "Add"
+                            {t!("add")}
                         }
                     }
                     if packages.is_empty() {
-                        p { class: "text-sm text-gray-400 dark:text-gray-500", "No nix dependencies." }
+                        p { class: "text-sm text-gray-400 dark:text-gray-500", {t!("mcp-server-no-nix-deps")} }
                     } else {
                         ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                             for pkg in &packages {
@@ -375,7 +376,7 @@ pub fn McpServerDetail(id: String) -> Element {
                                                         }
                                                     });
                                                 },
-                                                "Remove"
+                                                {t!("remove")}
                                             }
                                         }
                                     }
@@ -387,10 +388,10 @@ pub fn McpServerDetail(id: String) -> Element {
 
                 // Required by Skills section
                 div { class: "mt-6",
-                    h3 { class: "text-lg font-semibold mb-3", "Required by Skills" }
+                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-server-required-by")} }
                     {match &*dep_skills.read() {
                         Some(Ok(list)) if list.is_empty() => rsx! {
-                            p { class: "text-sm text-gray-400 dark:text-gray-500", "No skills depend on this MCP server." }
+                            p { class: "text-sm text-gray-400 dark:text-gray-500", {t!("mcp-server-no-skills-depend")} }
                         },
                         Some(Ok(list)) => rsx! {
                             ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -413,14 +414,14 @@ pub fn McpServerDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600 dark:text-red-400", "Error: {e}" } },
-                        None => rsx! { p { class: "text-sm", "Loading..." } },
+                        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+                        None => rsx! { p { class: "text-sm", {t!("loading")} } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }
 
@@ -437,7 +438,7 @@ pub fn McpServerForm() -> Element {
     let mut error = use_signal(|| None::<String>);
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "New MCP Server" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("mcp-server-new-title")} }
         if let Some(err) = &*error.read() {
             p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
         }
@@ -469,7 +470,7 @@ pub fn McpServerForm() -> Element {
                 button {
                     class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                     r#type: "submit",
-                    "Create"
+                    {t!("create")}
                 }
                 GenerateButton {
                     context: GenerateContext::McpServer { slug: slug.read().clone(), config_json: config_json.read().clone() },
@@ -521,7 +522,7 @@ pub fn McpServerEdit(id: String) -> Element {
             let edit_id = id.clone();
             let nav_id = id.clone();
             rsx! {
-                h2 { class: "text-2xl font-bold mb-4", "Edit MCP Server" }
+                h2 { class: "text-2xl font-bold mb-4", {t!("mcp-server-edit-title")} }
                 if let Some(err) = &*error.read() {
                     p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
                 }
@@ -555,12 +556,12 @@ pub fn McpServerEdit(id: String) -> Element {
                         button {
                             class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                             r#type: "submit",
-                            "Save"
+                            {t!("save")}
                         }
                         Link {
                             to: Route::McpServerDetail { id: id.clone() },
                             class: "px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white",
-                            "Cancel"
+                            {t!("cancel")}
                         }
                         GenerateButton {
                             context: GenerateContext::McpServer { slug: slug.read().clone(), config_json: config_json.read().clone() },
@@ -575,7 +576,7 @@ pub fn McpServerEdit(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }

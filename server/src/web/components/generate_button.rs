@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc, generate_name_desc};
 
@@ -38,7 +39,7 @@ pub fn GenerateButton(
                         generating.set(false);
                     });
                 },
-                if *generating.read() { "Generating..." } else { "Generate with AI" }
+                if *generating.read() { {t!("generate-generating")} } else { {t!("generate-with-ai")} }
             }
             if let Some(err) = &*error_msg.read() {
                 span { class: "text-xs text-red-600 dark:text-red-400", "{err}" }

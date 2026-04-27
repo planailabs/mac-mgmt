@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -65,11 +66,11 @@ pub fn OrganizationList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", "Organizations" }
+            h2 { class: "text-2xl font-bold", {t!("org-list-title")} }
             Link {
                 to: Route::OrganizationForm {},
                 class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                "New Organization"
+                {t!("org-list-new")}
             }
         }
         {match &*orgs.read() {
@@ -98,10 +99,10 @@ pub fn OrganizationList() -> Element {
                         table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                             thead { class: "bg-gray-50 dark:bg-gray-700",
                                 tr {
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Name" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Members" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Clusters" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Created" }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("name")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("org-list-col-members")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("org-list-col-clusters")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("created")} }
                                 }
                             }
                             tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -126,8 +127,8 @@ pub fn OrganizationList() -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
-            None => rsx! { p { "Loading…" } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
     }
 }

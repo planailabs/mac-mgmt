@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -587,8 +588,8 @@ pub fn FleetHealer(instance_id: String) -> Element {
 
     match &*ctx.read() {
         Some(Ok(c)) => render_healer(c),
-        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", "Error: {e}" } },
-        None => rsx! { p { class: "text-gray-500 text-sm", "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { class: "text-gray-500 text-sm", {t!("loading")} } },
     }
 }
 
@@ -621,15 +622,15 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let sessions = ctx.sessions.clone();
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "Healer Agent" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("healer-title")} }
         p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
-            "Instance: {ctx.instance_id} ({ctx.hostname})"
+            {t!("healer-instance", instance_id: ctx.instance_id.clone(), hostname: ctx.hostname.clone())}
         }
 
         if !unhealthy.is_empty() {
             div { class: "mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded",
                 p { class: "text-sm font-medium text-red-800 dark:text-red-300",
-                    "Unhealthy services: {unhealthy.join(\", \")}"
+                    {t!("healer-unhealthy", services: unhealthy.join(", "))}
                 }
             }
         }
@@ -642,7 +643,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     button {
                         class: "text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1",
                         onclick: move |_| { let v = *settings_open.read(); settings_open.set(!v); },
-                        "Settings"
+                        {t!("healer-settings")}
                         span { class: "text-xs", if *settings_open.read() { "\u{25BC}" } else { "\u{25B6}" } }
                     }
                     if *settings_open.read() {
@@ -667,17 +668,17 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 let first_key = models.first().map(|m| format!("{}:{}", m.provider, m.model)).unwrap_or_default();
                 rsx! {
                     div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                        h3 { class: "text-lg font-semibold mb-3", "New Session" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("healer-new-session")} }
 
                         // Model selector
                         div { class: "mb-3",
-                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Model" }
+                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("healer-model")} }
                             select {
                                 class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
                                 value: "{selected_model_key}",
                                 onchange: move |e| selected_model_key.set(e.value()),
                                 if !ollama_models.is_empty() {
-                                    optgroup { label: "Ollama (local, free)",
+                                    optgroup { label: t!("healer-ollama-free"),
                                         for m in ollama_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
@@ -686,7 +687,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     }
                                 }
                                 if !anthropic_models.is_empty() {
-                                    optgroup { label: "Anthropic (cloud)",
+                                    optgroup { label: t!("healer-anthropic-cloud"),
                                         for m in anthropic_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
@@ -695,7 +696,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     }
                                 }
                                 if !openrouter_models.is_empty() {
-                                    optgroup { label: "OpenRouter (cloud)",
+                                    optgroup { label: t!("healer-openrouter-cloud"),
                                         for m in openrouter_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
@@ -711,19 +712,19 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 if is_ollama {
                                     rsx! {
                                         p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
-                                            "Free to run, but local models are less capable than cloud models."
+                                            {t!("healer-ollama-hint")}
                                         }
                                     }
                                 } else if key.starts_with("openrouter:") {
                                     rsx! {
                                         p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
-                                            "Uses OpenRouter API credits. Subject to token budget."
+                                            {t!("healer-openrouter-hint")}
                                         }
                                     }
                                 } else {
                                     rsx! {
                                         p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
-                                            "Uses Anthropic API credits. More capable, subject to token budget."
+                                            {t!("healer-anthropic-hint")}
                                         }
                                     }
                                 }
@@ -732,14 +733,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
 
                         // Fix-model selector (optional, for remediation phase)
                         div { class: "mb-3",
-                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Fix Model (remediation)" }
+                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("healer-fix-model")} }
                             select {
                                 class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
                                 value: "{selected_fix_model_key}",
                                 onchange: move |e| selected_fix_model_key.set(e.value()),
-                                option { value: "none", "Same as diagnosis model" }
+                                option { value: "none", {t!("healer-same-as-diagnosis")} }
                                 if !ollama_models.is_empty() {
-                                    optgroup { label: "Ollama (local, free)",
+                                    optgroup { label: t!("healer-ollama-free"),
                                         for m in ollama_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
@@ -748,7 +749,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     }
                                 }
                                 if !anthropic_models.is_empty() {
-                                    optgroup { label: "Anthropic (cloud)",
+                                    optgroup { label: t!("healer-anthropic-cloud"),
                                         for m in anthropic_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
@@ -757,7 +758,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     }
                                 }
                                 if !openrouter_models.is_empty() {
-                                    optgroup { label: "OpenRouter (cloud)",
+                                    optgroup { label: t!("healer-openrouter-cloud"),
                                         for m in openrouter_models.iter() {
                                             { let key = format!("{}:{}", m.provider, m.model); rsx! {
                                                 option { value: "{key}", "{m.name}" }
@@ -767,7 +768,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 }
                             }
                             p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
-                                "Optional: use a different model for the remediation phase after diagnosis."
+                                {t!("healer-fix-model-hint")}
                             }
                         }
 
@@ -775,7 +776,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             textarea {
                                 class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
                                 rows: "2",
-                                placeholder: "Optional instructions (leave empty for auto-diagnosis)...",
+                                placeholder: t!("healer-instructions-placeholder"),
                                 value: "{user_input}",
                                 oninput: move |e| user_input.set(e.value()),
                             }
@@ -791,10 +792,10 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             label {
                                 r#for: "auto-approve",
                                 class: "text-sm text-gray-700 dark:text-gray-300",
-                                "Auto-approve remediation"
+                                {t!("healer-auto-approve")}
                             }
                             p { class: "text-xs text-gray-500 dark:text-gray-400",
-                                "(skip approval gate between diagnosis and fix)"
+                                {t!("healer-skip-approval")}
                             }
                         }
                         button {
@@ -836,7 +837,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     }
                                 }
                             },
-                            "Start Healing"
+                            {t!("healer-start")}
                         }
                     }
                 }
@@ -870,7 +871,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     if let Some(sid) = sid { let _ = pause_healer_session(sid).await; }
                                 }
                             },
-                            "Pause"
+                            {t!("healer-pause")}
                         }
                         button {
                             class: "px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700",
@@ -880,7 +881,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     if let Some(sid) = sid { let _ = cancel_healer_session(sid).await; }
                                 }
                             },
-                            "Cancel"
+                            {t!("healer-cancel-session")}
                         }
                     }
 
@@ -896,7 +897,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                             if let Some(sid) = sid { let _ = resume_healer_session(sid).await; }
                                         }
                                     },
-                                    "Resume"
+                                    {t!("healer-resume")}
                                 }
                             }
                         } else {
@@ -917,7 +918,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 state.set("idle".to_string());
                                 state_reason.set(None);
                             },
-                            "Back to sessions"
+                            {t!("healer-back-to-sessions")}
                         }
                     }
                 }
@@ -963,7 +964,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                     }
 
                     if *running.read() && active_tools.read().is_empty() && status_msg.read().is_none() {
-                        div { class: "p-3 text-sm text-gray-400 animate-pulse", "Agent is thinking..." }
+                        div { class: "p-3 text-sm text-gray-400 animate-pulse", {t!("healer-thinking")} }
                     }
                 }
             }
@@ -972,7 +973,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
         // Previous sessions list
         if session_id.read().is_none() && !*running.read() && !sessions.is_empty() {
             div { class: "mt-6",
-                h3 { class: "text-lg font-semibold mb-3", "Previous Sessions" }
+                h3 { class: "text-lg font-semibold mb-3", {t!("healer-previous-sessions")} }
                 div { class: "space-y-2",
                     for sess in sessions.iter() {
                         {
@@ -997,13 +998,13 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     div { class: "flex items-center gap-3 flex-wrap",
                                         span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}", "{badge_label}" }
                                         if is_awaiting_approval {
-                                            span { class: "px-1.5 py-0.5 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300 rounded animate-pulse", "approval pending" }
+                                            span { class: "px-1.5 py-0.5 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300 rounded animate-pulse", {t!("healer-approval-pending")} }
                                         }
                                         if is_auto {
-                                            span { class: "px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded", "auto" }
+                                            span { class: "px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded", {t!("healer-auto")} }
                                         }
                                         if has_auto_approve {
-                                            span { class: "px-1.5 py-0.5 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded", "auto-approve" }
+                                            span { class: "px-1.5 py-0.5 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded", {t!("healer-auto-approve-label")} }
                                         }
                                         if !session_label.is_empty() {
                                             span { class: "text-sm font-medium text-gray-700 dark:text-gray-300 truncate max-w-xs", "{session_label}" }
@@ -1023,7 +1024,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                         if let Some(err) = &error_msg {
                                             span { class: "text-xs text-red-500 max-w-xs truncate", "{err}" }
                                         }
-                                        span { class: "text-xs text-gray-400", "View" }
+                                        span { class: "text-xs text-gray-400", {t!("healer-view")} }
                                     }
                                 }
                             }
@@ -1171,16 +1172,16 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 
     rsx! {
         h2 { class: "text-2xl font-bold mb-4",
-            "Healer Session"
+            {t!("healer-session-title")}
             if !session_label.is_empty() {
                 span { class: "ml-2 text-lg font-normal text-gray-500 dark:text-gray-400", "— {session_label}" }
             }
         }
         p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
-            "Instance: {iid} — Session: {session_id}"
+            {t!("healer-session-subtitle", instance_id: iid.clone(), session_id: session_id.clone())}
             if is_auto {
                 span { class: "ml-2 px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded",
-                    "auto-triggered"
+                    {t!("healer-auto-triggered")}
                 }
             }
             if !model_label.is_empty() {
@@ -1215,7 +1216,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                             async move { let _ = pause_healer_session(sid).await; }
                         }
                     },
-                    "Pause"
+                    {t!("healer-pause")}
                 }
                 button {
                     class: "px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700",
@@ -1226,7 +1227,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                             async move { let _ = cancel_healer_session(sid).await; }
                         }
                     },
-                    "Cancel"
+                    {t!("healer-cancel-session")}
                 }
             }
 
@@ -1245,7 +1246,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                                     async move { let _ = resume_healer_session(sid).await; }
                                 }
                             },
-                            "Resume"
+                            {t!("healer-resume")}
                         }
                         if is_budget {
                             button {
@@ -1260,7 +1261,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                                         }
                                     }
                                 },
-                                "More Tokens (1M)"
+                                {t!("healer-more-tokens")}
                             }
                         }
                     }
@@ -1272,7 +1273,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
             Link {
                 to: back_url,
                 class: "px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300",
-                "Back to sessions"
+                {t!("healer-back-to-sessions")}
             }
         }
 
@@ -1331,65 +1332,65 @@ struct ChatMsg {
     metadata: Option<serde_json::Value>,
 }
 
-fn reason_display(reason: &str) -> &str {
+fn reason_display(reason: &str) -> String {
     match reason {
-        "manual_pause" => "paused by user",
-        "token_budget_exceeded" => "token budget exceeded",
-        "proxy_token_expiring" => "proxy token expiring",
-        "server_shutdown" => "server shutdown",
-        other => other,
+        "manual_pause" => t!("healer-paused-by-user"),
+        "token_budget_exceeded" => t!("healer-token-budget"),
+        "proxy_token_expiring" => t!("healer-proxy-expiring"),
+        "server_shutdown" => t!("healer-server-shutdown"),
+        other => other.to_string(),
     }
 }
 
-fn state_badge(st: &str) -> (&'static str, &'static str) {
+fn state_badge(st: &str) -> (&'static str, String) {
     match st {
         "starting" | "loading" | "created" | "initializing" => (
             "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-            "Initializing",
+            t!("healer-state-initializing"),
         ),
         "diagnosing" => (
             "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-            "Diagnosing",
+            t!("healer-state-diagnosing"),
         ),
         "remediating" => (
             "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
-            "Remediating",
+            t!("healer-state-remediating"),
         ),
         "verifying" => (
             "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
-            "Verifying",
+            t!("healer-state-verifying"),
         ),
         "completed" | "done" => (
             "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
-            "Done",
+            t!("healer-state-done"),
         ),
         "failed" => (
             "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-            "Failed",
+            t!("healer-state-failed"),
         ),
         "cancelled" => (
             "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
-            "Cancelled",
+            t!("healer-state-cancelled"),
         ),
         "paused" => (
             "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-            "Paused",
+            t!("healer-state-paused"),
         ),
         "awaiting_approval" => (
             "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-            "Awaiting Approval",
+            t!("healer-state-awaiting-approval"),
         ),
         "awaiting_retry" => (
             "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-            "Awaiting retry",
+            t!("healer-state-awaiting-retry"),
         ),
         "needs_human_attention" => (
             "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-            "Needs Human Attention",
+            t!("healer-state-needs-human"),
         ),
         _ => (
             "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
-            "Unknown",
+            t!("healer-state-unknown"),
         ),
     }
 }
@@ -1444,7 +1445,7 @@ fn render_state_change(msg: &ChatMsg) -> Element {
         div { class: "p-3 rounded bg-gray-50/50 dark:bg-gray-800/50 border-l-4 {border}",
             div { class: "flex items-center gap-1.5 mb-1",
                 span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300", "S" }
-                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "State Change" }
+                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", {t!("healer-event-state-change")} }
             }
             div { class: "flex items-center gap-2",
                 span { class: "text-xs font-semibold px-2 py-0.5 rounded-full {badge_bg}", "{label}" }
@@ -1471,27 +1472,27 @@ fn render_message(msg: &ChatMsg) -> Element {
         "system" => (
             "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400",
             "S",
-            "System",
+            t!("healer-event-system"),
         ),
         "assistant" => (
             "bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400",
             "A",
-            "Agent",
+            t!("healer-event-agent"),
         ),
         "user" => (
             "bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400",
             "U",
-            "User",
+            t!("healer-event-user"),
         ),
         "summary" => (
             "bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400",
             "S",
-            "Summary",
+            t!("healer-event-summary"),
         ),
         _ => (
             "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300",
             "-",
-            "Other",
+            t!("healer-event-other"),
         ),
     };
 
@@ -1552,7 +1553,7 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
                         span { class: "text-xs text-gray-500 dark:text-gray-400 truncate max-w-md", "{args_short}" }
                     }
                     if is_error {
-                        span { class: "text-xs text-red-500", "error" }
+                        span { class: "text-xs text-red-500", {t!("healer-event-error")} }
                     }
                 }
                 if has_args {
@@ -1577,10 +1578,10 @@ fn render_pinned_slots_from_signal(pins: &[PinInfo]) -> Element {
             for pin in pins.iter() {
                 {
                     let (icon, label, border) = match pin.slot.as_str() {
-                        "diagnosis" => ("D", "Diagnosis", "border-yellow-400 dark:border-yellow-600"),
-                        "remediation" => ("R", "Remediation Plan", "border-orange-400 dark:border-orange-600"),
-                        "final_report" => ("F", "Final Report", "border-green-400 dark:border-green-600"),
-                        _ => ("P", pin.slot.as_str(), "border-gray-400"),
+                        "diagnosis" => (t!("healer-phase-d"), t!("healer-phase-diagnosis"), "border-yellow-400 dark:border-yellow-600".to_string()),
+                        "remediation" => (t!("healer-phase-r"), t!("healer-phase-remediation"), "border-orange-400 dark:border-orange-600".to_string()),
+                        "final_report" => (t!("healer-phase-f"), t!("healer-phase-final-report"), "border-green-400 dark:border-green-600".to_string()),
+                        _ => ("P".to_string(), pin.slot.clone(), "border-gray-400".to_string()),
                     };
                     let html = simple_md_to_html(&pin.summary);
                     let services = pin.affected_services.clone();
@@ -1615,7 +1616,7 @@ fn render_staff_pings_inline(pings: &[StaffPingSummary]) -> Element {
     }
     rsx! {
         div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded",
-            h4 { class: "text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2", "Staff Pings" }
+            h4 { class: "text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2", {t!("nav-staff-pings")} }
             div { class: "space-y-2",
                 for ping in pings.iter() {
                     {

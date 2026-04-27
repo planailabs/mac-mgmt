@@ -2,6 +2,7 @@
 //! Used in fleet detail (per-instance) and cluster detail (per-cluster).
 
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -49,18 +50,18 @@ pub async fn send_push_event(
 
 struct PushAction {
     key: &'static str,
-    label: &'static str,
-    description: &'static str,
+    label_key: &'static str,
+    desc_key: &'static str,
 }
 
 const ACTIONS: &[PushAction] = &[
-    PushAction { key: "sync_config", label: "Sync Config", description: "Push config to daemons" },
-    PushAction { key: "sync_skills", label: "Sync Skills", description: "Push skill assignments" },
-    PushAction { key: "sync_mcp_servers", label: "Sync MCP Servers", description: "Push MCP server assignments" },
-    PushAction { key: "sync_ssh_keys", label: "Sync SSH Keys", description: "Push SSH key changes" },
-    PushAction { key: "sync_nixpkgs", label: "Sync Nixpkgs", description: "Push nixpkgs pin" },
-    PushAction { key: "self_update", label: "Self Update", description: "Trigger daemon binary update" },
-    PushAction { key: "request_assessment", label: "Request Assessment", description: "Trigger immediate health probe" },
+    PushAction { key: "sync_config", label_key: "push-sync-config", desc_key: "push-sync-config-desc" },
+    PushAction { key: "sync_skills", label_key: "push-sync-skills", desc_key: "push-sync-skills-desc" },
+    PushAction { key: "sync_mcp_servers", label_key: "push-sync-mcp", desc_key: "push-sync-mcp-desc" },
+    PushAction { key: "sync_ssh_keys", label_key: "push-sync-ssh", desc_key: "push-sync-ssh-desc" },
+    PushAction { key: "sync_nixpkgs", label_key: "push-sync-nixpkgs", desc_key: "push-sync-nixpkgs-desc" },
+    PushAction { key: "self_update", label_key: "push-self-update", desc_key: "push-self-update-desc" },
+    PushAction { key: "request_assessment", label_key: "push-request-assessment", desc_key: "push-request-assessment-desc" },
 ];
 
 #[component]
@@ -73,7 +74,7 @@ pub fn PushMenu(cluster_id: String) -> Element {
             button {
                 class: "px-3 py-1.5 text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600",
                 onclick: move |_| { let v = *open.read(); open.set(!v); },
-                "Push \u{25BC}"
+                {t!("push-menu-button")}
             }
             if *open.read() {
                 div {
@@ -81,13 +82,13 @@ pub fn PushMenu(cluster_id: String) -> Element {
                     for action in ACTIONS {
                         {
                             let key = action.key;
-                            let label = action.label;
-                            let desc = action.description;
+                            let label = t!(action.label_key);
+                            let desc = t!(action.desc_key);
                             let cid = cluster_id.clone();
                             rsx! {
                                 button {
                                     class: "w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700",
-                                    title: "{desc}",
+                                    title: desc,
                                     onclick: move |_| {
                                         let cid = cid.clone();
                                         let event = key.to_string();
@@ -99,7 +100,7 @@ pub fn PushMenu(cluster_id: String) -> Element {
                                             }
                                         }
                                     },
-                                    "{label}"
+                                    {label}
                                 }
                             }
                         }

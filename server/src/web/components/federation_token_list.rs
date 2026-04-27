@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::models::Token;
 #[cfg(feature = "server")]
@@ -88,7 +89,7 @@ pub fn FederationTokenList() -> Element {
     rsx! {
         if let Some(raw) = &*new_token.read() {
             div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
-                p { class: "text-sm font-medium text-green-800 dark:text-green-300", "New federation token (copy now, shown once):" }
+                p { class: "text-sm font-medium text-green-800 dark:text-green-300", {t!("federation-token-new")} }
                 code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
             }
         }
@@ -98,27 +99,27 @@ pub fn FederationTokenList() -> Element {
                 class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
                 r#type: "text",
                 required: true,
-                placeholder: "Federation token label",
+                placeholder: t!("federation-token-label"),
                 value: "{label}",
                 oninput: move |evt| label.set(evt.value()),
             }
             button {
                 class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                 r#type: "submit",
-                "Create Federation Token"
+                {t!("federation-token-create")}
             }
         }
 
         {match &*tokens.read() {
             Some(Ok(list)) => rsx! {
                 if list.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No federation tokens yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("federation-token-none")} }
                 } else {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
                         for token in list {
                             {
                                 let display_label = if token.label.is_empty() {
-                                    "(no label)".to_string()
+                                    t!("no-label")
                                 } else {
                                     token.label.clone()
                                 };
@@ -131,7 +132,7 @@ pub fn FederationTokenList() -> Element {
                                             span { class: "text-sm font-medium", "{display_label}" }
                                             span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{created}" }
                                             if revoked {
-                                                span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
+                                                span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", {t!("revoked")} }
                                             }
                                         }
                                         if !revoked {
@@ -145,7 +146,7 @@ pub fn FederationTokenList() -> Element {
                                                         }
                                                     });
                                                 },
-                                                "Revoke"
+                                                {t!("federation-token-revoke")}
                                             }
                                         }
                                     }
@@ -155,8 +156,8 @@ pub fn FederationTokenList() -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
         }}
     }
 }

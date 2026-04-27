@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::models::Cluster;
 use crate::web::app::Route;
@@ -431,13 +432,13 @@ pub fn ClusterDetail(id: String) -> Element {
                             button {
                                 class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300",
                                 r#type: "submit",
-                                "Save"
+                                {t!("save")}
                             }
                             button {
                                 class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200",
                                 r#type: "button",
                                 onclick: move |_| editing.set(false),
-                                "Cancel"
+                                {t!("cancel")}
                             }
                         }
                     } else {
@@ -449,10 +450,10 @@ pub fn ClusterDetail(id: String) -> Element {
                                     draft_name.set(name.clone());
                                     editing.set(true);
                                 },
-                                "Edit"
+                                {t!("edit")}
                             }
                             if *confirm_delete.read() {
-                                span { class: "text-red-600 dark:text-red-400 text-sm", "Delete this cluster?" }
+                                span { class: "text-red-600 dark:text-red-400 text-sm", {t!("cluster-detail-delete-confirm")} }
                                 button {
                                     class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                                     onclick: {
@@ -465,25 +466,25 @@ pub fn ClusterDetail(id: String) -> Element {
                                             }
                                         }
                                     },
-                                    "Confirm"
+                                    {t!("cluster-detail-confirm-delete")}
                                 }
                                 button {
                                     class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
                                     onclick: move |_| confirm_delete.set(false),
-                                    "Cancel"
+                                    {t!("cancel")}
                                 }
                             } else {
                                 button {
                                     class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 text-sm",
                                     onclick: move |_| confirm_delete.set(true),
-                                    "Delete"
+                                    {t!("delete")}
                                 }
                             }
                         }
                     }
                 }
                 div { class: "text-gray-500 dark:text-gray-400 mb-6 flex items-center gap-4 flex-wrap",
-                    span { "Created: {created}" }
+                    span { {t!("cluster-detail-created", date: created)} }
                     PinnedVersion { cluster_id: cid2.clone(), version: pinned.clone(), read_only, on_change: move |_| cluster.restart() }
                     NixpkgsCommit { cluster_id: cid2.clone(), commit: nix_commit.clone(), read_only, on_change: move |_| cluster.restart() }
                     ActiveRollouts { cluster_id: cid2.clone() }
@@ -491,7 +492,7 @@ pub fn ClusterDetail(id: String) -> Element {
                         button {
                             class: "bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-700",
                             onclick: move |_| cloud_init_open.set(true),
-                            "Cloud-init…"
+                            {t!("cluster-detail-cloud-init")}
                         }
                         super::push_menu::PushMenu { cluster_id: cid2.clone() }
                     }
@@ -507,42 +508,42 @@ pub fn ClusterDetail(id: String) -> Element {
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Sync Tokens" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-sync-tokens")} }
                         SyncTokenList { cluster_id: cid2.clone(), read_only }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Setting / Cluster Tokens" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-setting-tokens")} }
                         SettingTokenList { cluster_id: cid2.clone(), read_only }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Config" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-config")} }
                         ConfigEditor { cluster_id: cid2.clone(), read_only }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Config History" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-config-history")} }
                         ConfigHistory { cluster_id: cid2.clone() }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Skills" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-skills")} }
                         ClusterSkills { cluster_id: cid2.clone(), read_only }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "MCP Servers" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-mcp-servers")} }
                         ClusterMcpServers { cluster_id: cid2.clone(), read_only }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "SSH Keys" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-ssh-keys")} }
                         ClusterSshKeys { cluster_id: cid2.clone(), read_only: !can_admin }
                     }
                     div {
-                        h3 { class: "text-lg font-semibold mb-3", "Healer" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-healer")} }
                         ClusterHealerSettings { cluster_id: cid2.clone(), read_only }
                     }
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }
 
@@ -632,7 +633,7 @@ fn PinnedVersion(
                         on_change.call(());
                     }
                 },
-                span { "Version: " }
+                span { {t!("cluster-detail-version-label")} }
                 input {
                     class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-0.5 text-sm font-mono w-24",
                     r#type: "text",
@@ -641,12 +642,12 @@ fn PinnedVersion(
                     oninput: move |e| draft.set(e.value()),
                     autofocus: true,
                 }
-                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", "Save" }
+                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", {t!("save")} }
                 button {
                     class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
                     r#type: "button",
                     onclick: move |_| editing.set(false),
-                    "Cancel"
+                    {t!("cancel")}
                 }
             }
         }
@@ -654,13 +655,13 @@ fn PinnedVersion(
         let ver_display = version.clone().unwrap_or_default();
         rsx! {
             span { class: "flex items-center gap-1",
-                span { "Version: " }
-                span { class: "font-mono font-medium text-gray-700 dark:text-gray-200", "v{ver_display}" }
+                span { {t!("cluster-detail-version-label")} }
+                span { class: "font-mono font-medium text-gray-700 dark:text-gray-200", {t!("cluster-detail-version-value", version: ver_display.clone())} }
                 if let Some(rid) = rollout_id {
                     Link {
                         to: Route::RolloutDetail { id: rid },
                         class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
-                        "(rollout)"
+                        {t!("cluster-detail-version-rollout")}
                     }
                 }
                 if !read_only {
@@ -670,7 +671,7 @@ fn PinnedVersion(
                             draft.set(ver_display.clone());
                             editing.set(true);
                         },
-                        "Edit"
+                        {t!("edit")}
                     }
                 }
             }
@@ -678,7 +679,7 @@ fn PinnedVersion(
     } else {
         rsx! {
             span { class: "flex items-center gap-1",
-                span { class: "text-gray-400 dark:text-gray-500", "No version pinned" }
+                span { class: "text-gray-400 dark:text-gray-500", {t!("cluster-detail-no-version")} }
                 if !read_only {
                     button {
                         class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
@@ -686,7 +687,7 @@ fn PinnedVersion(
                             draft.set(String::new());
                             editing.set(true);
                         },
-                        "Set"
+                        {t!("cluster-detail-set")}
                     }
                 }
             }
@@ -726,21 +727,21 @@ fn NixpkgsCommit(
                         on_change.call(());
                     }
                 },
-                span { "Nixpkgs: " }
+                span { {t!("cluster-detail-nixpkgs-label")} }
                 input {
                     class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-0.5 text-sm font-mono w-64",
                     r#type: "text",
-                    placeholder: "commit sha",
+                    placeholder: t!("cluster-detail-nixpkgs-placeholder"),
                     value: "{draft}",
                     oninput: move |e| draft.set(e.value()),
                     autofocus: true,
                 }
-                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", "Save" }
+                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", {t!("save")} }
                 button {
                     class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
                     r#type: "button",
                     onclick: move |_| editing.set(false),
-                    "Cancel"
+                    {t!("cancel")}
                 }
             }
         }
@@ -765,7 +766,7 @@ fn NixpkgsCommit(
 
         rsx! {
             span { class: "flex items-center gap-1",
-                span { "Nixpkgs: " }
+                span { {t!("cluster-detail-nixpkgs-label")} }
                 a {
                     class: "font-mono font-medium text-gray-700 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400",
                     href: "{url}",
@@ -780,7 +781,7 @@ fn NixpkgsCommit(
                             draft.set(display_for_edit.clone());
                             editing.set(true);
                         },
-                        "Edit"
+                        {t!("edit")}
                     }
                 }
             }
@@ -788,7 +789,7 @@ fn NixpkgsCommit(
     } else {
         rsx! {
             span { class: "flex items-center gap-1",
-                span { class: "text-gray-400 dark:text-gray-500", "No nixpkgs pin" }
+                span { class: "text-gray-400 dark:text-gray-500", {t!("cluster-detail-no-nixpkgs")} }
                 if !read_only {
                     button {
                         class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
@@ -796,7 +797,7 @@ fn NixpkgsCommit(
                             draft.set(String::new());
                             editing.set(true);
                         },
-                        "Set"
+                        {t!("cluster-detail-set")}
                     }
                 }
             }
@@ -860,9 +861,9 @@ fn CloudInitModal(cluster_id: String, cluster_name: String, mut open: Signal<boo
 
                 div { class: "px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between",
                     div {
-                        h2 { class: "font-semibold text-base", "Cloud-init for {cluster_name}" }
+                        h2 { class: "font-semibold text-base", {t!("cluster-detail-cloud-init-title", cluster: cluster_name.clone())} }
                         p { class: "text-xs text-gray-500 dark:text-gray-400 mt-0.5",
-                            "Generates a fresh sync token and a ready-to-use cloud-config. Paste into any VM's user-data."
+                            {t!("cluster-detail-cloud-init-desc")}
                         }
                     }
                     button {
@@ -875,9 +876,9 @@ fn CloudInitModal(cluster_id: String, cluster_name: String, mut open: Signal<boo
 
                 div { class: "px-4 py-3 overflow-y-auto flex-1",
                     if is_loading {
-                        p { class: "text-sm text-gray-500 dark:text-gray-400", "Generating…" }
+                        p { class: "text-sm text-gray-500 dark:text-gray-400", {t!("cluster-detail-generating")} }
                     } else if let Some(e) = &current_error {
-                        p { class: "text-sm text-red-600 dark:text-red-400", "Error: {e}" }
+                        p { class: "text-sm text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} }
                     } else {
                         textarea {
                             class: "w-full h-80 font-mono text-xs border border-gray-300 dark:border-gray-600 rounded p-2 dark:bg-gray-900 dark:text-gray-100",
@@ -912,7 +913,7 @@ fn CloudInitModal(cluster_id: String, cluster_name: String, mut open: Signal<boo
                                 }
                             },
                             "data-copy-ack": "1",
-                            if *copied.read() { "Copied!" } else { "Copy" }
+                            if *copied.read() { {t!("cluster-detail-copied")} } else { {t!("cluster-detail-copy")} }
                         }
                         button {
                             r#type: "button",
@@ -939,14 +940,14 @@ fn CloudInitModal(cluster_id: String, cluster_name: String, mut open: Signal<boo
                                     let _ = document::eval(&js);
                                 }
                             },
-                            "Download"
+                            {t!("cluster-detail-download")}
                         }
                     }
                     button {
                         r#type: "button",
                         class: "px-3 py-1 rounded text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-200",
                         onclick: move |_| open.set(false),
-                        "Close"
+                        {t!("close")}
                     }
                 }
             }

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -113,12 +114,12 @@ pub fn ClusterList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", "Clusters" }
+            h2 { class: "text-2xl font-bold", {t!("cluster-list-title")} }
             if is_admin {
                 Link {
                     to: Route::ClusterForm {},
                     class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                    "New Cluster"
+                    {t!("cluster-list-new")}
                 }
             }
         }
@@ -179,11 +180,11 @@ pub fn ClusterList() -> Element {
                         table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                             thead { class: "bg-gray-50 dark:bg-gray-700",
                                 tr {
-                                    SortableTh { label: "Organization".to_string(), sort_key: "organization".to_string(), sort }
-                                    SortableTh { label: "Name".to_string(), sort_key: "name".to_string(), sort }
-                                    SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
-                                    SortableTh { label: "Nixpkgs".to_string(), sort_key: "nixpkgs".to_string(), sort }
-                                    SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
+                                    SortableTh { label: t!("cluster-list-col-org"), sort_key: "organization".to_string(), sort }
+                                    SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
+                                    SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
+                                    SortableTh { label: t!("cluster-list-col-nixpkgs"), sort_key: "nixpkgs".to_string(), sort }
+                                    SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
                                 }
                             }
                             tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
@@ -191,7 +192,7 @@ pub fn ClusterList() -> Element {
                                     tr { key: "{cluster.id}",
                                         td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300",
                                             if cluster.org_names.is_empty() {
-                                                span { class: "text-gray-400 dark:text-gray-500 italic", "-" }
+                                                span { class: "text-gray-400 dark:text-gray-500 italic", {t!("dash")} }
                                             } else {
                                                 {cluster.org_names.join(", ")}
                                             }
@@ -207,7 +208,7 @@ pub fn ClusterList() -> Element {
                                             if let Some(ver) = &cluster.pinned_version {
                                                 span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", "v{ver}" }
                                             } else {
-                                                span { class: "text-gray-400 dark:text-gray-500 text-sm", "-" }
+                                                span { class: "text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
                                             }
                                         }
                                         td { class: "px-6 py-4",
@@ -230,7 +231,7 @@ pub fn ClusterList() -> Element {
                                                     }
                                                 }
                                             } else {
-                                                span { class: "text-gray-400 dark:text-gray-500 text-sm", "-" }
+                                                span { class: "text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
                                             }
                                         }
                                         td { class: "px-6 py-4 text-gray-500 dark:text-gray-400",
@@ -243,8 +244,8 @@ pub fn ClusterList() -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
     }
 }

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -387,10 +388,10 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     });
 
     let refresh_ago = match *last_refreshed.read() {
-        Some(t) => {
-            let secs = Utc::now().signed_duration_since(t).num_seconds();
+        Some(ts) => {
+            let secs = Utc::now().signed_duration_since(ts).num_seconds();
             if secs < 5 {
-                "just now".to_string()
+                t!("fleet-just-now")
             } else {
                 format!("{secs}s ago")
             }
@@ -563,9 +564,9 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
 
             rsx! {
                 div { class: "flex items-center justify-between mb-4",
-                    h2 { class: "text-2xl font-bold", "Fleet Dashboard" }
+                    h2 { class: "text-2xl font-bold", {t!("fleet-title")} }
                     span { class: "text-xs text-gray-400 dark:text-gray-500",
-                        "Last refreshed: {refresh_ago}"
+                        {t!("fleet-last-refreshed", time: refresh_ago)}
                     }
                 }
                 // Stage filter banner — visible when the route was loaded
@@ -573,18 +574,18 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 if let Some(label) = stage_label.read().clone() {
                     div { class: "flex items-center justify-between gap-2 mb-3 px-3 py-2 rounded bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800",
                         div { class: "text-sm text-blue-800 dark:text-blue-200",
-                            span { class: "font-medium", "Filtered by rollout: " }
+                            span { class: "font-medium", {t!("fleet-filtered-by")} }
                             "{label}"
                         }
                         Link {
                             to: Route::FleetDashboard { stage_id: None },
                             class: "text-xs text-blue-700 dark:text-blue-300 hover:underline",
-                            "Clear filter"
+                            {t!("fleet-clear-filter")}
                         }
                     }
                 }
                 if entries.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No daemons have reported in yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("fleet-no-daemons")} }
                 } else {
                     TableToolbar { search, limit, total, filtered: filtered_count, shown }
                     div { class: "flex items-center gap-2 mb-3",
@@ -598,7 +599,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                         "px-3 py-1.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600"
                                     },
                                     onclick: move |_| unhealthy_only.set(!active),
-                                    "Unhealthy only"
+                                    {t!("fleet-unhealthy-only")}
                                 }
                             }
                         }
@@ -607,17 +608,17 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                         table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                             thead { class: "bg-gray-50 dark:bg-gray-700",
                                 tr {
-                                    SortableTh { label: "Cluster".to_string(), sort_key: "cluster".to_string(), sort }
-                                    SortableTh { label: "Hostname".to_string(), sort_key: "hostname".to_string(), sort }
-                                    SortableTh { label: "Env".to_string(), sort_key: "env".to_string(), sort }
-                                    SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Nixpkgs" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Status" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Load" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Services" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Probes" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Tunnels" }
-                                    SortableTh { label: "Last Seen".to_string(), sort_key: "last_seen".to_string(), sort }
+                                    SortableTh { label: t!("fleet-col-cluster"), sort_key: "cluster".to_string(), sort }
+                                    SortableTh { label: t!("fleet-col-hostname"), sort_key: "hostname".to_string(), sort }
+                                    SortableTh { label: t!("fleet-col-env"), sort_key: "env".to_string(), sort }
+                                    SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("cluster-list-col-nixpkgs")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-status")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-load")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-services")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-probes")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-tunnels")} }
+                                    SortableTh { label: t!("fleet-col-last-seen"), sort_key: "last_seen".to_string(), sort }
                                     th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
                                 }
                             }
@@ -628,9 +629,9 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                         let age = now.signed_duration_since(entry.reported_at);
                                         let is_online = age.num_seconds() < 300;
                                         let status_class = if is_online { "text-green-600 dark:text-green-400 font-semibold" } else { "text-red-600 dark:text-red-400 font-semibold" };
-                                        let status_text = if is_online { "online" } else { "offline" };
+                                        let status_text = if is_online { t!("fleet-online") } else { t!("fleet-offline") };
                                         let last_seen = if age.num_seconds() < 60 {
-                                            "just now".to_string()
+                                            t!("fleet-just-now")
                                         } else if age.num_minutes() < 60 {
                                             format!("{}m ago", age.num_minutes())
                                         } else if age.num_hours() < 24 {
@@ -652,12 +653,12 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     let (cls, title) = if healthy {
                                                         (
                                                             "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200".to_string(),
-                                                            "healthy".to_string(),
+                                                            t!("fleet-healthy"),
                                                         )
                                                     } else {
                                                         (
                                                             "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200".to_string(),
-                                                            "unhealthy".to_string(),
+                                                            t!("fleet-unhealthy"),
                                                         )
                                                     };
                                                     (name, cls, title)
@@ -692,18 +693,18 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                 let (cls, label, ok_text) = match ok {
                                                     Some(true) => (
                                                         "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-                                                        "ok",
-                                                        "ok",
+                                                        t!("fleet-ok"),
+                                                        t!("fleet-ok"),
                                                     ),
                                                     Some(false) => (
                                                         "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-                                                        "fail",
-                                                        "fail",
+                                                        t!("fleet-fail"),
+                                                        t!("fleet-fail"),
                                                     ),
                                                     None => (
                                                         "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-                                                        "pending",
-                                                        "no result yet",
+                                                        t!("fleet-pending"),
+                                                        t!("fleet-no-result"),
                                                     ),
                                                 };
                                                 let _ = label;
@@ -734,7 +735,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     let mut parts: Vec<String> = Vec::new();
                                                     if let Some(u) = util { parts.push(format!("{u}%")); }
                                                     if let Some(t) = temp { parts.push(format!("{t}°C")); }
-                                                    let label = if parts.is_empty() { "idle".to_string() } else { parts.join(" · ") };
+                                                    let label = if parts.is_empty() { t!("fleet-idle") } else { parts.join(" · ") };
                                                     let idx = g.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
                                                     let cls = match util {
                                                         Some(u) if u >= 85 => "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200",
@@ -821,7 +822,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     if let Some(lc) = &load_cell {
                                                         span { "{lc}" }
                                                     } else {
-                                                        span { class: "text-gray-400 dark:text-gray-500", "—" }
+                                                        span { class: "text-gray-400 dark:text-gray-500", {t!("em-dash")} }
                                                     }
                                                     if !gpu_cells.is_empty() {
                                                         div { class: "flex gap-1 flex-wrap mt-1",
@@ -846,7 +847,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                 }
                                                 td { class: "px-6 py-4 text-sm",
                                                     if probe_badges.is_empty() {
-                                                        span { class: "text-gray-400 dark:text-gray-500", "—" }
+                                                        span { class: "text-gray-400 dark:text-gray-500", {t!("em-dash")} }
                                                     } else {
                                                         div { class: "flex gap-1 flex-wrap",
                                                             for (name, badge_class, title) in &probe_badges {
@@ -944,7 +945,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                     }
                                                                 }
                                                             },
-                                                            "Delete"
+                                                            {t!("delete")}
                                                         }
                                                     }
                                                 }
@@ -959,10 +960,10 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
         },
         None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
         },
     }
 }

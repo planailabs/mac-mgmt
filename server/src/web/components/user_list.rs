@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use dioxus_i18n::t;
+
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, TableToolbar};
 #[cfg(feature = "server")]
@@ -106,11 +108,11 @@ pub fn UserList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", "Users" }
+            h2 { class: "text-2xl font-bold", {t!("user-list-title")} }
             Link {
                 to: Route::UserForm {},
                 class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                "New User"
+                {t!("user-list-new")}
             }
         }
         {match &*users_future.read() {
@@ -139,11 +141,11 @@ pub fn UserList() -> Element {
                         table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                             thead { class: "bg-gray-50 dark:bg-gray-700",
                                 tr {
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Email" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Name" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Admin" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Organizations" }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", "Created" }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("email")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("name")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("admin")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("user-list-col-orgs")} }
+                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("created")} }
                                 }
                             }
                             tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -182,7 +184,7 @@ pub fn UserList() -> Element {
                                                 }
                                                 td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300",
                                                     if orgs_display.is_empty() {
-                                                        span { class: "text-gray-400 dark:text-gray-500 italic", "None" }
+                                                        span { class: "text-gray-400 dark:text-gray-500 italic", {t!("none")} }
                                                     } else {
                                                         "{orgs_display}"
                                                     }
@@ -199,8 +201,8 @@ pub fn UserList() -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
     }
 }

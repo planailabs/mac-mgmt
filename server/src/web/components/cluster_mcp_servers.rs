@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use super::mcp_bundle_detail::McpServerOption;
 #[cfg(feature = "server")]
@@ -734,7 +735,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         // Direct MCP server assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Direct MCP Servers" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-mcp-direct")} }
             if !read_only {
                 form {
                     class: "flex gap-2 mb-3",
@@ -774,10 +775,10 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                         value: "{selected_server}",
                         onchange: move |evt| selected_server.set(evt.value()),
-                        option { value: "", "Select MCP server..." }
+                        option { value: "", {t!("cluster-mcp-select")} }
                         {match &*available_servers.read() {
                             Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "Local",
+                                optgroup { label: t!("cluster-mcp-local"),
                                     for s in list {
                                         {
                                             let val = s.id.to_string();
@@ -797,7 +798,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                 }
                                 rsx! {
                                     for (sc_name, items) in by_sc {
-                                        optgroup { label: "From {sc_name}",
+                                        optgroup { label: t!("cluster-mcp-from-sc", name: sc_name.clone()),
                                             for rm in items {
                                                 {
                                                     let val = format!(
@@ -819,13 +820,13 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                     button {
                         class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                         r#type: "submit",
-                        "Add"
+                        {t!("add")}
                     }
                 }
             }
             {match &*servers.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No direct MCP server assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-direct")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -843,7 +844,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-mcp-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
@@ -857,7 +858,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                                         }
                                                     });
                                                 },
-                                                "Remove"
+                                                {t!("remove")}
                                             }
                                         }
                                     }
@@ -873,10 +874,10 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
 
         // MCP servers from bundles (read-only, blue)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2", "From Bundles" }
+            h4 { class: "text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2", {t!("cluster-mcp-from-bundles")} }
             {match &*bundle_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No MCP servers from bundles." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-bundle-mcp")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -891,9 +892,9 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                             class: if overwritten { "text-sm font-mono text-blue-400 dark:text-blue-600 line-through" } else { "text-sm font-mono text-blue-700 dark:text-blue-400" },
                                             "{label}"
                                         }
-                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, "via {via}" }
+                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, {t!("cluster-mcp-via", source: via.clone())} }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", "overwritten" }
+                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", {t!("cluster-mcp-overwritten")} }
                                         }
                                     }
                                 }
@@ -908,10 +909,10 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
 
         // MCP servers from skills (transitive, read-only, grey)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2", "From Skills (transitive)" }
+            h4 { class: "text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2", {t!("cluster-mcp-from-skills")} }
             {match &*transitive_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No transitive MCP dependencies." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-transitive")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -926,9 +927,9 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                             class: if overwritten { "text-sm font-mono text-gray-400 dark:text-gray-500 line-through" } else { "text-sm font-mono text-gray-500 dark:text-gray-400" },
                                             "{label}"
                                         }
-                                        span { class: if overwritten { "text-xs text-gray-300 dark:text-gray-600" } else { "text-xs text-gray-400 dark:text-gray-500" }, "via {via}" }
+                                        span { class: if overwritten { "text-xs text-gray-300 dark:text-gray-600" } else { "text-xs text-gray-400 dark:text-gray-500" }, {t!("cluster-mcp-via", source: via.clone())} }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", "overwritten" }
+                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", {t!("cluster-mcp-overwritten")} }
                                         }
                                     }
                                 }
@@ -943,7 +944,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
 
         // MCP bundle assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "MCP Bundles" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-mcp-bundles-title")} }
             if !read_only {
                 if let Some(err) = &*bundle_error.read() {
                     p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
@@ -999,10 +1000,10 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                         value: "{selected_bundle}",
                         onchange: move |evt| selected_bundle.set(evt.value()),
-                        option { value: "", "Select MCP bundle..." }
+                        option { value: "", {t!("cluster-mcp-select-bundle")} }
                         {match &*available_bundles.read() {
                             Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "Local",
+                                optgroup { label: t!("cluster-mcp-local"),
                                     for b in list {
                                         {
                                             let val = b.id.to_string();
@@ -1022,7 +1023,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                 }
                                 rsx! {
                                     for (sc_name, items) in by_sc {
-                                        optgroup { label: "From {sc_name}",
+                                        optgroup { label: t!("cluster-mcp-from-sc", name: sc_name.clone()),
                                             for rb in items {
                                                 {
                                                     let val = format!(
@@ -1044,13 +1045,13 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                     button {
                         class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                         r#type: "submit",
-                        "Add"
+                        {t!("add")}
                     }
                 }
             }
             {match &*bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No MCP bundle assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-bundle-assign")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -1068,7 +1069,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-mcp-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
@@ -1082,7 +1083,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                                         }
                                                     });
                                                 },
-                                                "Remove"
+                                                {t!("remove")}
                                             }
                                         }
                                     }

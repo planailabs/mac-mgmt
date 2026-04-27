@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 use crate::models::ClusterConfig;
@@ -149,7 +150,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                     checked: *raw_mode.read(),
                     onchange: move |evt| raw_mode.set(evt.checked()),
                 }
-                "Raw JSON"
+                {t!("config-editor-raw-json")}
             }
         }
 
@@ -157,7 +158,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
             if *raw_mode.read() {
                 textarea {
                     class: "w-full h-64 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded p-2 mb-2 dark:bg-gray-700 dark:text-white",
-                    placeholder: "Paste JSON config here...",
+                    placeholder: t!("config-editor-paste-placeholder"),
                     value: "{editor_text}",
                     oninput: move |evt| editor_text.set(evt.value()),
                 }
@@ -172,15 +173,15 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                     Some(Err(e)) => rsx! {
-                        p { class: "text-red-600 dark:text-red-400 text-sm", "Failed to load schema: {e}" }
+                        p { class: "text-red-600 dark:text-red-400 text-sm", {t!("config-editor-schema-error", error: e.to_string())} }
                         textarea {
                             class: "w-full h-64 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded p-2 mb-2 dark:bg-gray-700 dark:text-white",
-                            placeholder: "Paste JSON config here...",
+                            placeholder: t!("config-editor-paste-placeholder"),
                             value: "{editor_text}",
                             oninput: move |evt| editor_text.set(evt.value()),
                         }
                     },
-                    None => rsx! { p { class: "text-sm", "Loading schema..." } },
+                    None => rsx! { p { class: "text-sm", {t!("config-editor-loading-schema")} } },
                 }}
             }
             if !read_only {
@@ -192,7 +193,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                         evt.stop_propagation();
                         do_save();
                     },
-                    "Save Config"
+                    {t!("config-editor-save")}
                 }
             }
         }
@@ -202,15 +203,15 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                 let saved_at = cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string();
                 rsx! {
                     div { class: "mt-4",
-                        p { class: "text-xs text-gray-500 dark:text-gray-400", "Last saved: {saved_at}" }
+                        p { class: "text-xs text-gray-500 dark:text-gray-400", {t!("config-editor-last-saved", time: saved_at)} }
                     }
                 }
             }
             Some(Ok(None)) => rsx! {
-                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-2", "No config saved yet." }
+                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-2", {t!("config-editor-no-config")} }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm mt-2", "Error: {e}" } },
-            None => rsx! { p { class: "text-sm mt-2", "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm mt-2", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { class: "text-sm mt-2", {t!("loading")} } },
         }}
     }
 }
@@ -340,9 +341,9 @@ fn KeyHashField(
 
     rsx! {
         div { class: "flex flex-col gap-0.5",
-            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "key_hash" }
+            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", {t!("config-editor-key-hash")} }
             p { class: "text-xs text-gray-500 dark:text-gray-400",
-                "Hex-encoded multihash of the API key (the raw key is only shown once on generation)"
+                {t!("config-editor-key-hash-help")}
             }
             div { class: "flex gap-2",
                 input {
@@ -381,13 +382,13 @@ fn KeyHashField(
                             }
                         });
                     },
-                    "Generate"
+                    {t!("config-editor-generate")}
                 }
             }
             if let Some(raw_key) = generated_key.read().as_ref() {
                 div { class: "mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded",
                     p { class: "text-xs font-semibold text-yellow-800 dark:text-yellow-200 mb-1",
-                        "Save this key now — it will not be shown again:"
+                        {t!("config-editor-key-warning")}
                     }
                     code { class: "block text-sm font-mono bg-white dark:bg-gray-800 p-2 rounded border select-all break-all",
                         "{raw_key}"
@@ -398,7 +399,7 @@ fn KeyHashField(
                         onclick: move |_| {
                             generated_key.set(None);
                         },
-                        "Dismiss"
+                        {t!("config-editor-dismiss")}
                     }
                 }
             }
@@ -433,7 +434,7 @@ fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_js
 /// Render a top-level array section (e.g. `cloud: Vec<CloudConfig>`).
 ///
 /// Shows each array entry as a numbered card with all its fields and a
-/// "Remove" button, plus an "+ Add entry" button at the bottom.
+/// "Remove" button, plus an {t!("config-editor-add-entry")} button at the bottom.
 fn render_top_level_array(
     section_schema: &serde_json::Value,
     defs: &serde_json::Value,
@@ -524,7 +525,7 @@ fn render_top_level_array(
                         serde_json::Value::Array(arr));
                     sync_add();
                 },
-                "+ Add entry"
+                {t!("config-editor-add-entry")}
             }
         }
     }
@@ -653,7 +654,7 @@ fn render_section_fields(
                                         }
                                         sync_reset();
                                     },
-                                    "reset to default"
+                                    {t!("config-editor-reset-default")}
                                 }
                             }
                         }
@@ -783,7 +784,7 @@ fn render_section_fields(
                                                         serde_json::Value::Array(arr));
                                                     sync_add();
                                                 },
-                                                "+ Add entry"
+                                                {t!("config-editor-add-entry")}
                                             }
                                         }
                                     }
@@ -846,7 +847,7 @@ fn render_section_fields(
                                                         input {
                                                             r#type: "text",
                                                             class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white",
-                                                            placeholder: "Add item...",
+                                                            placeholder: t!("config-editor-add-item"),
                                                             value: "{new_val}",
                                                             oninput: move |e| new_val.set(e.value()),
                                                             onkeypress: {
@@ -922,7 +923,7 @@ fn render_section_fields(
                                                     serde_json::Value::String(evt.value()));
                                                 sync_c();
                                             },
-                                            option { value: "", selected: selected_val.is_empty(), "-- select --" }
+                                            option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
                                             {enum_values.iter().map(|v| {
                                                 let is_selected = *v == selected_val;
                                                 let v = v.clone();

@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -262,7 +263,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
             return rsx! {
                 div { class: "max-w-6xl mx-auto px-4 py-6",
                     div { class: "p-4 bg-red-50 dark:bg-red-900/30 rounded text-sm text-red-700 dark:text-red-300",
-                        "File editor unavailable: {e}"
+                        {t!("file-editor-unavailable", error: e.to_string())}
                     }
                 }
             };
@@ -273,7 +274,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
     let Some(ctx_data) = ctx_data else {
         return rsx! {
             div { class: "max-w-6xl mx-auto px-4 py-6",
-                p { class: "text-sm text-gray-500", "Loading file editor..." }
+                p { class: "text-sm text-gray-500", {t!("file-editor-loading")} }
             }
         };
     };
@@ -315,10 +316,10 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                 editor_mtime.set(new_mtime);
                             }
                             editor_dirty.set(false);
-                            save_status.set(Some("Saved".into()));
+                            save_status.set(Some(t!("file-editor-saved").to_string()));
                         } else if status == 409 {
                             save_status.set(Some(
-                                "Conflict: file changed on disk. Reload and retry.".into(),
+                                t!("file-editor-conflict").to_string(),
                             ));
                         } else {
                             let err = result["error"].as_str().unwrap_or("Save failed");
@@ -339,14 +340,13 @@ pub fn FleetFiles(instance_id: String) -> Element {
                 Link {
                     to: back_url,
                     class: "text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400",
-                    "Back to instance"
+                    {t!("file-editor-back")}
                 }
-                h2 { class: "text-xl font-semibold", "Configuration Files" }
+                h2 { class: "text-xl font-semibold", {t!("file-editor-title")} }
             }
 
             div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-800 dark:text-amber-200",
-                "Changes here apply to this instance only and are not synced across the cluster. "
-                "Use the cluster configuration for settings that should be consistent across all instances."
+                {t!("file-editor-disclaimer")}
             }
 
             div { class: "grid grid-cols-1 lg:grid-cols-3 gap-4",
@@ -429,7 +429,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                             }
                                             span { class: "font-medium text-sm", "{name}" }
                                             if !writable {
-                                                span { class: "ml-2 text-xs px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded", "read-only" }
+                                                span { class: "ml-2 text-xs px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded", {t!("file-editor-readonly")} }
                                             }
                                         }
                                         span { class: "text-xs text-gray-500", "{service}" }
@@ -441,7 +441,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                 // Expanded directory entries
                                 if is_dir {
                                     if dir_loading.read().as_deref() == Some(&*name_entries) {
-                                        div { class: "ml-4 py-1 text-xs text-gray-500", "Loading..." }
+                                        div { class: "ml-4 py-1 text-xs text-gray-500", {t!("loading")} }
                                     }
                                     if let Some(entries) = dir_entries.read().get(&name_entries) {
                                         for entry in entries.iter() {
@@ -505,14 +505,14 @@ pub fn FleetFiles(instance_id: String) -> Element {
                         }
                     }
                     if file_tunnels.is_empty() {
-                        p { class: "text-sm text-gray-500 italic", "No configuration files available" }
+                        p { class: "text-sm text-gray-500 italic", {t!("file-editor-no-files")} }
                     }
                 }
 
                 // Right panel: editor
                 div { class: "lg:col-span-2 bg-white dark:bg-gray-800 rounded shadow p-4",
                     if selected_tunnel.read().is_none() {
-                        p { class: "text-sm text-gray-500 italic", "Select a file to view or edit" }
+                        p { class: "text-sm text-gray-500 italic", {t!("file-editor-select")} }
                     } else {
                         div { class: "flex items-center justify-between mb-2",
                             div {
@@ -525,7 +525,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
                             }
                             div { class: "flex items-center gap-2",
                                 if *editor_dirty.read() {
-                                    span { class: "text-xs text-amber-600", "unsaved changes" }
+                                    span { class: "text-xs text-amber-600", {t!("file-editor-unsaved")} }
                                 }
                                 if let Some(ref status) = *save_status.read() {
                                     span { class: "text-xs", "{status}" }
@@ -534,7 +534,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                     class: "px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50",
                                     disabled: !*editor_dirty.read() || *editor_loading.read() || *editor_is_binary.read(),
                                     onclick: save_file,
-                                    if *editor_loading.read() { "Saving..." } else { "Save" }
+                                    if *editor_loading.read() { {t!("file-editor-saving")} } else { {t!("save")} }
                                 }
                             }
                         }
@@ -547,11 +547,11 @@ pub fn FleetFiles(instance_id: String) -> Element {
 
                         if *editor_loading.read() && editor_content.read().is_empty() {
                             div { class: "flex items-center justify-center h-64",
-                                span { class: "text-gray-500", "Loading..." }
+                                span { class: "text-gray-500", {t!("loading")} }
                             }
                         } else if *editor_is_binary.read() {
                             div { class: "flex items-center justify-center h-64 text-gray-500",
-                                "Binary file — download to view"
+                                {t!("file-editor-binary")}
                             }
                         } else {
                             textarea {

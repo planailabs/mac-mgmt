@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use dioxus_i18n::t;
+
 use crate::web::app::Route;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -279,8 +281,7 @@ pub fn UserDetail(id: String) -> Element {
                             if !info.name.is_empty() {
                                 span { "{info.name} · " }
                             }
-                            "Created "
-                            {info.created_at.format("%Y-%m-%d %H:%M").to_string()}
+                            {t!("user-detail-created", date: info.created_at.format("%Y-%m-%d %H:%M").to_string())}
                         }
                     }
                     div { class: "flex gap-2 items-center",
@@ -302,7 +303,7 @@ pub fn UserDetail(id: String) -> Element {
                                     }
                                 },
                             }
-                            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "Admin" }
+                            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", {t!("admin")} }
                         }
                         // Impersonate
                         button {
@@ -316,11 +317,11 @@ pub fn UserDetail(id: String) -> Element {
                                     document::eval(&js);
                                 }
                             },
-                            "Impersonate"
+                            {t!("user-detail-impersonate")}
                         }
                         // Delete
                         if *confirm_delete.read() {
-                            span { class: "text-sm text-red-600 dark:text-red-400 mr-2", "Are you sure?" }
+                            span { class: "text-sm text-red-600 dark:text-red-400 mr-2", {t!("user-detail-confirm")} }
                             button {
                                 class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                                 onclick: {
@@ -334,18 +335,18 @@ pub fn UserDetail(id: String) -> Element {
                                         }
                                     }
                                 },
-                                "Yes, delete"
+                                {t!("user-detail-yes-delete")}
                             }
                             button {
                                 class: "bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 px-3 py-1 rounded text-sm",
                                 onclick: move |_| confirm_delete.set(false),
-                                "Cancel"
+                                {t!("cancel")}
                             }
                         } else {
                             button {
                                 class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                                 onclick: move |_| confirm_delete.set(true),
-                                "Delete User"
+                                {t!("user-detail-delete")}
                             }
                         }
                     }
@@ -353,7 +354,7 @@ pub fn UserDetail(id: String) -> Element {
 
                 // Organizations section
                 div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                    h3 { class: "text-lg font-semibold mb-3", "Organizations" }
+                    h3 { class: "text-lg font-semibold mb-3", {t!("user-detail-orgs")} }
 
                     div { class: "flex gap-2 mb-4",
                         select {
@@ -366,7 +367,7 @@ pub fn UserDetail(id: String) -> Element {
                                     selected_org.set(Some(val));
                                 }
                             },
-                            option { value: "", "Select organization to add..." }
+                            option { value: "", {t!("user-detail-select-org")} }
                             for o in &avail_orgs {
                                 {
                                     let oid = o.id.clone();
@@ -379,9 +380,9 @@ pub fn UserDetail(id: String) -> Element {
                             class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-24 dark:bg-gray-700 dark:text-white",
                             value: "{selected_org_role}",
                             onchange: move |e| selected_org_role.set(e.value()),
-                            option { value: "read", "Read" }
-                            option { value: "write", "Write" }
-                            option { value: "admin", "Admin" }
+                            option { value: "read", {t!("org-detail-role-read")} }
+                            option { value: "write", {t!("org-detail-role-write")} }
+                            option { value: "admin", {t!("org-detail-role-admin")} }
                         }
                         button {
                             class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
@@ -402,12 +403,12 @@ pub fn UserDetail(id: String) -> Element {
                                     }
                                 }
                             },
-                            "Add"
+                            {t!("add")}
                         }
                     }
 
                     if orgs.is_empty() {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm", "Not a member of any organization." }
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("user-detail-no-orgs")} }
                     } else {
                         div { class: "divide-y divide-gray-200 dark:divide-gray-700",
                             for o in &orgs {
@@ -446,7 +447,7 @@ pub fn UserDetail(id: String) -> Element {
                                                         }
                                                     }
                                                 },
-                                                "Remove"
+                                                {t!("remove")}
                                             }
                                         }
                                     }
@@ -457,7 +458,7 @@ pub fn UserDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }

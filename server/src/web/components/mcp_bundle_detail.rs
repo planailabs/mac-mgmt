@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc, McpBundleItemContext};
 use crate::models::McpServerBundle;
@@ -248,15 +249,15 @@ pub fn McpBundleDetail(id: String) -> Element {
                                     checked: "{draft_hide}",
                                     oninput: move |e| draft_hide.set(e.value() == "true"),
                                 }
-                                "Hide from public catalog"
+                                {t!("mcp-bundle-detail-hide")}
                             }
                             div { class: "flex gap-2",
-                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300", r#type: "submit", "Save" }
+                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300", r#type: "submit", {t!("save")} }
                                 button {
                                     class: "text-gray-500 hover:text-gray-700 dark:hover:text-gray-200",
                                     r#type: "button",
                                     onclick: move |_| editing.set(false),
-                                    "Cancel"
+                                    {t!("cancel")}
                                 }
                                 {
                                     let mcp_items_ctx = match &*items.read() {
@@ -292,7 +293,7 @@ pub fn McpBundleDetail(id: String) -> Element {
                                 draft_hide.set(hide_flag);
                                 editing.set(true);
                             },
-                            "Edit"
+                            {t!("edit")}
                         }
                         button {
                             class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400",
@@ -305,18 +306,18 @@ pub fn McpBundleDetail(id: String) -> Element {
                                     }
                                 });
                             },
-                            "Delete"
+                            {t!("delete")}
                         }
                     }
                 }
                 if !*editing.read() && !b.description.is_empty() {
                     p { class: "text-gray-600 dark:text-gray-300 mb-2", "{b.description}" }
                 }
-                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", "Created: {created}" }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", {t!("cluster-detail-created", date: created)} }
 
                 // Items section
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", "MCP Servers" }
+                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-bundle-detail-mcp-servers")} }
                     form {
                         class: "flex gap-2 mb-4",
                         onsubmit: move |evt: FormEvent| {
@@ -337,7 +338,7 @@ pub fn McpBundleDetail(id: String) -> Element {
                             class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
                             value: "{selected_server}",
                             onchange: move |evt| selected_server.set(evt.value()),
-                            option { value: "", "Select MCP server..." }
+                            option { value: "", {t!("mcp-bundle-detail-select-mcp")} }
                             {match &*available.read() {
                                 Some(Ok(list)) => rsx! {
                                     for s in list {
@@ -354,7 +355,7 @@ pub fn McpBundleDetail(id: String) -> Element {
                         button {
                             class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                             r#type: "submit",
-                            "Add"
+                            {t!("add")}
                         }
                     }
                     {match &*items.read() {
@@ -377,7 +378,7 @@ pub fn McpBundleDetail(id: String) -> Element {
                                                             }
                                                         });
                                                     },
-                                                    "Remove"
+                                                    {t!("remove")}
                                                 }
                                             }
                                         }
@@ -385,13 +386,13 @@ pub fn McpBundleDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                        None => rsx! { p { class: "text-sm", "Loading..." } },
+                        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
+                        None => rsx! { p { class: "text-sm", {t!("loading")} } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }

@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -268,32 +269,32 @@ pub fn RolloutForm() -> Element {
             let group_list_clone = group_list.clone();
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
-                    h2 { class: "text-2xl font-bold", "New Version Rollout" }
+                    h2 { class: "text-2xl font-bold", {t!("rollout-form-title")} }
                     Link {
                         to: Route::RolloutGroupList {},
                         class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
-                        "Manage Groups"
+                        {t!("rollout-list-manage-groups")}
                     }
                 }
 
                 div { class: "space-y-4",
                     div {
                         label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            "Name (optional)"
+                            {t!("rollout-form-name-label")}
                         }
                         input {
                             class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm dark:bg-gray-700 dark:text-white",
-                            placeholder: "e.g. v0.2.0 rollout, nixpkgs security update",
+                            placeholder: t!("rollout-form-name-placeholder"),
                             value: "{name}",
                             oninput: move |e| name.set(e.value()),
                         }
                         p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                            "A short label to identify this rollout. Shown in the list and detail views."
+                            {t!("rollout-form-name-help")}
                         }
                     }
                     div {
                         label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            "Target Version"
+                            {t!("rollout-form-target-version")}
                         }
                         {
                             let version_list: Vec<String> = match &*versions.read() {
@@ -305,39 +306,39 @@ pub fn RolloutForm() -> Element {
                                     class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm font-mono dark:bg-gray-700 dark:text-white",
                                     value: "{target_version}",
                                     onchange: move |e| target_version.set(e.value()),
-                                    option { value: "", "— none (nixpkgs only) —" }
+                                    option { value: "", {t!("rollout-form-none-nixpkgs")} }
                                     for v in version_list.iter() {
                                         option { value: "{v}", "{v}" }
                                     }
                                 }
                                 if version_list.is_empty() {
                                     p { class: "text-xs text-amber-600 dark:text-amber-500 mt-1",
-                                        "No daemon versions available. Sync them on the Daemon Versions page."
+                                        {t!("rollout-form-no-versions")}
                                     }
                                 }
                             }
                         }
                         p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                            "Pick a version uploaded via xzar. Downgrades are blocked."
+                            {t!("rollout-form-version-help")}
                         }
                     }
                     div {
                         label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            "Nixpkgs Commit (optional)"
+                            {t!("rollout-form-nixpkgs-label")}
                         }
                         input {
                             class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm font-mono dark:bg-gray-700 dark:text-white",
-                            placeholder: "e.g. 170a4b510ad7ee95dde01adf2fe21704498dbb5c",
+                            placeholder: t!("rollout-form-nixpkgs-placeholder"),
                             value: "{nixpkgs_commit}",
                             oninput: move |e| nixpkgs_commit.set(e.value()),
                         }
                         p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                            "Pin the nixpkgs source to this commit. Leave blank to leave each cluster's existing pin untouched."
+                            {t!("rollout-form-nixpkgs-help")}
                         }
                     }
                     div {
                         label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            "Stages (select in order)"
+                            {t!("rollout-form-stages-label")}
                         }
 
                         // "All Clusters" as a selectable stage
@@ -362,10 +363,10 @@ pub fn RolloutForm() -> Element {
                                             }
                                         },
                                     }
-                                    span { class: "font-semibold", "All Clusters" }
+                                    span { class: "font-semibold", {t!("rollout-form-all-clusters")} }
                                     if let Some(idx) = order {
                                         span { class: "text-xs text-gray-400 dark:text-gray-500",
-                                            "(stage {idx})"
+                                            {t!("rollout-form-stage-num", num: idx)}
                                         }
                                     }
                                 }
@@ -405,7 +406,7 @@ pub fn RolloutForm() -> Element {
                                         span { "{gname}" }
                                         if let Some(idx) = order {
                                             span { class: "text-xs text-gray-400 dark:text-gray-500",
-                                                "(stage {idx})"
+                                                {t!("rollout-form-stage-num", num: idx)}
                                             }
                                         }
                                     }
@@ -418,9 +419,9 @@ pub fn RolloutForm() -> Element {
                                 Link {
                                     to: Route::RolloutGroupList {},
                                     class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                    "Create groups"
+                                    {t!("rollout-form-create-groups-prefix")}
                                 }
-                                " to roll out in stages."
+                                {t!("rollout-form-create-groups-suffix")}
                             }
                         }
                     }
@@ -436,10 +437,10 @@ pub fn RolloutForm() -> Element {
                                 },
                             }
                             label { class: "text-sm font-medium text-gray-700 dark:text-gray-200",
-                                "Health gate"
+                                {t!("rollout-form-health-gate")}
                             }
                             span { class: "text-xs text-gray-400 dark:text-gray-500",
-                                "Auto-pause stages when assessment data falls below thresholds"
+                                {t!("rollout-form-auto-pause")}
                             }
                         }
 
@@ -448,7 +449,7 @@ pub fn RolloutForm() -> Element {
                                 div { class: "grid grid-cols-1 sm:grid-cols-3 gap-3",
                                     div {
                                         label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
-                                            "Heartbeat fresh % (min)"
+                                            {t!("rollout-form-heartbeat-pct")}
                                         }
                                         input {
                                             r#type: "number",
@@ -465,7 +466,7 @@ pub fn RolloutForm() -> Element {
                                     }
                                     div {
                                         label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
-                                            "Heartbeat freshness window (sec)"
+                                            {t!("rollout-form-heartbeat-window")}
                                         }
                                         input {
                                             r#type: "number",
@@ -481,7 +482,7 @@ pub fn RolloutForm() -> Element {
                                     }
                                     div {
                                         label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
-                                            "Grace period after start (sec)"
+                                            {t!("rollout-form-grace-period")}
                                         }
                                         input {
                                             r#type: "number",
@@ -499,7 +500,7 @@ pub fn RolloutForm() -> Element {
 
                                 div {
                                     label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
-                                        "Probe success thresholds"
+                                        {t!("rollout-form-probe-thresholds")}
                                     }
                                     {
                                         let rows: Vec<(usize, String, u8)> = gate
@@ -514,7 +515,7 @@ pub fn RolloutForm() -> Element {
                                                 div { class: "flex items-center gap-2 mb-1",
                                                     input {
                                                         class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white flex-1",
-                                                        placeholder: "service (e.g. ollama)",
+                                                        placeholder: t!("rollout-form-service-placeholder"),
                                                         value: "{svc}",
                                                         oninput: move |e| {
                                                             let mut g = gate.write();
@@ -538,7 +539,7 @@ pub fn RolloutForm() -> Element {
                                                             }
                                                         },
                                                     }
-                                                    span { class: "text-xs text-gray-500 dark:text-gray-400", "%" }
+                                                    span { class: "text-xs text-gray-500 dark:text-gray-400", {t!("rollout-form-pct-symbol")} }
                                                     button {
                                                         class: "text-red-600 dark:text-red-400 text-xs hover:underline",
                                                         onclick: move |_| {
@@ -547,7 +548,7 @@ pub fn RolloutForm() -> Element {
                                                                 g.probe_thresholds.remove(idx);
                                                             }
                                                         },
-                                                        "remove"
+                                                        {t!("rollout-form-remove-service")}
                                                     }
                                                 }
                                             }
@@ -558,10 +559,10 @@ pub fn RolloutForm() -> Element {
                                         onclick: move |_| {
                                             gate.write().probe_thresholds.push((String::new(), 90));
                                         },
-                                        "+ add service"
+                                        {t!("rollout-form-add-service")}
                                     }
                                     p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                                        "A stage fails its gate if any listed service drops below the threshold over the last 30 min."
+                                        {t!("rollout-form-gate-help")}
                                     }
                                 }
                             }
@@ -606,16 +607,16 @@ pub fn RolloutForm() -> Element {
                                 }
                             }
                         },
-                        "Create Rollout"
+                        {t!("rollout-form-create")}
                     }
                 }
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
         },
         None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
         },
     }
 }

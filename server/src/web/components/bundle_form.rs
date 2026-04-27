@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::Bundle;
@@ -58,24 +59,24 @@ pub fn BundleForm() -> Element {
     };
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "New Bundle" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("bundle-form-title")} }
         if let Some(err) = &*error.read() {
             p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
         }
         form { onsubmit: on_submit,
             div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Slug" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("slug")} }
                 input {
                     class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono dark:bg-gray-700 dark:text-white",
                     r#type: "text",
                     required: true,
-                    placeholder: "my-bundle",
+                    placeholder: t!("bundle-form-slug-placeholder"),
                     value: "{slug}",
                     oninput: move |evt| slug.set(evt.value()),
                 }
             }
             div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Name" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("name")} }
                 input {
                     class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                     r#type: "text",
@@ -85,7 +86,7 @@ pub fn BundleForm() -> Element {
                 }
             }
             div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Description" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("description")} }
                 textarea {
                     class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                     rows: "3",
@@ -97,7 +98,7 @@ pub fn BundleForm() -> Element {
                 button {
                     class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                     r#type: "submit",
-                    "Create"
+                    {t!("create")}
                 }
                 GenerateButton {
                     context: GenerateContext::Bundle { slug: slug.read().clone(), items: vec![] },

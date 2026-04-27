@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -211,11 +212,11 @@ pub fn DaemonVersionDetail(version: String) -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-6",
-            h2 { class: "text-2xl font-bold", "Daemon {version}" }
+            h2 { class: "text-2xl font-bold", {t!("daemon-version-detail-title", version: version.clone())} }
             Link {
                 to: Route::DaemonVersionList {},
                 class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
-                "← All versions"
+                {t!("daemon-version-detail-all")}
             }
         }
         {match &*paths.read() {
@@ -223,7 +224,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                 if list.is_empty() {
                     rsx! {
                         p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            "No store paths found in xzar for this version."
+                            {t!("daemon-version-detail-no-paths")}
                         }
                     }
                 } else {{
@@ -261,8 +262,8 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                 thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
-                                        SortableTh { label: "System".to_string(), sort_key: "system".to_string(), sort }
-                                        SortableTh { label: "Store Path".to_string(), sort_key: "store_path".to_string(), sort }
+                                        SortableTh { label: t!("daemon-version-detail-col-system"), sort_key: "system".to_string(), sort }
+                                        SortableTh { label: t!("daemon-version-detail-col-store-path"), sort_key: "store_path".to_string(), sort }
                                         th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider",
                                             ""
                                         }
@@ -282,7 +283,7 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                                                         a {
                                                             href: "{dl_url}",
                                                             class: "inline-flex items-center px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700",
-                                                            "Download"
+                                                            {t!("download")}
                                                         }
                                                     }
                                                 }
@@ -295,17 +296,17 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }}
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", "Clusters on this version" }
+        h3 { class: "text-lg font-semibold mt-10 mb-3", {t!("daemon-version-detail-clusters")} }
         {match &*clusters.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
                         p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            "No daemons reporting this version."
+                            {t!("daemon-version-detail-no-daemons")}
                         }
                     }
                 } else {{
@@ -343,8 +344,8 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                 thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
-                                        SortableTh { label: "Cluster".to_string(), sort_key: "cluster".to_string(), sort }
-                                        SortableTh { label: "Instances".to_string(), sort_key: "instances".to_string(), sort }
+                                        SortableTh { label: t!("daemon-version-detail-col-cluster"), sort_key: "cluster".to_string(), sort }
+                                        SortableTh { label: t!("daemon-version-detail-col-instances"), sort_key: "instances".to_string(), sort }
                                     }
                                 }
                                 tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
@@ -366,16 +367,16 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }}
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", "Rollouts targeting this version" }
+        h3 { class: "text-lg font-semibold mt-10 mb-3", {t!("daemon-version-detail-rollouts")} }
         {match &*rollouts.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm", "No rollouts target this version." }
+                        p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("daemon-version-detail-no-rollouts")} }
                     }
                 } else {{
                     let search = use_signal(String::new);
@@ -413,9 +414,9 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                             table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                 thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
-                                        SortableTh { label: "Rollout".to_string(), sort_key: "rollout".to_string(), sort }
-                                        SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
-                                        SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
+                                        SortableTh { label: t!("daemon-version-detail-col-rollout"), sort_key: "rollout".to_string(), sort }
+                                        SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
+                                        SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
                                     }
                                 }
                                 tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
@@ -444,17 +445,17 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }}
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", "Clusters pinned to this version" }
+        h3 { class: "text-lg font-semibold mt-10 mb-3", {t!("daemon-version-detail-pinned")} }
         {match &*pinned.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
                     rsx! {
                         p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            "No clusters pinned to this version."
+                            {t!("daemon-version-detail-no-pinned")}
                         }
                     }
                 } else {
@@ -473,8 +474,8 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
     }
 }

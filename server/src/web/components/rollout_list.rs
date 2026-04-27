@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -191,36 +192,30 @@ impl Searchable for RolloutEntry {
 /// `evaluated/total` count and a tooltip carrying the top failure reason.
 fn render_health_cell(health: Option<&RolloutHealthSummary>) -> Element {
     let Some(h) = health else {
-        return rsx! { span { class: "text-gray-400 dark:text-gray-500", "—" } };
+        return rsx! { span { class: "text-gray-400 dark:text-gray-500", {t!("em-dash")} } };
     };
     let (cls, label) = match h.state.as_str() {
         "pass" => (
             "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-            "pass",
+            t!("rollout-health-pass"),
         ),
         "fail" => (
             "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-            "fail",
+            t!("rollout-health-fail"),
         ),
         "grace" => (
             "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-            "grace",
+            t!("rollout-health-grace"),
         ),
         _ => (
             "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-            "no data",
+            t!("rollout-health-no-data"),
         ),
     };
     let title = if h.summary.is_empty() {
-        format!(
-            "{} stage(s) evaluated, {} failing",
-            h.evaluated_stages, h.failing_stages
-        )
+        t!("rollout-health-tooltip", evaluated: h.evaluated_stages, failing: h.failing_stages)
     } else {
-        format!(
-            "{} stage(s) evaluated, {} failing — {}",
-            h.evaluated_stages, h.failing_stages, h.summary
-        )
+        t!("rollout-health-tooltip-summary", evaluated: h.evaluated_stages, failing: h.failing_stages, summary: h.summary.clone())
     };
     rsx! {
         span { class: "inline-flex items-center gap-2",
@@ -242,27 +237,27 @@ fn render_health_cell(health: Option<&RolloutHealthSummary>) -> Element {
     }
 }
 
-fn status_badge(status: &str) -> (&'static str, &'static str) {
+fn status_badge(status: &str) -> (&'static str, String) {
     match status {
         "rolling" => (
             "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
-            "rolling",
+            t!("rollout-status-rolling"),
         ),
         "completed" => (
             "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-            "completed",
+            t!("rollout-status-completed"),
         ),
         "paused" => (
             "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-            "paused",
+            t!("rollout-status-paused"),
         ),
         "failed" => (
             "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-            "failed",
+            t!("rollout-status-failed"),
         ),
         _ => (
             "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
-            "pending",
+            t!("rollout-status-pending"),
         ),
     }
 }
@@ -275,22 +270,22 @@ pub fn RolloutList() -> Element {
         Some(Ok(list)) => {
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
-                    h2 { class: "text-2xl font-bold", "Rollouts" }
+                    h2 { class: "text-2xl font-bold", {t!("rollout-list-title")} }
                     div { class: "flex gap-2",
                         Link {
                             to: Route::RolloutGroupList {},
                             class: "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-500",
-                            "Manage Groups"
+                            {t!("rollout-list-manage-groups")}
                         }
                         Link {
                             to: Route::RolloutForm {},
                             class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                            "New Rollout"
+                            {t!("rollout-list-new")}
                         }
                     }
                 }
                 if list.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No rollouts yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("rollout-list-no-rollouts")} }
                 } else {
                     {
                         let search = use_signal(String::new);
@@ -331,11 +326,11 @@ pub fn RolloutList() -> Element {
                                 table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                     thead { class: "bg-gray-50 dark:bg-gray-700",
                                         tr {
-                                            SortableTh { label: "Name".to_string(), sort_key: "name".to_string(), sort }
-                                            SortableTh { label: "Status".to_string(), sort_key: "status".to_string(), sort }
-                                            SortableTh { label: "Stages".to_string(), sort_key: "stages".to_string(), sort }
-                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "Health" }
-                                            SortableTh { label: "Created".to_string(), sort_key: "created".to_string(), sort }
+                                            SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
+                                            SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
+                                            SortableTh { label: t!("rollout-list-col-stages"), sort_key: "stages".to_string(), sort }
+                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("rollout-list-col-health")} }
+                                            SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
                                             th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase",
                                                 ""
                                             }
@@ -397,7 +392,7 @@ pub fn RolloutList() -> Element {
                                                                             }
                                                                         }
                                                                     },
-                                                                    "Delete"
+                                                                    {t!("delete")}
                                                                 }
                                                             }
                                                         }
@@ -414,10 +409,10 @@ pub fn RolloutList() -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
         },
         None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
         },
     }
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::anthropic::{GenerateContext, GeneratedNameDesc};
@@ -327,15 +328,15 @@ pub fn SkillDetail(id: String) -> Element {
                                     checked: "{draft_hide}",
                                     oninput: move |e| draft_hide.set(e.value() == "true"),
                                 }
-                                "Hide from public catalog"
+                                {t!("skill-detail-hide")}
                             }
                             div { class: "flex gap-2",
-                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300", r#type: "submit", "Save" }
+                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300", r#type: "submit", {t!("save")} }
                                 button {
                                     class: "text-gray-500 hover:text-gray-700 dark:hover:text-gray-200",
                                     r#type: "button",
                                     onclick: move |_| editing.set(false),
-                                    "Cancel"
+                                    {t!("cancel")}
                                 }
                                 GenerateButton {
                                     context: GenerateContext::Skill { skill_id: sid.clone() },
@@ -360,22 +361,22 @@ pub fn SkillDetail(id: String) -> Element {
                                 draft_hide.set(hide_flag);
                                 editing.set(true);
                             },
-                            "Edit"
+                            {t!("edit")}
                         }
                     }
                 }
                 if !*editing.read() && !s.description.is_empty() {
                     p { class: "text-gray-600 dark:text-gray-300 mb-2", "{s.description}" }
                 }
-                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", "Created: {created}" }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", {t!("cluster-detail-created", date: created)} }
 
                 // Channels section (read-only, synced from xzar)
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", "Channels" }
-                    p { class: "text-xs text-gray-400 dark:text-gray-500 mb-3", "Channels are synced from xzar." }
+                    h3 { class: "text-lg font-semibold mb-3", {t!("skill-detail-channels")} }
+                    p { class: "text-xs text-gray-400 dark:text-gray-500 mb-3", {t!("skill-detail-channels-synced")} }
                     {match &*channels.read() {
                         Some(Ok(list)) if list.is_empty() => rsx! {
-                            p { class: "text-sm text-gray-500 dark:text-gray-400", "No channels synced yet." }
+                            p { class: "text-sm text-gray-500 dark:text-gray-400", {t!("skill-detail-no-channels")} }
                         },
                         Some(Ok(list)) => {
                             let path_map = match &*paths.read() {
@@ -410,14 +411,14 @@ pub fn SkillDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                        None => rsx! { p { class: "text-sm", "Loading..." } },
+                        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
+                        None => rsx! { p { class: "text-sm", {t!("loading")} } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }
 
@@ -436,7 +437,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
 
     rsx! {
         div { class: "mt-3",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "MCP Dependencies" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("skill-detail-mcp-deps")} }
             form {
                 class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
@@ -456,7 +457,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                     class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                     value: "{selected_server}",
                     onchange: move |e| selected_server.set(e.value()),
-                    option { value: "", "Select MCP server..." }
+                    option { value: "", {t!("skill-detail-select-mcp")} }
                     {match &*all_servers.read() {
                         Some(Ok(servers)) => rsx! {
                             for s in servers {
@@ -469,12 +470,12 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                 button {
                     class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
                     r#type: "submit",
-                    "Add"
+                    {t!("add")}
                 }
             }
             {match &*deps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400 dark:text-gray-500", "No MCP dependencies." }
+                    p { class: "text-xs text-gray-400 dark:text-gray-500", {t!("skill-detail-no-mcp-deps")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -495,7 +496,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                                                     }
                                                 });
                                             },
-                                            "Remove"
+                                            {t!("remove")}
                                         }
                                     }
                                 }
@@ -503,8 +504,8 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-xs", "Error: {e}" } },
-                None => rsx! { p { class: "text-xs", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-xs", {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { class: "text-xs", {t!("loading")} } },
             }}
         }
     }

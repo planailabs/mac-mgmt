@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use super::bundle_detail::SkillChannelDisplay;
 #[cfg(feature = "server")]
@@ -589,7 +590,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         // Direct skill assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Direct Skills" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-skills-direct")} }
             if !read_only {
                 form {
                     class: "flex gap-2 mb-3",
@@ -630,10 +631,10 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                         value: "{selected_sc}",
                         onchange: move |evt| selected_sc.set(evt.value()),
-                        option { value: "", "Select skill/channel..." }
+                        option { value: "", {t!("cluster-skills-select")} }
                         {match &*available_sc.read() {
                             Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "Local",
+                                optgroup { label: t!("cluster-skills-local"),
                                     for sc in list {
                                         {
                                             let val = sc.id.to_string();
@@ -654,7 +655,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                 }
                                 rsx! {
                                     for (sc_name, items) in by_sc {
-                                        optgroup { label: "From {sc_name}",
+                                        optgroup { label: t!("cluster-skills-from-sc", name: sc_name.clone()),
                                             for rsc in items {
                                                 {
                                                     let val = format!(
@@ -676,13 +677,13 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                     button {
                         class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                         r#type: "submit",
-                        "Add"
+                        {t!("add")}
                     }
                 }
             }
             {match &*skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No direct skill assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-skills-no-direct")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -700,7 +701,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-skills-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
@@ -714,7 +715,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                                         }
                                                     });
                                                 },
-                                                "Remove"
+                                                {t!("remove")}
                                             }
                                         }
                                     }
@@ -730,10 +731,10 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
 
         // Skills from bundles (read-only, blue)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2", "From Bundles" }
+            h4 { class: "text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2", {t!("cluster-skills-from-bundles")} }
             {match &*bundle_skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No skills from bundles." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-skills-no-bundle-skills")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -748,9 +749,9 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                             class: if overwritten { "text-sm font-mono text-blue-400 dark:text-blue-600 line-through" } else { "text-sm font-mono text-blue-700 dark:text-blue-400" },
                                             "{label}"
                                         }
-                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, "via {via}" }
+                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, {t!("cluster-skills-via", source: via.clone())} }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", "overwritten" }
+                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", {t!("cluster-skills-overwritten")} }
                                         }
                                     }
                                 }
@@ -765,7 +766,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
 
         // Bundle assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Bundles" }
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-skills-bundles-title")} }
             if let Some(err) = &*bundle_error.read() {
                 p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
             }
@@ -821,10 +822,10 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
                         value: "{selected_bundle}",
                         onchange: move |evt| selected_bundle.set(evt.value()),
-                        option { value: "", "Select bundle..." }
+                        option { value: "", {t!("cluster-skills-select-bundle")} }
                         {match &*available_bundles.read() {
                             Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "Local",
+                                optgroup { label: t!("cluster-skills-local"),
                                     for b in list {
                                         {
                                             let val = b.id.to_string();
@@ -844,7 +845,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                 }
                                 rsx! {
                                     for (sc_name, items) in by_sc {
-                                        optgroup { label: "From {sc_name}",
+                                        optgroup { label: t!("cluster-skills-from-sc", name: sc_name.clone()),
                                             for rb in items {
                                                 {
                                                     let val = format!(
@@ -866,13 +867,13 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                     button {
                         class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
                         r#type: "submit",
-                        "Add"
+                        {t!("add")}
                     }
                 }
             }
             {match &*bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No bundle assignments." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-skills-no-bundle-assign")} }
                 },
                 Some(Ok(list)) => rsx! {
                     ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -890,7 +891,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-skills-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
@@ -904,7 +905,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                                         }
                                                     });
                                                 },
-                                                "Remove"
+                                                {t!("remove")}
                                             }
                                         }
                                     }

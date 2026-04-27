@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use dioxus_tabular::*;
 
 use crate::models::{Bundle, Cluster, McpServer, McpServerBundle, Skill};
@@ -373,7 +374,7 @@ impl<R: Row + GetRowData<LinkData>> TableColumn<R> for LinkColumn {
             rsx! {
                 td { class: "px-6 py-4 text-purple-700 dark:text-purple-400",
                     span { class: "{mono_class}", "{data.label}" }
-                    span { class: "text-xs text-purple-500 dark:text-purple-500 ml-2", "via {source}" }
+                    span { class: "text-xs text-purple-500 dark:text-purple-500 ml-2", {t!("table-via", source: source)} }
                 }
             }
         } else {
@@ -510,11 +511,11 @@ impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
         match data.0 {
             Some(ver) => rsx! {
                 td { class: "px-6 py-4",
-                    span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", "v{ver}" }
+                    span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", {t!("table-version-prefix", version: ver)} }
                 }
             },
             None => rsx! {
-                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", "-" }
+                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
             },
         }
     }
@@ -567,7 +568,7 @@ impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitCol
                 }
             }
             None => rsx! {
-                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", "-" }
+                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
             },
         }
     }
@@ -651,7 +652,7 @@ pub fn TableToolbar(
                 input {
                     class: "border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm w-64 pl-8 dark:bg-gray-700 dark:text-white",
                     r#type: "text",
-                    placeholder: "Search\u{2026}",
+                    placeholder: t!("search-placeholder"),
                     value: "{search}",
                     oninput: move |evt| search.set(evt.value()),
                 }
@@ -667,9 +668,9 @@ pub fn TableToolbar(
             }
             div { class: "flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400",
                 if total != filtered {
-                    span { "Showing {shown} of {filtered} (filtered from {total})" }
+                    span { {t!("table-showing-filtered", shown: shown, filtered: filtered, total: total)} }
                 } else {
-                    span { "Showing {shown} of {total}" }
+                    span { {t!("table-showing", shown: shown, total: total)} }
                 }
                 select {
                     class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-sm bg-white dark:bg-gray-700 dark:text-white",
@@ -679,9 +680,9 @@ pub fn TableToolbar(
                             limit.set(n);
                         }
                     },
-                    option { value: "20", "20 per page" }
-                    option { value: "50", "50 per page" }
-                    option { value: "100", "100 per page" }
+                    option { value: "20", {t!("table-per-page-20")} }
+                    option { value: "50", {t!("table-per-page-50")} }
+                    option { value: "100", {t!("table-per-page-100")} }
                 }
             }
         }

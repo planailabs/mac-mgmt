@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::{prelude::*, unic_langid::langid};
 
 use super::components::admin_tokens_page::AdminTokens;
 use super::components::bundle_detail::BundleDetail;
@@ -158,6 +159,14 @@ const THEME_INIT_SCRIPT: &str = r#"
 
 #[component]
 pub fn App() -> Element {
+    use_init_i18n(|| {
+        I18nConfig::new(langid!("en-US"))
+            .with_locale(Locale::new_static(
+                langid!("en-US"),
+                include_str!("./en-US.ftl"),
+            ))
+    });
+
     let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
     // Remove the pre-hydration loading banner once WASM has hydrated.
     use_effect(|| {

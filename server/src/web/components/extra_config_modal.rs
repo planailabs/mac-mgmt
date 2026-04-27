@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 const OPENCLAW_BASELINE: &str = include_str!("../../../ext/openclaw-config-baseline.json");
@@ -173,9 +174,9 @@ pub fn ExtraConfigField(form_values: Signal<serde_json::Value>, mut open: Signal
 
     rsx! {
         div { class: "flex flex-col gap-0.5",
-            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "extra_config" }
+            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", {t!("extra-config-label")} }
             p { class: "text-xs text-gray-500 dark:text-gray-400",
-                "Arbitrary openclaw.json keys merged after typed fields."
+                {t!("extra-config-help")}
             }
             div {
                 button {
@@ -186,9 +187,9 @@ pub fn ExtraConfigField(form_values: Signal<serde_json::Value>, mut open: Signal
                         evt.stop_propagation();
                         open.set(true);
                     },
-                    "Edit extra_config…"
+                    {t!("extra-config-edit")}
                 }
-                span { class: "ml-2 text-xs text-gray-500 dark:text-gray-400", "{key_count} value(s) set" }
+                span { class: "ml-2 text-xs text-gray-500 dark:text-gray-400", {t!("extra-config-values-set", count: key_count)} }
             }
         }
     }
@@ -267,7 +268,7 @@ fn ExtraConfigModal(
                 onclick: move |e| e.stop_propagation(),
 
                 div { class: "px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between",
-                    h2 { class: "font-semibold text-base", "Edit openclaw extra_config" }
+                    h2 { class: "font-semibold text-base", {t!("extra-config-title")} }
                     button {
                         r#type: "button",
                         class: "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 text-xl leading-none",
@@ -284,27 +285,27 @@ fn ExtraConfigModal(
                     input {
                         r#type: "text",
                         class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
-                        placeholder: "Filter by path… (space-separated tokens match in order)",
+                        placeholder: t!("extra-config-filter"),
                         value: "{filter}",
                         oninput: move |e| filter.set(e.value()),
                     }
                     div { class: "flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400",
-                        span { "legend:" }
+                        span { {t!("extra-config-legend")} }
                         span { class: "flex items-center gap-1",
                             span { class: "inline-block w-2 h-3 bg-purple-500 rounded-sm" }
-                            "sensitive"
+                            {t!("extra-config-sensitive")}
                         }
                         span { class: "flex items-center gap-1",
                             span { class: "inline-block w-2 h-3 bg-emerald-300 rounded-sm" }
-                            "array of objects"
+                            {t!("extra-config-array-of-objects")}
                         }
                         span { class: "flex items-center gap-1",
                             span { class: "inline-block w-2 h-3 bg-amber-300 rounded-sm" }
-                            "string-keyed map"
+                            {t!("extra-config-string-map")}
                         }
                         span { class: "flex items-center gap-1",
-                            span { class: "px-1 rounded bg-blue-600 text-white", "type" }
-                            "active union mode"
+                            span { class: "px-1 rounded bg-blue-600 text-white", {t!("extra-config-type")} }
+                            {t!("extra-config-active-union")}
                         }
                     }
                 }
@@ -326,9 +327,9 @@ fn ExtraConfigModal(
                             }
                         }
                         (Some(Err(e)), _) => rsx! {
-                            p { class: "text-red-600 dark:text-red-400 text-sm", "Failed to load schema: {e}" }
+                            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("extra-config-schema-error", error: e.to_string())} }
                         },
-                        _ => rsx! { p { class: "text-sm", "Loading schema…" } },
+                        _ => rsx! { p { class: "text-sm", {t!("extra-config-loading-schema")} } },
                     }}
                 }
 
@@ -341,7 +342,7 @@ fn ExtraConfigModal(
                             evt.stop_propagation();
                             open.set(false);
                         },
-                        "Cancel"
+                        {t!("cancel")}
                     }
                     button {
                         r#type: "button",
@@ -352,7 +353,7 @@ fn ExtraConfigModal(
                             let cleaned = prune(working.read().clone());
                             on_save.call(cleaned);
                         },
-                        "Save"
+                        {t!("save")}
                     }
                 }
             }
@@ -828,7 +829,7 @@ fn render_node_inner(
                             evt.stop_propagation();
                             remove_at(&mut working, &reset_path);
                         },
-                        "reset to default"
+                        {t!("config-editor-reset-default")}
                     }
                 }
             }
@@ -1034,7 +1035,7 @@ fn render_object_map(
                 input {
                     r#type: "text",
                     class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
-                    placeholder: "key",
+                    placeholder: t!("extra-config-key"),
                     value: "{new_key}",
                     oninput: move |e| new_key.set(e.value()),
                 }
@@ -1069,7 +1070,7 @@ fn render_object_map(
                         set_at(&mut working, &entry_path, init);
                         new_key.set(String::new());
                     },
-                    "+ add"
+                    {t!("extra-config-add")}
                 }
             }
         }
@@ -1150,7 +1151,7 @@ fn render_object_array(
                     arr.push(serde_json::Value::Object(Default::default()));
                     set_at(&mut working, &path_for_add, serde_json::Value::Array(arr));
                 },
-                "+ add item"
+                {t!("extra-config-add-item")}
             }
         }
     }
@@ -1251,7 +1252,7 @@ fn render_primitive_array(
                 input {
                     r#type: "text",
                     class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white",
-                    placeholder: "Add item…",
+                    placeholder: t!("config-editor-add-item"),
                     value: "{new_val}",
                     oninput: move |e| new_val.set(e.value()),
                 }

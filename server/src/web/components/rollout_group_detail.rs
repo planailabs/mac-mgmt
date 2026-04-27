@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -272,12 +273,12 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                     oninput: move |e| draft_desc.set(e.value()),
                                     autofocus: true,
                                 }
-                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", "Save" }
+                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", {t!("save")} }
                                 button {
                                     class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
                                     r#type: "button",
                                     onclick: move |_| editing_desc.set(false),
-                                    "Cancel"
+                                    {t!("cancel")}
                                 }
                             }
                         } else {
@@ -292,7 +293,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                                 draft_desc.set(desc.clone());
                                                 editing_desc.set(true);
                                             },
-                                            "Edit"
+                                            {t!("edit")}
                                         }
                                     }
                                 }
@@ -311,11 +312,11 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        "Delete Group"
+                        {t!("rollout-group-delete")}
                     }
                 }
 
-                h3 { class: "text-lg font-semibold mb-3", "Members" }
+                h3 { class: "text-lg font-semibold mb-3", {t!("rollout-group-members")} }
 
                 div { class: "flex gap-2 mb-4",
                     select {
@@ -328,7 +329,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                 selected_cluster.set(Some(val));
                             }
                         },
-                        option { value: "", "Select cluster to add..." }
+                        option { value: "", {t!("rollout-group-select-cluster")} }
                         for c in &clusters {
                             {
                                 let cid = c.id.to_string();
@@ -355,7 +356,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        "Add"
+                        {t!("add")}
                     }
                     if !clusters.is_empty() {
                         button {
@@ -372,13 +373,13 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                     }
                                 }
                             },
-                            "Add All Clusters"
+                            {t!("rollout-group-add-all")}
                         }
                     }
                 }
 
                 if info.members.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No members yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("rollout-group-no-members")} }
                 } else {{
                     let search = use_signal(String::new);
                     let limit = use_signal(|| 20usize);
@@ -412,7 +413,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                             table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                 thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
-                                        SortableTh { label: "Cluster".to_string(), sort_key: "cluster".to_string(), sort }
+                                        SortableTh { label: t!("rollout-group-col-cluster"), sort_key: "cluster".to_string(), sort }
                                         th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
                                     }
                                 }
@@ -437,7 +438,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                                                 }
                                                             }
                                                         },
-                                                        "Remove"
+                                                        {t!("remove")}
                                                     }
                                                 }
                                             }
@@ -452,8 +453,8 @@ pub fn RolloutGroupDetail(id: String) -> Element {
             }
         }
         Some(Err(e)) => {
-            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } }
+            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } }
         }
-        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
     }
 }

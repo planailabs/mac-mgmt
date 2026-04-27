@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -131,10 +132,10 @@ pub fn StaffPings() -> Element {
     });
 
     if !*loaded.read() {
-        return rsx! { p { class: "text-gray-500 text-sm", "Loading staff pings..." } };
+        return rsx! { p { class: "text-gray-500 text-sm", {t!("staff-pings-loading")} } };
     }
     if let Some(err) = &*error_msg.read() {
-        return rsx! { p { class: "text-red-600 text-sm", "Error: {err}" } };
+        return rsx! { p { class: "text-red-600 text-sm", {t!("error-message", message: err.to_string())} } };
     }
 
     let all = pings.read();
@@ -144,16 +145,16 @@ pub fn StaffPings() -> Element {
     let resolved_count = resolved.len();
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "Staff Pings" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("staff-pings-title")} }
         p { class: "text-sm text-gray-500 dark:text-gray-400 mb-6",
-            "Actionable notifications from the healer agent."
+            {t!("staff-pings-description")}
         }
 
         if !unresolved.is_empty() {
             div { class: "mb-8",
                 h3 { class: "text-lg font-semibold mb-3 flex items-center gap-2",
                     span { class: "inline-block w-2.5 h-2.5 rounded-full bg-red-500" }
-                    "Open ({unresolved_count})"
+                    {t!("staff-pings-open", count: unresolved_count)}
                 }
                 div { class: "space-y-2",
                     for ping in unresolved.iter() {
@@ -163,14 +164,14 @@ pub fn StaffPings() -> Element {
             }
         } else {
             div { class: "mb-8 p-6 text-center text-gray-400 dark:text-gray-500 bg-white dark:bg-gray-800 rounded shadow",
-                "No open staff pings"
+                {t!("staff-pings-no-open")}
             }
         }
 
         if !resolved.is_empty() {
             div {
                 h3 { class: "text-lg font-semibold mb-3 text-gray-500 dark:text-gray-400",
-                    "Resolved ({resolved_count})"
+                    {t!("staff-pings-resolved", count: resolved_count)}
                 }
                 div { class: "space-y-2 opacity-60",
                     for ping in resolved.iter() {
@@ -216,14 +217,14 @@ fn render_ping_card(ping: &StaffPingRow, pings: Signal<Vec<StaffPingRow>>) -> El
                         }
                     }
                     if let Some(by) = &resolved_by {
-                        p { class: "text-xs text-green-600 dark:text-green-400 mt-1", "Resolved by {by}" }
+                        p { class: "text-xs text-green-600 dark:text-green-400 mt-1", {t!("staff-pings-resolved-by", by: by.clone())} }
                     }
                 }
                 div { class: "flex items-center gap-2 shrink-0",
                     Link {
                         to: session_url,
                         class: "px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200",
-                        "View session"
+                        {t!("staff-pings-view-session")}
                     }
                     if !is_resolved {
                         button {
@@ -243,7 +244,7 @@ fn render_ping_card(ping: &StaffPingRow, pings: Signal<Vec<StaffPingRow>>) -> El
                                     }
                                 }
                             },
-                            "Resolve"
+                            {t!("staff-pings-resolve")}
                         }
                     }
                 }

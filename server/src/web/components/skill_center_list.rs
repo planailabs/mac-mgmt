@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 #[server]
 async fn list_skill_centers() -> Result<Vec<SkillCenterRow>, ServerFnError> {
@@ -36,25 +37,25 @@ pub fn SkillCenterList() -> Element {
     rsx! {
         div { class: "px-6 py-8 max-w-5xl mx-auto",
             div { class: "flex items-center justify-between mb-6",
-                h1 { class: "text-2xl font-bold dark:text-white", "Skill Centers" }
+                h1 { class: "text-2xl font-bold dark:text-white", {t!("skill-center-list-title")} }
                 Link {
                     to: crate::web::app::Route::SkillCenterForm {},
                     class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                    "New Skill Center"
+                    {t!("skill-center-list-new")}
                 }
             }
             match &*skill_centers.read() {
                 Some(Ok(centers)) => rsx! {
                     if centers.is_empty() {
-                        p { class: "text-gray-500 dark:text-gray-400", "No skill centers registered." }
+                        p { class: "text-gray-500 dark:text-gray-400", {t!("skill-center-list-none")} }
                     } else {
                         table { class: "w-full text-sm text-left",
                             thead {
                                 tr { class: "border-b dark:border-gray-700",
-                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", "Name" }
-                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", "URL" }
-                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", "Priority" }
-                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", "Enabled" }
+                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", {t!("name")} }
+                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", {t!("skill-center-list-col-url")} }
+                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", {t!("skill-center-list-col-priority")} }
+                                    th { class: "py-2 px-3 font-medium dark:text-gray-300", {t!("skill-center-list-col-enabled")} }
                                 }
                             }
                             tbody {
@@ -71,9 +72,9 @@ pub fn SkillCenterList() -> Element {
                                         td { class: "py-2 px-3 dark:text-gray-300", "{center.priority}" }
                                         td { class: "py-2 px-3",
                                             if center.enabled {
-                                                span { class: "text-green-600 dark:text-green-400", "Yes" }
+                                                span { class: "text-green-600 dark:text-green-400", {t!("yes")} }
                                             } else {
-                                                span { class: "text-red-600 dark:text-red-400", "No" }
+                                                span { class: "text-red-600 dark:text-red-400", {t!("no")} }
                                             }
                                         }
                                     }
@@ -82,8 +83,8 @@ pub fn SkillCenterList() -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-500", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-red-500", {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { class: "text-gray-500", {t!("loading")} } },
             }
         }
     }

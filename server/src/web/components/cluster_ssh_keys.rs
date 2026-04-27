@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -175,20 +176,20 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                 textarea {
                     class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
                     rows: 2,
-                    placeholder: "ssh-ed25519 AAAA... user@host",
+                    placeholder: t!("ssh-keys-placeholder"),
                     value: "{key_input}",
                     oninput: move |e| key_input.set(e.value()),
                 }
                 button {
                     class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 self-start",
                     r#type: "submit",
-                    "Add"
+                    {t!("add")}
                 }
             }
         }
         {match &*keys.read() {
             Some(Ok(list)) if list.is_empty() => rsx! {
-                p { class: "text-gray-500 dark:text-gray-400 text-sm", "No SSH keys." }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("ssh-keys-no-keys")} }
             },
             Some(Ok(list)) => rsx! {
                 ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
@@ -216,7 +217,7 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                                                     }
                                                 });
                                             },
-                                            "Remove"
+                                            {t!("remove")}
                                         }
                                     }
                                 }
@@ -225,8 +226,8 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
         }}
     }
 }

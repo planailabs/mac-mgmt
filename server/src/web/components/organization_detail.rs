@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -632,13 +633,13 @@ pub fn OrganizationDetail(id: String) -> Element {
                                     button {
                                         class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300",
                                         r#type: "submit",
-                                        "Save"
+                                        {t!("save")}
                                     }
                                     button {
                                         class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200",
                                         r#type: "button",
                                         onclick: move |_| editing_name.set(false),
-                                        "Cancel"
+                                        {t!("cancel")}
                                     }
                                 }
                             } else {
@@ -650,20 +651,19 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             draft_name.set(org_name.clone());
                                             editing_name.set(true);
                                         },
-                                        "Edit"
+                                        {t!("edit")}
                                     }
                                 }
                             }
                         }
                         p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            "Created "
-                            {info.created_at.format("%Y-%m-%d %H:%M").to_string()}
+                            {t!("org-detail-created", date: info.created_at.format("%Y-%m-%d %H:%M").to_string())}
                         }
                     }
                     if can_delete {
                         div { class: "flex gap-2",
                             if *confirm_delete.read() {
-                                span { class: "text-sm text-red-600 dark:text-red-400 self-center mr-2", "Are you sure?" }
+                                span { class: "text-sm text-red-600 dark:text-red-400 self-center mr-2", {t!("org-detail-confirm")} }
                                 button {
                                     class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                                     onclick: {
@@ -676,18 +676,18 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             }
                                         }
                                     },
-                                    "Confirm Delete"
+                                    {t!("org-detail-confirm-delete")}
                                 }
                                 button {
                                     class: "bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600",
                                     onclick: move |_| confirm_delete.set(false),
-                                    "Cancel"
+                                    {t!("cancel")}
                                 }
                             } else {
                                 button {
                                     class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
                                     onclick: move |_| confirm_delete.set(true),
-                                    "Delete Organization"
+                                    {t!("org-detail-delete")}
                                 }
                             }
                         }
@@ -697,7 +697,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     // Members section
                     div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                        h3 { class: "text-lg font-semibold mb-3", "Members" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("org-detail-members")} }
 
                         if can_manage_members {
                             div { class: "flex gap-2 mb-4",
@@ -711,7 +711,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             selected_user.set(Some(val));
                                         }
                                     },
-                                    option { value: "", "Select user to add..." }
+                                    option { value: "", {t!("org-detail-select-user")} }
                                     for u in &avail_users {
                                         {
                                             let uid = u.id.clone();
@@ -724,9 +724,9 @@ pub fn OrganizationDetail(id: String) -> Element {
                                     class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-24 dark:bg-gray-700 dark:text-white",
                                     value: "{selected_role}",
                                     onchange: move |e| selected_role.set(e.value()),
-                                    option { value: "read", "Read" }
-                                    option { value: "write", "Write" }
-                                    option { value: "admin", "Admin" }
+                                    option { value: "read", {t!("org-detail-role-read")} }
+                                    option { value: "write", {t!("org-detail-role-write")} }
+                                    option { value: "admin", {t!("org-detail-role-admin")} }
                                 }
                                 button {
                                     class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
@@ -747,13 +747,13 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             }
                                         }
                                     },
-                                    "Add"
+                                    {t!("add")}
                                 }
                             }
                         }
 
                         if members.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400 text-sm", "No members yet." }
+                            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("org-detail-no-members")} }
                         } else {
                             div { class: "divide-y divide-gray-200 dark:divide-gray-700",
                                 for m in &members {
@@ -790,9 +790,9 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                                     }
                                                                 }
                                                             },
-                                                            option { value: "read", "Read" }
-                                                            option { value: "write", "Write" }
-                                                            option { value: "admin", "Admin" }
+                                                            option { value: "read", {t!("org-detail-role-read")} }
+                                                            option { value: "write", {t!("org-detail-role-write")} }
+                                                            option { value: "admin", {t!("org-detail-role-admin")} }
                                                         }
                                                     } else {
                                                         span { class: "text-xs px-1.5 py-0.5 rounded {badge_class}", "{current_role}" }
@@ -814,7 +814,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                                 }
                                                             }
                                                         },
-                                                        "Remove"
+                                                        {t!("remove")}
                                                     }
                                                 }
                                             }
@@ -827,7 +827,7 @@ pub fn OrganizationDetail(id: String) -> Element {
 
                     // Clusters section
                     div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                        h3 { class: "text-lg font-semibold mb-3", "Clusters" }
+                        h3 { class: "text-lg font-semibold mb-3", {t!("org-detail-clusters")} }
 
                         if can_manage_clusters {
                             div { class: "flex gap-2 mb-4",
@@ -841,7 +841,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             selected_cluster.set(Some(val));
                                         }
                                     },
-                                    option { value: "", "Select cluster to add..." }
+                                    option { value: "", {t!("org-detail-select-cluster")} }
                                     for c in &avail_clusters {
                                         {
                                             let cid = c.id.clone();
@@ -868,13 +868,13 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             }
                                         }
                                     },
-                                    "Add"
+                                    {t!("add")}
                                 }
                             }
                         }
 
                         if clusters.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400 text-sm", "No clusters yet." }
+                            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("org-detail-no-clusters")} }
                         } else {
                             div { class: "divide-y divide-gray-200 dark:divide-gray-700",
                                 for c in &clusters {
@@ -904,7 +904,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                                 }
                                                             }
                                                         },
-                                                        "Remove"
+                                                        {t!("remove")}
                                                     }
                                                 }
                                             }
@@ -918,13 +918,13 @@ pub fn OrganizationDetail(id: String) -> Element {
                     // Tokens section (org admins only)
                     if can_manage_tokens {
                         div { class: "lg:col-span-2 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                            h3 { class: "text-lg font-semibold mb-3", "Tokens" }
+                            h3 { class: "text-lg font-semibold mb-3", {t!("org-detail-tokens")} }
 
                             div { class: "flex gap-2 mb-4",
                                 input {
                                     class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
                                     r#type: "text",
-                                    placeholder: "Token label...",
+                                    placeholder: t!("org-detail-token-label-placeholder"),
                                     value: "{token_label}",
                                     oninput: move |e| token_label.set(e.value()),
                                 }
@@ -948,19 +948,19 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             }
                                         }
                                     },
-                                    "Create Token"
+                                    {t!("org-detail-create-token")}
                                 }
                             }
 
                             if let Some(raw) = &*created_token.read() {
                                 div { class: "bg-green-100 dark:bg-green-900 border border-green-400 dark:border-green-600 text-green-800 dark:text-green-200 rounded p-3 mb-4 text-sm",
-                                    p { class: "font-semibold mb-1", "Token created! Copy it now — it won't be shown again." }
+                                    p { class: "font-semibold mb-1", {t!("org-detail-token-created")} }
                                     code { class: "block break-all", "{raw}" }
                                 }
                             }
 
                             if tokens.is_empty() {
-                                p { class: "text-gray-500 dark:text-gray-400 text-sm", "No tokens yet." }
+                                p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("org-detail-no-tokens")} }
                             } else {
                                 div { class: "divide-y divide-gray-200 dark:divide-gray-700",
                                     for t in &tokens {
@@ -975,9 +975,9 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                     div {
                                                         span { class: "text-sm font-medium", "{label}" }
                                                         if is_revoked {
-                                                            span { class: "ml-2 text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded", "revoked" }
+                                                            span { class: "ml-2 text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded", {t!("revoked")} }
                                                         } else {
-                                                            span { class: "ml-2 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded", "active" }
+                                                            span { class: "ml-2 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded", {t!("active")} }
                                                         }
                                                         span { class: "text-sm text-gray-500 dark:text-gray-400 ml-2", "{created}" }
                                                     }
@@ -997,7 +997,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                                     }
                                                                 }
                                                             },
-                                                            "Revoke"
+                                                            {t!("admin-token-revoke")}
                                                         }
                                                     }
                                                 }
@@ -1012,8 +1012,8 @@ pub fn OrganizationDetail(id: String) -> Element {
             }
         }
         Some(Err(e)) => {
-            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } }
+            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } }
         }
-        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
     }
 }

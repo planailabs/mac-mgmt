@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use dioxus_tabular::*;
 
 use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
@@ -233,7 +234,7 @@ pub fn SkillList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", "Skills" }
+            h2 { class: "text-2xl font-bold", {t!("skill-list-title")} }
             div { class: "flex items-center gap-2",
                 {match &*skills.read() {
                     Some(Ok(list)) => {
@@ -279,7 +280,7 @@ pub fn SkillList() -> Element {
                             syncing.set(false);
                         });
                     },
-                    if *syncing.read() { "Syncing..." } else { "Sync from xzar" }
+                    if *syncing.read() { {t!("skill-list-syncing")} } else { {t!("skill-list-sync")} }
                 }
             }
         }
@@ -330,8 +331,8 @@ pub fn SkillList() -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
     }
 }

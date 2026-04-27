@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use dioxus_tabular::*;
 
 use crate::models::{Bundle, McpServer, McpServerBundle, Skill};
@@ -16,7 +17,7 @@ pub fn HiddenBadge(hidden: bool) -> Element {
         span {
             class: "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-500",
             title: "Hidden from public catalog",
-            "Hidden"
+            {t!("hidden-badge")}
         }
     }
 }

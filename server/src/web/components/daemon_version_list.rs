@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -130,7 +131,7 @@ pub fn DaemonVersionList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", "Daemon Versions" }
+            h2 { class: "text-2xl font-bold", {t!("daemon-version-list-title")} }
             button {
                 class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
                 disabled: *syncing.read(),
@@ -154,7 +155,7 @@ pub fn DaemonVersionList() -> Element {
                         syncing.set(false);
                     });
                 },
-                if *syncing.read() { "Syncing..." } else { "Sync from xzar" }
+                if *syncing.read() { {t!("daemon-version-list-syncing")} } else { {t!("daemon-version-list-sync")} }
             }
         }
         if let Some(msg) = &*sync_msg.read() {
@@ -168,7 +169,7 @@ pub fn DaemonVersionList() -> Element {
                 if list.is_empty() {
                     rsx! {
                         p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            "No daemon versions yet. Run xzar.sh to upload binaries, then click Sync."
+                            {t!("daemon-version-list-none")}
                         }
                     }
                 } else {
@@ -206,8 +207,8 @@ pub fn DaemonVersionList() -> Element {
                             table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                 thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
-                                        SortableTh { label: "Version".to_string(), sort_key: "version".to_string(), sort }
-                                        SortableTh { label: "Added".to_string(), sort_key: "added".to_string(), sort }
+                                        SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
+                                        SortableTh { label: t!("daemon-version-list-col-added"), sort_key: "added".to_string(), sort }
                                     }
                                 }
                                 tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
@@ -234,8 +235,8 @@ pub fn DaemonVersionList() -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-            None => rsx! { p { "Loading..." } },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            None => rsx! { p { {t!("loading")} } },
         }}
     }
 }

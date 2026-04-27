@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
+use dioxus_i18n::t;
 
 use crate::web::app::Route;
 
@@ -26,13 +26,6 @@ impl ThemeMode {
         }
     }
 
-    fn aria_label(self) -> &'static str {
-        match self {
-            Self::System => "Using system theme. Click for light mode",
-            Self::Light => "Using light mode. Click for dark mode",
-            Self::Dark => "Using dark mode. Click for system theme",
-        }
-    }
 }
 
 #[component]
@@ -97,64 +90,64 @@ pub struct NavGroup {
 
 pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGroup> {
     let mut overview_links = vec![
-        NavLink::Internal(Route::ClusterList {}, "Clusters".to_string()),
+        NavLink::Internal(Route::ClusterList {}, "nav-clusters".to_string()),
     ];
     #[cfg(feature = "mgmt")]
     {
         overview_links.push(NavLink::Internal(
             Route::FleetDashboard { stage_id: None },
-            "Fleet".to_string(),
+            "nav-fleet".to_string(),
         ));
-        overview_links.push(NavLink::Internal(Route::EasyAccess {}, "Easy Access".to_string()));
+        overview_links.push(NavLink::Internal(Route::EasyAccess {}, "nav-easy-access".to_string()));
     }
     let mut groups = vec![NavGroup {
-        title: "Overview".to_string(),
+        title: "nav-overview".to_string(),
         links: overview_links,
     }];
 
     if is_admin {
         #[cfg(feature = "skill-center")]
         groups.push(NavGroup {
-            title: "MCP + Skills".to_string(),
+            title: "nav-mcp-skills".to_string(),
             links: vec![
-                NavLink::Internal(Route::SkillList {}, "Skills".to_string()),
-                NavLink::Internal(Route::McpServerList {}, "MCP Servers".to_string()),
-                NavLink::Internal(Route::McpBundleList {}, "MCP Bundles".to_string()),
-                NavLink::Internal(Route::BundleList {}, "Bundles".to_string()),
+                NavLink::Internal(Route::SkillList {}, "nav-skills".to_string()),
+                NavLink::Internal(Route::McpServerList {}, "nav-mcp-servers".to_string()),
+                NavLink::Internal(Route::McpBundleList {}, "nav-mcp-bundles".to_string()),
+                NavLink::Internal(Route::BundleList {}, "nav-bundles".to_string()),
             ],
         });
 
         #[cfg(feature = "mgmt")]
         {
             let admin_links = vec![
-                NavLink::Internal(Route::AdminTokens {}, "Admin Tokens".to_string()),
-                NavLink::Internal(Route::StaffPings {}, "Staff Pings".to_string()),
-                NavLink::Internal(Route::OrganizationList {}, "Organizations".to_string()),
-                NavLink::Internal(Route::UserList {}, "Users".to_string()),
-                NavLink::Internal(Route::SkillCenterList {}, "Skill Centers".to_string()),
+                NavLink::Internal(Route::AdminTokens {}, "nav-admin-tokens".to_string()),
+                NavLink::Internal(Route::StaffPings {}, "nav-staff-pings".to_string()),
+                NavLink::Internal(Route::OrganizationList {}, "nav-organizations".to_string()),
+                NavLink::Internal(Route::UserList {}, "nav-users".to_string()),
+                NavLink::Internal(Route::SkillCenterList {}, "nav-skill-centers".to_string()),
             ];
             groups.push(NavGroup {
-                title: "Admin".to_string(),
+                title: "nav-admin".to_string(),
                 links: admin_links,
             });
 
             groups.push(NavGroup {
-                title: "Version".to_string(),
+                title: "nav-version".to_string(),
                 links: vec![
-                    NavLink::Internal(Route::RolloutList {}, "Rollouts".to_string()),
-                    NavLink::Internal(Route::DaemonVersionList {}, "Daemon Versions".to_string()),
+                    NavLink::Internal(Route::RolloutList {}, "nav-rollouts".to_string()),
+                    NavLink::Internal(Route::DaemonVersionList {}, "nav-daemon-versions".to_string()),
                 ],
             });
         }
     }
 
-    let mut resources_links = vec![NavLink::Internal(Route::DocList {}, "Docs".to_string())];
+    let mut resources_links = vec![NavLink::Internal(Route::DocList {}, "nav-docs".to_string())];
     if let Some(url) = swagger_url {
-        resources_links.push(NavLink::External(url, "API Docs".to_string()));
+        resources_links.push(NavLink::External(url, "nav-api-docs".to_string()));
     }
 
     groups.push(NavGroup {
-        title: "Resources".to_string(),
+        title: "nav-resources".to_string(),
         links: resources_links,
     });
 
@@ -179,7 +172,7 @@ pub fn Sidebar(is_admin: bool) -> Element {
             nav { class: "flex-1 px-4 py-6 space-y-8",
                 for group in groups {
                     div { key: "{group.title}",
-                        h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", "{group.title}" }
+                        h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", {t!(&group.title)} }
                         div { class: "mt-2 space-y-1",
                             for link in group.links {
                                 match link {
@@ -189,7 +182,7 @@ pub fn Sidebar(is_admin: bool) -> Element {
                                             to: route.clone(),
                                             class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
                                             active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
-                                            "{label}"
+                                            {t!(&label)}
                                         }
                                     },
                                     NavLink::External(url, label) => rsx! {
@@ -198,7 +191,7 @@ pub fn Sidebar(is_admin: bool) -> Element {
                                             href: "{url}",
                                             target: "_blank",
                                             class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
-                                            "{label}"
+                                            {t!(&label)}
                                         }
                                     }
                                 }
@@ -291,7 +284,11 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
         document::eval(js);
     };
 
-    let current_aria = theme().aria_label();
+    let current_aria = match theme() {
+        ThemeMode::System => t!("theme-system"),
+        ThemeMode::Light => t!("theme-light"),
+        ThemeMode::Dark => t!("theme-dark"),
+    };
     let current_theme = theme();
 
     rsx! {
@@ -300,7 +297,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                 div { class: "flex justify-between h-16 items-center",
                     // Left side: Logo
                     Link { to: Route::ClusterList {},
-                        h1 { class: "text-xl font-bold text-gray-900 dark:text-white", "mac-mgmt" }
+                        h1 { class: "text-xl font-bold text-gray-900 dark:text-white", {t!("nav-logo")} }
                     }
 
                     // Right side: Profile & Theme (Desktop & Mobile share some parts)
@@ -330,7 +327,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                 a {
                                     href: "/auth/logout",
                                     class: "ml-1 p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
-                                    title: "Sign out",
+                                    title: t!("nav-sign-out"),
                                     svg {
                                         class: "h-5 w-5",
                                         fill: "none",
@@ -351,8 +348,8 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                         button {
                             onclick: toggle_theme,
                             class: "ml-1 p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors",
-                            "aria-label": "{current_aria}",
-                            title: "{current_aria}",
+                            "aria-label": current_aria.clone(),
+                            title: current_aria,
                             ThemeIcon { mode: current_theme }
                         }
 
@@ -362,7 +359,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                             class: "xl:hidden ml-1 inline-flex items-center justify-center p-2 rounded-md text-gray-400 dark:text-gray-300 hover:text-gray-500 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500",
                             "aria-expanded": "{is_open}",
                             "aria-controls": "mobile-drawer",
-                            span { class: "sr-only", "Open main menu" }
+                            span { class: "sr-only", {t!("nav-open-main-menu")} }
                             svg {
                                 class: "h-6 w-6",
                                 fill: "none",
@@ -420,12 +417,12 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                                 to: Route::Profile {},
                                                 class: "text-xs text-blue-600 dark:text-blue-400 hover:underline block",
                                                 onclick: move |_| is_open.set(false),
-                                                "View Profile"
+                                                {t!("nav-view-profile")}
                                             }
                                             a {
                                                 href: "/auth/logout",
                                                 class: "text-xs text-red-600 dark:text-red-400 hover:underline block",
-                                                "Sign out"
+                                                {t!("nav-sign-out")}
                                             }
                                         }
                                     }
@@ -437,7 +434,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                         button {
                             onclick: move |_| is_open.set(false),
                             class: "flex-shrink-0 p-2 -mr-2 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none transition-colors",
-                            "aria-label": "Close menu",
+                            "aria-label": t!("nav-close-menu"),
                             svg {
                                 class: "h-6 w-6",
                                 fill: "none",
@@ -452,7 +449,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                     nav { class: "flex-1 px-4 py-6 space-y-8",
                         for group in get_nav_groups(is_admin, swagger_url.clone()) {
                             div { key: "{group.title}",
-                                h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", "{group.title}" }
+                                h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", {t!(&group.title)} }
                                 div { class: "mt-2 space-y-1",
                                     for link in group.links {
                                         match link {
@@ -463,7 +460,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                                     class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
                                                     active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
                                                     onclick: move |_| is_open.set(false),
-                                                    "{label}"
+                                                    {t!(&label)}
                                                 }
                                             },
                                             NavLink::External(url, label) => rsx! {
@@ -473,7 +470,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                                     target: "_blank",
                                                     class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
                                                     onclick: move |_| is_open.set(false),
-                                                    "{label}"
+                                                    {t!(&label)}
                                                 }
                                             }
                                         }

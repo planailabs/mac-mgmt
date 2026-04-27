@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -79,20 +80,20 @@ pub fn RolloutGroupList() -> Element {
     match &*groups.read() {
         Some(Ok(list)) => {
             rsx! {
-                h2 { class: "text-2xl font-bold mb-4", "Rollout Groups" }
+                h2 { class: "text-2xl font-bold mb-4", {t!("rollout-group-list-title")} }
 
                 div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                    h3 { class: "text-lg font-semibold mb-2", "Create Group" }
+                    h3 { class: "text-lg font-semibold mb-2", {t!("rollout-group-list-create")} }
                     div { class: "flex gap-2",
                         input {
                             class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
-                            placeholder: "Group name",
+                            placeholder: t!("rollout-group-list-name-placeholder"),
                             value: "{name}",
                             oninput: move |e| name.set(e.value()),
                         }
                         input {
                             class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
-                            placeholder: "Description",
+                            placeholder: t!("rollout-group-list-desc-placeholder"),
                             value: "{desc}",
                             oninput: move |e| desc.set(e.value()),
                         }
@@ -110,7 +111,7 @@ pub fn RolloutGroupList() -> Element {
                                     }
                                 }
                             },
-                            "Create"
+                            {t!("create")}
                         }
                     }
                 }
@@ -153,9 +154,9 @@ pub fn RolloutGroupList() -> Element {
                             table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                                 thead { class: "bg-gray-50 dark:bg-gray-700",
                                     tr {
-                                        SortableTh { label: "Name".to_string(), sort_key: "name".to_string(), sort }
-                                        SortableTh { label: "Description".to_string(), sort_key: "description".to_string(), sort }
-                                        SortableTh { label: "Members".to_string(), sort_key: "members".to_string(), sort }
+                                        SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
+                                        SortableTh { label: t!("description"), sort_key: "description".to_string(), sort }
+                                        SortableTh { label: t!("rollout-group-list-col-members"), sort_key: "members".to_string(), sort }
                                     }
                                 }
                                 tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
@@ -184,8 +185,8 @@ pub fn RolloutGroupList() -> Element {
             }
         }
         Some(Err(e)) => {
-            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } }
+            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } }
         }
-        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
     }
 }

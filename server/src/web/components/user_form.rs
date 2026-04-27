@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::web::app::Route;
 #[cfg(feature = "server")]
@@ -50,32 +51,32 @@ pub fn UserForm() -> Element {
     };
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "New User" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("user-form-title")} }
         if let Some(err) = &*error.read() {
             p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
         }
         form { onsubmit: on_submit,
             class: "max-w-md space-y-4",
             div {
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Email" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("email")} }
                 input {
                     class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                     r#type: "email",
                     required: true,
                     value: "{email}",
                     oninput: move |evt| email.set(evt.value()),
-                    placeholder: "user@example.com",
+                    placeholder: t!("user-form-email-placeholder"),
                     autofocus: true,
                 }
             }
             div {
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", "Name" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("name")} }
                 input {
                     class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
                     r#type: "text",
                     value: "{name}",
                     oninput: move |evt| name.set(evt.value()),
-                    placeholder: "Display name",
+                    placeholder: t!("user-form-name-placeholder"),
                 }
             }
             div { class: "flex items-center gap-2",
@@ -85,12 +86,12 @@ pub fn UserForm() -> Element {
                     class: "h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500",
                     onchange: move |e: Event<FormData>| is_admin.set(e.checked()),
                 }
-                label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "Admin" }
+                label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", {t!("admin")} }
             }
             button {
                 class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
                 r#type: "submit",
-                "Create"
+                {t!("create")}
             }
         }
     }

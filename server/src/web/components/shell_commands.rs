@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -106,10 +107,10 @@ pub fn FleetShell(instance_id: String) -> Element {
     match &*ctx.read() {
         Some(Ok(c)) => render_shell(c),
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
         },
         None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
         },
     }
 }
@@ -132,7 +133,7 @@ fn render_shell(ctx: &ShellContext) -> Element {
     let token = ctx.proxy_token.clone();
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "Shell Commands" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("shell-title")} }
 
         for (service, cmds) in by_service.iter() {
             div { class: "mb-6",
@@ -257,7 +258,7 @@ fn ShellCommandCard(
                             }
                         }
                     },
-                    if *running.read() { "Running..." } else { "Run" }
+                    if *running.read() { {t!("shell-running")} } else { {t!("shell-run")} }
                 }
                 span { class: "text-sm font-mono text-gray-600 dark:text-gray-300",
                     "{run_name}"
@@ -268,7 +269,7 @@ fn ShellCommandCard(
             }
             if requires_arg {
                 div { class: "flex items-center gap-2 mb-2",
-                    label { class: "text-xs text-gray-500 dark:text-gray-400", "{arg_label}:" }
+                    label { class: "text-xs text-gray-500 dark:text-gray-400", {t!("shell-arg-label", label: arg_label.clone())} }
                     input {
                         class: "px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
                         r#type: "text",

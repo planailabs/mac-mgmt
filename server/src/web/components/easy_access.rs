@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -164,9 +165,9 @@ pub fn EasyAccess() -> Element {
             if nodes.is_empty() {
                 return rsx! {
                     div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                        h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", "Easy Access" }
+                        h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", {t!("easy-access-title")} }
                         p { class: "text-gray-500 dark:text-gray-400 text-lg",
-                            "No online nodes with tunnels configured."
+                            {t!("easy-access-no-nodes")}
                         }
                     }
                 };
@@ -174,7 +175,7 @@ pub fn EasyAccess() -> Element {
 
             rsx! {
                 div { class: "max-w-6xl mx-auto px-4 py-8",
-                    h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-8", "Easy Access" }
+                    h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-8", {t!("easy-access-title")} }
 
                     for node in nodes {
                         div { key: "{node.instance_id}", class: "mb-10",
@@ -279,7 +280,7 @@ pub fn EasyAccess() -> Element {
                                                     path { d: "{service_icon(\"files\")}" }
                                                 }
                                                 span { class: "text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors text-center leading-tight",
-                                                    "Files"
+                                                    {t!("easy-access-files")}
                                                 }
                                             }
                                         }
@@ -311,7 +312,7 @@ pub fn EasyAccess() -> Element {
                                                     path { d: "{service_icon(\"shell\")}" }
                                                 }
                                                 span { class: "text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors text-center leading-tight",
-                                                    "Shell"
+                                                    {t!("easy-access-shell")}
                                                 }
                                             }
                                         }
@@ -325,14 +326,14 @@ pub fn EasyAccess() -> Element {
         }
         Some(Err(e)) => rsx! {
             div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", "Easy Access" }
-                p { class: "text-red-600 dark:text-red-400", "Error: {e}" }
+                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", {t!("easy-access-title")} }
+                p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} }
             }
         },
         None => rsx! {
             div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", "Easy Access" }
-                p { class: "text-gray-500 dark:text-gray-400", "Loading…" }
+                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", {t!("easy-access-title")} }
+                p { class: "text-gray-500 dark:text-gray-400", {t!("loading")} }
             }
         },
     }

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -143,7 +144,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
         Some(Ok(versions)) => {
             if versions.is_empty() {
                 return rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No config history yet." }
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("config-history-no-history")} }
                 };
             }
 
@@ -155,7 +156,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                     div { class: "flex gap-4 mb-3 items-end",
                         div {
                             label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                                "Left (older)"
+                                {t!("config-history-left")}
                             }
                             select {
                                 class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm",
@@ -167,7 +168,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                                         left_id.set(Some(val));
                                     }
                                 },
-                                option { value: "", "Select version..." }
+                                option { value: "", {t!("config-history-select")} }
                                 for v in &versions_left {
                                     {
                                         let vid = v.id.to_string();
@@ -179,7 +180,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                         }
                         div {
                             label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                                "Right (newer)"
+                                {t!("config-history-right")}
                             }
                             select {
                                 class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm",
@@ -191,7 +192,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                                         right_id.set(Some(val));
                                     }
                                 },
-                                option { value: "", "Select version..." }
+                                option { value: "", {t!("config-history-select")} }
                                 for v in &versions_right {
                                     {
                                         let vid = v.id.to_string();
@@ -226,9 +227,9 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                                 }
                             },
                             if *diff_loading.read() {
-                                "Loading..."
+                                {t!("loading")}
                             } else {
-                                "Compare"
+                                {t!("config-history-compare")}
                             }
                         }
                     }
@@ -259,10 +260,10 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
         },
         None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
         },
     }
 }

@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -114,10 +115,10 @@ pub fn FleetLogs(instance_id: String) -> Element {
     match &*ctx.read() {
         Some(Ok(c)) => render_logs(c),
         Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" }
+            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
         },
         None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." }
+            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
         },
     }
 }
@@ -132,7 +133,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
     let mut polling = use_signal(|| false);
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "Logs" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("log-title")} }
 
         div { class: "flex items-center gap-3 mb-4",
             // Service filter
@@ -140,7 +141,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                 class: "px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
                 value: "{selected_service}",
                 onchange: move |e| selected_service.set(e.value()),
-                option { value: "", "All services" }
+                option { value: "", {t!("log-all-services")} }
                 for svc in services.iter() {
                     option { value: "{svc}", "{svc}" }
                 }
@@ -217,7 +218,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                         }
                     }
                 },
-                if *polling.read() { "Stop" } else { "Start Tailing" }
+                if *polling.read() { {t!("log-stop")} } else { {t!("log-start-tailing")} }
             }
 
             // Clear
@@ -226,7 +227,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                 onclick: move |_| {
                     log_output.set(String::new());
                 },
-                "Clear"
+                {t!("clear")}
             }
 
             // One-shot fetch
@@ -266,14 +267,14 @@ fn render_logs(ctx: &LogsContext) -> Element {
                         }
                     }
                 },
-                "Fetch Latest"
+                {t!("log-fetch-latest")}
             }
         }
 
         // Log output
         pre { class: "log-output p-3 bg-gray-900 text-green-400 text-xs font-mono rounded overflow-x-auto max-h-[600px] overflow-y-auto whitespace-pre-wrap min-h-[200px]",
             if log_output.read().is_empty() {
-                span { class: "text-gray-500", "Click 'Fetch Latest' or 'Start Tailing' to view logs." }
+                span { class: "text-gray-500", {t!("log-empty-hint")} }
             } else {
                 "{log_output}"
             }

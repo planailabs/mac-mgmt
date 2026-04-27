@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 use crate::web::app::Route;
 
@@ -45,7 +46,7 @@ pub fn OrganizationForm() -> Element {
         e.prevent_default();
         let name_val = name.read().clone();
         if name_val.trim().is_empty() {
-            error.set(Some("Name is required".to_string()));
+            error.set(Some(t!("org-form-name-required")));
             return;
         }
         spawn(async move {
@@ -61,27 +62,27 @@ pub fn OrganizationForm() -> Element {
     };
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", "New Organization" }
+        h2 { class: "text-2xl font-bold mb-4", {t!("org-form-title")} }
         form { onsubmit: submit,
             class: "max-w-md space-y-4",
             if let Some(err) = &*error.read() {
                 p { class: "text-red-600 text-sm", "{err}" }
             }
             div {
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", "Name" }
+                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("name")} }
                 input {
                     r#type: "text",
                     value: "{name}",
                     oninput: move |e| name.set(e.value()),
                     class: "w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
-                    placeholder: "Organization name",
+                    placeholder: t!("org-form-name-placeholder"),
                     autofocus: true,
                 }
             }
             button {
                 r#type: "submit",
                 class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                "Create"
+                {t!("create")}
             }
         }
     }

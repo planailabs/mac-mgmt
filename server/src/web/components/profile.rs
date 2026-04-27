@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
@@ -103,22 +104,22 @@ pub fn Profile() -> Element {
                     // Details card
                     div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700",
                         div { class: "px-4 py-3 flex justify-between items-center",
-                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", "Name" }
+                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", {t!("name")} }
                             span { class: "text-sm text-gray-900 dark:text-white", "{info.name}" }
                         }
                         div { class: "px-4 py-3 flex justify-between items-center",
-                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", "Email" }
+                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", {t!("email")} }
                             span { class: "text-sm text-gray-900 dark:text-white", "{info.email}" }
                         }
                         div { class: "px-4 py-3 flex justify-between items-center",
-                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", "Role" }
+                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", {t!("profile-role")} }
                             if info.is_admin {
                                 span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-                                    "Admin"
+                                    {t!("admin")}
                                 }
                             } else {
                                 span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200",
-                                    "Member"
+                                    {t!("member")}
                                 }
                             }
                         }
@@ -126,9 +127,9 @@ pub fn Profile() -> Element {
 
                     // Organizations card
                     div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                        h3 { class: "text-lg font-semibold text-gray-900 dark:text-white mb-3", "Organizations" }
+                        h3 { class: "text-lg font-semibold text-gray-900 dark:text-white mb-3", {t!("profile-organizations")} }
                         if orgs.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400 text-sm", "Not a member of any organization." }
+                            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("profile-no-orgs")} }
                         } else {
                             div { class: "divide-y divide-gray-200 dark:divide-gray-700",
                                 for o in &orgs {
@@ -156,7 +157,7 @@ pub fn Profile() -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", "Error: {e}" } },
-        None => rsx! { p { "Loading..." } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }
