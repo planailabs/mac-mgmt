@@ -17,6 +17,7 @@ pub mod daemon_version_detail;
 pub mod daemon_version_list;
 pub mod docs;
 pub mod extra_config_modal;
+pub mod federation_token_list;
 pub mod file_editor;
 pub mod fleet_dashboard;
 pub mod fleet_detail;

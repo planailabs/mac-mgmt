@@ -1,0 +1,162 @@
+use dioxus::prelude::*;
+
+use crate::models::Token;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
+
+#[server]
+async fn list_federation_tokens() -> Result<Vec<Token>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let tokens = sqlx::query_as::<_, Token>(
+        "SELECT * FROM tokens WHERE kind = 'federation' ORDER BY created_at DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(tokens)
+}
+
+#[server]
+async fn create_federation_token(label: String) -> Result<String, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    let label = label.trim().to_string();
+    if label.is_empty() {
+        return Err(ServerFnError::new("label is required"));
+    }
+
+    let pool = crate::server_pool()?;
+
+    let raw_token = format!("fed_{}", hex::encode(rand::rng().random::<[u8; 32]>()));
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+
+    sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind) VALUES (NULL, $1, $2, 'federation')",
+    )
+    .bind(&hash)
+    .bind(&label)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(raw_token)
+}
+
+#[server]
+async fn revoke_federation_token(token_id: String) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = token_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query("UPDATE tokens SET revoked = true WHERE id = $1")
+        .bind(uuid)
+        .execute(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(())
+}
+
+#[component]
+pub fn FederationTokenList() -> Element {
+    let mut tokens = use_server_future(move || async move { list_federation_tokens().await })?;
+
+    let mut label = use_signal(String::new);
+    let mut new_token = use_signal(|| None::<String>);
+
+    let on_create = move |evt: FormEvent| {
+        evt.prevent_default();
+        let label_val = label.read().clone();
+        spawn(async move {
+            match create_federation_token(label_val).await {
+                Ok(raw) => {
+                    new_token.set(Some(raw));
+                    label.set(String::new());
+                    tokens.restart();
+                }
+                Err(e) => tracing::error!("failed to create federation token: {e}"),
+            }
+        });
+    };
+
+    rsx! {
+        if let Some(raw) = &*new_token.read() {
+            div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
+                p { class: "text-sm font-medium text-green-800 dark:text-green-300", "New federation token (copy now, shown once):" }
+                code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
+            }
+        }
+
+        form { onsubmit: on_create, class: "flex gap-2 mb-4",
+            input {
+                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                r#type: "text",
+                required: true,
+                placeholder: "Federation token label",
+                value: "{label}",
+                oninput: move |evt| label.set(evt.value()),
+            }
+            button {
+                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
+                r#type: "submit",
+                "Create Federation Token"
+            }
+        }
+
+        {match &*tokens.read() {
+            Some(Ok(list)) => rsx! {
+                if list.is_empty() {
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No federation tokens yet." }
+                } else {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for token in list {
+                            {
+                                let display_label = if token.label.is_empty() {
+                                    "(no label)".to_string()
+                                } else {
+                                    token.label.clone()
+                                };
+                                let created = token.created_at.format("%Y-%m-%d").to_string();
+                                let revoked = token.revoked;
+                                let tid = token.id.to_string();
+                                rsx! {
+                                    li { class: "py-2 flex justify-between items-center",
+                                        div {
+                                            span { class: "text-sm font-medium", "{display_label}" }
+                                            span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{created}" }
+                                            if revoked {
+                                                span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "revoked" }
+                                            }
+                                        }
+                                        if !revoked {
+                                            button {
+                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                                onclick: move |_| {
+                                                    let tid = tid.clone();
+                                                    spawn(async move {
+                                                        if revoke_federation_token(tid).await.is_ok() {
+                                                            tokens.restart();
+                                                        }
+                                                    });
+                                                },
+                                                "Revoke"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+        }}
+    }
+}
