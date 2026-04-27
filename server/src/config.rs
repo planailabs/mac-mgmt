@@ -56,6 +56,16 @@ fn default_git_fetch_interval() -> u64 {
     300
 }
 
+fn default_gitlab_url() -> String {
+    "https://git.plan.ai".to_string()
+}
+fn default_nixpkgs_project() -> String {
+    "plan-ai/nixpkgs".to_string()
+}
+fn default_nixpkgs_branch() -> String {
+    "trunk".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GitConfig {
     #[serde(default = "default_git_state_dir")]
@@ -66,6 +76,15 @@ pub struct GitConfig {
     pub nixpkgs_url: String,
     #[serde(default = "default_git_fetch_interval")]
     pub fetch_interval_secs: u64,
+    /// GitLab instance URL for API calls (e.g. resolving latest CI pipeline).
+    #[serde(default = "default_gitlab_url")]
+    pub gitlab_url: String,
+    /// GitLab project path for nixpkgs (used for CI pipeline lookups).
+    #[serde(default = "default_nixpkgs_project")]
+    pub nixpkgs_project: String,
+    /// Branch to resolve when no explicit nixpkgs pin is set.
+    #[serde(default = "default_nixpkgs_branch")]
+    pub nixpkgs_branch: String,
 }
 
 impl Default for GitConfig {
@@ -75,6 +94,9 @@ impl Default for GitConfig {
             mac_mgmt_url: default_mac_mgmt_git_url(),
             nixpkgs_url: default_nixpkgs_git_url(),
             fetch_interval_secs: default_git_fetch_interval(),
+            gitlab_url: default_gitlab_url(),
+            nixpkgs_project: default_nixpkgs_project(),
+            nixpkgs_branch: default_nixpkgs_branch(),
         }
     }
 }

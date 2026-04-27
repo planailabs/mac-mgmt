@@ -18,18 +18,34 @@ fn profile_lock() -> &'static Mutex<()> {
     PROFILE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-const NIX_SOURCE_BASE: &str =
-    "https://git.plan.ai/plan-ai/nixpkgs/-/jobs/artifacts/plan-ai/raw/nixpkgs.tar.xz?job=build";
-
 /// In-process pin: when set, all nix profile operations target this commit's
-/// GitLab archive tarball instead of the rolling CI-artifact source.
+/// archive tarball served by the mac-mgmt server.
 static NIXPKGS_PIN: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
 fn pin_cell() -> &'static RwLock<Option<String>> {
     NIXPKGS_PIN.get_or_init(|| RwLock::new(None))
 }
 
+/// Server URL for constructing nixpkgs archive download URLs.
+static SERVER_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+
+fn server_url_cell() -> &'static RwLock<Option<String>> {
+    SERVER_URL.get_or_init(|| RwLock::new(None))
+}
+
+pub fn set_nixpkgs_server_url(url: Option<String>) {
+    *server_url_cell().write().unwrap() = url;
+}
+
+fn current_nixpkgs_server_url() -> Option<String> {
+    server_url_cell().read().unwrap().clone()
+}
+
 pub fn set_nixpkgs_commit(commit: Option<String>) {
+    if let Some(ref sha) = commit {
+        // Persist to disk so the daemon survives restarts without server.
+        let _ = cache_nixpkgs_pin(sha);
+    }
     *pin_cell().write().unwrap() = commit;
 }
 
@@ -37,21 +53,41 @@ pub fn current_nixpkgs_commit() -> Option<String> {
     pin_cell().read().unwrap().clone()
 }
 
-/// Standard GitLab repo archive tarball for a commit. System-agnostic;
-/// served by git.plan.ai without auth.
-fn nixpkgs_tarball_url(commit: &str) -> String {
-    format!("https://git.plan.ai/plan-ai/nixpkgs/-/archive/{commit}/nixpkgs-{commit}.tar.bz2")
+/// Load the cached nixpkgs pin from disk (survives restarts).
+pub fn load_cached_nixpkgs_pin() {
+    let path = crate::config::config_dir().join("nixpkgs-pin");
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        let sha = contents.trim().to_string();
+        if sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()) {
+            tracing::info!("loaded cached nixpkgs pin: {sha}");
+            *pin_cell().write().unwrap() = Some(sha);
+        }
+    }
 }
 
-/// Base flake URL (no `#attr`) for the desired state. Honours the per-cluster
-/// pin if set, otherwise falls back to the legacy CI-artifact URL (which still
-/// carries the `_<system>` suffix).
+fn cache_nixpkgs_pin(sha: &str) -> std::io::Result<()> {
+    let path = crate::config::config_dir().join("nixpkgs-pin");
+    std::fs::write(&path, sha)
+}
+
+/// Tarball URL for a pinned commit, served by the mac-mgmt server.
+fn nixpkgs_tarball_url(commit: &str) -> String {
+    let url = current_nixpkgs_server_url()
+        .expect("server URL must be set before nixpkgs operations");
+    format!("{}/api/nixpkgs-archive/{commit}", url.trim_end_matches('/'))
+}
+
+/// Base flake URL (no `#attr`) for the desired state. When a server URL
+/// and nixpkgs commit are configured, uses the server's archive endpoint.
+/// Otherwise falls back to the standard `nixpkgs` channel (standalone mode).
 fn desired_flake_base() -> Result<String> {
     if let Some(sha) = current_nixpkgs_commit() {
-        return Ok(nixpkgs_tarball_url(&sha));
+        if current_nixpkgs_server_url().is_some() {
+            return Ok(nixpkgs_tarball_url(&sha));
+        }
     }
-    let system = nix_current_system()?;
-    Ok(format!("{NIX_SOURCE_BASE}_{system}"))
+    // Standalone / unmanaged: use the standard nixpkgs flake.
+    Ok("nixpkgs".to_string())
 }
 
 pub fn desired_flake_ref(pkg: &str) -> Result<String> {

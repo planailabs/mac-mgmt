@@ -72,6 +72,7 @@
             # Dev tools
             overmind
             cargo-watch
+            xz  # for nixpkgs archive generation
 
             # For WASM
             wasm-pack

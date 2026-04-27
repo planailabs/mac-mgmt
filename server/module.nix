@@ -68,7 +68,7 @@ in
       wantedBy = [ "multi-user.target" ];
 
       environment.CONFIG_PATH = configFile;
-      path = [ config.nix.package pkgs.gitMinimal ];
+      path = [ config.nix.package pkgs.gitMinimal pkgs.xz ];
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;

@@ -214,6 +214,8 @@ pub fn build_rocket(
         routes::setting_remove_ssh_key,
         // Daemon binary download (public)
         routes::download_daemon,
+        // Nixpkgs source archive (public)
+        routes::get_nixpkgs_archive,
         // Metrics
         metrics_routes::get_metrics,
     ];

@@ -9,7 +9,7 @@ skill-center = []
 mgmt = []
 web = ["webui", "dioxus/web"]
 webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-tabular", "dep:pulldown-cmark"]
-server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "mac-mgmt-common/observability"]
+server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "mac-mgmt-common/observability"]
 server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:sentry", "dep:mac-mgmt-healer", "mac-mgmt-common/observability"]
 
 [dependencies]
@@ -51,3 +51,4 @@ schemars = { version = "1.2.1", features = ["derive"], optional = true }
 similar = { version = "2", optional = true }
 pulldown-cmark = { version = "0.12", optional = true }
 rust-embed = { version = "8", features = ["include-exclude"], optional = true }
+fs2 = { version = "0.4", optional = true }

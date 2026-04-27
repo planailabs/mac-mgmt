@@ -896,6 +896,12 @@ pub async fn run(
     // try to recover from a store binary before anything else runs.
     crate::nix::ensure_nix_on_path();
 
+    // Set the server URL for nixpkgs archive downloads and load any
+    // cached pin so the daemon can operate even if the server is
+    // unreachable on this boot.
+    crate::nix::set_nixpkgs_server_url(server_url.clone());
+    crate::nix::load_cached_nixpkgs_pin();
+
     // Fetch the cluster's nixpkgs pin before ServiceManager::init runs.
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         fetch_nixpkgs_pin(url, token).await;

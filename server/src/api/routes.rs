@@ -557,12 +557,79 @@ pub async fn get_update_target(
     }))
 }
 
+/// Cached rolling nixpkgs commit resolved from the GitLab CI API.
+/// Tuple: (commit SHA, resolved at).
+static ROLLING_NIXPKGS: std::sync::OnceLock<tokio::sync::RwLock<Option<(String, std::time::Instant)>>> =
+    std::sync::OnceLock::new();
+
+/// Resolve the latest successful CI pipeline commit for the configured
+/// nixpkgs branch. Caches the result for 5 minutes.
+async fn resolve_rolling_nixpkgs_commit() -> Option<String> {
+    let cache = ROLLING_NIXPKGS.get_or_init(|| tokio::sync::RwLock::new(None));
+    let ttl = std::time::Duration::from_secs(300);
+
+    // Check cache under read lock.
+    {
+        let guard = cache.read().await;
+        if let Some((sha, at)) = guard.as_ref() {
+            if at.elapsed() < ttl {
+                return Some(sha.clone());
+            }
+        }
+    }
+
+    // Cache miss or expired — resolve from GitLab API.
+    let cfg = &crate::config::config().git;
+    let encoded_project = cfg.nixpkgs_project.replace('/', "%2F");
+    let url = format!(
+        "{}/api/v4/projects/{}/pipelines?ref={}&status=success&per_page=1",
+        cfg.gitlab_url.trim_end_matches('/'),
+        encoded_project,
+        cfg.nixpkgs_branch,
+    );
+
+    let client = reqwest::Client::new();
+    let resp = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            tracing::warn!("GitLab pipeline API returned {}: {url}", r.status());
+            return cache.read().await.as_ref().map(|(s, _)| s.clone());
+        }
+        Err(e) => {
+            tracing::warn!("GitLab pipeline API failed: {e}");
+            return cache.read().await.as_ref().map(|(s, _)| s.clone());
+        }
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("GitLab pipeline API parse error: {e}");
+            return cache.read().await.as_ref().map(|(s, _)| s.clone());
+        }
+    };
+
+    let sha = body
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|p| p.get("sha"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    if let Some(ref s) = sha {
+        let mut guard = cache.write().await;
+        *guard = Some((s.clone(), std::time::Instant::now()));
+    }
+
+    sha
+}
+
 #[utoipa::path(
     get,
     path = "/api/nixpkgs",
     tag = "Sync",
     summary = "Get the target nixpkgs commit for this daemon",
-    description = "Returns the commit the daemon should pin nixpkgs to. If an active rollout targeting this cluster carries a nixpkgs_commit, that wins; otherwise returns the cluster's persistent pin. Null means use the rolling default source.",
+    description = "Returns the commit the daemon should pin nixpkgs to. If an active rollout targeting this cluster carries a nixpkgs_commit, that wins; otherwise returns the cluster's persistent pin. If neither is set, resolves the latest successful CI pipeline on the default branch.",
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Nixpkgs pin"),
@@ -606,7 +673,13 @@ pub async fn get_nixpkgs_pin(
     .await
     .map_err(|_| Status::InternalServerError)?;
 
-    Ok(Json(NixpkgsPin { commit: pinned }))
+    if pinned.is_some() {
+        return Ok(Json(NixpkgsPin { commit: pinned }));
+    }
+
+    // No explicit pin — resolve rolling commit from latest successful CI pipeline.
+    let rolling = resolve_rolling_nixpkgs_commit().await;
+    Ok(Json(NixpkgsPin { commit: rolling }))
 }
 
 #[derive(sqlx::FromRow)]
@@ -4505,6 +4578,200 @@ pub async fn download_daemon(version: &str, system: &str) -> Result<BinaryDownlo
 
     let filename = format!("mac-mgmt-{version}-{system}");
     Ok(BinaryDownload { body, filename })
+}
+
+// ── Nixpkgs archive (public) ───────────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/nixpkgs-archive/{commit}",
+    tag = "Download",
+    summary = "Download nixpkgs source archive for a commit",
+    description = "Generates a tar.xz archive of the nixpkgs source tree at the given commit from the server's mirror clone. Results are cached in /tmp with file locking so concurrent requests coalesce. No authentication required.",
+    params(
+        ("commit" = String, Path, description = "Full 40-character hex commit SHA"),
+    ),
+    responses(
+        (status = 200, description = "tar.xz archive"),
+        (status = 400, description = "Invalid commit SHA format"),
+        (status = 404, description = "Commit not found in nixpkgs mirror"),
+        (status = 500, description = "Archive generation failed"),
+    ),
+)]
+#[rocket::get("/nixpkgs-archive/<commit>")]
+pub async fn get_nixpkgs_archive(commit: &str) -> Result<BinaryDownload, Status> {
+    // Validate commit SHA format.
+    if commit.len() != 40 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(Status::BadRequest);
+    }
+
+    let cache_path = format!("/tmp/mac-mgmt-nixpkgs-{commit}.tar.xz");
+    let lock_path = format!("{cache_path}.lock");
+    let partial_path = format!("{cache_path}.partial");
+
+    // Ensure the nixpkgs mirror clone exists.
+    crate::web::components::commit_count::nixpkgs_ensure_clone().await;
+    let repo_path = crate::web::components::commit_count::nixpkgs_clone_path();
+
+    // File locking: try exclusive lock to become the generator, or wait
+    // for the current generator to finish.
+    let lock_file = std::fs::File::create(&lock_path).map_err(|e| {
+        tracing::error!("failed to create lock file {lock_path}: {e}");
+        Status::InternalServerError
+    })?;
+
+    use fs2::FileExt;
+    let generated_by_us;
+    match lock_file.try_lock_exclusive() {
+        Ok(()) => {
+            // We hold the exclusive lock. Check if cache already exists
+            // (another process may have generated it before we locked).
+            if std::path::Path::new(&cache_path).exists() {
+                generated_by_us = false;
+            } else {
+                // Generate the tarball.
+                generated_by_us = true;
+                if let Err(e) = generate_nixpkgs_archive(commit, &repo_path, &partial_path, &cache_path).await {
+                    let _ = lock_file.unlock();
+                    return Err(e);
+                }
+            }
+            let _ = lock_file.unlock();
+        }
+        Err(_) => {
+            // Another request is generating. Wait on a blocking thread.
+            let lf = lock_file;
+            tokio::task::spawn_blocking(move || {
+                let _ = lf.lock_exclusive();
+                let _ = lf.unlock();
+            })
+            .await
+            .map_err(|e| {
+                tracing::error!("lock wait failed: {e}");
+                Status::InternalServerError
+            })?;
+            generated_by_us = false;
+        }
+    }
+
+    let _ = generated_by_us; // suppress unused warning
+
+    // Read the cached file and serve it.
+    let body = tokio::fs::read(&cache_path).await.map_err(|e| {
+        tracing::error!("failed to read cached archive {cache_path}: {e}");
+        Status::InternalServerError
+    })?;
+
+    Ok(BinaryDownload {
+        body,
+        filename: format!("nixpkgs-{commit}.tar.xz"),
+    })
+}
+
+/// Run `git archive | xz` to generate a compressed nixpkgs tarball.
+/// Writes to `partial_path` first, then renames to `cache_path` atomically.
+async fn generate_nixpkgs_archive(
+    commit: &str,
+    repo_path: &std::path::Path,
+    partial_path: &str,
+    cache_path: &str,
+) -> Result<(), Status> {
+    // Check if the commit exists in the mirror.
+    let exists = commit_exists_in_repo(commit, repo_path).await;
+    if !exists {
+        // Fetch and retry once.
+        tracing::info!("commit {commit} not in nixpkgs mirror, fetching...");
+        crate::web::components::commit_count::nixpkgs_fetch().await;
+        if !commit_exists_in_repo(commit, repo_path).await {
+            tracing::warn!("commit {commit} not found after fetch");
+            return Err(Status::NotFound);
+        }
+    }
+
+    tracing::info!("generating nixpkgs archive for {commit}");
+
+    use std::process::Stdio;
+
+    // git archive --format=tar --prefix=nixpkgs-{commit}/ {commit}
+    let mut git = tokio::process::Command::new("git")
+        .args([
+            "archive",
+            "--format=tar",
+            &format!("--prefix=nixpkgs-{commit}/"),
+            commit,
+        ])
+        .current_dir(repo_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            tracing::error!("failed to spawn git archive: {e}");
+            Status::InternalServerError
+        })?;
+
+    let git_stdout = git.stdout.take().unwrap().into_owned_fd().map_err(|e| {
+        tracing::error!("failed to get git stdout fd: {e}");
+        Status::InternalServerError
+    })?;
+    let output_file = std::fs::File::create(partial_path).map_err(|e| {
+        tracing::error!("failed to create {partial_path}: {e}");
+        Status::InternalServerError
+    })?;
+
+    // xz -1 (fast compression)
+    let xz = tokio::process::Command::new("xz")
+        .args(["-1"])
+        .stdin(git_stdout)
+        .stdout(output_file)
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            tracing::error!("failed to spawn xz: {e}");
+            Status::InternalServerError
+        })?;
+
+    let (git_out, xz_out) = tokio::join!(git.wait_with_output(), xz.wait_with_output());
+
+    let git_out = git_out.map_err(|e| {
+        tracing::error!("git archive wait failed: {e}");
+        Status::InternalServerError
+    })?;
+    if !git_out.status.success() {
+        let stderr = String::from_utf8_lossy(&git_out.stderr);
+        tracing::error!("git archive failed: {stderr}");
+        let _ = std::fs::remove_file(partial_path);
+        return Err(Status::InternalServerError);
+    }
+
+    let xz_out = xz_out.map_err(|e| {
+        tracing::error!("xz wait failed: {e}");
+        Status::InternalServerError
+    })?;
+    if !xz_out.status.success() {
+        let stderr = String::from_utf8_lossy(&xz_out.stderr);
+        tracing::error!("xz failed: {stderr}");
+        let _ = std::fs::remove_file(partial_path);
+        return Err(Status::InternalServerError);
+    }
+
+    // Atomic rename.
+    std::fs::rename(partial_path, cache_path).map_err(|e| {
+        tracing::error!("failed to rename {partial_path} -> {cache_path}: {e}");
+        Status::InternalServerError
+    })?;
+
+    tracing::info!("nixpkgs archive for {commit} cached at {cache_path}");
+    Ok(())
+}
+
+/// Check if a commit exists in a git repo.
+async fn commit_exists_in_repo(commit: &str, repo_path: &std::path::Path) -> bool {
+    tokio::process::Command::new("git")
+        .args(["cat-file", "-t", commit])
+        .current_dir(repo_path)
+        .output()
+        .await
+        .is_ok_and(|o| o.status.success())
 }
 
 // ── Rollout rollback (admin) ────────────────────────────────────────
