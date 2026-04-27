@@ -4609,9 +4609,12 @@ pub async fn get_nixpkgs_archive(commit: &str) -> Result<BinaryDownload, Status>
     let lock_path = format!("{cache_path}.lock");
     let partial_path = format!("{cache_path}.partial");
 
-    // Ensure the nixpkgs mirror clone exists.
-    crate::web::components::commit_count::nixpkgs_ensure_clone().await;
-    let repo_path = crate::web::components::commit_count::nixpkgs_clone_path();
+    let cfg = &crate::config::config().git;
+    let repo_path = std::path::PathBuf::from(&cfg.state_dir).join("repos/nixpkgs.git");
+    if !repo_path.exists() {
+        tracing::error!("nixpkgs mirror clone not found at {}", repo_path.display());
+        return Err(Status::InternalServerError);
+    }
 
     // File locking: try exclusive lock to become the generator, or wait
     // for the current generator to finish.
@@ -4681,7 +4684,11 @@ async fn generate_nixpkgs_archive(
     if !exists {
         // Fetch and retry once.
         tracing::info!("commit {commit} not in nixpkgs mirror, fetching...");
-        crate::web::components::commit_count::nixpkgs_fetch().await;
+        let _ = tokio::process::Command::new("git")
+            .args(["remote", "update", "--prune"])
+            .current_dir(repo_path)
+            .output()
+            .await;
         if !commit_exists_in_repo(commit, repo_path).await {
             tracing::warn!("commit {commit} not found after fetch");
             return Err(Status::NotFound);

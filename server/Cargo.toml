@@ -10,7 +10,7 @@ mgmt = []
 web = ["webui", "dioxus/web"]
 webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-tabular", "dep:pulldown-cmark"]
 server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:similar", "dep:ed25519-dalek", "dep:pulldown-cmark", "dep:rust-embed", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "mac-mgmt-common/observability"]
-server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:sentry", "dep:mac-mgmt-healer", "mac-mgmt-common/observability"]
+server-api-only = ["dep:rocket", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:multihash", "dep:tracing-subscriber", "dep:anyhow", "dep:async-trait", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:jsonschema", "dep:utoipa", "dep:utoipa-swagger-ui", "dep:schemars", "dep:ed25519-dalek", "dep:sentry", "dep:mac-mgmt-healer", "dep:tokio-stream", "dep:fs2", "mac-mgmt-common/observability"]
 
 [dependencies]
 dioxus = { version = "0.7", features = ["fullstack", "router"], optional = true }

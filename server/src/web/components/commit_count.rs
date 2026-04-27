@@ -345,44 +345,6 @@ pub async fn nixpkgs_commit_counts(shas: &HashSet<String>) -> HashMap<String, u6
         .await
 }
 
-/// Ensure the nixpkgs mirror clone exists (first-run idempotent).
-#[cfg(feature = "server")]
-pub async fn nixpkgs_ensure_clone() {
-    let cfg = &crate::config::config().git;
-    NIXPKGS
-        .get_or_init(|| {
-            RepoCache::new(
-                "nixpkgs",
-                PathBuf::from(&cfg.state_dir).join("repos/nixpkgs.git"),
-                cfg.nixpkgs_url.clone(),
-            )
-        })
-        .ensure_clone()
-        .await;
-}
-
-/// Fetch latest refs for the nixpkgs mirror (coalesces concurrent calls).
-#[cfg(feature = "server")]
-pub async fn nixpkgs_fetch() {
-    if let Some(cache) = NIXPKGS.get() {
-        cache.fetch().await;
-    }
-}
-
-/// Path to the bare nixpkgs mirror clone on disk.
-#[cfg(feature = "server")]
-pub fn nixpkgs_clone_path() -> PathBuf {
-    let cfg = &crate::config::config().git;
-    let _ = NIXPKGS.get_or_init(|| {
-        RepoCache::new(
-            "nixpkgs",
-            PathBuf::from(&cfg.state_dir).join("repos/nixpkgs.git"),
-            cfg.nixpkgs_url.clone(),
-        )
-    });
-    PathBuf::from(&cfg.state_dir).join("repos/nixpkgs.git")
-}
-
 // ── Background fetch loop ──────────────────────────────────────────────
 
 #[cfg(feature = "server")]
