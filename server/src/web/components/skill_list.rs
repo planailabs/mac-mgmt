@@ -8,6 +8,51 @@ use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
+
+/// A skill channel from a remote skill center.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RemoteSkillChannel {
+    pub skill_slug: String,
+    pub skill_name: String,
+    pub channel: String,
+    pub skill_center_name: String,
+}
+
+#[server]
+async fn list_remote_skill_channels() -> Result<Vec<RemoteSkillChannel>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("skill center cache not initialized"))?;
+    let all = cache.get_all().await;
+
+    let pool = crate::server_pool()?;
+    let rows = sqlx::query_as::<_, (uuid::Uuid, String)>(
+        "SELECT id, name FROM skill_centers WHERE enabled = true",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let names: std::collections::HashMap<uuid::Uuid, String> =
+        rows.into_iter().collect();
+
+    let mut result = Vec::new();
+    for (sc_id, cached) in &all {
+        let sc_name = names.get(sc_id).cloned().unwrap_or_else(|| sc_id.to_string());
+        for ch in &cached.catalog.skill_channels {
+            result.push(RemoteSkillChannel {
+                skill_slug: ch.skill_slug.clone(),
+                skill_name: ch.skill_name.clone(),
+                channel: ch.channel.clone(),
+                skill_center_name: sc_name.clone(),
+            });
+        }
+    }
+    result.sort_by(|a, b| a.skill_slug.cmp(&b.skill_slug).then(a.channel.cmp(&b.channel)));
+    Ok(result)
+}
+
 #[server]
 async fn list_skills() -> Result<Vec<Skill>, ServerFnError> {
     load_admin_list::<Skill>("SELECT * FROM skills ORDER BY slug").await
@@ -168,6 +213,7 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
 #[component]
 pub fn SkillList() -> Element {
     let mut skills = use_server_future(list_skills)?;
+    let remote_skills = use_server_future(list_remote_skill_channels)?;
     let mut syncing = use_signal(|| false);
     let mut sync_msg = use_signal(|| None::<String>);
     let mut sync_err = use_signal(|| None::<String>);
@@ -264,6 +310,19 @@ pub fn SkillList() -> Element {
                                 for row in all_rows.into_iter().take(limit_val) {
                                     tr { key: "{row.key()}", TableCells { row } }
                                 }
+                                {match &*remote_skills.read() {
+                                    Some(Ok(remote)) => rsx! {
+                                        for item in remote.iter() {
+                                            tr { class: "text-purple-700 dark:text-purple-400",
+                                                td { class: "px-6 py-4 whitespace-nowrap text-sm font-mono", "{item.skill_slug}" }
+                                                td { class: "px-6 py-4 whitespace-nowrap text-sm", "{item.skill_name}" }
+                                                td { class: "px-6 py-4 whitespace-nowrap text-xs", "via {item.skill_center_name}" }
+                                                td { class: "px-6 py-4 whitespace-nowrap text-sm", "" }
+                                            }
+                                        }
+                                    },
+                                    _ => rsx! {},
+                                }}
                             }
                         }
                     }

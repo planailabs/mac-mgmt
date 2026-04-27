@@ -7,6 +7,51 @@ use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+#[cfg(feature = "server")]
+use crate::web::user::current_user;
+
+/// An MCP server from a remote skill center.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RemoteMcpServer {
+    pub slug: String,
+    pub name: String,
+    pub skill_center_name: String,
+}
+
+#[server]
+async fn list_remote_mcp_servers() -> Result<Vec<RemoteMcpServer>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("skill center cache not initialized"))?;
+    let all = cache.get_all().await;
+
+    let pool = crate::server_pool()?;
+    let rows = sqlx::query_as::<_, (uuid::Uuid, String)>(
+        "SELECT id, name FROM skill_centers WHERE enabled = true",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let names: std::collections::HashMap<uuid::Uuid, String> =
+        rows.into_iter().collect();
+
+    let mut result = Vec::new();
+    for (sc_id, cached) in &all {
+        let sc_name = names.get(sc_id).cloned().unwrap_or_else(|| sc_id.to_string());
+        for srv in &cached.catalog.mcp_servers {
+            result.push(RemoteMcpServer {
+                slug: srv.slug.clone(),
+                name: srv.name.clone(),
+                skill_center_name: sc_name.clone(),
+            });
+        }
+    }
+    result.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(result)
+}
+
 #[server]
 async fn list_mcp_servers() -> Result<Vec<McpServer>, ServerFnError> {
     load_admin_list::<McpServer>("SELECT * FROM mcp_servers ORDER BY slug").await
@@ -15,6 +60,7 @@ async fn list_mcp_servers() -> Result<Vec<McpServer>, ServerFnError> {
 #[component]
 pub fn McpServerList() -> Element {
     let mut servers = use_server_future(list_mcp_servers)?;
+    let remote_servers = use_server_future(list_remote_mcp_servers)?;
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
@@ -84,6 +130,19 @@ pub fn McpServerList() -> Element {
                                 for row in all_rows.into_iter().take(limit_val) {
                                     tr { key: "{row.key()}", TableCells { row } }
                                 }
+                                {match &*remote_servers.read() {
+                                    Some(Ok(remote)) => rsx! {
+                                        for item in remote.iter() {
+                                            tr { class: "text-purple-700 dark:text-purple-400",
+                                                td { class: "px-6 py-4 whitespace-nowrap text-sm font-mono", "{item.slug}" }
+                                                td { class: "px-6 py-4 whitespace-nowrap text-sm", "{item.name}" }
+                                                td { class: "px-6 py-4 whitespace-nowrap text-xs", "via {item.skill_center_name}" }
+                                                td { class: "px-6 py-4 whitespace-nowrap text-sm", "" }
+                                            }
+                                        }
+                                    },
+                                    _ => rsx! {},
+                                }}
                             }
                         }
                     }

@@ -790,8 +790,40 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
             }}
         }
 
+        // Remote MCP server assignments (from skill centers, purple)
+        div { class: "mb-4",
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "From Skill Centers" }
+            {match &*remote_servers.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote MCP server assignments." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for rm in list {
+                            {
+                                let label = if rm.mcp_name.is_empty() {
+                                    rm.slug.clone()
+                                } else {
+                                    format!("{} ({})", rm.mcp_name, rm.slug)
+                                };
+                                let via = rm.skill_center_name.clone();
+                                rsx! {
+                                    li { class: "py-2 flex items-center gap-2",
+                                        span { class: "text-sm font-mono text-purple-700 dark:text-purple-400", "{label}" }
+                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            }}
+        }
+
         // MCP bundle assignments
-        div {
+        div { class: "mb-4",
             h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "MCP Bundles" }
             if !read_only {
                 if let Some(err) = &*bundle_error.read() {
@@ -881,41 +913,9 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
             }}
         }
 
-        // Remote MCP server assignments (from skill centers, purple)
-        div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote MCP Servers" }
-            {match &*remote_servers.read() {
-                Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote MCP server assignments." }
-                },
-                Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
-                        for rm in list {
-                            {
-                                let label = if rm.mcp_name.is_empty() {
-                                    rm.slug.clone()
-                                } else {
-                                    format!("{} ({})", rm.mcp_name, rm.slug)
-                                };
-                                let via = rm.skill_center_name.clone();
-                                rsx! {
-                                    li { class: "py-2 flex items-center gap-2",
-                                        span { class: "text-sm font-mono text-purple-700 dark:text-purple-400", "{label}" }
-                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
-            }}
-        }
-
         // Remote MCP bundle assignments (from skill centers, purple)
         div {
-            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote MCP Bundles" }
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "MCP Bundles from Skill Centers" }
             {match &*remote_mcp_bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
                     p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote MCP bundle assignments." }

@@ -603,8 +603,36 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
             }}
         }
 
+        // Remote skill assignments (from skill centers, purple)
+        div { class: "mb-4",
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "From Skill Centers" }
+            {match &*remote_skills.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote skill assignments." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for rs in list {
+                            {
+                                let label = format!("{} / {}", rs.slug, rs.channel);
+                                let via = rs.skill_center_name.clone();
+                                rsx! {
+                                    li { class: "py-2 flex items-center gap-2",
+                                        span { class: "text-sm font-mono text-purple-700 dark:text-purple-400", "{label}" }
+                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            }}
+        }
+
         // Bundle assignments
-        div {
+        div { class: "mb-4",
             h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", "Bundles" }
             if let Some(err) = &*bundle_error.read() {
                 p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
@@ -694,37 +722,9 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
             }}
         }
 
-        // Remote skill assignments (from skill centers, purple)
-        div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote Skills" }
-            {match &*remote_skills.read() {
-                Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote skill assignments." }
-                },
-                Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
-                        for rs in list {
-                            {
-                                let label = format!("{} / {}", rs.slug, rs.channel);
-                                let via = rs.skill_center_name.clone();
-                                rsx! {
-                                    li { class: "py-2 flex items-center gap-2",
-                                        span { class: "text-sm font-mono text-purple-700 dark:text-purple-400", "{label}" }
-                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
-            }}
-        }
-
         // Remote bundle assignments (from skill centers, purple)
         div {
-            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote Bundles" }
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Bundles from Skill Centers" }
             {match &*remote_bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
                     p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote bundle assignments." }
