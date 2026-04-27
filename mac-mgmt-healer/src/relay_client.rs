@@ -90,11 +90,11 @@ impl RelayClient {
     }
 
     fn req(&self, url: &str) -> reqwest::RequestBuilder {
-        self.http.get(url).bearer_auth(&self.proxy_token)
+        self.http.get(url).header("x-proxy-token", &self.proxy_token)
     }
 
     fn post_req(&self, url: &str) -> reqwest::RequestBuilder {
-        self.http.post(url).bearer_auth(&self.proxy_token)
+        self.http.post(url).header("x-proxy-token", &self.proxy_token)
     }
 
     // ── Daemon connectivity ────────────────────────────────────────────
@@ -109,7 +109,7 @@ impl RelayClient {
         match self
             .http
             .get(&url)
-            .bearer_auth(&self.proxy_token)
+            .header("x-proxy-token", &self.proxy_token)
             .timeout(Duration::from_secs(5))
             .send()
             .await

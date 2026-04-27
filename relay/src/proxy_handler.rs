@@ -123,7 +123,7 @@ async fn proxy_security_headers(
                 .header("access-control-allow-methods", "GET, POST, OPTIONS")
                 .header(
                     "access-control-allow-headers",
-                    "authorization, content-type",
+                    "authorization, content-type, x-proxy-token",
                 )
                 .header("access-control-expose-headers", "x-file-mtime, x-file-size")
                 .header("access-control-max-age", "3600")
@@ -219,16 +219,29 @@ fn parse_instance_prefix(headers: &HeaderMap, proxy_hostname: &str) -> Option<St
     }
 }
 
-/// Extract proxy_token from Bearer header or cookie.
+/// Extract proxy_token from X-Proxy-Token header, cookie, or (legacy)
+/// Authorization: Bearer header — checked in that order.
+/// The Authorization header is only used as a last resort for backwards
+/// compatibility; new clients should use X-Proxy-Token so that the
+/// Authorization header can pass through to the upstream service.
 fn extract_token(headers: &HeaderMap) -> Option<String> {
-    // Try Bearer header first (for API/CORS calls from the web UI).
+    // Preferred: dedicated proxy header (keeps Authorization free for upstream).
+    if let Some(val) = headers.get("x-proxy-token").and_then(|v| v.to_str().ok()) {
+        if !val.is_empty() {
+            return Some(val.to_string());
+        }
+    }
+    // Cookie (set by /proxy?proxy_token=TOKEN bootstrap).
+    if let Some(t) = extract_cookie_token(headers) {
+        return Some(t);
+    }
+    // Legacy: Authorization: Bearer (consumed by relay, NOT forwarded).
     if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
         if let Some(token) = auth.strip_prefix("Bearer ") {
             return Some(token.to_string());
         }
     }
-    // Fall back to cookie.
-    extract_cookie_token(headers)
+    None
 }
 
 /// Remove the proxy_token cookie from a cookie header value, keeping the rest.
@@ -274,8 +287,7 @@ fn has_scope(scopes: &[String], required: &str) -> bool {
         })
 }
 
-/// Validate the proxy token (from Bearer header or cookie) and check cluster scoping.
-/// Returns the SelfInfo so callers can check scopes.
+/// Validate the proxy token and check cluster scoping.
 async fn authenticate_proxy(
     headers: &HeaderMap,
     state: &ProxyState,
@@ -283,7 +295,7 @@ async fn authenticate_proxy(
 ) -> Result<SelfInfo, axum::response::Response> {
     let token = extract_token(headers)
         .ok_or_else(|| {
-            (StatusCode::UNAUTHORIZED, "Missing proxy_token. Use Authorization: Bearer <token> or visit /proxy?proxy_token=TOKEN first.").into_response()
+            (StatusCode::UNAUTHORIZED, "Missing proxy_token. Use X-Proxy-Token header, proxy_token cookie, or Authorization: Bearer <token>.").into_response()
         })?;
 
     let self_info = validate_token_cached(&state.server_api_url, &token)
@@ -480,13 +492,15 @@ async fn proxy_catchall(
     }
 
     // Collect request headers to forward.
-    // Strip hop-by-hop headers. For cookies, remove our proxy_token but
-    // forward the rest so upstream services keep their session cookies.
+    // Strip hop-by-hop and relay-internal headers. For cookies, remove our
+    // proxy_token but forward the rest so upstream services keep their
+    // session cookies. The x-proxy-token header is relay-only auth and must
+    // not leak to the upstream service.
     let mut fwd_headers: Vec<(String, String)> = headers
         .iter()
         .filter_map(|(k, v)| {
             let lk = k.as_str().to_lowercase();
-            if lk == "connection" || lk == "transfer-encoding" {
+            if lk == "connection" || lk == "transfer-encoding" || lk == "x-proxy-token" {
                 return None;
             }
             if lk == "cookie" {

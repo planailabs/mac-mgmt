@@ -171,7 +171,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                                 // Fetch latest first (500 lines)
                                 try {{
                                     const resp = await fetch("{logs_url}?n=500{svc_param}", {{
-                                        headers: {{ "Authorization": "Bearer {token}" }},
+                                        headers: {{ "X-Proxy-Token": "{token}" }},
                                     }});
                                     const data = await resp.json();
                                     if (data.lines) {{
@@ -191,7 +191,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                                     await new Promise(r => setTimeout(r, 2000));
                                     try {{
                                         const resp = await fetch("{logs_url}?after=" + after + "{svc_param}", {{
-                                            headers: {{ "Authorization": "Bearer {token}" }},
+                                            headers: {{ "X-Proxy-Token": "{token}" }},
                                         }});
                                         const data = await resp.json();
                                         if (data.lines && data.lines.length > 0) {{
@@ -245,7 +245,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
                                 r#"
                                 try {{
                                     const resp = await fetch("{logs_url}?n=500{svc_param}", {{
-                                        headers: {{ "Authorization": "Bearer {token}" }},
+                                        headers: {{ "X-Proxy-Token": "{token}" }},
                                     }});
                                     const data = await resp.json();
                                     return (data.lines || []).join("\n");

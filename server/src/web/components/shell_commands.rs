@@ -210,7 +210,7 @@ fn ShellCommandCard(
                                         const resp = await fetch("{exec_url}", {{
                                             method: "POST",
                                             headers: {{
-                                                "Authorization": "Bearer {token}",
+                                                "X-Proxy-Token": "{token}",
                                                 "Content-Type": "application/json",
                                             }},
                                             body: '{body}',

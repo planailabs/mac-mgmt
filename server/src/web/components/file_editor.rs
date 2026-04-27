@@ -120,7 +120,7 @@ async fn relay_file_list(
     let js = format!(
         r#"
         const resp = await fetch("{url}", {{
-            headers: {{ "Authorization": "Bearer {token}" }}
+            headers: {{ "X-Proxy-Token": "{token}" }}
         }});
         const body = await resp.text();
         return body;
@@ -146,7 +146,7 @@ async fn relay_file_read(
     let js = format!(
         r#"
         const resp = await fetch("{url}", {{
-            headers: {{ "Authorization": "Bearer {token}" }}
+            headers: {{ "X-Proxy-Token": "{token}" }}
         }});
         if (!resp.ok) {{
             const err = await resp.text();
@@ -216,7 +216,7 @@ async fn relay_file_write(
         const resp = await fetch("{url}", {{
             method: "POST",
             headers: {{
-                "Authorization": "Bearer {token}",
+                "X-Proxy-Token": "{token}",
                 "Content-Type": "application/octet-stream"
             }},
             body: `{escaped}`
