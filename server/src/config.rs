@@ -19,6 +19,26 @@ pub struct ServerConfig {
     pub sentry: SentryConfig,
     #[serde(default)]
     pub git: GitConfig,
+    #[serde(default)]
+    pub skill_centers: SkillCentersConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkillCentersConfig {
+    #[serde(default = "default_skill_center_refresh")]
+    pub refresh_interval_secs: u64,
+}
+
+impl Default for SkillCentersConfig {
+    fn default() -> Self {
+        Self {
+            refresh_interval_secs: default_skill_center_refresh(),
+        }
+    }
+}
+
+fn default_skill_center_refresh() -> u64 {
+    60
 }
 
 pub use mac_mgmt_common::sentry_ext::SentryConfig;

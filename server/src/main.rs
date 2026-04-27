@@ -17,17 +17,22 @@ mod rollout_health;
 #[cfg(feature = "webui")]
 mod web;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
+mod skill_center_cache;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
+mod skill_center_client;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod xzar;
 
 #[cfg(all(feature = "server", feature = "webui"))]
 mod server_state {
-    use crate::api::push::PushChannels;
+    use crate::api::push::{FederationPushChannel, PushChannels};
     use mac_mgmt_healer::HealerState;
     use sqlx::PgPool;
     use std::sync::{Arc, OnceLock};
 
     static POOL: OnceLock<PgPool> = OnceLock::new();
     static PUSH: OnceLock<PushChannels> = OnceLock::new();
+    static FEDERATION_PUSH: OnceLock<FederationPushChannel> = OnceLock::new();
     static HEALER: OnceLock<HealerState> = OnceLock::new();
     static PG_HEALER_STORE: OnceLock<Arc<mac_mgmt_healer::store::pg::PgHealerStore>> =
         OnceLock::new();
@@ -39,6 +44,10 @@ mod server_state {
     pub fn set_push_channels(channels: PushChannels) {
         PUSH.set(channels)
             .expect("push channels already initialized");
+    }
+
+    pub fn set_federation_channel(channel: FederationPushChannel) {
+        let _ = FEDERATION_PUSH.set(channel);
     }
 
     pub fn set_healer_state(state: HealerState) {
@@ -59,6 +68,15 @@ mod server_state {
         PUSH.get()
             .cloned()
             .ok_or_else(|| dioxus::prelude::ServerFnError::new("push channels not initialized"))
+    }
+
+    pub fn federation_channel() -> Result<FederationPushChannel, dioxus::prelude::ServerFnError> {
+        FEDERATION_PUSH
+            .get()
+            .cloned()
+            .ok_or_else(|| {
+                dioxus::prelude::ServerFnError::new("federation channel not initialized")
+            })
     }
 
     pub fn healer_state() -> Option<HealerState> {
@@ -83,6 +101,12 @@ pub fn server_pool() -> Result<sqlx::PgPool, dioxus::prelude::ServerFnError> {
 #[cfg(all(feature = "server", feature = "webui"))]
 pub fn push_channels() -> Result<crate::api::push::PushChannels, dioxus::prelude::ServerFnError> {
     server_state::push_channels()
+}
+
+#[cfg(all(feature = "server", feature = "webui"))]
+pub fn federation_channel(
+) -> Result<crate::api::push::FederationPushChannel, dioxus::prelude::ServerFnError> {
+    server_state::federation_channel()
 }
 
 /// Factory that builds relay-based access for healer sessions (server mode).
@@ -149,11 +173,14 @@ async fn init_server() -> (
         .expect("failed to run migrations");
 
     let push_channels = api::push::new_push_channels();
+    let federation_push = api::push::new_federation_channel();
 
     #[cfg(feature = "webui")]
     server_state::set_pool(pool.clone());
     #[cfg(feature = "webui")]
     server_state::set_push_channels(push_channels.clone());
+    #[cfg(feature = "webui")]
+    server_state::set_federation_channel(federation_push.clone());
 
     // Background task: delete daemon heartbeats offline for 30+ days
     {
@@ -268,12 +295,26 @@ async fn init_server() -> (
         ));
     }
 
+    // Initialize skill center cache and start background refresh loop
+    let sc_cache = skill_center_cache::SkillCenterCache::new();
+    {
+        let cache = sc_cache.clone();
+        let p = pool.clone();
+        let pc = push_channels.clone();
+        let interval = std::time::Duration::from_secs(cfg.skill_centers.refresh_interval_secs);
+        tokio::spawn(skill_center_cache::run_cache_refresh_loop(
+            cache, p, pc, interval,
+        ));
+    }
+
     let api_rocket = api::build_rocket(
         pool.clone(),
         cfg.api.port,
         push_channels,
         healer_state.clone(),
         pg_healer_store,
+        federation_push,
+        sc_cache,
     )
     .ignite()
     .await

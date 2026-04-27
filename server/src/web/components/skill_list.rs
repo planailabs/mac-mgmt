@@ -128,6 +128,7 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     if !to_remove_channel_ids.is_empty() {
+        crate::api::push::notify_federation_global();
         crate::api::push::notify_skill_channels_global(&to_remove_channel_ids).await;
     }
 

@@ -240,6 +240,61 @@ impl<'r> FromRequest<'r> for MetricsAuth {
     }
 }
 
+/// Guard that only allows federation tokens.
+/// Federation tokens are used by management servers to access the skill center's federation API.
+pub struct FederationAuth;
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for FederationAuth {
+    type Error = &'static str;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        match AuthenticatedToken::from_request(req).await {
+            Outcome::Success(auth) if auth.token_kind == "federation" => {
+                Outcome::Success(FederationAuth)
+            }
+            Outcome::Success(_) => {
+                Outcome::Error((Status::Forbidden, "federation token required"))
+            }
+            Outcome::Error(e) => Outcome::Error(e),
+            Outcome::Forward(f) => Outcome::Forward(f),
+        }
+    }
+}
+
+/// Guard that accepts a federation token or allows anonymous access.
+/// When authenticated, `is_authenticated` is true (hidden items are visible).
+pub struct FederationOrPublic {
+    pub is_authenticated: bool,
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for FederationOrPublic {
+    type Error = &'static str;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        // If no Authorization header, allow anonymous access
+        if req.headers().get_one("Authorization").is_none() {
+            return Outcome::Success(FederationOrPublic {
+                is_authenticated: false,
+            });
+        }
+        // Header present — must be a valid federation token
+        match AuthenticatedToken::from_request(req).await {
+            Outcome::Success(auth) if auth.token_kind == "federation" => {
+                Outcome::Success(FederationOrPublic {
+                    is_authenticated: true,
+                })
+            }
+            Outcome::Success(_) => {
+                Outcome::Error((Status::Forbidden, "federation token required"))
+            }
+            Outcome::Error(e) => Outcome::Error(e),
+            Outcome::Forward(f) => Outcome::Forward(f),
+        }
+    }
+}
+
 /// Guard that only allows admin tokens.
 pub struct AdminAuth;
 

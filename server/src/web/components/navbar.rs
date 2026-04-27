@@ -108,6 +108,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
     }];
 
     if is_admin {
+        #[cfg(feature = "skill-center")]
         groups.push(NavGroup {
             title: "MCP + Skills".to_string(),
             links: vec![
@@ -118,23 +119,28 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             ],
         });
 
-        groups.push(NavGroup {
-            title: "Admin".to_string(),
-            links: vec![
+        #[cfg(feature = "mgmt")]
+        {
+            let admin_links = vec![
                 NavLink::Internal(Route::AdminTokens {}, "Admin Tokens".to_string()),
                 NavLink::Internal(Route::StaffPings {}, "Staff Pings".to_string()),
                 NavLink::Internal(Route::OrganizationList {}, "Organizations".to_string()),
                 NavLink::Internal(Route::UserList {}, "Users".to_string()),
-            ],
-        });
+                NavLink::Internal(Route::SkillCenterList {}, "Skill Centers".to_string()),
+            ];
+            groups.push(NavGroup {
+                title: "Admin".to_string(),
+                links: admin_links,
+            });
 
-        groups.push(NavGroup {
-            title: "Version".to_string(),
-            links: vec![
-                NavLink::Internal(Route::RolloutList {}, "Rollouts".to_string()),
-                NavLink::Internal(Route::DaemonVersionList {}, "Daemon Versions".to_string()),
-            ],
-        });
+            groups.push(NavGroup {
+                title: "Version".to_string(),
+                links: vec![
+                    NavLink::Internal(Route::RolloutList {}, "Rollouts".to_string()),
+                    NavLink::Internal(Route::DaemonVersionList {}, "Daemon Versions".to_string()),
+                ],
+            });
+        }
     }
 
     let mut resources_links = vec![NavLink::Internal(Route::DocList {}, "Docs".to_string())];

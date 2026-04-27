@@ -51,6 +51,7 @@ async fn delete_mcp_bundle(id: String) -> Result<(), ServerFnError> {
     let uuid: uuid::Uuid = id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     crate::api::push::notify_mcp_bundle_global(uuid).await;
     sqlx::query("DELETE FROM mcp_server_bundles WHERE id = $1")
         .bind(uuid)
@@ -81,6 +82,7 @@ async fn update_mcp_bundle(
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     crate::api::push::notify_mcp_bundle_global(uuid).await;
     Ok(())
 }
@@ -143,6 +145,7 @@ async fn add_mcp_bundle_item(
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     crate::api::push::notify_mcp_bundle_global(bid).await;
     Ok(())
 }
@@ -167,6 +170,7 @@ async fn remove_mcp_bundle_item(bundle_item_id: String) -> Result<(), ServerFnEr
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     if let Some(bid) = bundle_id {
+        crate::api::push::notify_federation_global();
         crate::api::push::notify_mcp_bundle_global(bid).await;
     }
     Ok(())

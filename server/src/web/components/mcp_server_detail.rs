@@ -127,6 +127,7 @@ async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
     // Resolve affected clusters BEFORE the delete — the cascade will wipe
     // both direct assignments and bundle memberships, so a post-delete query
     // would find nothing.
+    crate::api::push::notify_federation_global();
     crate::api::push::notify_mcp_server_global(uuid).await;
     sqlx::query("DELETE FROM mcp_servers WHERE id = $1")
         .bind(uuid)

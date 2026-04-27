@@ -9,13 +9,34 @@ use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+pub use mac_mgmt_common::FederationEvent;
 pub use mac_mgmt_common::PushEvent as PushMessage;
 
 /// Per-cluster broadcast channels for push notifications.
 pub type PushChannels = Arc<RwLock<HashMap<Uuid, broadcast::Sender<PushMessage>>>>;
 
+/// Single broadcast channel for federation events (skill center → mgmt server).
+pub type FederationPushChannel = broadcast::Sender<FederationEvent>;
+
 pub fn new_push_channels() -> PushChannels {
     Arc::new(RwLock::new(HashMap::new()))
+}
+
+pub fn new_federation_channel() -> FederationPushChannel {
+    broadcast::channel(64).0
+}
+
+/// Notify all federation subscribers that the catalog has changed.
+pub fn notify_federation(channel: &FederationPushChannel) {
+    let _ = channel.send(FederationEvent::CatalogChanged);
+}
+
+/// Notify federation subscribers using the global channel (for Dioxus server functions).
+#[cfg(feature = "webui")]
+pub fn notify_federation_global() {
+    if let Ok(channel) = crate::federation_channel() {
+        notify_federation(&channel);
+    }
 }
 
 /// Send a push message to all connected daemons for a cluster.

@@ -16,6 +16,7 @@ schemars = { version = "1.2.1", features = ["derive"] }
 sentry = { workspace = true, features = ["tracing"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+uuid = { version = "1", features = ["serde"] }
 toml = "0.8"
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }

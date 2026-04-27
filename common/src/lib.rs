@@ -369,6 +369,98 @@ pub struct McpServerEntry {
     pub nix_packages: Vec<String>,
 }
 
+// ── Federation types (skill center ↔ management server protocol) ────
+
+/// Push notification sent from skill center to management server via SSE.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FederationEvent {
+    Ping,
+    CatalogChanged,
+}
+
+/// Full catalog returned by a skill center's federation API.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FederationCatalog {
+    pub skill_channels: Vec<FederationSkillChannel>,
+    pub bundles: Vec<FederationBundle>,
+    pub mcp_servers: Vec<FederationMcpServer>,
+    pub mcp_bundles: Vec<FederationMcpBundle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederationSkillChannel {
+    pub id: uuid::Uuid,
+    pub skill_slug: String,
+    pub skill_name: String,
+    pub skill_description: String,
+    pub channel: String,
+    pub hidden: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederationBundle {
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub hidden: bool,
+    pub skills: Vec<FederationBundleSkill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederationBundleSkill {
+    pub skill_channel_id: uuid::Uuid,
+    pub skill_slug: String,
+    pub channel: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederationMcpServer {
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub hidden: bool,
+    pub config: serde_json::Value,
+    pub nix_packages: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederationMcpBundle {
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub hidden: bool,
+    pub servers: Vec<FederationMcpBundleServer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederationMcpBundleServer {
+    pub mcp_server_id: uuid::Uuid,
+    pub slug: String,
+}
+
+/// Request body for `POST /api/federation/resolve-skills`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveSkillsRequest {
+    pub skills: Vec<SkillResolveEntry>,
+    pub arch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillResolveEntry {
+    pub slug: String,
+    pub channel: String,
+}
+
+/// Request body for `POST /api/federation/resolve-mcp-servers`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveMcpServersRequest {
+    pub slugs: Vec<String>,
+}
+
 /// Single SSH key entry in the sync response (`GET /api/ssh-keys`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshKeySyncEntry {
