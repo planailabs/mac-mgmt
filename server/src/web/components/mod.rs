@@ -45,6 +45,7 @@ pub mod rollout_list;
 pub mod setting_token_list;
 pub mod shell_commands;
 pub mod skill_center_detail;
+pub mod skill_center_form;
 pub mod skill_center_list;
 pub mod skill_detail;
 pub mod skill_list;

@@ -37,6 +37,11 @@ pub fn SkillCenterList() -> Element {
         div { class: "px-6 py-8 max-w-5xl mx-auto",
             div { class: "flex items-center justify-between mb-6",
                 h1 { class: "text-2xl font-bold dark:text-white", "Skill Centers" }
+                Link {
+                    to: crate::web::app::Route::SkillCenterForm {},
+                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                    "New Skill Center"
+                }
             }
             match &*skill_centers.read() {
                 Some(Ok(centers)) => rsx! {

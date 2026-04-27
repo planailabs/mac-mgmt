@@ -11,6 +11,7 @@ use super::components::daemon_version_detail::DaemonVersionDetail;
 use super::components::daemon_version_list::DaemonVersionList;
 use super::components::docs::{DocList, DocPage};
 use super::components::skill_center_detail::SkillCenterDetail;
+use super::components::skill_center_form::SkillCenterForm;
 use super::components::skill_center_list::SkillCenterList;
 use super::components::file_editor::FleetFiles;
 use super::components::fleet_dashboard::FleetDashboard;
@@ -121,6 +122,8 @@ pub enum Route {
     UserDetail { id: String },
     #[route("/skill-centers")]
     SkillCenterList {},
+    #[route("/skill-centers/new")]
+    SkillCenterForm {},
     #[route("/skill-centers/:id")]
     SkillCenterDetail { id: String },
     #[route("/docs")]
