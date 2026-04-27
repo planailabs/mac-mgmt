@@ -1493,9 +1493,9 @@ pub struct RelayConfig {
     #[serde(default = "default_true")]
     pub tunnels_enabled: bool,
     #[schemars(
-        description = "Rewrite Host and Referer headers to localhost:<port> when proxying TCP tunnels. Useful for services (e.g. Ollama) that reject requests with non-local origins."
+        description = "Rewrite Host, Referer, Origin and strip forwarding headers when proxying TCP tunnels. Prevents services (e.g. Ollama) from rejecting requests with non-local origins. Default true."
     )]
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub fake_origin_local: bool,
 }
 

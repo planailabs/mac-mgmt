@@ -91,6 +91,30 @@ pub struct TunnelTarget {
 // ── Shared proxy helpers ─────────────────────────────────────────────
 
 /// Build a reqwest request for the given HTTP method against a tunnel target.
+/// Headers that are stripped entirely when `fake_origin_local` is true
+/// because they leak the relay's real hostname/IP to the local service.
+const FAKE_ORIGIN_DROP_HEADERS: &[&str] = &[
+    "host",
+    "origin",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-forwarded-port",
+    "x-real-ip",
+    "forwarded",
+    "via",
+];
+
+/// Rewrite the origin (scheme + host + port) of a URL while preserving the
+/// path, query, and fragment. Returns `None` if the value is not a valid URL.
+fn rewrite_url_origin(value: &str, target: &TunnelTarget) -> Option<String> {
+    let mut parsed = reqwest::Url::parse(value).ok()?;
+    let _ = parsed.set_host(Some(&target.host));
+    let _ = parsed.set_port(Some(target.port));
+    let _ = parsed.set_scheme("http"); // local services are always plain HTTP
+    Some(parsed.to_string())
+}
+
 fn build_proxy_request(
     client: &reqwest::Client,
     target: &TunnelTarget,
@@ -108,28 +132,49 @@ fn build_proxy_request(
         _ => client.get(&url),
     };
     if fake_origin_local {
-        let local = format!("{}:{}", target.host, target.port);
-        req = req
-            .header("host", &local)
-            .header("referer", format!("http://{local}/"));
+        req = req.header("host", format!("{}:{}", target.host, target.port));
     }
     req
 }
 
+/// Rewrite or drop a single header value when `fake_origin_local` is true.
+/// Returns the (possibly rewritten) value, or `None` if the header should be
+/// dropped entirely.
+fn fake_origin_header<'a>(
+    key: &str,
+    value: &'a str,
+    target: &TunnelTarget,
+) -> Option<std::borrow::Cow<'a, str>> {
+    // Referer carries a full URL — rewrite the origin portion, keep the path.
+    if key == "referer" {
+        return Some(
+            rewrite_url_origin(value, target)
+                .map(std::borrow::Cow::Owned)
+                .unwrap_or(std::borrow::Cow::Borrowed(value)),
+        );
+    }
+    // Everything else in FAKE_ORIGIN_DROP_HEADERS is dropped.
+    None
+}
+
 /// Apply request headers from a Vec, filtering hop-by-hop headers.
-/// When `fake_origin_local` is true, Host and Referer headers are also
-/// stripped (they were already set by `build_proxy_request`).
+/// When `fake_origin_local` is true, origin-revealing headers are rewritten
+/// or stripped so the local service sees a localhost origin.
 fn apply_headers_vec(
     mut req: reqwest::RequestBuilder,
     headers: &[(String, String)],
     fake_origin_local: bool,
+    target: &TunnelTarget,
 ) -> reqwest::RequestBuilder {
     for (k, v) in headers {
         let lk = k.to_lowercase();
         if lk == "connection" || lk == "transfer-encoding" {
             continue;
         }
-        if fake_origin_local && (lk == "host" || lk == "referer") {
+        if fake_origin_local && FAKE_ORIGIN_DROP_HEADERS.contains(&lk.as_str()) {
+            if let Some(rewritten) = fake_origin_header(&lk, v, target) {
+                req = req.header(k.as_str(), rewritten.as_ref());
+            }
             continue;
         }
         req = req.header(k.as_str(), v.as_str());
@@ -138,11 +183,13 @@ fn apply_headers_vec(
 }
 
 /// Apply request headers from a JSON object, filtering hop-by-hop headers.
-/// When `fake_origin_local` is true, Host and Referer headers are also stripped.
+/// When `fake_origin_local` is true, origin-revealing headers are rewritten
+/// or stripped so the local service sees a localhost origin.
 fn apply_headers_json(
     mut req: reqwest::RequestBuilder,
     headers: &serde_json::Value,
     fake_origin_local: bool,
+    target: &TunnelTarget,
 ) -> reqwest::RequestBuilder {
     if let Some(hdrs) = headers.as_object() {
         for (k, v) in hdrs {
@@ -150,7 +197,12 @@ fn apply_headers_json(
             if lk == "connection" || lk == "transfer-encoding" {
                 continue;
             }
-            if fake_origin_local && (lk == "host" || lk == "referer") {
+            if fake_origin_local && FAKE_ORIGIN_DROP_HEADERS.contains(&lk.as_str()) {
+                if let Some(val) = v.as_str() {
+                    if let Some(rewritten) = fake_origin_header(&lk, val, target) {
+                        req = req.header(k.as_str(), rewritten.as_ref());
+                    }
+                }
                 continue;
             }
             if let Some(val) = v.as_str() {
@@ -634,7 +686,7 @@ async fn handle_proxy_request(
 
     let client = reqwest::Client::new();
     let req = build_proxy_request(&client, &target, method, path, fake_origin_local);
-    let req = apply_headers_vec(req, &headers, fake_origin_local);
+    let req = apply_headers_vec(req, &headers, fake_origin_local, &target);
     let req = apply_body_b64(req, body);
 
     let (status, resp_headers, resp_body) = match req.timeout(Duration::from_secs(60)).send().await
@@ -707,7 +759,7 @@ async fn handle_proxy_stream_request(
 
     let client = reqwest::Client::new();
     let req = build_proxy_request(&client, &target, method, path, fake_origin_local);
-    let req = apply_headers_json(req, &headers_json, fake_origin_local);
+    let req = apply_headers_json(req, &headers_json, fake_origin_local, &target);
     let req = apply_body_b64(req, body_b64);
 
     let resp = match req.send().await {
@@ -898,7 +950,7 @@ async fn proxy_session_stream(
 
     let client = reqwest::Client::new();
     let mut req = build_proxy_request(&client, &target, method, req_path, fake_origin_local);
-    req = apply_headers_json(req, &req_json["headers"], fake_origin_local);
+    req = apply_headers_json(req, &req_json["headers"], fake_origin_local, target);
 
     // Collect request body chunks from data WS until "end_request"
     let has_body = req_json
