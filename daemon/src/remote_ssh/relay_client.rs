@@ -108,14 +108,17 @@ fn build_proxy_request(
         _ => client.get(&url),
     };
     if fake_origin_local {
-        req = req.header("host", format!("{}:{}", target.host, target.port));
+        let local = format!("{}:{}", target.host, target.port);
+        req = req
+            .header("host", &local)
+            .header("referer", format!("http://{local}/"));
     }
     req
 }
 
 /// Apply request headers from a Vec, filtering hop-by-hop headers.
-/// When `fake_origin_local` is true, the Host header is also stripped
-/// (it was already set by `build_proxy_request`).
+/// When `fake_origin_local` is true, Host and Referer headers are also
+/// stripped (they were already set by `build_proxy_request`).
 fn apply_headers_vec(
     mut req: reqwest::RequestBuilder,
     headers: &[(String, String)],
@@ -126,7 +129,7 @@ fn apply_headers_vec(
         if lk == "connection" || lk == "transfer-encoding" {
             continue;
         }
-        if fake_origin_local && lk == "host" {
+        if fake_origin_local && (lk == "host" || lk == "referer") {
             continue;
         }
         req = req.header(k.as_str(), v.as_str());
@@ -135,7 +138,7 @@ fn apply_headers_vec(
 }
 
 /// Apply request headers from a JSON object, filtering hop-by-hop headers.
-/// When `fake_origin_local` is true, the Host header is also stripped.
+/// When `fake_origin_local` is true, Host and Referer headers are also stripped.
 fn apply_headers_json(
     mut req: reqwest::RequestBuilder,
     headers: &serde_json::Value,
@@ -147,7 +150,7 @@ fn apply_headers_json(
             if lk == "connection" || lk == "transfer-encoding" {
                 continue;
             }
-            if fake_origin_local && lk == "host" {
+            if fake_origin_local && (lk == "host" || lk == "referer") {
                 continue;
             }
             if let Some(val) = v.as_str() {

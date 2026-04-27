@@ -148,7 +148,7 @@ flavour = "cpu"
 # url = "wss://relay.example.com"
 # remote_ssh_enabled = false
 # tunnels_enabled = true
-# fake_origin_local = false  # rewrite Host header to localhost:<port> in tunnel proxying
+# fake_origin_local = false  # rewrite Host and Referer headers to localhost:<port> in tunnel proxying
 
 # ── Healer (per-cluster overrides) ──────────────────────────────────
 # These settings override server-global healer defaults for this cluster.
