@@ -1929,6 +1929,14 @@ pub(crate) struct Catalog {
     bundles: Vec<CatalogBundle>,
     mcp_servers: Vec<McpServerOptionRow>,
     mcp_bundles: Vec<CatalogMcpBundle>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    remote_skill_channels: Vec<RemoteSkillRow>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    remote_bundles: Vec<RemoteBundleRow>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    remote_mcp_servers: Vec<RemoteMcpServerRow>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    remote_mcp_bundles: Vec<RemoteMcpBundleRow>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1960,6 +1968,7 @@ struct McpBundleItemLink {
 pub async fn setting_catalog(
     auth: SettingAuth,
     pool: &State<PgPool>,
+    _cache: &State<crate::skill_center_cache::SkillCenterCache>,
 ) -> Result<Json<Catalog>, Status> {
     let cid = auth.cluster_id;
     let p = pool.inner();
@@ -2053,11 +2062,52 @@ pub async fn setting_catalog(
         })
         .collect();
 
+    // Fetch remote assignments for this cluster
+    let remote_skill_channels = sqlx::query_as::<_, RemoteSkillRow>(
+        "SELECT id, skill_center_id, remote_skill_channel_id, slug, channel, skill_name, created_at \
+         FROM cluster_remote_skills WHERE cluster_id = $1 ORDER BY slug, channel",
+    )
+    .bind(cid)
+    .fetch_all(p)
+    .await
+    .unwrap_or_default();
+
+    let remote_bundles = sqlx::query_as::<_, RemoteBundleRow>(
+        "SELECT id, skill_center_id, remote_bundle_id, slug, bundle_name, created_at \
+         FROM cluster_remote_bundles WHERE cluster_id = $1 ORDER BY slug",
+    )
+    .bind(cid)
+    .fetch_all(p)
+    .await
+    .unwrap_or_default();
+
+    let remote_mcp_servers = sqlx::query_as::<_, RemoteMcpServerRow>(
+        "SELECT id, skill_center_id, remote_mcp_server_id, slug, mcp_name, created_at \
+         FROM cluster_remote_mcp_servers WHERE cluster_id = $1 ORDER BY slug",
+    )
+    .bind(cid)
+    .fetch_all(p)
+    .await
+    .unwrap_or_default();
+
+    let remote_mcp_bundles = sqlx::query_as::<_, RemoteMcpBundleRow>(
+        "SELECT id, skill_center_id, remote_bundle_id, slug, bundle_name, created_at \
+         FROM cluster_remote_mcp_bundles WHERE cluster_id = $1 ORDER BY slug",
+    )
+    .bind(cid)
+    .fetch_all(p)
+    .await
+    .unwrap_or_default();
+
     Ok(Json(Catalog {
         skill_channels,
         bundles,
         mcp_servers,
         mcp_bundles,
+        remote_skill_channels,
+        remote_bundles,
+        remote_mcp_servers,
+        remote_mcp_bundles,
     }))
 }
 
@@ -4926,7 +4976,7 @@ pub async fn admin_create_federation_token(
 
 // ── Setting — Remote Skill Assignments ─────────────────────────────
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct RemoteSkillRow {
     id: Uuid,
     skill_center_id: Uuid,
@@ -5053,7 +5103,7 @@ pub async fn setting_batch_remote_skills(
 
 // ── Setting — Remote Bundle Assignments ────────────────────────────
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct RemoteBundleRow {
     id: Uuid,
     skill_center_id: Uuid,
@@ -5176,7 +5226,7 @@ pub async fn setting_batch_remote_bundles(
 
 // ── Setting — Remote MCP Server Assignments ────────────────────────
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct RemoteMcpServerRow {
     id: Uuid,
     skill_center_id: Uuid,
@@ -5299,7 +5349,7 @@ pub async fn setting_batch_remote_mcp_servers(
 
 // ── Setting — Remote MCP Bundle Assignments ────────────────────────
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub(crate) struct RemoteMcpBundleRow {
     id: Uuid,
     skill_center_id: Uuid,

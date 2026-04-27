@@ -47,6 +47,7 @@ async fn update_skill(
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     Ok(())
 }
 
@@ -233,6 +234,7 @@ async fn add_channel_mcp_dep(
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     Ok(())
 }
 
@@ -249,6 +251,7 @@ async fn remove_channel_mcp_dep(dep_id: String) -> Result<(), ServerFnError> {
         .execute(&pool)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     Ok(())
 }
 

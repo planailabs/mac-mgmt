@@ -10,6 +10,8 @@ use uuid::Uuid;
 use crate::api::push::{PushChannels, PushMessage};
 use crate::skill_center_client::SkillCenterClient;
 
+static GLOBAL_CACHE: std::sync::OnceLock<SkillCenterCache> = std::sync::OnceLock::new();
+
 /// Cached catalog from a single skill center.
 #[derive(Clone)]
 pub struct CachedCatalog {
@@ -36,6 +38,16 @@ impl SkillCenterCache {
 
     pub async fn get_all(&self) -> HashMap<Uuid, CachedCatalog> {
         self.inner.read().await.clone()
+    }
+
+    /// Set the global cache instance (called once during init).
+    pub fn set_global(cache: SkillCenterCache) {
+        let _ = GLOBAL_CACHE.set(cache);
+    }
+
+    /// Get the global cache instance (for Dioxus server functions).
+    pub fn global() -> Option<SkillCenterCache> {
+        GLOBAL_CACHE.get().cloned()
     }
 
     async fn update(&self, skill_center_id: Uuid, catalog: FederationCatalog) {

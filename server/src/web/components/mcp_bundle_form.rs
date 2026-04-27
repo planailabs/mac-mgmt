@@ -25,6 +25,7 @@ async fn create_mcp_bundle(
     .fetch_one(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     Ok(bundle)
 }
 

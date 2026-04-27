@@ -3,6 +3,42 @@ use dioxus::prelude::*;
 use super::skill_center_list::SkillCenterRow;
 use crate::web::app::Route;
 
+/// Summary of a skill center's cached catalog.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct CatalogSummary {
+    pub skill_channels: usize,
+    pub bundles: usize,
+    pub mcp_servers: usize,
+    pub mcp_bundles: usize,
+    pub fetched_at: Option<String>,
+}
+
+#[server]
+async fn get_catalog_summary(id: String) -> Result<CatalogSummary, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid UUID"))?;
+
+    // Access the skill center cache from global state
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("cache not available"))?;
+
+    if let Some(cached) = cache.get(&uuid).await {
+        Ok(CatalogSummary {
+            skill_channels: cached.catalog.skill_channels.len(),
+            bundles: cached.catalog.bundles.len(),
+            mcp_servers: cached.catalog.mcp_servers.len(),
+            mcp_bundles: cached.catalog.mcp_bundles.len(),
+            fetched_at: Some(cached.fetched_at.to_rfc3339()),
+        })
+    } else {
+        Ok(CatalogSummary::default())
+    }
+}
+
 #[server]
 async fn get_skill_center(id: String) -> Result<Option<SkillCenterRow>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
@@ -98,9 +134,15 @@ async fn delete_skill_center(id: String) -> Result<(), ServerFnError> {
 
 #[component]
 pub fn SkillCenterDetail(id: String) -> Element {
+    let id2 = id.clone();
     let mut center_future = use_server_future(move || {
         let id = id.clone();
         async move { get_skill_center(id).await }
+    })?;
+
+    let catalog_summary = use_server_future(move || {
+        let id = id2.clone();
+        async move { get_catalog_summary(id).await }
     })?;
 
     let mut editing = use_signal(|| false);
@@ -266,6 +308,42 @@ pub fn SkillCenterDetail(id: String) -> Element {
                                 dt { class: "font-medium dark:text-gray-300", "Updated" }
                                 dd { class: "dark:text-gray-400", "{center.updated_at}" }
                             }
+
+                            // Cached catalog summary
+                            h3 { class: "text-lg font-semibold mt-6 mb-3 dark:text-white", "Cached Catalog" }
+                            {match &*catalog_summary.read() {
+                                Some(Ok(summary)) => {
+                                    if summary.skill_channels == 0 && summary.bundles == 0 && summary.mcp_servers == 0 && summary.mcp_bundles == 0 {
+                                        rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "No catalog data cached yet. The catalog will be fetched automatically." } }
+                                    } else {
+                                        rsx! {
+                                            div { class: "grid grid-cols-2 sm:grid-cols-4 gap-4",
+                                                div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
+                                                    p { class: "text-2xl font-bold dark:text-white", "{summary.skill_channels}" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "Skill Channels" }
+                                                }
+                                                div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
+                                                    p { class: "text-2xl font-bold dark:text-white", "{summary.bundles}" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "Bundles" }
+                                                }
+                                                div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
+                                                    p { class: "text-2xl font-bold dark:text-white", "{summary.mcp_servers}" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "MCP Servers" }
+                                                }
+                                                div { class: "bg-gray-50 dark:bg-gray-800 rounded p-3",
+                                                    p { class: "text-2xl font-bold dark:text-white", "{summary.mcp_bundles}" }
+                                                    p { class: "text-xs text-gray-500 dark:text-gray-400", "MCP Bundles" }
+                                                }
+                                            }
+                                            if let Some(ref ts) = summary.fetched_at {
+                                                p { class: "text-xs text-gray-500 dark:text-gray-400 mt-2", "Last synced: {ts}" }
+                                            }
+                                        }
+                                    }
+                                },
+                                Some(Err(e)) => rsx! { p { class: "text-red-500 text-sm", "Failed to load catalog summary: {e}" } },
+                                None => rsx! { p { class: "text-gray-500 text-sm", "Loading catalog..." } },
+                            }}
                         }
                     }
                 },

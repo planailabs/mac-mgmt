@@ -297,6 +297,7 @@ async fn init_server() -> (
 
     // Initialize skill center cache and start background refresh loop
     let sc_cache = skill_center_cache::SkillCenterCache::new();
+    skill_center_cache::SkillCenterCache::set_global(sc_cache.clone());
     {
         let cache = sc_cache.clone();
         let p = pool.clone();

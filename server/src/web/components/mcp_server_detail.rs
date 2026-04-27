@@ -43,7 +43,7 @@ async fn upsert_mcp_server(
     crate::mcp_schema::validate_mcp_server_config(&parsed)
         .map_err(|e| ServerFnError::new(format!("schema validation failed: {e}")))?;
 
-    if let Some(id) = id {
+    let result = if let Some(id) = id {
         let uuid: uuid::Uuid = id
             .parse()
             .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
@@ -57,7 +57,7 @@ async fn upsert_mcp_server(
         .bind(uuid)
         .fetch_one(&pool)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
+        .map_err(|e| ServerFnError::new(e.to_string()))?
     } else {
         sqlx::query_as::<_, McpServer>(
             "INSERT INTO mcp_servers (slug, name, description, config_json, hide_from_public_catalog) VALUES ($1, $2, $3, $4, $5) RETURNING *",
@@ -69,8 +69,10 @@ async fn upsert_mcp_server(
         .bind(hide_from_public_catalog)
         .fetch_one(&pool)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-    }
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    };
+    crate::api::push::notify_federation_global();
+    Ok(result)
 }
 
 #[server]
@@ -94,6 +96,7 @@ async fn add_nix_package(id: String, package: String) -> Result<(), ServerFnErro
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     Ok(())
 }
 
@@ -113,6 +116,7 @@ async fn remove_nix_package(id: String, package: String) -> Result<(), ServerFnE
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
     Ok(())
 }
 

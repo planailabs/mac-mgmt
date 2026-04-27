@@ -26,6 +26,16 @@ When changing daemon code, ensure it compiles not only with default features but
 
 Run `cargo check -p mac-mgmt` with each combination to catch gating issues early. Code behind a feature gate must not reference items from another feature without the appropriate `#[cfg(feature = "...")]` guard.
 
+## Server: verify builds across feature combinations
+
+The server has `skill-center` and `mgmt` features (both on by default). When changing code gated on these features, ensure it compiles in all three modes:
+
+- `cargo check -p mac-mgmt-server` (default — monolith, both features on)
+- `cargo check -p mac-mgmt-server --no-default-features --features "server,webui,web,skill-center"` (skill center only)
+- `cargo check -p mac-mgmt-server --no-default-features --features "server,webui,web,mgmt"` (management server only)
+
+When adding catalog mutation paths (skills, bundles, MCP servers, MCP bundles), call `crate::api::push::notify_federation_global()` so federation SSE subscribers are notified of catalog changes.
+
 ## Configuration
 
 When changing default values in config structs (`OllamaConfig`, `OpenClawConfig`, etc.), always update `config.example.toml` to reflect the new defaults.
