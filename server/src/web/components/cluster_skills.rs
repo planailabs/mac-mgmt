@@ -360,6 +360,89 @@ async fn remove_cluster_bundle(cluster_bundle_id: String) -> Result<(), ServerFn
     Ok(())
 }
 
+/// Remote skill assignment from a skill center.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct RemoteSkillDisplay {
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub channel: String,
+    pub skill_name: String,
+    pub skill_center_name: String,
+}
+
+/// Remote bundle assignment from a skill center.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct RemoteBundleDisplay {
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub bundle_name: String,
+    pub skill_center_name: String,
+}
+
+#[server]
+async fn list_remote_skills(cluster_id: String) -> Result<Vec<RemoteSkillDisplay>, ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let rows = sqlx::query_as::<_, RemoteSkillDisplay>(
+        "SELECT crs.id, crs.slug, crs.channel, crs.skill_name, sc.name AS skill_center_name \
+         FROM cluster_remote_skills crs \
+         JOIN skill_centers sc ON sc.id = crs.skill_center_id \
+         WHERE crs.cluster_id = $1 \
+         ORDER BY crs.slug, crs.channel",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows)
+}
+
+#[server]
+async fn list_remote_bundles(
+    cluster_id: String,
+) -> Result<Vec<RemoteBundleDisplay>, ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let rows = sqlx::query_as::<_, RemoteBundleDisplay>(
+        "SELECT crb.id, crb.slug, crb.bundle_name, sc.name AS skill_center_name \
+         FROM cluster_remote_bundles crb \
+         JOIN skill_centers sc ON sc.id = crb.skill_center_id \
+         WHERE crb.cluster_id = $1 \
+         ORDER BY crb.slug",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows)
+}
+
 #[component]
 pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
     let cid_skills = cluster_id.clone();
@@ -378,6 +461,18 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
     let bundle_skills = use_server_future(move || {
         let cid = cid_bskills.clone();
         async move { list_bundle_skills(cid).await }
+    })?;
+
+    let cid_remote_skills = cluster_id.clone();
+    let remote_skills = use_server_future(move || {
+        let cid = cid_remote_skills.clone();
+        async move { list_remote_skills(cid).await }
+    })?;
+
+    let cid_remote_bundles = cluster_id.clone();
+    let remote_bundles = use_server_future(move || {
+        let cid = cid_remote_bundles.clone();
+        async move { list_remote_bundles(cid).await }
     })?;
 
     let available_sc = use_server_future(list_all_skill_channels)?;
@@ -588,6 +683,66 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                                 "Remove"
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            }}
+        }
+
+        // Remote skill assignments (from skill centers, purple)
+        div { class: "mb-4",
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote Skills" }
+            {match &*remote_skills.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote skill assignments." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for rs in list {
+                            {
+                                let label = format!("{} / {}", rs.slug, rs.channel);
+                                let via = rs.skill_center_name.clone();
+                                rsx! {
+                                    li { class: "py-2 flex items-center gap-2",
+                                        span { class: "text-sm font-mono text-purple-700 dark:text-purple-400", "{label}" }
+                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            }}
+        }
+
+        // Remote bundle assignments (from skill centers, purple)
+        div {
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote Bundles" }
+            {match &*remote_bundles.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote bundle assignments." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for rb in list {
+                            {
+                                let label = if rb.bundle_name.is_empty() {
+                                    rb.slug.clone()
+                                } else {
+                                    format!("{} ({})", rb.bundle_name, rb.slug)
+                                };
+                                let via = rb.skill_center_name.clone();
+                                rsx! {
+                                    li { class: "py-2 flex items-center gap-2",
+                                        span { class: "text-sm text-purple-700 dark:text-purple-400", "{label}" }
+                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
                                     }
                                 }
                             }

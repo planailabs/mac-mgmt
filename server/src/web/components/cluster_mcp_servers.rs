@@ -505,6 +505,90 @@ async fn remove_cluster_mcp_bundle(cluster_mcp_bundle_id: String) -> Result<(), 
     Ok(())
 }
 
+/// Remote MCP server assignment from a skill center.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct RemoteMcpServerDisplay {
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub mcp_name: String,
+    pub skill_center_name: String,
+}
+
+/// Remote MCP bundle assignment from a skill center.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
+pub struct RemoteMcpBundleDisplay {
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub bundle_name: String,
+    pub skill_center_name: String,
+}
+
+#[server]
+async fn list_remote_mcp_servers(
+    cluster_id: String,
+) -> Result<Vec<RemoteMcpServerDisplay>, ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let rows = sqlx::query_as::<_, RemoteMcpServerDisplay>(
+        "SELECT crm.id, crm.slug, crm.mcp_name, sc.name AS skill_center_name \
+         FROM cluster_remote_mcp_servers crm \
+         JOIN skill_centers sc ON sc.id = crm.skill_center_id \
+         WHERE crm.cluster_id = $1 \
+         ORDER BY crm.slug",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows)
+}
+
+#[server]
+async fn list_remote_mcp_bundles(
+    cluster_id: String,
+) -> Result<Vec<RemoteMcpBundleDisplay>, ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .accessible_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let rows = sqlx::query_as::<_, RemoteMcpBundleDisplay>(
+        "SELECT crmb.id, crmb.slug, crmb.bundle_name, sc.name AS skill_center_name \
+         FROM cluster_remote_mcp_bundles crmb \
+         JOIN skill_centers sc ON sc.id = crmb.skill_center_id \
+         WHERE crmb.cluster_id = $1 \
+         ORDER BY crmb.slug",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(rows)
+}
+
 #[component]
 pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
     let cid_servers = cluster_id.clone();
@@ -529,6 +613,18 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
     let transitive_mcps = use_server_future(move || {
         let cid = cid_tmcps.clone();
         async move { list_transitive_mcp_servers(cid).await }
+    })?;
+
+    let cid_remote_servers = cluster_id.clone();
+    let remote_servers = use_server_future(move || {
+        let cid = cid_remote_servers.clone();
+        async move { list_remote_mcp_servers(cid).await }
+    })?;
+
+    let cid_remote_mcp_bundles = cluster_id.clone();
+    let remote_mcp_bundles = use_server_future(move || {
+        let cid = cid_remote_mcp_bundles.clone();
+        async move { list_remote_mcp_bundles(cid).await }
     })?;
 
     let available_servers = use_server_future(list_all_mcp_servers)?;
@@ -774,6 +870,70 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                                 "Remove"
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            }}
+        }
+
+        // Remote MCP server assignments (from skill centers, purple)
+        div { class: "mb-4",
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote MCP Servers" }
+            {match &*remote_servers.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote MCP server assignments." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for rm in list {
+                            {
+                                let label = if rm.mcp_name.is_empty() {
+                                    rm.slug.clone()
+                                } else {
+                                    format!("{} ({})", rm.mcp_name, rm.slug)
+                                };
+                                let via = rm.skill_center_name.clone();
+                                rsx! {
+                                    li { class: "py-2 flex items-center gap-2",
+                                        span { class: "text-sm font-mono text-purple-700 dark:text-purple-400", "{label}" }
+                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
+                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+            }}
+        }
+
+        // Remote MCP bundle assignments (from skill centers, purple)
+        div {
+            h4 { class: "text-sm font-semibold text-purple-700 dark:text-purple-400 mb-2", "Remote MCP Bundles" }
+            {match &*remote_mcp_bundles.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-gray-500 dark:text-gray-400 text-sm", "No remote MCP bundle assignments." }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for rb in list {
+                            {
+                                let label = if rb.bundle_name.is_empty() {
+                                    rb.slug.clone()
+                                } else {
+                                    format!("{} ({})", rb.bundle_name, rb.slug)
+                                };
+                                let via = rb.skill_center_name.clone();
+                                rsx! {
+                                    li { class: "py-2 flex items-center gap-2",
+                                        span { class: "text-sm text-purple-700 dark:text-purple-400", "{label}" }
+                                        span { class: "text-xs text-purple-500 dark:text-purple-500", "via {via}" }
                                     }
                                 }
                             }
