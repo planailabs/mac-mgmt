@@ -165,59 +165,6 @@ pub struct SkillCenter {
     pub updated_at: DateTime<Utc>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct ClusterRemoteSkill {
-    pub id: Uuid,
-    pub cluster_id: Uuid,
-    pub skill_center_id: Uuid,
-    pub remote_skill_channel_id: Uuid,
-    pub slug: String,
-    pub channel: String,
-    pub skill_name: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct ClusterRemoteBundle {
-    pub id: Uuid,
-    pub cluster_id: Uuid,
-    pub skill_center_id: Uuid,
-    pub remote_bundle_id: Uuid,
-    pub slug: String,
-    pub bundle_name: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct ClusterRemoteMcpServer {
-    pub id: Uuid,
-    pub cluster_id: Uuid,
-    pub skill_center_id: Uuid,
-    pub remote_mcp_server_id: Uuid,
-    pub slug: String,
-    pub mcp_name: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct ClusterRemoteMcpBundle {
-    pub id: Uuid,
-    pub cluster_id: Uuid,
-    pub skill_center_id: Uuid,
-    pub remote_bundle_id: Uuid,
-    pub slug: String,
-    pub bundle_name: String,
-    pub created_at: DateTime<Utc>,
-}
-
 // ── Heartbeat models ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

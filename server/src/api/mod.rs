@@ -321,23 +321,6 @@ pub fn build_rocket(
         routes::admin_delete_skill_center,
         // Admin — federation tokens
         routes::admin_create_federation_token,
-        // Setting — remote assignments
-        routes::setting_list_remote_skills,
-        routes::setting_add_remote_skill,
-        routes::setting_remove_remote_skill,
-        routes::setting_batch_remote_skills,
-        routes::setting_list_remote_bundles,
-        routes::setting_add_remote_bundle,
-        routes::setting_remove_remote_bundle,
-        routes::setting_batch_remote_bundles,
-        routes::setting_list_remote_mcp_servers,
-        routes::setting_add_remote_mcp_server,
-        routes::setting_remove_remote_mcp_server,
-        routes::setting_batch_remote_mcp_servers,
-        routes::setting_list_remote_mcp_bundles,
-        routes::setting_add_remote_mcp_bundle,
-        routes::setting_remove_remote_mcp_bundle,
-        routes::setting_batch_remote_mcp_bundles,
     ]);
 
     rocket::custom(config)

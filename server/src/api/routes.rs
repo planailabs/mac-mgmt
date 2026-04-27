@@ -93,61 +93,66 @@ pub async fn get_self(
 // ── Existing sync routes ───────────────────────────────────────────────
 
 /// Aggregate skills from remote skill centers for a cluster.
-/// Queries cluster_remote_skills and cluster_remote_bundles, groups by skill center,
-/// resolves via each skill center's federation API, and merges by priority.
+/// Queries cluster_skills and cluster_bundles where skill_center_id IS NOT NULL,
+/// groups by skill center, resolves via each skill center's federation API, and merges by priority.
 async fn aggregate_remote_skills(
     cluster_id: Uuid,
     pool: &PgPool,
     cache: &crate::skill_center_cache::SkillCenterCache,
     arch: &str,
 ) -> HashMap<String, String> {
-    // Gather remote direct skill assignments
     #[derive(sqlx::FromRow)]
-    struct RemoteSkillRef {
-        skill_center_id: Uuid,
-        slug: String,
-        channel: String,
+    struct RemoteRef {
+        skill_center_id: Option<Uuid>,
+        slug: Option<String>,
+        channel: Option<String>,
     }
 
-    let direct: Vec<RemoteSkillRef> = sqlx::query_as(
-        "SELECT skill_center_id, slug, channel FROM cluster_remote_skills WHERE cluster_id = $1",
+    let direct: Vec<RemoteRef> = sqlx::query_as(
+        "SELECT skill_center_id, slug, channel FROM cluster_skills \
+         WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
     )
     .bind(cluster_id)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
-    // Gather remote bundle assignments and expand via cached catalog
     #[derive(sqlx::FromRow)]
     struct RemoteBundleRef {
-        skill_center_id: Uuid,
-        remote_bundle_id: Uuid,
+        skill_center_id: Option<Uuid>,
+        remote_id: Option<Uuid>,
     }
 
     let bundles: Vec<RemoteBundleRef> = sqlx::query_as(
-        "SELECT skill_center_id, remote_bundle_id FROM cluster_remote_bundles WHERE cluster_id = $1",
+        "SELECT skill_center_id, remote_id FROM cluster_bundles \
+         WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
     )
     .bind(cluster_id)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
-    // Group by skill center: skill_center_id → Vec<(slug, channel)>
     let mut by_sc: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
 
     for r in direct {
-        by_sc.entry(r.skill_center_id).or_default().push((r.slug, r.channel));
+        if let (Some(sc_id), Some(slug), Some(channel)) =
+            (r.skill_center_id, r.slug, r.channel)
+        {
+            by_sc.entry(sc_id).or_default().push((slug, channel));
+        }
     }
 
     let all_caches = cache.get_all().await;
     for b in bundles {
-        if let Some(cached) = all_caches.get(&b.skill_center_id) {
-            if let Some(bundle) = cached.catalog.bundles.iter().find(|fb| fb.id == b.remote_bundle_id) {
-                for skill in &bundle.skills {
-                    by_sc
-                        .entry(b.skill_center_id)
-                        .or_default()
-                        .push((skill.skill_slug.clone(), skill.channel.clone()));
+        if let (Some(sc_id), Some(rid)) = (b.skill_center_id, b.remote_id) {
+            if let Some(cached) = all_caches.get(&sc_id) {
+                if let Some(bundle) = cached.catalog.bundles.iter().find(|fb| fb.id == rid) {
+                    for skill in &bundle.skills {
+                        by_sc
+                            .entry(sc_id)
+                            .or_default()
+                            .push((skill.skill_slug.clone(), skill.channel.clone()));
+                    }
                 }
             }
         }
@@ -157,7 +162,6 @@ async fn aggregate_remote_skills(
         return HashMap::new();
     }
 
-    // Load skill centers for URL/token
     #[derive(sqlx::FromRow)]
     struct ScInfo {
         id: Uuid,
@@ -175,7 +179,6 @@ async fn aggregate_remote_skills(
 
     let sc_map: HashMap<Uuid, &ScInfo> = centers.iter().map(|s| (s.id, s)).collect();
 
-    // Sort by priority ascending (lower priority first, so higher overwrites)
     let mut ordered: Vec<_> = by_sc.iter().collect();
     ordered.sort_by_key(|(sc_id, _)| sc_map.get(sc_id).map(|s| s.priority).unwrap_or(0));
 
@@ -190,7 +193,7 @@ async fn aggregate_remote_skills(
             match client.resolve_skills(slug_channels, arch).await {
                 Ok(resolved) => {
                     for (slug, path) in resolved {
-                        result.insert(slug, path); // higher priority overwrites lower
+                        result.insert(slug, path);
                     }
                 }
                 Err(e) => {
@@ -204,6 +207,7 @@ async fn aggregate_remote_skills(
 }
 
 /// Aggregate MCP servers from remote skill centers for a cluster.
+/// Queries cluster_mcp_servers and cluster_mcp_bundles where skill_center_id IS NOT NULL.
 async fn aggregate_remote_mcp_servers(
     cluster_id: Uuid,
     pool: &PgPool,
@@ -211,12 +215,13 @@ async fn aggregate_remote_mcp_servers(
 ) -> HashMap<String, McpServerEntry> {
     #[derive(sqlx::FromRow)]
     struct RemoteMcpRef {
-        skill_center_id: Uuid,
-        slug: String,
+        skill_center_id: Option<Uuid>,
+        slug: Option<String>,
     }
 
     let direct: Vec<RemoteMcpRef> = sqlx::query_as(
-        "SELECT skill_center_id, slug FROM cluster_remote_mcp_servers WHERE cluster_id = $1",
+        "SELECT skill_center_id, slug FROM cluster_mcp_servers \
+         WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
     )
     .bind(cluster_id)
     .fetch_all(pool)
@@ -225,34 +230,35 @@ async fn aggregate_remote_mcp_servers(
 
     #[derive(sqlx::FromRow)]
     struct RemoteMcpBundleRef {
-        skill_center_id: Uuid,
-        remote_bundle_id: Uuid,
+        skill_center_id: Option<Uuid>,
+        remote_id: Option<Uuid>,
     }
 
     let bundles: Vec<RemoteMcpBundleRef> = sqlx::query_as(
-        "SELECT skill_center_id, remote_bundle_id FROM cluster_remote_mcp_bundles WHERE cluster_id = $1",
+        "SELECT skill_center_id, remote_id FROM cluster_mcp_bundles \
+         WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
     )
     .bind(cluster_id)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
-    // Group by skill center
     let mut by_sc: HashMap<Uuid, Vec<String>> = HashMap::new();
 
     for r in direct {
-        by_sc.entry(r.skill_center_id).or_default().push(r.slug);
+        if let (Some(sc_id), Some(slug)) = (r.skill_center_id, r.slug) {
+            by_sc.entry(sc_id).or_default().push(slug);
+        }
     }
 
     let all_caches = cache.get_all().await;
     for b in bundles {
-        if let Some(cached) = all_caches.get(&b.skill_center_id) {
-            if let Some(bundle) = cached.catalog.mcp_bundles.iter().find(|fb| fb.id == b.remote_bundle_id) {
-                for server in &bundle.servers {
-                    by_sc
-                        .entry(b.skill_center_id)
-                        .or_default()
-                        .push(server.slug.clone());
+        if let (Some(sc_id), Some(rid)) = (b.skill_center_id, b.remote_id) {
+            if let Some(cached) = all_caches.get(&sc_id) {
+                if let Some(bundle) = cached.catalog.mcp_bundles.iter().find(|fb| fb.id == rid) {
+                    for server in &bundle.servers {
+                        by_sc.entry(sc_id).or_default().push(server.slug.clone());
+                    }
                 }
             }
         }
@@ -1929,14 +1935,6 @@ pub(crate) struct Catalog {
     bundles: Vec<CatalogBundle>,
     mcp_servers: Vec<McpServerOptionRow>,
     mcp_bundles: Vec<CatalogMcpBundle>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    remote_skill_channels: Vec<RemoteSkillRow>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    remote_bundles: Vec<RemoteBundleRow>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    remote_mcp_servers: Vec<RemoteMcpServerRow>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    remote_mcp_bundles: Vec<RemoteMcpBundleRow>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2062,52 +2060,11 @@ pub async fn setting_catalog(
         })
         .collect();
 
-    // Fetch remote assignments for this cluster
-    let remote_skill_channels = sqlx::query_as::<_, RemoteSkillRow>(
-        "SELECT id, skill_center_id, remote_skill_channel_id, slug, channel, skill_name, created_at \
-         FROM cluster_remote_skills WHERE cluster_id = $1 ORDER BY slug, channel",
-    )
-    .bind(cid)
-    .fetch_all(p)
-    .await
-    .unwrap_or_default();
-
-    let remote_bundles = sqlx::query_as::<_, RemoteBundleRow>(
-        "SELECT id, skill_center_id, remote_bundle_id, slug, bundle_name, created_at \
-         FROM cluster_remote_bundles WHERE cluster_id = $1 ORDER BY slug",
-    )
-    .bind(cid)
-    .fetch_all(p)
-    .await
-    .unwrap_or_default();
-
-    let remote_mcp_servers = sqlx::query_as::<_, RemoteMcpServerRow>(
-        "SELECT id, skill_center_id, remote_mcp_server_id, slug, mcp_name, created_at \
-         FROM cluster_remote_mcp_servers WHERE cluster_id = $1 ORDER BY slug",
-    )
-    .bind(cid)
-    .fetch_all(p)
-    .await
-    .unwrap_or_default();
-
-    let remote_mcp_bundles = sqlx::query_as::<_, RemoteMcpBundleRow>(
-        "SELECT id, skill_center_id, remote_bundle_id, slug, bundle_name, created_at \
-         FROM cluster_remote_mcp_bundles WHERE cluster_id = $1 ORDER BY slug",
-    )
-    .bind(cid)
-    .fetch_all(p)
-    .await
-    .unwrap_or_default();
-
     Ok(Json(Catalog {
         skill_channels,
         bundles,
         mcp_servers,
         mcp_bundles,
-        remote_skill_channels,
-        remote_bundles,
-        remote_mcp_servers,
-        remote_mcp_bundles,
     }))
 }
 
@@ -4974,498 +4931,3 @@ pub async fn admin_create_federation_token(
     Ok(Json(CreatedToken { token: raw_token }))
 }
 
-// ── Setting — Remote Skill Assignments ─────────────────────────────
-
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct RemoteSkillRow {
-    id: Uuid,
-    skill_center_id: Uuid,
-    remote_skill_channel_id: Uuid,
-    slug: String,
-    channel: String,
-    skill_name: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[rocket::get("/setting/remote-skills")]
-pub async fn setting_list_remote_skills(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-) -> Result<Json<Vec<RemoteSkillRow>>, Status> {
-    let rows = sqlx::query_as::<_, RemoteSkillRow>(
-        "SELECT id, skill_center_id, remote_skill_channel_id, slug, channel, skill_name, created_at \
-         FROM cluster_remote_skills WHERE cluster_id = $1 ORDER BY slug, channel",
-    )
-    .bind(auth.cluster_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows))
-}
-
-#[derive(Deserialize)]
-pub struct AddRemoteSkillBody {
-    skill_center_id: Uuid,
-    remote_skill_channel_id: Uuid,
-    slug: String,
-    channel: String,
-    #[serde(default)]
-    skill_name: String,
-}
-
-#[rocket::post("/setting/remote-skills", data = "<body>")]
-pub async fn setting_add_remote_skill(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<AddRemoteSkillBody>,
-) -> Result<Status, Status> {
-    sqlx::query(
-        "INSERT INTO cluster_remote_skills \
-         (cluster_id, skill_center_id, remote_skill_channel_id, slug, channel, skill_name) \
-         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING",
-    )
-    .bind(auth.cluster_id)
-    .bind(body.skill_center_id)
-    .bind(body.remote_skill_channel_id)
-    .bind(&body.slug)
-    .bind(&body.channel)
-    .bind(&body.skill_name)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
-    Ok(Status::Created)
-}
-
-#[rocket::delete("/setting/remote-skills/<id>")]
-pub async fn setting_remove_remote_skill(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    id: &str,
-) -> Result<Status, Status> {
-    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM cluster_remote_skills WHERE id = $1 AND cluster_id = $2")
-        .bind(uuid)
-        .bind(auth.cluster_id)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
-    Ok(Status::NoContent)
-}
-
-#[derive(Deserialize)]
-pub struct BatchRemoteSkillsBody {
-    #[serde(default)]
-    add: Vec<AddRemoteSkillBody>,
-    #[serde(default)]
-    remove: Vec<Uuid>,
-}
-
-#[rocket::patch("/setting/remote-skills/batch", data = "<body>")]
-pub async fn setting_batch_remote_skills(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<BatchRemoteSkillsBody>,
-) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for id in &body.remove {
-        sqlx::query("DELETE FROM cluster_remote_skills WHERE id = $1 AND cluster_id = $2")
-            .bind(id)
-            .bind(auth.cluster_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| Status::InternalServerError)?;
-    }
-    for item in &body.add {
-        sqlx::query(
-            "INSERT INTO cluster_remote_skills \
-             (cluster_id, skill_center_id, remote_skill_channel_id, slug, channel, skill_name) \
-             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING",
-        )
-        .bind(auth.cluster_id)
-        .bind(item.skill_center_id)
-        .bind(item.remote_skill_channel_id)
-        .bind(&item.slug)
-        .bind(&item.channel)
-        .bind(&item.skill_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    }
-    tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
-    Ok(Status::Ok)
-}
-
-// ── Setting — Remote Bundle Assignments ────────────────────────────
-
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct RemoteBundleRow {
-    id: Uuid,
-    skill_center_id: Uuid,
-    remote_bundle_id: Uuid,
-    slug: String,
-    bundle_name: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[rocket::get("/setting/remote-bundles")]
-pub async fn setting_list_remote_bundles(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-) -> Result<Json<Vec<RemoteBundleRow>>, Status> {
-    let rows = sqlx::query_as::<_, RemoteBundleRow>(
-        "SELECT id, skill_center_id, remote_bundle_id, slug, bundle_name, created_at \
-         FROM cluster_remote_bundles WHERE cluster_id = $1 ORDER BY slug",
-    )
-    .bind(auth.cluster_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows))
-}
-
-#[derive(Deserialize)]
-pub struct AddRemoteBundleBody {
-    skill_center_id: Uuid,
-    remote_bundle_id: Uuid,
-    slug: String,
-    #[serde(default)]
-    bundle_name: String,
-}
-
-#[rocket::post("/setting/remote-bundles", data = "<body>")]
-pub async fn setting_add_remote_bundle(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<AddRemoteBundleBody>,
-) -> Result<Status, Status> {
-    sqlx::query(
-        "INSERT INTO cluster_remote_bundles \
-         (cluster_id, skill_center_id, remote_bundle_id, slug, bundle_name) \
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-    )
-    .bind(auth.cluster_id)
-    .bind(body.skill_center_id)
-    .bind(body.remote_bundle_id)
-    .bind(&body.slug)
-    .bind(&body.bundle_name)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
-    Ok(Status::Created)
-}
-
-#[rocket::delete("/setting/remote-bundles/<id>")]
-pub async fn setting_remove_remote_bundle(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    id: &str,
-) -> Result<Status, Status> {
-    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM cluster_remote_bundles WHERE id = $1 AND cluster_id = $2")
-        .bind(uuid)
-        .bind(auth.cluster_id)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
-    Ok(Status::NoContent)
-}
-
-#[derive(Deserialize)]
-pub struct BatchRemoteBundlesBody {
-    #[serde(default)]
-    add: Vec<AddRemoteBundleBody>,
-    #[serde(default)]
-    remove: Vec<Uuid>,
-}
-
-#[rocket::patch("/setting/remote-bundles/batch", data = "<body>")]
-pub async fn setting_batch_remote_bundles(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<BatchRemoteBundlesBody>,
-) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for id in &body.remove {
-        sqlx::query("DELETE FROM cluster_remote_bundles WHERE id = $1 AND cluster_id = $2")
-            .bind(id)
-            .bind(auth.cluster_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| Status::InternalServerError)?;
-    }
-    for item in &body.add {
-        sqlx::query(
-            "INSERT INTO cluster_remote_bundles \
-             (cluster_id, skill_center_id, remote_bundle_id, slug, bundle_name) \
-             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-        )
-        .bind(auth.cluster_id)
-        .bind(item.skill_center_id)
-        .bind(item.remote_bundle_id)
-        .bind(&item.slug)
-        .bind(&item.bundle_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    }
-    tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncSkills).await;
-    Ok(Status::Ok)
-}
-
-// ── Setting — Remote MCP Server Assignments ────────────────────────
-
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct RemoteMcpServerRow {
-    id: Uuid,
-    skill_center_id: Uuid,
-    remote_mcp_server_id: Uuid,
-    slug: String,
-    mcp_name: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[rocket::get("/setting/remote-mcp-servers")]
-pub async fn setting_list_remote_mcp_servers(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-) -> Result<Json<Vec<RemoteMcpServerRow>>, Status> {
-    let rows = sqlx::query_as::<_, RemoteMcpServerRow>(
-        "SELECT id, skill_center_id, remote_mcp_server_id, slug, mcp_name, created_at \
-         FROM cluster_remote_mcp_servers WHERE cluster_id = $1 ORDER BY slug",
-    )
-    .bind(auth.cluster_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows))
-}
-
-#[derive(Deserialize)]
-pub struct AddRemoteMcpServerBody {
-    skill_center_id: Uuid,
-    remote_mcp_server_id: Uuid,
-    slug: String,
-    #[serde(default)]
-    mcp_name: String,
-}
-
-#[rocket::post("/setting/remote-mcp-servers", data = "<body>")]
-pub async fn setting_add_remote_mcp_server(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<AddRemoteMcpServerBody>,
-) -> Result<Status, Status> {
-    sqlx::query(
-        "INSERT INTO cluster_remote_mcp_servers \
-         (cluster_id, skill_center_id, remote_mcp_server_id, slug, mcp_name) \
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-    )
-    .bind(auth.cluster_id)
-    .bind(body.skill_center_id)
-    .bind(body.remote_mcp_server_id)
-    .bind(&body.slug)
-    .bind(&body.mcp_name)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
-    Ok(Status::Created)
-}
-
-#[rocket::delete("/setting/remote-mcp-servers/<id>")]
-pub async fn setting_remove_remote_mcp_server(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    id: &str,
-) -> Result<Status, Status> {
-    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM cluster_remote_mcp_servers WHERE id = $1 AND cluster_id = $2")
-        .bind(uuid)
-        .bind(auth.cluster_id)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
-    Ok(Status::NoContent)
-}
-
-#[derive(Deserialize)]
-pub struct BatchRemoteMcpServersBody {
-    #[serde(default)]
-    add: Vec<AddRemoteMcpServerBody>,
-    #[serde(default)]
-    remove: Vec<Uuid>,
-}
-
-#[rocket::patch("/setting/remote-mcp-servers/batch", data = "<body>")]
-pub async fn setting_batch_remote_mcp_servers(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<BatchRemoteMcpServersBody>,
-) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for id in &body.remove {
-        sqlx::query("DELETE FROM cluster_remote_mcp_servers WHERE id = $1 AND cluster_id = $2")
-            .bind(id)
-            .bind(auth.cluster_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| Status::InternalServerError)?;
-    }
-    for item in &body.add {
-        sqlx::query(
-            "INSERT INTO cluster_remote_mcp_servers \
-             (cluster_id, skill_center_id, remote_mcp_server_id, slug, mcp_name) \
-             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-        )
-        .bind(auth.cluster_id)
-        .bind(item.skill_center_id)
-        .bind(item.remote_mcp_server_id)
-        .bind(&item.slug)
-        .bind(&item.mcp_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    }
-    tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
-    Ok(Status::Ok)
-}
-
-// ── Setting — Remote MCP Bundle Assignments ────────────────────────
-
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub(crate) struct RemoteMcpBundleRow {
-    id: Uuid,
-    skill_center_id: Uuid,
-    remote_bundle_id: Uuid,
-    slug: String,
-    bundle_name: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[rocket::get("/setting/remote-mcp-bundles")]
-pub async fn setting_list_remote_mcp_bundles(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-) -> Result<Json<Vec<RemoteMcpBundleRow>>, Status> {
-    let rows = sqlx::query_as::<_, RemoteMcpBundleRow>(
-        "SELECT id, skill_center_id, remote_bundle_id, slug, bundle_name, created_at \
-         FROM cluster_remote_mcp_bundles WHERE cluster_id = $1 ORDER BY slug",
-    )
-    .bind(auth.cluster_id)
-    .fetch_all(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    Ok(Json(rows))
-}
-
-#[derive(Deserialize)]
-pub struct AddRemoteMcpBundleBody {
-    skill_center_id: Uuid,
-    remote_bundle_id: Uuid,
-    slug: String,
-    #[serde(default)]
-    bundle_name: String,
-}
-
-#[rocket::post("/setting/remote-mcp-bundles", data = "<body>")]
-pub async fn setting_add_remote_mcp_bundle(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<AddRemoteMcpBundleBody>,
-) -> Result<Status, Status> {
-    sqlx::query(
-        "INSERT INTO cluster_remote_mcp_bundles \
-         (cluster_id, skill_center_id, remote_bundle_id, slug, bundle_name) \
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-    )
-    .bind(auth.cluster_id)
-    .bind(body.skill_center_id)
-    .bind(body.remote_bundle_id)
-    .bind(&body.slug)
-    .bind(&body.bundle_name)
-    .execute(pool.inner())
-    .await
-    .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
-    Ok(Status::Created)
-}
-
-#[rocket::delete("/setting/remote-mcp-bundles/<id>")]
-pub async fn setting_remove_remote_mcp_bundle(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    id: &str,
-) -> Result<Status, Status> {
-    let uuid: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
-    sqlx::query("DELETE FROM cluster_remote_mcp_bundles WHERE id = $1 AND cluster_id = $2")
-        .bind(uuid)
-        .bind(auth.cluster_id)
-        .execute(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
-    Ok(Status::NoContent)
-}
-
-#[derive(Deserialize)]
-pub struct BatchRemoteMcpBundlesBody {
-    #[serde(default)]
-    add: Vec<AddRemoteMcpBundleBody>,
-    #[serde(default)]
-    remove: Vec<Uuid>,
-}
-
-#[rocket::patch("/setting/remote-mcp-bundles/batch", data = "<body>")]
-pub async fn setting_batch_remote_mcp_bundles(
-    auth: SettingAuth,
-    pool: &State<PgPool>,
-    channels: &State<PushChannels>,
-    body: Json<BatchRemoteMcpBundlesBody>,
-) -> Result<Status, Status> {
-    let mut tx = pool.inner().begin().await.map_err(|_| Status::InternalServerError)?;
-    for id in &body.remove {
-        sqlx::query("DELETE FROM cluster_remote_mcp_bundles WHERE id = $1 AND cluster_id = $2")
-            .bind(id)
-            .bind(auth.cluster_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| Status::InternalServerError)?;
-    }
-    for item in &body.add {
-        sqlx::query(
-            "INSERT INTO cluster_remote_mcp_bundles \
-             (cluster_id, skill_center_id, remote_bundle_id, slug, bundle_name) \
-             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-        )
-        .bind(auth.cluster_id)
-        .bind(item.skill_center_id)
-        .bind(item.remote_bundle_id)
-        .bind(&item.slug)
-        .bind(&item.bundle_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-    }
-    tx.commit().await.map_err(|_| Status::InternalServerError)?;
-    push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
-    Ok(Status::Ok)
-}

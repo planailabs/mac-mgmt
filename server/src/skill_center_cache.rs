@@ -111,8 +111,8 @@ async fn refresh_one(
 
         if !deleted_sc_ids.is_empty() {
             let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
-                "DELETE FROM cluster_remote_skills \
-                 WHERE skill_center_id = $1 AND remote_skill_channel_id = ANY($2) \
+                "DELETE FROM cluster_skills \
+                 WHERE skill_center_id = $1 AND remote_id = ANY($2) \
                  RETURNING cluster_id",
             )
             .bind(sc.id)
@@ -137,8 +137,8 @@ async fn refresh_one(
 
         if !deleted_bundle_ids.is_empty() {
             let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
-                "DELETE FROM cluster_remote_bundles \
-                 WHERE skill_center_id = $1 AND remote_bundle_id = ANY($2) \
+                "DELETE FROM cluster_bundles \
+                 WHERE skill_center_id = $1 AND remote_id = ANY($2) \
                  RETURNING cluster_id",
             )
             .bind(sc.id)
@@ -178,8 +178,8 @@ async fn refresh_one(
 
         if !deleted_mcp_ids.is_empty() {
             let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
-                "DELETE FROM cluster_remote_mcp_servers \
-                 WHERE skill_center_id = $1 AND remote_mcp_server_id = ANY($2) \
+                "DELETE FROM cluster_mcp_servers \
+                 WHERE skill_center_id = $1 AND remote_id = ANY($2) \
                  RETURNING cluster_id",
             )
             .bind(sc.id)
@@ -207,8 +207,8 @@ async fn refresh_one(
 
         if !deleted_mcp_bundle_ids.is_empty() {
             let cluster_ids: Vec<Uuid> = sqlx::query_scalar(
-                "DELETE FROM cluster_remote_mcp_bundles \
-                 WHERE skill_center_id = $1 AND remote_bundle_id = ANY($2) \
+                "DELETE FROM cluster_mcp_bundles \
+                 WHERE skill_center_id = $1 AND remote_id = ANY($2) \
                  RETURNING cluster_id",
             )
             .bind(sc.id)
