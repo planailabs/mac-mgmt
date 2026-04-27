@@ -305,6 +305,40 @@ pub async fn create_proxy_token() -> Result<ProxyTokenResult, ServerFnError> {
     })
 }
 
+impl FleetEntry {
+    /// Returns true if any service is unhealthy or any probe has failed.
+    fn has_unhealthy(&self) -> bool {
+        let has_unhealthy_service = self
+            .services
+            .as_array()
+            .map(|arr| {
+                arr.iter().any(|s| {
+                    s.get("healthy")
+                        .and_then(|v| v.as_bool())
+                        .map(|h| !h)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+
+        let has_failed_probe = self
+            .services_extended
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().any(|s| {
+                    s.get("last_probe_ok")
+                        .and_then(|v| v.as_bool())
+                        .map(|ok| !ok)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+
+        has_unhealthy_service || has_failed_probe
+    }
+}
+
 impl Searchable for FleetEntry {
     fn matches_search(&self, query: &str) -> bool {
         self.cluster_name.to_lowercase().contains(query)
@@ -323,6 +357,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
     let search = use_signal(String::new);
     let limit = use_signal(|| 20usize);
     let sort = use_signal(|| ("last_seen".to_string(), false));
+    let mut unhealthy_only = use_signal(|| false);
     let filter_stage = stage_id.clone();
 
     // Fetch immediately, then every 5 seconds. use_hook + spawn so it runs
@@ -411,7 +446,8 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
             let entries_clone = entries.clone();
             let mut filtered: Vec<FleetEntry> = {
                 let q = search.read().to_lowercase();
-                if q.is_empty() {
+                let show_unhealthy = *unhealthy_only.read();
+                let mut result: Vec<FleetEntry> = if q.is_empty() {
                     entries_clone.clone()
                 } else {
                     entries_clone
@@ -419,7 +455,11 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                         .filter(|e| e.matches_search(&q))
                         .cloned()
                         .collect()
+                };
+                if show_unhealthy {
+                    result.retain(|e| e.has_unhealthy());
                 }
+                result
             };
 
             {
@@ -546,7 +586,23 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 if entries.is_empty() {
                     p { class: "text-gray-500 dark:text-gray-400 text-sm", "No daemons have reported in yet." }
                 } else {
-                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                    div { class: "flex items-center gap-3 flex-wrap",
+                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                        {
+                            let active = *unhealthy_only.read();
+                            rsx! {
+                                button {
+                                    class: if active {
+                                        "px-3 py-1.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700"
+                                    } else {
+                                        "px-3 py-1.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600"
+                                    },
+                                    onclick: move |_| unhealthy_only.set(!active),
+                                    "Unhealthy only"
+                                }
+                            }
+                        }
+                    }
                     div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
                         table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
                             thead { class: "bg-gray-50 dark:bg-gray-700",
