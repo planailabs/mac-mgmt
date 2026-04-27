@@ -63,6 +63,10 @@ nav-view-profile = View Profile
 nav-open-main-menu = Open main menu
 nav-close-menu = Close menu
 
+## ── Language Picker ─────────────────────────────────────────────
+
+language-picker-label = Language
+
 ## ── Theme Toggle ────────────────────────────────────────────────
 
 theme-system = Using system theme. Click for light mode

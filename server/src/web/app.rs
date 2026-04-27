@@ -159,12 +159,33 @@ const THEME_INIT_SCRIPT: &str = r#"
 
 #[component]
 pub fn App() -> Element {
-    use_init_i18n(|| {
+    let mut i18n = use_init_i18n(|| {
         I18nConfig::new(langid!("en-US"))
             .with_locale(Locale::new_static(
                 langid!("en-US"),
                 include_str!("./en-US.ftl"),
             ))
+            .with_locale(Locale::new_static(
+                langid!("de-DE"),
+                include_str!("./de-DE.ftl"),
+            ))
+    });
+
+    // Restore language preference from localStorage on first load.
+    use_effect(move || {
+        spawn(async move {
+            let result = document::eval(
+                "try { return localStorage.getItem('lang') || ''; } catch(e) { return ''; }",
+            )
+            .await;
+            if let Ok(val) = result {
+                if let Some(lang) = val.as_str() {
+                    if lang == "de-DE" {
+                        let _ = i18n.set_language(langid!("de-DE"));
+                    }
+                }
+            }
+        });
     });
 
     let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
