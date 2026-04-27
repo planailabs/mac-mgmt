@@ -586,8 +586,8 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 if entries.is_empty() {
                     p { class: "text-gray-500 dark:text-gray-400 text-sm", "No daemons have reported in yet." }
                 } else {
-                    div { class: "flex items-center gap-3 flex-wrap",
-                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
+                    div { class: "flex items-center gap-2 mb-3",
                         {
                             let active = *unhealthy_only.read();
                             rsx! {
