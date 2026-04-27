@@ -2,60 +2,74 @@ use dioxus::prelude::*;
 use dioxus_tabular::*;
 
 use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
-use crate::models::Skill;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
-/// A skill channel from a remote skill center.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RemoteSkillChannel {
-    pub skill_slug: String,
-    pub skill_name: String,
-    pub channel: String,
-    pub skill_center_name: String,
-}
-
 #[server]
-async fn list_remote_skill_channels() -> Result<Vec<RemoteSkillChannel>, ServerFnError> {
+async fn list_skills() -> Result<Vec<CatalogEntry>, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
-
-    let cache = crate::skill_center_cache::SkillCenterCache::global()
-        .ok_or_else(|| ServerFnError::new("skill center cache not initialized"))?;
-    let all = cache.get_all().await;
-
     let pool = crate::server_pool()?;
-    let rows = sqlx::query_as::<_, (uuid::Uuid, String)>(
-        "SELECT id, name FROM skill_centers WHERE enabled = true",
+
+    let local = sqlx::query_as::<_, crate::models::Skill>(
+        "SELECT * FROM skills ORDER BY slug",
     )
     .fetch_all(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let names: std::collections::HashMap<uuid::Uuid, String> =
-        rows.into_iter().collect();
 
-    let mut result = Vec::new();
-    for (sc_id, cached) in &all {
-        let sc_name = names.get(sc_id).cloned().unwrap_or_else(|| sc_id.to_string());
-        for ch in &cached.catalog.skill_channels {
-            result.push(RemoteSkillChannel {
-                skill_slug: ch.skill_slug.clone(),
-                skill_name: ch.skill_name.clone(),
-                channel: ch.channel.clone(),
-                skill_center_name: sc_name.clone(),
-            });
+    let mut entries: Vec<CatalogEntry> = local
+        .into_iter()
+        .map(|s| CatalogEntry {
+            id: s.id,
+            slug: s.slug,
+            name: s.name,
+            description: s.description,
+            created_at: Some(s.created_at),
+            hide_from_public_catalog: s.hide_from_public_catalog,
+            skill_center_name: None,
+            route_kind: "skill".to_string(),
+        })
+        .collect();
+
+    // Add remote items from cache
+    if let Some(cache) = crate::skill_center_cache::SkillCenterCache::global() {
+        let all = cache.get_all().await;
+        let sc_names: std::collections::HashMap<uuid::Uuid, String> =
+            sqlx::query_as::<_, (uuid::Uuid, String)>(
+                "SELECT id, name FROM skill_centers WHERE enabled = true",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        for (sc_id, cached) in &all {
+            let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
+            if sc_name.is_empty() {
+                continue;
+            }
+            for ch in &cached.catalog.skill_channels {
+                entries.push(CatalogEntry {
+                    id: ch.id,
+                    slug: ch.skill_slug.clone(),
+                    name: ch.skill_name.clone(),
+                    description: ch.skill_description.clone(),
+                    created_at: None,
+                    hide_from_public_catalog: ch.hidden,
+                    skill_center_name: Some(sc_name.clone()),
+                    route_kind: "skill".to_string(),
+                });
+            }
         }
     }
-    result.sort_by(|a, b| a.skill_slug.cmp(&b.skill_slug).then(a.channel.cmp(&b.channel)));
-    Ok(result)
-}
 
-#[server]
-async fn list_skills() -> Result<Vec<Skill>, ServerFnError> {
-    load_admin_list::<Skill>("SELECT * FROM skills ORDER BY slug").await
+    entries.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(entries)
 }
 
 /// Sync result returned to the UI.
@@ -213,7 +227,6 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
 #[component]
 pub fn SkillList() -> Element {
     let mut skills = use_server_future(list_skills)?;
-    let remote_skills = use_server_future(list_remote_skill_channels)?;
     let mut syncing = use_signal(|| false);
     let mut sync_msg = use_signal(|| None::<String>);
     let mut sync_err = use_signal(|| None::<String>);
@@ -224,13 +237,15 @@ pub fn SkillList() -> Element {
             div { class: "flex items-center gap-2",
                 {match &*skills.read() {
                     Some(Ok(list)) => {
-                        let gen_items: Vec<GenerateAllItem> = list.iter().map(|s| GenerateAllItem {
-                            id: s.id.to_string(),
-                            name: s.name.clone(),
-                            description: s.description.clone(),
-                            context: GenerateContext::Skill { skill_id: s.id.to_string() },
-                            entity_kind: EntityKind::Skill,
-                        }).collect();
+                        let gen_items: Vec<GenerateAllItem> = list.iter()
+                            .filter(|e| e.skill_center_name.is_none())
+                            .map(|s| GenerateAllItem {
+                                id: s.id.to_string(),
+                                name: s.name.clone(),
+                                description: s.description.clone(),
+                                context: GenerateContext::Skill { skill_id: s.id.to_string() },
+                                entity_kind: EntityKind::Skill,
+                            }).collect();
                         rsx! {
                             GenerateAllButton {
                                 items: gen_items,
@@ -310,19 +325,6 @@ pub fn SkillList() -> Element {
                                 for row in all_rows.into_iter().take(limit_val) {
                                     tr { key: "{row.key()}", TableCells { row } }
                                 }
-                                {match &*remote_skills.read() {
-                                    Some(Ok(remote)) => rsx! {
-                                        for item in remote.iter() {
-                                            tr { class: "text-purple-700 dark:text-purple-400",
-                                                td { class: "px-6 py-4 whitespace-nowrap text-sm font-mono", "{item.skill_slug}" }
-                                                td { class: "px-6 py-4 whitespace-nowrap text-sm", "{item.skill_name}" }
-                                                td { class: "px-6 py-4 whitespace-nowrap text-xs", "via {item.skill_center_name}" }
-                                                td { class: "px-6 py-4 whitespace-nowrap text-sm", "" }
-                                            }
-                                        }
-                                    },
-                                    _ => rsx! {},
-                                }}
                             }
                         }
                     }

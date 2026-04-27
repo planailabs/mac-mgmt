@@ -104,6 +104,8 @@ pub struct LinkData {
     pub label: String,
     pub route: Route,
     pub mono: bool,
+    /// When set, renders purple text with "via X" instead of a link.
+    pub remote_source: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -122,6 +124,7 @@ impl GetRowData<LinkData> for Cluster {
                 id: self.id.to_string(),
             },
             mono: false,
+            remote_source: None,
         }
     }
 }
@@ -154,6 +157,7 @@ impl GetRowData<LinkData> for Skill {
                 id: self.id.to_string(),
             },
             mono: true,
+            remote_source: None,
         }
     }
 }
@@ -180,6 +184,7 @@ impl GetRowData<LinkData> for Bundle {
                 id: self.id.to_string(),
             },
             mono: true,
+            remote_source: None,
         }
     }
 }
@@ -206,6 +211,7 @@ impl GetRowData<LinkData> for McpServer {
                 id: self.id.to_string(),
             },
             mono: true,
+            remote_source: None,
         }
     }
 }
@@ -232,6 +238,7 @@ impl GetRowData<LinkData> for McpServerBundle {
                 id: self.id.to_string(),
             },
             mono: true,
+            remote_source: None,
         }
     }
 }
@@ -245,6 +252,87 @@ impl GetRowData<TextData> for McpServerBundle {
 impl GetRowData<CreatedAtData> for McpServerBundle {
     fn get(&self) -> CreatedAtData {
         CreatedAtData(self.created_at.format("%Y-%m-%d %H:%M").to_string())
+    }
+}
+
+// ── CatalogEntry: unified type for local + remote catalog items ─────
+
+/// A unified catalog entry for listing pages that can represent either
+/// a local item or a remote item from a skill center.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CatalogEntry {
+    /// Synthetic UUID — for local items this is the real ID, for remote
+    /// items it's a deterministic hash to satisfy the Row trait.
+    pub id: uuid::Uuid,
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub hide_from_public_catalog: bool,
+    /// Non-None for remote items from skill centers.
+    pub skill_center_name: Option<String>,
+    /// Route discriminant for local items (e.g. "skill", "mcp_server").
+    pub route_kind: String,
+}
+
+impl Searchable for CatalogEntry {
+    fn matches_search(&self, query: &str) -> bool {
+        self.slug.to_lowercase().contains(query)
+            || self.name.to_lowercase().contains(query)
+            || self.description.to_lowercase().contains(query)
+            || self
+                .skill_center_name
+                .as_deref()
+                .map(|s| s.to_lowercase().contains(query))
+                .unwrap_or(false)
+    }
+}
+
+impl Row for CatalogEntry {
+    fn key(&self) -> impl Into<String> {
+        self.id.to_string()
+    }
+}
+
+impl GetRowData<LinkData> for CatalogEntry {
+    fn get(&self) -> LinkData {
+        let route = match self.route_kind.as_str() {
+            "skill" => Route::SkillDetail {
+                id: self.id.to_string(),
+            },
+            "bundle" => Route::BundleDetail {
+                id: self.id.to_string(),
+            },
+            "mcp_server" => Route::McpServerDetail {
+                id: self.id.to_string(),
+            },
+            "mcp_bundle" => Route::McpBundleDetail {
+                id: self.id.to_string(),
+            },
+            _ => Route::SkillList {},
+        };
+        LinkData {
+            label: self.slug.clone(),
+            route,
+            mono: true,
+            remote_source: self.skill_center_name.clone(),
+        }
+    }
+}
+
+impl GetRowData<TextData> for CatalogEntry {
+    fn get(&self) -> TextData {
+        TextData(self.name.clone())
+    }
+}
+
+impl GetRowData<CreatedAtData> for CatalogEntry {
+    fn get(&self) -> CreatedAtData {
+        CreatedAtData(
+            self.created_at
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_default(),
+        )
     }
 }
 
@@ -279,14 +367,25 @@ impl<R: Row + GetRowData<LinkData>> TableColumn<R> for LinkColumn {
         _attributes: Vec<Attribute>,
     ) -> Element {
         let data: LinkData = row.get();
-        let class = if data.mono {
-            "text-blue-600 dark:text-blue-400 hover:underline font-mono text-sm"
+        if let Some(source) = &data.remote_source {
+            let mono_class = if data.mono { " font-mono text-sm" } else { "" };
+            let source = source.clone();
+            rsx! {
+                td { class: "px-6 py-4 text-purple-700 dark:text-purple-400",
+                    span { class: "{mono_class}", "{data.label}" }
+                    span { class: "text-xs text-purple-500 dark:text-purple-500 ml-2", "via {source}" }
+                }
+            }
         } else {
-            "text-blue-600 dark:text-blue-400 hover:underline"
-        };
-        rsx! {
-            td { class: "px-6 py-4 dark:text-gray-200",
-                Link { to: data.route, class, "{data.label}" }
+            let class = if data.mono {
+                "text-blue-600 dark:text-blue-400 hover:underline font-mono text-sm"
+            } else {
+                "text-blue-600 dark:text-blue-400 hover:underline"
+            };
+            rsx! {
+                td { class: "px-6 py-4 dark:text-gray-200",
+                    Link { to: data.route, class, "{data.label}" }
+                }
             }
         }
     }

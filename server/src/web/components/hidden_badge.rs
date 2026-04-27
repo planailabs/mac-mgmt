@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_tabular::*;
 
 use crate::models::{Bundle, McpServer, McpServerBundle, Skill};
+use crate::web::components::table_utils::CatalogEntry;
 use crate::web::components::table_utils::{sort_indicator, toggle_sort};
 
 /// Small "Hidden" pill rendered when an entity has `hide_from_public_catalog = true`.
@@ -86,6 +87,12 @@ impl GetRowData<HiddenData> for McpServer {
 }
 
 impl GetRowData<HiddenData> for McpServerBundle {
+    fn get(&self) -> HiddenData {
+        HiddenData(self.hide_from_public_catalog)
+    }
+}
+
+impl GetRowData<HiddenData> for CatalogEntry {
     fn get(&self) -> HiddenData {
         HiddenData(self.hide_from_public_catalog)
     }
