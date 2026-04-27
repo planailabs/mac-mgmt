@@ -40,6 +40,60 @@ async fn get_catalog_summary(id: String) -> Result<CatalogSummary, ServerFnError
 }
 
 #[server]
+async fn sync_skill_center_now(id: String) -> Result<CatalogSummary, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+
+    let uuid: uuid::Uuid = id
+        .parse()
+        .map_err(|_| ServerFnError::new("invalid UUID"))?;
+
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("cache not available"))?;
+
+    #[allow(dead_code)]
+    #[derive(sqlx::FromRow)]
+    struct ScRow {
+        id: uuid::Uuid,
+        url: String,
+        federation_token: String,
+        name: String,
+    }
+
+    let sc: ScRow = sqlx::query_as(
+        "SELECT id, url, federation_token, name FROM skill_centers WHERE id = $1",
+    )
+    .bind(uuid)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("query failed: {e}")))?
+    .ok_or_else(|| ServerFnError::new("skill center not found"))?;
+
+    let client = crate::skill_center_client::SkillCenterClient::new(
+        sc.url.clone(),
+        sc.federation_token.clone(),
+    );
+
+    let catalog = client
+        .fetch_catalog()
+        .await
+        .map_err(|e| ServerFnError::new(format!("sync failed: {e}")))?;
+
+    let summary = CatalogSummary {
+        skill_channels: catalog.skill_channels.len(),
+        bundles: catalog.bundles.len(),
+        mcp_servers: catalog.mcp_servers.len(),
+        mcp_bundles: catalog.mcp_bundles.len(),
+        fetched_at: Some(chrono::Utc::now().to_rfc3339()),
+    };
+
+    cache.update(sc.id, catalog).await;
+
+    Ok(summary)
+}
+
+#[server]
 async fn get_skill_center(id: String) -> Result<Option<SkillCenterRow>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     user.require_admin()?;
@@ -135,15 +189,19 @@ async fn delete_skill_center(id: String) -> Result<(), ServerFnError> {
 #[component]
 pub fn SkillCenterDetail(id: String) -> Element {
     let id2 = id.clone();
+    let id3 = id.clone();
     let mut center_future = use_server_future(move || {
         let id = id.clone();
         async move { get_skill_center(id).await }
     })?;
 
-    let catalog_summary = use_server_future(move || {
+    let mut catalog_summary = use_server_future(move || {
         let id = id2.clone();
         async move { get_catalog_summary(id).await }
     })?;
+
+    let mut syncing = use_signal(|| false);
+    let mut sync_error = use_signal(|| None::<String>);
 
     let mut editing = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
@@ -310,7 +368,39 @@ pub fn SkillCenterDetail(id: String) -> Element {
                             }
 
                             // Cached catalog summary
-                            h3 { class: "text-lg font-semibold mt-6 mb-3 dark:text-white", "Cached Catalog" }
+                            div { class: "flex items-center justify-between mt-6 mb-3",
+                                h3 { class: "text-lg font-semibold dark:text-white", "Cached Catalog" }
+                                {
+                                    let is_syncing = *syncing.read();
+                                    let sync_id = id3.clone();
+                                    rsx! {
+                                        button {
+                                            class: "px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed",
+                                            disabled: is_syncing,
+                                            onclick: move |_| {
+                                                let sid = sync_id.clone();
+                                                spawn(async move {
+                                                    syncing.set(true);
+                                                    sync_error.set(None);
+                                                    match sync_skill_center_now(sid).await {
+                                                        Ok(_) => {
+                                                            catalog_summary.restart();
+                                                        }
+                                                        Err(e) => {
+                                                            sync_error.set(Some(e.to_string()));
+                                                        }
+                                                    }
+                                                    syncing.set(false);
+                                                });
+                                            },
+                                            if is_syncing { "Syncing..." } else { "Sync Now" }
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(err) = &*sync_error.read() {
+                                p { class: "text-red-600 text-sm mb-2", "{err}" }
+                            }
                             {match &*catalog_summary.read() {
                                 Some(Ok(summary)) => {
                                     if summary.skill_channels == 0 && summary.bundles == 0 && summary.mcp_servers == 0 && summary.mcp_bundles == 0 {

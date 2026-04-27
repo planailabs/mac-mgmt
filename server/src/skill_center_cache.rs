@@ -50,7 +50,7 @@ impl SkillCenterCache {
         GLOBAL_CACHE.get().cloned()
     }
 
-    async fn update(&self, skill_center_id: Uuid, catalog: FederationCatalog) {
+    pub async fn update(&self, skill_center_id: Uuid, catalog: FederationCatalog) {
         self.inner.write().await.insert(
             skill_center_id,
             CachedCatalog {
