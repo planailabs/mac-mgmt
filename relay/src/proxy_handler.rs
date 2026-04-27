@@ -219,29 +219,15 @@ fn parse_instance_prefix(headers: &HeaderMap, proxy_hostname: &str) -> Option<St
     }
 }
 
-/// Extract proxy_token from X-Proxy-Token header, cookie, or (legacy)
-/// Authorization: Bearer header — checked in that order.
-/// The Authorization header is only used as a last resort for backwards
-/// compatibility; new clients should use X-Proxy-Token so that the
-/// Authorization header can pass through to the upstream service.
+/// Extract proxy_token from X-Proxy-Token header or cookie.
+/// Authorization is never consumed — it belongs to the upstream service.
 fn extract_token(headers: &HeaderMap) -> Option<String> {
-    // Preferred: dedicated proxy header (keeps Authorization free for upstream).
     if let Some(val) = headers.get("x-proxy-token").and_then(|v| v.to_str().ok()) {
         if !val.is_empty() {
             return Some(val.to_string());
         }
     }
-    // Cookie (set by /proxy?proxy_token=TOKEN bootstrap).
-    if let Some(t) = extract_cookie_token(headers) {
-        return Some(t);
-    }
-    // Legacy: Authorization: Bearer (consumed by relay, NOT forwarded).
-    if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
-        if let Some(token) = auth.strip_prefix("Bearer ") {
-            return Some(token.to_string());
-        }
-    }
-    None
+    extract_cookie_token(headers)
 }
 
 /// Remove the proxy_token cookie from a cookie header value, keeping the rest.
@@ -295,7 +281,7 @@ async fn authenticate_proxy(
 ) -> Result<SelfInfo, axum::response::Response> {
     let token = extract_token(headers)
         .ok_or_else(|| {
-            (StatusCode::UNAUTHORIZED, "Missing proxy_token. Use X-Proxy-Token header, proxy_token cookie, or Authorization: Bearer <token>.").into_response()
+            (StatusCode::UNAUTHORIZED, "Missing proxy_token. Use X-Proxy-Token header or visit /proxy?proxy_token=TOKEN first.").into_response()
         })?;
 
     let self_info = validate_token_cached(&state.server_api_url, &token)
