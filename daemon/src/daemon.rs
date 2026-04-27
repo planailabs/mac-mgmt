@@ -1176,6 +1176,16 @@ pub async fn run(
     #[cfg(feature = "relay")]
     relay_mgr.sync_ssh_keys();
 
+    // Register tunnel definitions immediately so they're available as soon
+    // as the relay WebSocket connects, rather than waiting for the first
+    // health_tick to fire.
+    #[cfg(all(feature = "services", feature = "relay"))]
+    daemon.update_relay_tunnel_defs(&relay_mgr);
+    #[cfg(all(feature = "services", feature = "relay"))]
+    daemon.update_relay_file_tunnel_defs(&relay_mgr);
+    #[cfg(all(feature = "services", feature = "relay"))]
+    daemon.update_relay_shell_tunnel_defs(&relay_mgr);
+
     // Helper macros purely for cfg-gated relay proxy access.
     macro_rules! relay_proxy_hostname {
         () => {{
