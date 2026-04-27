@@ -96,15 +96,20 @@ pub struct NavGroup {
 }
 
 pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGroup> {
+    let mut overview_links = vec![
+        NavLink::Internal(Route::ClusterList {}, "Clusters".to_string()),
+    ];
+    #[cfg(feature = "mgmt")]
+    {
+        overview_links.push(NavLink::Internal(
+            Route::FleetDashboard { stage_id: None },
+            "Fleet".to_string(),
+        ));
+        overview_links.push(NavLink::Internal(Route::EasyAccess {}, "Easy Access".to_string()));
+    }
     let mut groups = vec![NavGroup {
         title: "Overview".to_string(),
-        links: vec![
-            NavLink::Internal(Route::ClusterList {}, "Clusters".to_string()),
-            NavLink::Internal(
-                Route::FleetDashboard { stage_id: None },
-                "Fleet".to_string(),
-            ),
-        ],
+        links: overview_links,
     }];
 
     if is_admin {

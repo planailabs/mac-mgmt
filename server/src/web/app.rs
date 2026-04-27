@@ -10,6 +10,7 @@ use super::components::cluster_list::ClusterList;
 use super::components::daemon_version_detail::DaemonVersionDetail;
 use super::components::daemon_version_list::DaemonVersionList;
 use super::components::docs::{DocList, DocPage};
+use super::components::easy_access::EasyAccess;
 use super::components::skill_center_detail::SkillCenterDetail;
 use super::components::skill_center_form::SkillCenterForm;
 use super::components::skill_center_list::SkillCenterList;
@@ -82,6 +83,8 @@ pub enum Route {
     RolloutForm {},
     #[route("/rollouts/:id")]
     RolloutDetail { id: String },
+    #[route("/easy-access")]
+    EasyAccess {},
     #[route("/fleet?:stage_id")]
     FleetDashboard { stage_id: Option<String> },
     #[route("/fleet/:instance_id")]

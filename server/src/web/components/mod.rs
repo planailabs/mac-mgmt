@@ -16,6 +16,7 @@ pub mod config_history;
 pub mod daemon_version_detail;
 pub mod daemon_version_list;
 pub mod docs;
+pub mod easy_access;
 pub mod extra_config_modal;
 pub mod federation_token_list;
 pub mod file_editor;
