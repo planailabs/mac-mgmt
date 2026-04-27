@@ -632,32 +632,40 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         onchange: move |evt| selected_sc.set(evt.value()),
                         option { value: "", "Select skill/channel..." }
                         {match &*available_sc.read() {
-                            Some(Ok(list)) => rsx! {
-                                for sc in list {
-                                    {
-                                        let val = sc.id.to_string();
-                                        let label = format!("{} / {}", sc.skill_slug, sc.channel);
-                                        rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "Local",
+                                    for sc in list {
+                                        {
+                                            let val = sc.id.to_string();
+                                            let label = format!("{} / {}", sc.skill_slug, sc.channel);
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },
                             _ => rsx! {},
                         }}
                         {match &*available_remote_sc.read() {
-                            Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "From Skill Centers",
-                                    for rsc in list {
-                                        {
-                                            let val = format!(
-                                                "remote|{}|{}|{}|{}|{}",
-                                                rsc.skill_center_id, rsc.remote_skill_channel_id,
-                                                rsc.skill_slug, rsc.channel, rsc.skill_name
-                                            );
-                                            let label = format!(
-                                                "{} / {} ({})",
-                                                rsc.skill_slug, rsc.channel, rsc.skill_center_name
-                                            );
-                                            rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => {
+                                // Group by skill center name
+                                let mut by_sc: std::collections::BTreeMap<String, Vec<&RemoteSkillOption>> = std::collections::BTreeMap::new();
+                                for rsc in list.iter() {
+                                    by_sc.entry(rsc.skill_center_name.clone()).or_default().push(rsc);
+                                }
+                                rsx! {
+                                    for (sc_name, items) in by_sc {
+                                        optgroup { label: "From {sc_name}",
+                                            for rsc in items {
+                                                {
+                                                    let val = format!(
+                                                        "remote|{}|{}|{}|{}|{}",
+                                                        rsc.skill_center_id, rsc.remote_skill_channel_id,
+                                                        rsc.skill_slug, rsc.channel, rsc.skill_name
+                                                    );
+                                                    let label = format!("{} / {}", rsc.skill_slug, rsc.channel);
+                                                    rsx! { option { value: "{val}", "{label}" } }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -815,32 +823,39 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         onchange: move |evt| selected_bundle.set(evt.value()),
                         option { value: "", "Select bundle..." }
                         {match &*available_bundles.read() {
-                            Some(Ok(list)) => rsx! {
-                                for b in list {
-                                    {
-                                        let val = b.id.to_string();
-                                        let label = format!("{} ({})", b.name, b.slug);
-                                        rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "Local",
+                                    for b in list {
+                                        {
+                                            let val = b.id.to_string();
+                                            let label = format!("{} ({})", b.name, b.slug);
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },
                             _ => rsx! {},
                         }}
                         {match &*available_remote_bundles.read() {
-                            Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "From Skill Centers",
-                                    for rb in list {
-                                        {
-                                            let val = format!(
-                                                "remote|{}|{}|{}|{}",
-                                                rb.skill_center_id, rb.remote_bundle_id,
-                                                rb.slug, rb.name
-                                            );
-                                            let label = format!(
-                                                "{} ({}) ({})",
-                                                rb.name, rb.slug, rb.skill_center_name
-                                            );
-                                            rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => {
+                                let mut by_sc: std::collections::BTreeMap<String, Vec<&RemoteBundleOption>> = std::collections::BTreeMap::new();
+                                for rb in list.iter() {
+                                    by_sc.entry(rb.skill_center_name.clone()).or_default().push(rb);
+                                }
+                                rsx! {
+                                    for (sc_name, items) in by_sc {
+                                        optgroup { label: "From {sc_name}",
+                                            for rb in items {
+                                                {
+                                                    let val = format!(
+                                                        "remote|{}|{}|{}|{}",
+                                                        rb.skill_center_id, rb.remote_bundle_id,
+                                                        rb.slug, rb.name
+                                                    );
+                                                    let label = format!("{} ({})", rb.name, rb.slug);
+                                                    rsx! { option { value: "{val}", "{label}" } }
+                                                }
+                                            }
                                         }
                                     }
                                 }

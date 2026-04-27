@@ -776,32 +776,39 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         onchange: move |evt| selected_server.set(evt.value()),
                         option { value: "", "Select MCP server..." }
                         {match &*available_servers.read() {
-                            Some(Ok(list)) => rsx! {
-                                for s in list {
-                                    {
-                                        let val = s.id.to_string();
-                                        let label = format!("{} ({})", s.name, s.slug);
-                                        rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "Local",
+                                    for s in list {
+                                        {
+                                            let val = s.id.to_string();
+                                            let label = format!("{} ({})", s.name, s.slug);
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },
                             _ => rsx! {},
                         }}
                         {match &*available_remote_servers.read() {
-                            Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "From Skill Centers",
-                                    for rm in list {
-                                        {
-                                            let val = format!(
-                                                "remote|{}|{}|{}|{}",
-                                                rm.skill_center_id, rm.remote_mcp_server_id,
-                                                rm.slug, rm.name
-                                            );
-                                            let label = format!(
-                                                "{} ({}) ({})",
-                                                rm.name, rm.slug, rm.skill_center_name
-                                            );
-                                            rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => {
+                                let mut by_sc: std::collections::BTreeMap<String, Vec<&RemoteMcpServerOption>> = std::collections::BTreeMap::new();
+                                for rm in list.iter() {
+                                    by_sc.entry(rm.skill_center_name.clone()).or_default().push(rm);
+                                }
+                                rsx! {
+                                    for (sc_name, items) in by_sc {
+                                        optgroup { label: "From {sc_name}",
+                                            for rm in items {
+                                                {
+                                                    let val = format!(
+                                                        "remote|{}|{}|{}|{}",
+                                                        rm.skill_center_id, rm.remote_mcp_server_id,
+                                                        rm.slug, rm.name
+                                                    );
+                                                    let label = format!("{} ({})", rm.name, rm.slug);
+                                                    rsx! { option { value: "{val}", "{label}" } }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -994,32 +1001,39 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         onchange: move |evt| selected_bundle.set(evt.value()),
                         option { value: "", "Select MCP bundle..." }
                         {match &*available_bundles.read() {
-                            Some(Ok(list)) => rsx! {
-                                for b in list {
-                                    {
-                                        let val = b.id.to_string();
-                                        let label = format!("{} ({})", b.name, b.slug);
-                                        rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "Local",
+                                    for b in list {
+                                        {
+                                            let val = b.id.to_string();
+                                            let label = format!("{} ({})", b.name, b.slug);
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },
                             _ => rsx! {},
                         }}
                         {match &*available_remote_mcp_bundles.read() {
-                            Some(Ok(list)) if !list.is_empty() => rsx! {
-                                optgroup { label: "From Skill Centers",
-                                    for rb in list {
-                                        {
-                                            let val = format!(
-                                                "remote|{}|{}|{}|{}",
-                                                rb.skill_center_id, rb.remote_bundle_id,
-                                                rb.slug, rb.name
-                                            );
-                                            let label = format!(
-                                                "{} ({}) ({})",
-                                                rb.name, rb.slug, rb.skill_center_name
-                                            );
-                                            rsx! { option { value: "{val}", "{label}" } }
+                            Some(Ok(list)) if !list.is_empty() => {
+                                let mut by_sc: std::collections::BTreeMap<String, Vec<&RemoteMcpBundleOption>> = std::collections::BTreeMap::new();
+                                for rb in list.iter() {
+                                    by_sc.entry(rb.skill_center_name.clone()).or_default().push(rb);
+                                }
+                                rsx! {
+                                    for (sc_name, items) in by_sc {
+                                        optgroup { label: "From {sc_name}",
+                                            for rb in items {
+                                                {
+                                                    let val = format!(
+                                                        "remote|{}|{}|{}|{}",
+                                                        rb.skill_center_id, rb.remote_bundle_id,
+                                                        rb.slug, rb.name
+                                                    );
+                                                    let label = format!("{} ({})", rb.name, rb.slug);
+                                                    rsx! { option { value: "{val}", "{label}" } }
+                                                }
+                                            }
                                         }
                                     }
                                 }
