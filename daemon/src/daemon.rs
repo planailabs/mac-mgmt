@@ -82,14 +82,9 @@ impl Daemon {
 
     async fn handle_update(&mut self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
-            // Await the target version fetch so check_and_apply sees the
-            // server's target. Nixpkgs pin can run in the background.
+            // Await both fetches so check_upgrades sees the latest pin.
             fetch_target_version(url, token).await;
-            let u = url.clone();
-            let t = token.clone();
-            tokio::spawn(async move {
-                fetch_nixpkgs_pin(&u, &t).await;
-            });
+            fetch_nixpkgs_pin(url, token).await;
         }
 
         if self.in_upgrade_window() {
@@ -733,11 +728,7 @@ impl Daemon {
             PushCommand::SyncNixpkgs => {
                 tracing::info!("server push: sync nixpkgs pin");
                 if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
-                    let u = url.clone();
-                    let t = token.clone();
-                    tokio::spawn(async move {
-                        fetch_nixpkgs_pin(&u, &t).await;
-                    });
+                    fetch_nixpkgs_pin(url, token).await;
                 }
                 #[cfg(feature = "services")]
                 self.svc_mgr.check_upgrades();
