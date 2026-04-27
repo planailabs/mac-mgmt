@@ -19,7 +19,7 @@ let
   mcpServerId = "b0000000-0000-0000-0000-000000000001";
 
   mac-mgmt-server-api = (pkgs.callPackage ../server/package.nix { }).overrideAttrs (old: {
-    cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only" ];
+    cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only,mgmt,skill-center" ];
     buildPhase = null;
     installPhase = null;
   });
