@@ -360,6 +360,217 @@ async fn remove_cluster_bundle(cluster_bundle_id: String) -> Result<(), ServerFn
     Ok(())
 }
 
+/// Remote skill option for add-item dropdown (from skill center catalogs).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RemoteSkillOption {
+    pub skill_center_id: String,
+    pub skill_center_name: String,
+    pub remote_skill_channel_id: String,
+    pub skill_slug: String,
+    pub skill_name: String,
+    pub channel: String,
+}
+
+/// Remote bundle option for add-item dropdown (from skill center catalogs).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RemoteBundleOption {
+    pub skill_center_id: String,
+    pub skill_center_name: String,
+    pub remote_bundle_id: String,
+    pub slug: String,
+    pub name: String,
+}
+
+#[server]
+async fn list_remote_skill_options() -> Result<Vec<RemoteSkillOption>, ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("skill center cache not initialized"))?;
+
+    #[derive(sqlx::FromRow)]
+    struct ScName {
+        id: uuid::Uuid,
+        name: String,
+    }
+    let sc_rows: Vec<ScName> =
+        sqlx::query_as("SELECT id, name FROM skill_centers WHERE enabled = true")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let sc_names: std::collections::HashMap<uuid::Uuid, String> =
+        sc_rows.into_iter().map(|r| (r.id, r.name)).collect();
+
+    let catalogs = cache.get_all().await;
+    let mut result = Vec::new();
+    for (sc_id, cached) in &catalogs {
+        let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
+        if sc_name.is_empty() {
+            continue; // skill center disabled or deleted
+        }
+        for sc in &cached.catalog.skill_channels {
+            if sc.hidden {
+                continue;
+            }
+            result.push(RemoteSkillOption {
+                skill_center_id: sc_id.to_string(),
+                skill_center_name: sc_name.clone(),
+                remote_skill_channel_id: sc.id.to_string(),
+                skill_slug: sc.skill_slug.clone(),
+                skill_name: sc.skill_name.clone(),
+                channel: sc.channel.clone(),
+            });
+        }
+    }
+    result.sort_by(|a, b| {
+        a.skill_center_name
+            .cmp(&b.skill_center_name)
+            .then(a.skill_slug.cmp(&b.skill_slug))
+            .then(a.channel.cmp(&b.channel))
+    });
+    Ok(result)
+}
+
+#[server]
+async fn list_remote_bundle_options() -> Result<Vec<RemoteBundleOption>, ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("skill center cache not initialized"))?;
+
+    #[derive(sqlx::FromRow)]
+    struct ScName {
+        id: uuid::Uuid,
+        name: String,
+    }
+    let sc_rows: Vec<ScName> =
+        sqlx::query_as("SELECT id, name FROM skill_centers WHERE enabled = true")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let sc_names: std::collections::HashMap<uuid::Uuid, String> =
+        sc_rows.into_iter().map(|r| (r.id, r.name)).collect();
+
+    let catalogs = cache.get_all().await;
+    let mut result = Vec::new();
+    for (sc_id, cached) in &catalogs {
+        let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
+        if sc_name.is_empty() {
+            continue;
+        }
+        for b in &cached.catalog.bundles {
+            if b.hidden {
+                continue;
+            }
+            result.push(RemoteBundleOption {
+                skill_center_id: sc_id.to_string(),
+                skill_center_name: sc_name.clone(),
+                remote_bundle_id: b.id.to_string(),
+                slug: b.slug.clone(),
+                name: b.name.clone(),
+            });
+        }
+    }
+    result.sort_by(|a, b| {
+        a.skill_center_name
+            .cmp(&b.skill_center_name)
+            .then(a.slug.cmp(&b.slug))
+    });
+    Ok(result)
+}
+
+#[server]
+async fn add_remote_cluster_skill(
+    cluster_id: String,
+    skill_center_id: String,
+    remote_skill_channel_id: String,
+    slug: String,
+    channel: String,
+    skill_name: String,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let sc_id: uuid::Uuid = skill_center_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let rsc_id: uuid::Uuid = remote_skill_channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO cluster_remote_skills (cluster_id, skill_center_id, remote_skill_channel_id, slug, channel, skill_name) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(cid)
+    .bind(sc_id)
+    .bind(rsc_id)
+    .bind(&slug)
+    .bind(&channel)
+    .bind(&skill_name)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSkills).await;
+    Ok(())
+}
+
+#[server]
+async fn add_remote_cluster_bundle(
+    cluster_id: String,
+    skill_center_id: String,
+    remote_bundle_id: String,
+    slug: String,
+    bundle_name: String,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let sc_id: uuid::Uuid = skill_center_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let rb_id: uuid::Uuid = remote_bundle_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO cluster_remote_bundles (cluster_id, skill_center_id, remote_bundle_id, slug, bundle_name) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(cid)
+    .bind(sc_id)
+    .bind(rb_id)
+    .bind(&slug)
+    .bind(&bundle_name)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncSkills).await;
+    Ok(())
+}
+
 /// Remote skill assignment from a skill center.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
@@ -464,19 +675,21 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
     })?;
 
     let cid_remote_skills = cluster_id.clone();
-    let remote_skills = use_server_future(move || {
+    let mut remote_skills = use_server_future(move || {
         let cid = cid_remote_skills.clone();
         async move { list_remote_skills(cid).await }
     })?;
 
     let cid_remote_bundles = cluster_id.clone();
-    let remote_bundles = use_server_future(move || {
+    let mut remote_bundles = use_server_future(move || {
         let cid = cid_remote_bundles.clone();
         async move { list_remote_bundles(cid).await }
     })?;
 
     let available_sc = use_server_future(list_all_skill_channels)?;
     let available_bundles = use_server_future(list_all_bundles)?;
+    let available_remote_sc = use_server_future(list_remote_skill_options)?;
+    let available_remote_bundles = use_server_future(list_remote_bundle_options)?;
 
     let mut selected_sc = use_signal(String::new);
     let mut selected_bundle = use_signal(String::new);
@@ -495,13 +708,33 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                     onsubmit: move |evt: FormEvent| {
                         evt.prevent_default();
                         let cid = cid_add_skill.clone();
-                        let scid = selected_sc.read().clone();
+                        let val = selected_sc.read().clone();
                         spawn(async move {
-                            if !scid.is_empty() {
-                                if add_cluster_skill(cid, scid).await.is_ok() {
-                                    selected_sc.set(String::new());
-                                    skills.restart();
+                            if val.is_empty() {
+                                return;
+                            }
+                            if let Some(rest) = val.strip_prefix("remote|") {
+                                let parts: Vec<&str> = rest.splitn(5, '|').collect();
+                                if parts.len() == 5 {
+                                    if add_remote_cluster_skill(
+                                        cid,
+                                        parts[0].to_string(),
+                                        parts[1].to_string(),
+                                        parts[2].to_string(),
+                                        parts[3].to_string(),
+                                        parts[4].to_string(),
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
+                                        selected_sc.set(String::new());
+                                        skills.restart();
+                                        remote_skills.restart();
+                                    }
                                 }
+                            } else if add_cluster_skill(cid, val).await.is_ok() {
+                                selected_sc.set(String::new());
+                                skills.restart();
                             }
                         });
                     },
@@ -517,6 +750,27 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                         let val = sc.id.to_string();
                                         let label = format!("{} / {}", sc.skill_slug, sc.channel);
                                         rsx! { option { value: "{val}", "{label}" } }
+                                    }
+                                }
+                            },
+                            _ => rsx! {},
+                        }}
+                        {match &*available_remote_sc.read() {
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "From Skill Centers",
+                                    for rsc in list {
+                                        {
+                                            let val = format!(
+                                                "remote|{}|{}|{}|{}|{}",
+                                                rsc.skill_center_id, rsc.remote_skill_channel_id,
+                                                rsc.skill_slug, rsc.channel, rsc.skill_name
+                                            );
+                                            let label = format!(
+                                                "{} / {} ({})",
+                                                rsc.skill_slug, rsc.channel, rsc.skill_center_name
+                                            );
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },
@@ -643,10 +897,36 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                     onsubmit: move |evt: FormEvent| {
                         evt.prevent_default();
                         let cid = cid_add_bundle.clone();
-                        let bid = selected_bundle.read().clone();
+                        let val = selected_bundle.read().clone();
                         spawn(async move {
-                            if !bid.is_empty() {
-                                match add_cluster_bundle(cid, bid).await {
+                            if val.is_empty() {
+                                return;
+                            }
+                            if let Some(rest) = val.strip_prefix("remote|") {
+                                let parts: Vec<&str> = rest.splitn(4, '|').collect();
+                                if parts.len() == 4 {
+                                    match add_remote_cluster_bundle(
+                                        cid,
+                                        parts[0].to_string(),
+                                        parts[1].to_string(),
+                                        parts[2].to_string(),
+                                        parts[3].to_string(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            bundle_error.set(None);
+                                            selected_bundle.set(String::new());
+                                            bundles.restart();
+                                            remote_bundles.restart();
+                                        }
+                                        Err(e) => {
+                                            bundle_error.set(Some(e.to_string()));
+                                        }
+                                    }
+                                }
+                            } else {
+                                match add_cluster_bundle(cid, val).await {
                                     Ok(()) => {
                                         bundle_error.set(None);
                                         selected_bundle.set(String::new());
@@ -671,6 +951,27 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                         let val = b.id.to_string();
                                         let label = format!("{} ({})", b.name, b.slug);
                                         rsx! { option { value: "{val}", "{label}" } }
+                                    }
+                                }
+                            },
+                            _ => rsx! {},
+                        }}
+                        {match &*available_remote_bundles.read() {
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "From Skill Centers",
+                                    for rb in list {
+                                        {
+                                            let val = format!(
+                                                "remote|{}|{}|{}|{}",
+                                                rb.skill_center_id, rb.remote_bundle_id,
+                                                rb.slug, rb.name
+                                            );
+                                            let label = format!(
+                                                "{} ({}) ({})",
+                                                rb.name, rb.slug, rb.skill_center_name
+                                            );
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },

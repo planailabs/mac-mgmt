@@ -505,6 +505,212 @@ async fn remove_cluster_mcp_bundle(cluster_mcp_bundle_id: String) -> Result<(), 
     Ok(())
 }
 
+/// Remote MCP server option for add-item dropdown (from skill center catalogs).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RemoteMcpServerOption {
+    pub skill_center_id: String,
+    pub skill_center_name: String,
+    pub remote_mcp_server_id: String,
+    pub slug: String,
+    pub name: String,
+}
+
+/// Remote MCP bundle option for add-item dropdown (from skill center catalogs).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RemoteMcpBundleOption {
+    pub skill_center_id: String,
+    pub skill_center_name: String,
+    pub remote_bundle_id: String,
+    pub slug: String,
+    pub name: String,
+}
+
+#[server]
+async fn list_remote_mcp_server_options() -> Result<Vec<RemoteMcpServerOption>, ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("skill center cache not initialized"))?;
+
+    #[derive(sqlx::FromRow)]
+    struct ScName {
+        id: uuid::Uuid,
+        name: String,
+    }
+    let sc_rows: Vec<ScName> =
+        sqlx::query_as("SELECT id, name FROM skill_centers WHERE enabled = true")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let sc_names: std::collections::HashMap<uuid::Uuid, String> =
+        sc_rows.into_iter().map(|r| (r.id, r.name)).collect();
+
+    let catalogs = cache.get_all().await;
+    let mut result = Vec::new();
+    for (sc_id, cached) in &catalogs {
+        let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
+        if sc_name.is_empty() {
+            continue;
+        }
+        for m in &cached.catalog.mcp_servers {
+            if m.hidden {
+                continue;
+            }
+            result.push(RemoteMcpServerOption {
+                skill_center_id: sc_id.to_string(),
+                skill_center_name: sc_name.clone(),
+                remote_mcp_server_id: m.id.to_string(),
+                slug: m.slug.clone(),
+                name: m.name.clone(),
+            });
+        }
+    }
+    result.sort_by(|a, b| {
+        a.skill_center_name
+            .cmp(&b.skill_center_name)
+            .then(a.slug.cmp(&b.slug))
+    });
+    Ok(result)
+}
+
+#[server]
+async fn list_remote_mcp_bundle_options() -> Result<Vec<RemoteMcpBundleOption>, ServerFnError> {
+    let _user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cache = crate::skill_center_cache::SkillCenterCache::global()
+        .ok_or_else(|| ServerFnError::new("skill center cache not initialized"))?;
+
+    #[derive(sqlx::FromRow)]
+    struct ScName {
+        id: uuid::Uuid,
+        name: String,
+    }
+    let sc_rows: Vec<ScName> =
+        sqlx::query_as("SELECT id, name FROM skill_centers WHERE enabled = true")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let sc_names: std::collections::HashMap<uuid::Uuid, String> =
+        sc_rows.into_iter().map(|r| (r.id, r.name)).collect();
+
+    let catalogs = cache.get_all().await;
+    let mut result = Vec::new();
+    for (sc_id, cached) in &catalogs {
+        let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
+        if sc_name.is_empty() {
+            continue;
+        }
+        for b in &cached.catalog.mcp_bundles {
+            if b.hidden {
+                continue;
+            }
+            result.push(RemoteMcpBundleOption {
+                skill_center_id: sc_id.to_string(),
+                skill_center_name: sc_name.clone(),
+                remote_bundle_id: b.id.to_string(),
+                slug: b.slug.clone(),
+                name: b.name.clone(),
+            });
+        }
+    }
+    result.sort_by(|a, b| {
+        a.skill_center_name
+            .cmp(&b.skill_center_name)
+            .then(a.slug.cmp(&b.slug))
+    });
+    Ok(result)
+}
+
+#[server]
+async fn add_remote_cluster_mcp_server(
+    cluster_id: String,
+    skill_center_id: String,
+    remote_mcp_server_id: String,
+    slug: String,
+    mcp_name: String,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let sc_id: uuid::Uuid = skill_center_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let rm_id: uuid::Uuid = remote_mcp_server_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO cluster_remote_mcp_servers (cluster_id, skill_center_id, remote_mcp_server_id, slug, mcp_name) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(cid)
+    .bind(sc_id)
+    .bind(rm_id)
+    .bind(&slug)
+    .bind(&mcp_name)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncMcpServers).await;
+    Ok(())
+}
+
+#[server]
+async fn add_remote_cluster_mcp_bundle(
+    cluster_id: String,
+    skill_center_id: String,
+    remote_bundle_id: String,
+    slug: String,
+    bundle_name: String,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let cid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&cid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+    let sc_id: uuid::Uuid = skill_center_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let rb_id: uuid::Uuid = remote_bundle_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO cluster_remote_mcp_bundles (cluster_id, skill_center_id, remote_bundle_id, slug, bundle_name) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(cid)
+    .bind(sc_id)
+    .bind(rb_id)
+    .bind(&slug)
+    .bind(&bundle_name)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_global(cid, crate::api::push::PushMessage::SyncMcpServers).await;
+    Ok(())
+}
+
 /// Remote MCP server assignment from a skill center.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
@@ -616,19 +822,21 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
     })?;
 
     let cid_remote_servers = cluster_id.clone();
-    let remote_servers = use_server_future(move || {
+    let mut remote_servers = use_server_future(move || {
         let cid = cid_remote_servers.clone();
         async move { list_remote_mcp_servers(cid).await }
     })?;
 
     let cid_remote_mcp_bundles = cluster_id.clone();
-    let remote_mcp_bundles = use_server_future(move || {
+    let mut remote_mcp_bundles = use_server_future(move || {
         let cid = cid_remote_mcp_bundles.clone();
         async move { list_remote_mcp_bundles(cid).await }
     })?;
 
     let available_servers = use_server_future(list_all_mcp_servers)?;
     let available_bundles = use_server_future(list_all_mcp_bundles)?;
+    let available_remote_servers = use_server_future(list_remote_mcp_server_options)?;
+    let available_remote_mcp_bundles = use_server_future(list_remote_mcp_bundle_options)?;
 
     let mut selected_server = use_signal(String::new);
     let mut selected_bundle = use_signal(String::new);
@@ -647,13 +855,32 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                     onsubmit: move |evt: FormEvent| {
                         evt.prevent_default();
                         let cid = cid_add_server.clone();
-                        let msid = selected_server.read().clone();
+                        let val = selected_server.read().clone();
                         spawn(async move {
-                            if !msid.is_empty() {
-                                if add_cluster_mcp_server(cid, msid).await.is_ok() {
-                                    selected_server.set(String::new());
-                                    servers.restart();
+                            if val.is_empty() {
+                                return;
+                            }
+                            if let Some(rest) = val.strip_prefix("remote|") {
+                                let parts: Vec<&str> = rest.splitn(4, '|').collect();
+                                if parts.len() == 4 {
+                                    if add_remote_cluster_mcp_server(
+                                        cid,
+                                        parts[0].to_string(),
+                                        parts[1].to_string(),
+                                        parts[2].to_string(),
+                                        parts[3].to_string(),
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
+                                        selected_server.set(String::new());
+                                        servers.restart();
+                                        remote_servers.restart();
+                                    }
                                 }
+                            } else if add_cluster_mcp_server(cid, val).await.is_ok() {
+                                selected_server.set(String::new());
+                                servers.restart();
                             }
                         });
                     },
@@ -669,6 +896,27 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                         let val = s.id.to_string();
                                         let label = format!("{} ({})", s.name, s.slug);
                                         rsx! { option { value: "{val}", "{label}" } }
+                                    }
+                                }
+                            },
+                            _ => rsx! {},
+                        }}
+                        {match &*available_remote_servers.read() {
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "From Skill Centers",
+                                    for rm in list {
+                                        {
+                                            let val = format!(
+                                                "remote|{}|{}|{}|{}",
+                                                rm.skill_center_id, rm.remote_mcp_server_id,
+                                                rm.slug, rm.name
+                                            );
+                                            let label = format!(
+                                                "{} ({}) ({})",
+                                                rm.name, rm.slug, rm.skill_center_name
+                                            );
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },
@@ -834,10 +1082,36 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                     onsubmit: move |evt: FormEvent| {
                         evt.prevent_default();
                         let cid = cid_add_bundle.clone();
-                        let bid = selected_bundle.read().clone();
+                        let val = selected_bundle.read().clone();
                         spawn(async move {
-                            if !bid.is_empty() {
-                                match add_cluster_mcp_bundle(cid, bid).await {
+                            if val.is_empty() {
+                                return;
+                            }
+                            if let Some(rest) = val.strip_prefix("remote|") {
+                                let parts: Vec<&str> = rest.splitn(4, '|').collect();
+                                if parts.len() == 4 {
+                                    match add_remote_cluster_mcp_bundle(
+                                        cid,
+                                        parts[0].to_string(),
+                                        parts[1].to_string(),
+                                        parts[2].to_string(),
+                                        parts[3].to_string(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            bundle_error.set(None);
+                                            selected_bundle.set(String::new());
+                                            bundles.restart();
+                                            remote_mcp_bundles.restart();
+                                        }
+                                        Err(e) => {
+                                            bundle_error.set(Some(e.to_string()));
+                                        }
+                                    }
+                                }
+                            } else {
+                                match add_cluster_mcp_bundle(cid, val).await {
                                     Ok(()) => {
                                         bundle_error.set(None);
                                         selected_bundle.set(String::new());
@@ -862,6 +1136,27 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                         let val = b.id.to_string();
                                         let label = format!("{} ({})", b.name, b.slug);
                                         rsx! { option { value: "{val}", "{label}" } }
+                                    }
+                                }
+                            },
+                            _ => rsx! {},
+                        }}
+                        {match &*available_remote_mcp_bundles.read() {
+                            Some(Ok(list)) if !list.is_empty() => rsx! {
+                                optgroup { label: "From Skill Centers",
+                                    for rb in list {
+                                        {
+                                            let val = format!(
+                                                "remote|{}|{}|{}|{}",
+                                                rb.skill_center_id, rb.remote_bundle_id,
+                                                rb.slug, rb.name
+                                            );
+                                            let label = format!(
+                                                "{} ({}) ({})",
+                                                rb.name, rb.slug, rb.skill_center_name
+                                            );
+                                            rsx! { option { value: "{val}", "{label}" } }
+                                        }
                                     }
                                 }
                             },
