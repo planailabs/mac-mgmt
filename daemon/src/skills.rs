@@ -75,8 +75,10 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
 
         let link_str = link.to_string_lossy().to_string();
         tracing::debug!("{slug}: nix-store --add-root {link_str} --realise {store_path}");
+        let cache_args = crate::nix::extra_substituter_args();
         let output = tokio::process::Command::new("nix-store")
             .args(["--add-root", &link_str, "--realise", store_path])
+            .args(&cache_args)
             .output()
             .await
             .with_context(|| format!("failed to run nix-store --realise for {slug}"))?;

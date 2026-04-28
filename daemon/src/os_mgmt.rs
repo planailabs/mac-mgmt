@@ -109,5 +109,111 @@ pub fn configure_os(dry_run: bool) -> Result<()> {
         println!("No OS configurations found for {os_id}");
     }
 
+    // Ensure nix.conf has the required settings for the daemon to operate
+    // as a trusted user with flakes enabled.
+    configure_nix(dry_run)?;
+
     Ok(())
+}
+
+/// Ensure /etc/nix/nix.conf contains `extra-trusted-users` for the daemon user
+/// and `extra-experimental-features = nix-command flakes`. Appends missing lines.
+fn configure_nix(dry_run: bool) -> Result<()> {
+    let nix_conf = Path::new("/etc/nix/nix.conf");
+    let user = std::env::var("USER").unwrap_or_else(|_| "mac-mgmt".to_string());
+
+    let existing = if nix_conf.exists() {
+        std::fs::read_to_string(nix_conf).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let mut additions = Vec::new();
+
+    // Check for trusted-users / extra-trusted-users containing our user
+    let has_trusted = existing.lines().any(|line| {
+        let trimmed = line.trim();
+        (trimmed.starts_with("trusted-users") || trimmed.starts_with("extra-trusted-users"))
+            && trimmed.contains(&user)
+    });
+    if !has_trusted {
+        additions.push(format!("extra-trusted-users = {user}"));
+    }
+
+    // Check for experimental-features containing nix-command and flakes
+    let has_experimental = existing.lines().any(|line| {
+        let trimmed = line.trim();
+        (trimmed.starts_with("experimental-features")
+            || trimmed.starts_with("extra-experimental-features"))
+            && trimmed.contains("nix-command")
+            && trimmed.contains("flakes")
+    });
+    if !has_experimental {
+        additions.push("extra-experimental-features = nix-command flakes".to_string());
+    }
+
+    if additions.is_empty() {
+        println!("nix.conf: already configured");
+        return Ok(());
+    }
+
+    if dry_run {
+        for line in &additions {
+            println!("would append to /etc/nix/nix.conf: {line}");
+        }
+        return Ok(());
+    }
+
+    // Ensure /etc/nix exists
+    sudo_mkdir_p(Path::new("/etc/nix"))?;
+
+    let append_content = format!("\n{}\n", additions.join("\n"));
+    // Use sudo tee --append for non-root
+    if is_root() {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(nix_conf)
+            .context("failed to open /etc/nix/nix.conf for append")?;
+        f.write_all(append_content.as_bytes())?;
+    } else {
+        use std::io::Write;
+        let mut child = Command::new("sudo")
+            .args(["tee", "--append", "/etc/nix/nix.conf"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .context("failed to run sudo tee --append /etc/nix/nix.conf")?;
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(append_content.as_bytes())?;
+        let status = child.wait()?;
+        if !status.success() {
+            anyhow::bail!("sudo tee --append /etc/nix/nix.conf failed");
+        }
+    }
+
+    for line in &additions {
+        println!("appended to /etc/nix/nix.conf: {line}");
+    }
+
+    // Restart nix-daemon so it picks up the new config
+    restart_nix_daemon();
+
+    Ok(())
+}
+
+fn restart_nix_daemon() {
+    if cfg!(target_os = "macos") {
+        let _ = Command::new("sudo")
+            .args(["launchctl", "kickstart", "-k", "system/org.nixos.nix-daemon"])
+            .status();
+    } else {
+        let _ = Command::new("sudo")
+            .args(["systemctl", "restart", "nix-daemon"])
+            .status();
+    }
 }

@@ -39,6 +39,7 @@ allowed_domains = ["example.com"]
 [xzar]
 url = "https://xzar.example.com"
 token = "xzar-api-token-here"
+public_key = "xzar.example.com:BASE64PUBKEY="
 
 # Optional: enables "Generate with AI" buttons in the admin UI
 # and provides the cloud fallback for the healer agent (when local

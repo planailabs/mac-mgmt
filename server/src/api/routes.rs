@@ -682,6 +682,45 @@ pub async fn get_nixpkgs_pin(
     Ok(Json(NixpkgsPin { commit: rolling }))
 }
 
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct NixCachesResponse {
+    caches: Vec<NixCacheEntry>,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct NixCacheEntry {
+    url: String,
+    public_key: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/nix-caches",
+    tag = "Sync",
+    summary = "Get nix binary cache URLs and their signing public keys",
+    description = "Returns substituter URLs and trusted public keys the daemon should use for nix operations. Daemon appends these as --extra-substituters / --extra-trusted-public-keys.",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Nix caches list"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
+#[rocket::get("/nix-caches")]
+pub async fn get_nix_caches(
+    _auth: SyncAuth,
+) -> Json<NixCachesResponse> {
+    let cfg = crate::config::config();
+    let mut caches = Vec::new();
+    if let Some(ref xzar) = cfg.xzar {
+        caches.push(NixCacheEntry {
+            url: xzar.url.clone(),
+            public_key: xzar.public_key.clone(),
+        });
+    }
+    Json(NixCachesResponse { caches })
+}
+
 #[derive(sqlx::FromRow)]
 struct SkillSlugChannel {
     skill_channel_id: Uuid,

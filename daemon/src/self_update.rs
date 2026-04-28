@@ -255,6 +255,7 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
     let _ = std::fs::remove_file(&gcroot);
 
     tracing::info!("realising {store_path} (gcroot {})", gcroot.display());
+    let cache_args = crate::nix::extra_substituter_args();
     let output = Command::new("nix-store")
         .args([
             "--realise",
@@ -262,6 +263,7 @@ fn apply_store_path(version: &str, store_path: &str) -> Result<()> {
             gcroot.to_str().unwrap_or(".mac-mgmt.gcroot"),
             store_path,
         ])
+        .args(&cache_args)
         .output()
         .context("failed to run nix-store --realise --add-root")?;
     if !output.status.success() {
@@ -395,6 +397,7 @@ pub fn ensure_symlink() -> Result<std::path::PathBuf> {
         .with_context(|| format!("failed to create {}", gcroot_dir.display()))?;
     let gcroot = gcroot_dir.join(".mac-mgmt.gcroot");
     let _ = std::fs::remove_file(&gcroot);
+    let cache_args = crate::nix::extra_substituter_args();
     let realise_out = Command::new("nix-store")
         .args([
             "--realise",
@@ -402,6 +405,7 @@ pub fn ensure_symlink() -> Result<std::path::PathBuf> {
             gcroot.to_str().unwrap_or(".mac-mgmt.gcroot"),
             store_file.to_str().unwrap_or(""),
         ])
+        .args(&cache_args)
         .output();
     if let Ok(out) = &realise_out {
         if !out.status.success() {

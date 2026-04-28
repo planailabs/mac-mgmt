@@ -111,6 +111,9 @@ pub struct AnthropicConfig {
 pub struct XzarConfig {
     pub url: String,
     pub token: String,
+    /// Nix public signing key for this cache (e.g. "xzar.plan.ai:BASE64KEY=").
+    /// Exposed to daemons via GET /api/nix-caches so they can trust store paths.
+    pub public_key: String,
 }
 
 #[derive(Debug, Deserialize)]

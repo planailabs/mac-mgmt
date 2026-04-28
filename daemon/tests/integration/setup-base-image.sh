@@ -49,12 +49,11 @@ incus exec "$BUILD_CONTAINER" -- bash -c '
     yes | sh <(curl --proto "=https" --tlsv1.2 -L https://nixos.org/nix/install) --daemon
 '
 
-# Configure nix
+# Configure nix (trusted-user + flakes; substituters are provided dynamically by the server)
 echo "Configuring nix..."
 incus exec "$BUILD_CONTAINER" -- bash -c '
     echo "extra-experimental-features = nix-command flakes" | tee -a /etc/nix/nix.conf
-    echo "substituters = https://cache.nixos.org/ https://xzar.plan.ai" | tee -a /etc/nix/nix.conf
-    echo "trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= xzar.plan.ai:KUE66pjr6UX5HHCn9kedN1DJ2J5nSlBrKmE7tUjXewE=" | tee -a /etc/nix/nix.conf
+    echo "extra-trusted-users = root" | tee -a /etc/nix/nix.conf
     systemctl restart nix-daemon
 '
 

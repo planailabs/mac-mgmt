@@ -26,6 +26,57 @@ fn pin_cell() -> &'static RwLock<Option<String>> {
     NIXPKGS_PIN.get_or_init(|| RwLock::new(None))
 }
 
+/// Nix binary caches (substituter URL, signing public key) provided by the server.
+static NIX_CACHES: OnceLock<RwLock<Vec<(String, String)>>> = OnceLock::new();
+
+fn nix_caches_cell() -> &'static RwLock<Vec<(String, String)>> {
+    NIX_CACHES.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Update the in-process nix caches list and persist to disk.
+pub fn set_nix_caches(caches: Vec<(String, String)>) {
+    let _ = cache_nix_caches_to_disk(&caches);
+    *nix_caches_cell().write().unwrap() = caches;
+}
+
+/// Load cached nix-caches from disk (survives restarts without server).
+pub fn load_cached_nix_caches() {
+    let path = crate::config::config_dir().join("nix-caches.json");
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        if let Ok(caches) = serde_json::from_str::<Vec<(String, String)>>(&contents) {
+            if !caches.is_empty() {
+                tracing::info!("loaded {} cached nix cache(s) from disk", caches.len());
+                *nix_caches_cell().write().unwrap() = caches;
+            }
+        }
+    }
+}
+
+fn cache_nix_caches_to_disk(caches: &[(String, String)]) -> std::io::Result<()> {
+    let path = crate::config::config_dir().join("nix-caches.json");
+    let json = serde_json::to_string(caches).unwrap_or_default();
+    std::fs::write(&path, json)
+}
+
+/// Return extra args to append to nix commands for substituters.
+/// Empty vec when no caches are configured.
+pub fn extra_substituter_args() -> Vec<String> {
+    let caches = nix_caches_cell().read().unwrap();
+    if caches.is_empty() {
+        return Vec::new();
+    }
+    let urls: Vec<&str> = caches.iter().map(|(url, _)| url.as_str()).collect();
+    let keys: Vec<&str> = caches.iter().map(|(_, key)| key.as_str()).collect();
+    vec![
+        "--option".into(),
+        "extra-substituters".into(),
+        urls.join(" "),
+        "--option".into(),
+        "extra-trusted-public-keys".into(),
+        keys.join(" "),
+    ]
+}
+
 /// Server URL for constructing nixpkgs archive download URLs.
 static SERVER_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
@@ -274,10 +325,12 @@ fn has_dry_run_support() -> bool {
 /// Check which packages have upgrades available via `nix profile upgrade --dry-run`.
 /// Requires nix with https://github.com/NixOS/nix/pull/15545
 fn packages_with_upgrades_dry_run(packages: &[&str]) -> Result<Vec<String>> {
+    let cache_args = extra_substituter_args();
     let mut cmd = Command::new("nix");
     cmd.env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
-        .args(["profile", "upgrade", "--dry-run", "--impure"]);
+        .args(["profile", "upgrade", "--dry-run", "--impure"])
+        .args(&cache_args);
     for pkg in packages {
         cmd.arg(*pkg);
     }
@@ -366,6 +419,7 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
     let before = profile_store_paths(Some(tmp_profile.to_str().unwrap()))?;
 
     // Upgrade the temp profile
+    let cache_args = extra_substituter_args();
     let output = Command::new("nix")
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
@@ -377,6 +431,7 @@ fn packages_with_upgrades_temp_profile(packages: &[&str]) -> Result<Vec<String>>
             tmp_profile.to_str().unwrap(),
         ])
         .args(packages)
+        .args(&cache_args)
         .output()
         .context("failed to run nix profile upgrade on temp profile")?;
 
@@ -527,10 +582,12 @@ fn profile_original_urls() -> Result<HashMap<String, String>> {
 /// half-done if the build fails.
 fn pre_build_package(nix_bin: &str, pkg: &str, flake_ref: &str) -> Result<()> {
     tracing::info!("pre-building {pkg} from {flake_ref}");
+    let cache_args = extra_substituter_args();
     let build = Command::new(nix_bin)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args(["build", "--no-link", "--impure", flake_ref])
+        .args(&cache_args)
         .output()
         .context("failed to run nix build for pre-build")?;
     if !build.status.success() {
@@ -550,12 +607,14 @@ fn pre_build_package(nix_bin: &str, pkg: &str, flake_ref: &str) -> Result<()> {
 /// `--impure` flag. Logs/breadcrumbs and bails on non-zero exit.
 fn run_profile_cmd(nix_bin: &str, action: &str, pkg: &str, args: &[&str]) -> Result<()> {
     tracing::info!("running nix profile {action} {pkg}");
+    let cache_args = extra_substituter_args();
     let output = Command::new(nix_bin)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .arg("profile")
         .args(args)
         .arg("--impure")
+        .args(&cache_args)
         .output()
         .with_context(|| format!("failed to run nix profile {action}"))?;
 
@@ -862,10 +921,12 @@ fn upgrade_nix_inner() -> Result<()> {
         Err(e) => tracing::warn!("could not list profile to pre-build nix: {e}"),
     }
 
+    let cache_args = extra_substituter_args();
     let output = Command::new(nix_bin_str)
         .env("NIXPKGS_ALLOW_UNFREE", "1")
         .env("NIXPKGS_ALLOW_INSECURE", "1")
         .args(["profile", "upgrade", "nix", "--impure"])
+        .args(&cache_args)
         .output()
         .context("failed to run nix profile upgrade nix")?;
 

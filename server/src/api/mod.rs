@@ -27,6 +27,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::get_config,
         routes::get_update_target,
         routes::get_nixpkgs_pin,
+        routes::get_nix_caches,
         routes::get_skills,
         routes::get_mcp_servers,
         // Setting — config
@@ -202,6 +203,7 @@ pub fn build_rocket(
         routes::get_config,
         routes::get_update_target,
         routes::get_nixpkgs_pin,
+        routes::get_nix_caches,
         routes::get_skills,
         routes::get_mcp_servers,
         // Setting token routes — config

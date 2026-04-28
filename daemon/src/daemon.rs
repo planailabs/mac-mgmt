@@ -82,9 +82,10 @@ impl Daemon {
 
     async fn handle_update(&mut self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
-            // Await both fetches so check_upgrades sees the latest pin.
+            // Await all fetches so check_upgrades sees the latest pin + caches.
             fetch_target_version(url, token).await;
             fetch_nixpkgs_pin(url, token).await;
+            fetch_nix_caches(url, token).await;
         }
 
         if self.in_upgrade_window() {
@@ -892,10 +893,12 @@ pub async fn run(
     // unreachable on this boot.
     crate::nix::set_nixpkgs_server_url(server_url.clone());
     crate::nix::load_cached_nixpkgs_pin();
+    crate::nix::load_cached_nix_caches();
 
-    // Fetch the cluster's nixpkgs pin before ServiceManager::init runs.
+    // Fetch the cluster's nixpkgs pin and nix caches before ServiceManager::init runs.
     if let (Some(url), Some(token)) = (&server_url, &server_token) {
         fetch_nixpkgs_pin(url, token).await;
+        fetch_nix_caches(url, token).await;
     }
 
     // When the unmanaged marker exists, services are run by
@@ -1410,6 +1413,27 @@ async fn fetch_target_version(server_url: &str, server_token: &str) {
         } else {
             tracing::debug!("no target version set by server");
         }
+    }
+}
+
+/// Fetch nix binary cache URLs and public keys from the server and apply them.
+async fn fetch_nix_caches(server_url: &str, server_token: &str) {
+    #[derive(serde::Deserialize)]
+    struct NixCachesResponse {
+        caches: Vec<NixCacheEntry>,
+    }
+    #[derive(serde::Deserialize)]
+    struct NixCacheEntry {
+        url: String,
+        public_key: String,
+    }
+    if let Some(resp) =
+        fetch_server_json::<NixCachesResponse>(server_url, server_token, "/api/nix-caches", "nix caches")
+            .await
+    {
+        let caches: Vec<(String, String)> = resp.caches.into_iter().map(|c| (c.url, c.public_key)).collect();
+        tracing::info!("server returned {} nix cache(s)", caches.len());
+        crate::nix::set_nix_caches(caches);
     }
 }
 
