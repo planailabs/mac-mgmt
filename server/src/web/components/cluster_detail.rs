@@ -10,8 +10,6 @@ use super::cluster_healer_settings::ClusterHealerSettings;
 use super::cluster_mcp_servers::ClusterMcpServers;
 use super::cluster_skills::ClusterSkills;
 use super::cluster_ssh_keys::ClusterSshKeys;
-use super::config_editor::ConfigEditor;
-use super::config_history::ConfigHistory;
 use super::setting_token_list::SettingTokenList;
 use super::token_list::SyncTokenList;
 
@@ -517,11 +515,11 @@ pub fn ClusterDetail(id: String) -> Element {
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-config")} }
-                        ConfigEditor { cluster_id: cid2.clone(), read_only }
-                    }
-                    div {
-                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-config-history")} }
-                        ConfigHistory { cluster_id: cid2.clone() }
+                        Link {
+                            to: Route::ClusterConfigPage { id: cid2.clone() },
+                            class: "inline-block bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                            {t!("cluster-detail-open-config")}
+                        }
                     }
                     div {
                         h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-skills")} }

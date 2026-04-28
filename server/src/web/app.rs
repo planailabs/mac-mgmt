@@ -5,6 +5,7 @@ use super::components::admin_tokens_page::AdminTokens;
 use super::components::bundle_detail::BundleDetail;
 use super::components::bundle_form::BundleForm;
 use super::components::bundle_list::BundleList;
+use super::components::cluster_config_page::ClusterConfigPage;
 use super::components::cluster_detail::ClusterDetail;
 use super::components::cluster_form::ClusterForm;
 use super::components::cluster_list::ClusterList;
@@ -52,6 +53,8 @@ pub enum Route {
     ClusterForm {},
     #[route("/clusters/:id")]
     ClusterDetail { id: String },
+    #[route("/clusters/:id/config")]
+    ClusterConfigPage { id: String },
     #[route("/skills")]
     SkillList {},
     #[route("/skills/:id")]

@@ -767,6 +767,10 @@ config-editor-add-entry = + Add entry
 config-editor-reset-default = reset to default
 config-editor-add-item = Add item...
 config-editor-select = -- select --
+config-editor-secret-placeholder = secret:NAME or raw value
+config-editor-secret-hint = Use secret:NAME to reference a vault secret, or enter a raw value
+config-editor-convert-to-secret = Move to vault
+config-editor-converting = Converting...
 
 ## ── Config History ──────────────────────────────────────────────
 
@@ -879,3 +883,24 @@ staff-pings-loading = Loading staff pings...
 
 fleet-reachable-zero = 0 of { $total } daemons reachable
 fleet-reachable-zero-hint = 0 of { $total } daemons reachable — none have an active SSE connection right now
+
+## ── Cluster Config Page ────────────────────────────────────────────
+
+cluster-config-back = Back to cluster
+cluster-detail-open-config = Open Config & Secrets
+
+## ── Secrets ────────────────────────────────────────────────────────
+
+secrets-title = Secrets Vault
+secrets-description = Secrets are encrypted at rest and can be referenced in config fields as secret:NAME.
+secrets-empty = No secrets stored yet.
+secrets-col-name = Name
+secrets-col-reference = Config Reference
+secrets-col-value = Value
+secrets-col-created = Created
+secrets-col-actions = Actions
+secrets-add = Add Secret
+secrets-update = Update
+secrets-new-value = New value...
+secrets-value-placeholder = Secret value...
+secrets-confirm-delete = Delete?

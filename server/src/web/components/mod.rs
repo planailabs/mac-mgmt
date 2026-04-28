@@ -3,6 +3,7 @@ pub mod admin_tokens_page;
 pub mod bundle_detail;
 pub mod bundle_form;
 pub mod bundle_list;
+pub mod cluster_config_page;
 pub mod cluster_detail;
 pub mod cluster_form;
 pub mod cluster_healer_settings;

@@ -767,6 +767,10 @@ config-editor-add-entry = + Eintrag hinzufügen
 config-editor-reset-default = auf Standard zurücksetzen
 config-editor-add-item = Element hinzufügen...
 config-editor-select = -- auswählen --
+config-editor-secret-placeholder = secret:NAME oder Rohwert
+config-editor-secret-hint = Nutze secret:NAME um ein Vault-Secret zu referenzieren, oder gib einen Rohwert ein
+config-editor-convert-to-secret = In Vault verschieben
+config-editor-converting = Wird konvertiert...
 
 ## ── Konfigurationsverlauf ──────────────────────────────────────
 
@@ -879,3 +883,24 @@ staff-pings-loading = Mitarbeiter-Pings werden geladen...
 
 fleet-reachable-zero = 0 von { $total } Daemons erreichbar
 fleet-reachable-zero-hint = 0 von { $total } Daemons erreichbar — keiner hat derzeit eine aktive SSE-Verbindung
+
+## ── Cluster-Konfigurationsseite ────────────────────────────────────
+
+cluster-config-back = Zurück zum Cluster
+cluster-detail-open-config = Konfiguration & Secrets öffnen
+
+## ── Secrets ────────────────────────────────────────────────────────
+
+secrets-title = Secret-Vault
+secrets-description = Secrets werden verschlüsselt gespeichert und können in Konfigurationsfeldern als secret:NAME referenziert werden.
+secrets-empty = Noch keine Secrets gespeichert.
+secrets-col-name = Name
+secrets-col-reference = Konfig-Referenz
+secrets-col-value = Wert
+secrets-col-created = Erstellt
+secrets-col-actions = Aktionen
+secrets-add = Secret hinzufügen
+secrets-update = Aktualisieren
+secrets-new-value = Neuer Wert...
+secrets-value-placeholder = Secret-Wert...
+secrets-confirm-delete = Löschen?

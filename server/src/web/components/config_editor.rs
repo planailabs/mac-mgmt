@@ -76,6 +76,66 @@ async fn get_config_schema() -> Result<serde_json::Value, ServerFnError> {
     Ok(value)
 }
 
+/// Convert a raw secret value into a vault secret and return the `secret:NAME` reference.
+#[server]
+async fn convert_to_secret(
+    cluster_id: String,
+    name: String,
+    value: String,
+) -> Result<String, ServerFnError> {
+    use aes_gcm::aead::{Aead, KeyInit, OsRng};
+    use aes_gcm::{AeadCore, Aes256Gcm, Key};
+
+    let user = current_user().await?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = cluster_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    if let Some(ids) = user
+        .writable_cluster_ids(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    {
+        if !ids.contains(&uuid) {
+            return Err(ServerFnError::new("access denied"));
+        }
+    }
+
+    let cfg = crate::config::config();
+    let key_b64 = cfg
+        .secrets
+        .encryption_key
+        .as_deref()
+        .ok_or_else(|| ServerFnError::new("secrets vault not configured"))?;
+    let key_bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
+            .map_err(|e| ServerFnError::new(format!("invalid encryption key: {e}")))?;
+    let key = *Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let cipher = Aes256Gcm::new(&key);
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, value.as_bytes())
+        .map_err(|_| ServerFnError::new("encryption failed"))?;
+    let mut encrypted = nonce.to_vec();
+    encrypted.extend_from_slice(&ciphertext);
+
+    // Upsert: create or update the secret
+    sqlx::query(
+        "INSERT INTO cluster_secrets (cluster_id, name, encrypted_value) \
+         VALUES ($1, $2, $3) \
+         ON CONFLICT (cluster_id, name) DO UPDATE SET encrypted_value = $3, updated_at = now()",
+    )
+    .bind(uuid)
+    .bind(&name)
+    .bind(&encrypted)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    crate::api::push::notify_global(uuid, crate::api::push::PushMessage::SyncConfig).await;
+    Ok(format!("secret:{name}"))
+}
+
 /// Generate a random API key and return (raw_key, hex-encoded multihash).
 /// The raw key is shown once to the user; only the multihash is stored.
 #[server]
@@ -167,6 +227,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                     Some(Ok(schema_val)) => {
                         rsx! {
                             StructuredEditor {
+                                cluster_id: cluster_id.clone(),
                                 schema: schema_val.clone(),
                                 json_text: editor_text,
                             }
@@ -218,7 +279,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
 
 /// Renders structured form sections from JSON Schema, keeping the JSON signal in sync.
 #[component]
-fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Element {
+fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Signal<String>) -> Element {
     let mut form_values: Signal<serde_json::Value> =
         use_signal(|| serde_json::Value::Object(Default::default()));
     let extra_config_open = use_signal(|| false);
@@ -256,7 +317,7 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
             form_values,
             json_text,
         }
-        div { class: "space-y-3 mb-3",
+        div { class: "columns-1 xl:columns-2 2xl:columns-3 gap-4 space-y-4 mb-4",
             {properties.into_iter().map(|(section_name, section_schema)| {
                 let resolved = resolve_ref(&section_schema, &defs);
                 let description = resolved
@@ -277,7 +338,7 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                 let is_array_section = section_type == "array";
 
                 rsx! {
-                    details { class: "border border-gray-300 dark:border-gray-600 rounded shadow-sm",
+                    details { class: "border border-gray-300 dark:border-gray-600 rounded shadow-sm break-inside-avoid",
                         key: "{section_name}",
                         open: form_values.read().get(&section_name).is_some(),
                         summary { class: "px-3 py-2 bg-gray-100 dark:bg-gray-700 cursor-pointer font-semibold text-sm hover:bg-gray-200 dark:hover:bg-gray-600",
@@ -286,7 +347,7 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                         if !description.is_empty() {
                             p { class: "px-3 pt-1 text-xs text-gray-500 dark:text-gray-400", "{description}" }
                         }
-                        div { class: "px-3 py-2 space-y-2",
+                        div { class: "px-3 py-3 space-y-3",
                             if is_array_section {
                                 {render_top_level_array(
                                     &resolved,
@@ -295,6 +356,7 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                                     form_values,
                                     json_text,
                                     extra_config_open,
+                                    cluster_id.clone(),
                                     sync_to_json,
                                 )}
                             } else {
@@ -305,6 +367,7 @@ fn StructuredEditor(schema: serde_json::Value, json_text: Signal<String>) -> Ele
                                     form_values,
                                     json_text,
                                     extra_config_open,
+                                    cluster_id.clone(),
                                     sync_to_json,
                                 )}
                             }
@@ -407,6 +470,103 @@ fn KeyHashField(
     }
 }
 
+/// Dedicated component for secret fields so we can use hooks (convert-to-secret state).
+#[component]
+fn SecretField(
+    cluster_id: String,
+    field_name: String,
+    field_path: Vec<String>,
+    mut form_values: Signal<serde_json::Value>,
+    mut json_text: Signal<String>,
+) -> Element {
+    let mut converting = use_signal(|| false);
+    let mut convert_error = use_signal(|| None::<String>);
+
+    let val_str = get_at_path(&form_values.read(), &field_path)
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+
+    let is_already_ref = val_str.starts_with("secret:") || val_str.starts_with("env:");
+    let has_value = !val_str.is_empty();
+
+    let fp = field_path.clone();
+    let fp2 = field_path.clone();
+    let fp_convert = field_path.clone();
+    let cid = cluster_id.clone();
+    // Derive a secret name from the field path (e.g. "cloud.0.api_key" → "cloud_0_api_key")
+    let derived_name = field_path
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join("_");
+
+    let mut sync = move || {
+        let json = form_values.read().clone();
+        json_text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+    };
+
+    rsx! {
+        input {
+            r#type: "password",
+            class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+            placeholder: t!("config-editor-secret-placeholder"),
+            value: val_str,
+            oninput: move |evt| {
+                let v = evt.value();
+                if v.is_empty() {
+                    remove_at_path(&mut form_values, &fp);
+                } else {
+                    set_at_path(&mut form_values, &fp,
+                        serde_json::Value::String(v));
+                }
+                sync();
+            },
+        }
+        div { class: "flex items-center gap-2 mt-0.5",
+            p { class: "text-xs text-gray-400 dark:text-gray-500 flex-1",
+                {t!("config-editor-secret-hint")}
+            }
+            if has_value && !is_already_ref {
+                button {
+                    r#type: "button",
+                    class: "text-xs px-2 py-0.5 border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-50 dark:hover:bg-amber-900/30 whitespace-nowrap",
+                    disabled: *converting.read(),
+                    onclick: move |evt| {
+                        evt.prevent_default();
+                        evt.stop_propagation();
+                        let cid = cid.clone();
+                        let name = derived_name.clone();
+                        let fp_inner = fp2.clone();
+                        let value = get_at_path(&form_values.read(), &fp_convert)
+                            .and_then(|v| v.as_str().map(String::from))
+                            .unwrap_or_default();
+                        converting.set(true);
+                        convert_error.set(None);
+                        spawn(async move {
+                            match convert_to_secret(cid, name, value).await {
+                                Ok(reference) => {
+                                    set_at_path(&mut form_values, &fp_inner,
+                                        serde_json::Value::String(reference));
+                                    let json = form_values.read().clone();
+                                    json_text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+                                }
+                                Err(e) => {
+                                    convert_error.set(Some(e.to_string()));
+                                }
+                            }
+                            converting.set(false);
+                        });
+                    },
+                    if *converting.read() { {t!("config-editor-converting")} } else { {t!("config-editor-convert-to-secret")} }
+                }
+            }
+        }
+        if let Some(err) = &*convert_error.read() {
+            p { class: "text-xs text-red-500 dark:text-red-400 mt-0.5", "{err}" }
+        }
+    }
+}
+
 fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_json::Value {
     // Direct $ref
     if let Some(r) = schema.get("$ref").and_then(|r| r.as_str()) {
@@ -442,6 +602,7 @@ fn render_top_level_array(
     mut form_values: Signal<serde_json::Value>,
     json_text: Signal<String>,
     extra_config_open: Signal<bool>,
+    cluster_id: String,
     sync_to_json: impl Fn() + Clone + 'static,
 ) -> Element {
     let items_schema = section_schema
@@ -506,6 +667,7 @@ fn render_top_level_array(
                                 form_values,
                                 json_text,
                                 extra_config_open,
+                                cluster_id.clone(),
                                 sync_to_json.clone(),
                             )}
                         }
@@ -539,6 +701,7 @@ fn render_section_fields(
     mut form_values: Signal<serde_json::Value>,
     json_text: Signal<String>,
     extra_config_open: Signal<bool>,
+    cluster_id: String,
     sync_to_json: impl Fn() + Clone + 'static,
 ) -> Element {
     let properties = section_schema
@@ -577,6 +740,9 @@ fn render_section_fields(
             }
 
             let resolved = resolve_ref(&field_schema, defs);
+            // Check x-secret extension (Secret type emits this in its JSON Schema)
+            let is_secret = resolved.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false)
+                || field_schema.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false);
             // Description may be on the field schema itself (for $ref fields)
             // or on the resolved type definition
             let description = field_schema
@@ -621,6 +787,7 @@ fn render_section_fields(
                             form_values,
                             json_text,
                             extra_config_open,
+                            cluster_id.clone(),
                             sync,
                         )}
                     }
@@ -764,6 +931,7 @@ fn render_section_fields(
                                                                 form_values,
                                                                 json_text,
                                                                 extra_config_open,
+                                                                cluster_id.clone(),
                                                                 sync_remove.clone(),
                                                             )}
                                                         }
@@ -931,6 +1099,18 @@ fn render_section_fields(
                                             })}
                                         }
                                     }
+                                } else if is_secret {
+                                    let secret_key = field_path.join(".");
+                                    rsx! {
+                                        SecretField {
+                                            key: "{secret_key}",
+                                            cluster_id: cluster_id.clone(),
+                                            field_name: field_name.clone(),
+                                            field_path,
+                                            form_values,
+                                            json_text,
+                                        }
+                                    }
                                 } else {
                                     rsx! {
                                         input {
@@ -1049,6 +1229,7 @@ fn render_object_array_entry(
     form_values: Signal<serde_json::Value>,
     json_text: Signal<String>,
     extra_config_open: Signal<bool>,
+    cluster_id: String,
     sync_to_json: impl Fn() + Clone + 'static,
 ) -> Element {
     render_section_fields(
@@ -1058,6 +1239,7 @@ fn render_object_array_entry(
         form_values,
         json_text,
         extra_config_open,
+        cluster_id,
         sync_to_json,
     )
 }
