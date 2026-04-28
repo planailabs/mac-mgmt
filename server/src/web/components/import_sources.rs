@@ -365,39 +365,41 @@ pub fn ImportSources(
     // Signal for edit requests from source cards
     let mut edit_request = use_signal(|| None::<ImportSourceRow>);
 
-    // Process edit requests
-    if let Some(source) = edit_request.write().take() {
-        form_name.set(source.name.clone());
-        form_type.set(source.source_type.clone());
-        form_channel.set(source.channel.clone());
-        form_auto_sync.set(source.auto_sync);
-        match source.source_type.as_str() {
-            "git" => {
-                form_repo_url.set(
-                    source.source_config.get("repo_url")
-                        .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                );
-                form_branch.set(
-                    source.source_config.get("branch")
-                        .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                );
-                form_glob.set(
-                    source.source_config.get("glob")
-                        .and_then(|v| v.as_str()).unwrap_or("skills/*").to_string(),
-                );
+    // Process edit requests via effect so the state change applies immediately
+    use_effect(move || {
+        if let Some(source) = edit_request.write().take() {
+            form_name.set(source.name.clone());
+            form_type.set(source.source_type.clone());
+            form_channel.set(source.channel.clone());
+            form_auto_sync.set(source.auto_sync);
+            match source.source_type.as_str() {
+                "git" => {
+                    form_repo_url.set(
+                        source.source_config.get("repo_url")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    );
+                    form_branch.set(
+                        source.source_config.get("branch")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    );
+                    form_glob.set(
+                        source.source_config.get("glob")
+                            .and_then(|v| v.as_str()).unwrap_or("skills/*").to_string(),
+                    );
+                }
+                "clawhub" => {
+                    form_clawhub_slug.set(
+                        source.source_config.get("slug")
+                            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    );
+                }
+                _ => {}
             }
-            "clawhub" => {
-                form_clawhub_slug.set(
-                    source.source_config.get("slug")
-                        .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                );
-            }
-            _ => {}
+            editing.set(Some(source));
+            show_form.set(true);
+            form_error.set(None);
         }
-        editing.set(Some(source));
-        show_form.set(true);
-        form_error.set(None);
-    }
+    });
 
     rsx! {
         div { class: "px-6 py-8 max-w-5xl mx-auto",
