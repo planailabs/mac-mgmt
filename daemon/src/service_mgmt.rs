@@ -179,6 +179,7 @@ impl ServiceManager {
         let ollama_cfg = std::mem::take(&mut cfg.ollama);
         let lms_cfg = std::mem::take(&mut cfg.lms);
         let unsloth_cfg = std::mem::take(&mut cfg.unsloth);
+        let litellm_cfg = std::mem::take(&mut cfg.litellm);
         let cloud_cfgs = std::mem::take(&mut cfg.cloud);
         let backup_cfg = std::mem::take(&mut cfg.backup);
 
@@ -194,6 +195,9 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&unsloth_cfg) {
             config_store.set("unsloth", v);
         }
+        if let Ok(v) = serde_json::to_value(&litellm_cfg) {
+            config_store.set("litellm", v);
+        }
         if let Ok(v) = serde_json::to_value(&openclaw_cfg) {
             config_store.set("openclaw", v);
         }
@@ -208,7 +212,7 @@ impl ServiceManager {
         }
 
         let connectors =
-            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &unsloth_cfg, &cloud_cfgs, &backup_cfg);
+            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &unsloth_cfg, &litellm_cfg, &cloud_cfgs, &backup_cfg);
 
         let all_services = connectors::build_services(
             &global_cfg,
@@ -217,6 +221,8 @@ impl ServiceManager {
             ollama_cfg,
             lms_cfg,
             unsloth_cfg,
+            litellm_cfg,
+            cloud_cfgs,
             backup_cfg,
         );
 
@@ -960,6 +966,9 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&cfg.unsloth) {
             self.config_store.set("unsloth", v);
         }
+        if let Ok(v) = serde_json::to_value(&cfg.litellm) {
+            self.config_store.set("litellm", v);
+        }
         if let Ok(v) = serde_json::to_value(&cfg.openclaw) {
             self.config_store.set("openclaw", v);
         }
@@ -978,7 +987,7 @@ impl ServiceManager {
 
         // Rebuild the connector list from current config.
         let new_connectors =
-            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.cloud, &cfg.backup);
+            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.litellm, &cfg.cloud, &cfg.backup);
         self.connectors = new_connectors
             .into_iter()
             .map(|c| ConnectorState {

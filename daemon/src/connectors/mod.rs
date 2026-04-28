@@ -1,6 +1,8 @@
 pub mod backup;
 pub mod cloud_openclaw;
 pub mod cloud_opencode;
+pub mod litellm_openclaw;
+pub mod litellm_opencode;
 pub mod lms_openclaw;
 pub mod lms_opencode;
 pub mod ollama_openclaw;
@@ -16,12 +18,13 @@ use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 use crate::services::{
-    apprise::Apprise, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama,
-    openclaw::OpenClaw, opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
+    apprise::Apprise, litellm::Litellm, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi,
+    ollama::Ollama, openclaw::OpenClaw, opencode::Opencode, restic::Restic, rocm_smi::RocmSmi,
+    unsloth::Unsloth,
 };
 use mac_mgmt_common::{
-    AgentProvider, BackupConfig, CloudConfig, GlobalConfig, LlmProvider, LmsConfig, OllamaConfig,
-    OpenClawConfig, OpencodeConfig, UnslothConfig,
+    AgentProvider, BackupConfig, CloudConfig, GlobalConfig, LitellmConfig, LlmProvider, LmsConfig,
+    OllamaConfig, OpenClawConfig, OpencodeConfig, UnslothConfig,
 };
 
 /// When a connector runs relative to service startup.
@@ -69,6 +72,8 @@ pub fn build_services(
     ollama_cfg: OllamaConfig,
     lms_cfg: LmsConfig,
     unsloth_cfg: UnslothConfig,
+    litellm_cfg: LitellmConfig,
+    cloud_cfgs: Vec<CloudConfig>,
     backup_cfg: BackupConfig,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
@@ -108,7 +113,12 @@ pub fn build_services(
         tracing::info!("unsloth disabled");
     }
 
-    // Cloud providers don't need a local service.
+    if litellm_cfg.enabled {
+        tracing::info!("litellm enabled");
+        services.push(Box::new(Litellm::new(litellm_cfg, cloud_cfgs)));
+    } else {
+        tracing::info!("litellm disabled");
+    }
 
     services.push(Box::new(McPorter));
     services.push(Box::new(Apprise));
@@ -136,6 +146,7 @@ pub fn build_connectors(
     ollama_cfg: &OllamaConfig,
     lms_cfg: &LmsConfig,
     unsloth_cfg: &UnslothConfig,
+    litellm_cfg: &LitellmConfig,
     cloud_cfgs: &[CloudConfig],
     backup_cfg: &BackupConfig,
 ) -> Vec<Box<dyn Connector>> {
@@ -159,6 +170,8 @@ pub fn build_connectors(
     );
 
     let has_enabled_cloud = cloud_cfgs.iter().any(|c| c.enabled);
+    // When litellm is enabled, it replaces direct cloud→agent connectors.
+    let use_litellm = litellm_cfg.enabled;
 
     // Register ALL enabled LLM providers with each enabled agent.
     // Only the provider matching default_llm gets set_default=true.
@@ -190,7 +203,14 @@ pub fn build_connectors(
                     set_default: global.default_llm == LlmProvider::Unsloth,
                 }));
             }
-            if has_enabled_cloud {
+            if use_litellm {
+                connectors.push(Box::new(litellm_openclaw::LitellmOpenClaw {
+                    host: litellm_cfg.host.clone(),
+                    port: litellm_cfg.port,
+                    set_default: global.default_llm == LlmProvider::Cloud
+                        || global.default_llm == LlmProvider::Litellm,
+                }));
+            } else if has_enabled_cloud {
                 connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
                     set_default: global.default_llm == LlmProvider::Cloud,
                 }));
@@ -221,7 +241,14 @@ pub fn build_connectors(
                     set_default: global.default_llm == LlmProvider::Unsloth,
                 }));
             }
-            if has_enabled_cloud {
+            if use_litellm {
+                connectors.push(Box::new(litellm_opencode::LitellmOpencode {
+                    host: litellm_cfg.host.clone(),
+                    port: litellm_cfg.port,
+                    set_default: global.default_llm == LlmProvider::Cloud
+                        || global.default_llm == LlmProvider::Litellm,
+                }));
+            } else if has_enabled_cloud {
                 connectors.push(Box::new(cloud_opencode::CloudOpencode {
                     set_default: global.default_llm == LlmProvider::Cloud,
                 }));

@@ -1,5 +1,6 @@
 pub mod apprise;
 pub mod gpu_tool_common;
+pub mod litellm;
 pub mod lms;
 pub mod mcporter;
 pub mod nvidia_smi;

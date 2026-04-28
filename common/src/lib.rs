@@ -601,6 +601,7 @@ pub enum LlmProvider {
     Lms,
     Unsloth,
     Cloud,
+    Litellm,
     None,
 }
 
@@ -617,6 +618,7 @@ impl LlmProvider {
             Self::Lms => "lms",
             Self::Unsloth => "unsloth",
             Self::Cloud => "cloud",
+            Self::Litellm => "litellm",
             Self::None => "none",
         }
     }
@@ -982,6 +984,49 @@ impl UnslothConfig {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.port == 0 {
             return Err(ValidationError("unsloth.port must be > 0".into()));
+        }
+        Ok(())
+    }
+}
+
+// ── LiteLLM proxy ─────────────────────────────────────────────────────
+
+fn default_litellm_port() -> u16 {
+    4100
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LitellmConfig {
+    #[schemars(description = "Whether LiteLLM proxy is enabled")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "LiteLLM proxy listen address")]
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[schemars(description = "LiteLLM proxy listen port")]
+    #[serde(default = "default_litellm_port")]
+    pub port: u16,
+    #[schemars(description = "Master key for LiteLLM proxy authentication")]
+    #[serde(default)]
+    pub master_key: Option<Secret>,
+}
+
+impl Default for LitellmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_host(),
+            port: default_litellm_port(),
+            master_key: None,
+        }
+    }
+}
+
+impl LitellmConfig {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.port == 0 {
+            return Err(ValidationError("litellm.port must be > 0".into()));
         }
         Ok(())
     }
@@ -1502,6 +1547,8 @@ pub struct ClusterConfig {
     pub lms: LmsConfig,
     #[serde(default)]
     pub unsloth: UnslothConfig,
+    #[serde(default)]
+    pub litellm: LitellmConfig,
     #[schemars(description = "Cloud LLM provider entries (list of providers)")]
     #[serde(default, deserialize_with = "deserialize_cloud_list")]
     pub cloud: Vec<CloudConfig>,
@@ -1559,6 +1606,9 @@ impl ClusterConfig {
         }
         if self.unsloth.enabled {
             self.unsloth.validate().map_err(|e| e.to_string())?;
+        }
+        if self.litellm.enabled {
+            self.litellm.validate().map_err(|e| e.to_string())?;
         }
         for (i, c) in self.cloud.iter().enumerate() {
             if c.enabled {
@@ -1662,6 +1712,8 @@ pub struct DaemonConfig {
     pub lms: LmsConfig,
     #[serde(default)]
     pub unsloth: UnslothConfig,
+    #[serde(default)]
+    pub litellm: LitellmConfig,
     #[serde(default, deserialize_with = "deserialize_cloud_list")]
     pub cloud: Vec<CloudConfig>,
     #[serde(default)]
@@ -1715,6 +1767,7 @@ impl DaemonConfig {
         config.daemon.validate().map_err(|e| e.to_string())?;
         config.global.validate().map_err(|e| e.to_string())?;
         config.ollama.validate().map_err(|e| e.to_string())?;
+        config.litellm.validate().map_err(|e| e.to_string())?;
         config.relay.validate().map_err(|e| e.to_string())?;
         Ok(config)
     }

@@ -98,6 +98,16 @@ flavour = "cpu"
 # port = 8888
 # default_model = ""
 
+# ── LiteLLM ──────────────────────────────────────────────────────────
+# LiteLLM proxy - unified OpenAI-compatible API for all cloud LLM providers.
+# When enabled, replaces direct cloud→agent connectors with a single proxy.
+# Cloud provider configs (below) are auto-converted to a LiteLLM config YAML.
+# [litellm]
+# enabled = false
+# host = "127.0.0.1"
+# port = 4100
+# master_key = "sk-your-master-key"
+
 # ── Notifications (via apprise) ──────────────────────────────────────
 # Push notifications when daemon events occur (crashes, upgrades, etc.).
 # Uses the apprise CLI for delivery — supports 100+ services including
