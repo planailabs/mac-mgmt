@@ -46,7 +46,12 @@ pub fn resolve_store_paths(
 
     for (slug, channel) in skills {
         let pin_name = format!("skill/{slug}/{channel}/{arch}");
-        if let Some(pin) = pins.iter().find(|p| p.name == pin_name && !p.abandoned) {
+        let noarch_name = format!("skill/{slug}/{channel}/noarch");
+        let pin = pins
+            .iter()
+            .find(|p| p.name == pin_name && !p.abandoned)
+            .or_else(|| pins.iter().find(|p| p.name == noarch_name && !p.abandoned));
+        if let Some(pin) = pin {
             if let Some(root) = pin.roots.first() {
                 let path = if root.drv_full.starts_with("/nix/store/") {
                     root.drv_full.clone()

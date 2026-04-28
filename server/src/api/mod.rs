@@ -9,6 +9,9 @@ pub(crate) mod secrets;
 #[cfg(feature = "skill-center")]
 pub(crate) mod federation;
 
+#[cfg(feature = "skill-importer")]
+pub(crate) mod importer;
+
 use rocket::Config;
 use rocket::config::Shutdown;
 use sqlx::PgPool;
@@ -266,6 +269,18 @@ pub fn build_rocket(
         federation::federation_resolve_skills,
         federation::federation_resolve_mcp_servers,
         federation::federation_events,
+    ]);
+
+    // Skill importer routes — import from git repos and ClawHub
+    #[cfg(feature = "skill-importer")]
+    api_routes.append(&mut rocket::routes![
+        importer::create_source,
+        importer::list_sources,
+        importer::delete_source,
+        importer::sync_source,
+        importer::list_jobs,
+        importer::get_job,
+        importer::search_clawhub,
     ]);
 
     // Management server routes — fleet orchestration, clusters, rollouts, healer

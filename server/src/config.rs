@@ -21,7 +21,10 @@ pub struct ServerConfig {
     pub git: GitConfig,
     #[serde(default)]
     pub skill_centers: SkillCentersConfig,
-    pub secrets: SecretsConfig,
+    #[serde(default)]
+    pub secrets: Option<SecretsConfig>,
+    #[serde(default)]
+    pub importer: Option<ImporterConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,6 +403,26 @@ pub struct SecretsConfig {
     /// Base64-encoded 32-byte AES-256 key for encrypting secrets at rest.
     /// Generate with: `openssl rand -base64 32`
     pub encryption_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImporterConfig {
+    /// Directory for temporary git clones and builds.
+    #[serde(default = "default_importer_work_dir")]
+    pub work_dir: String,
+    /// ClawHub registry URL (e.g. "https://clawhub.ai").
+    pub clawhub_url: Option<String>,
+    /// Interval in seconds for auto-sync of import sources.
+    #[serde(default = "default_importer_sync_interval")]
+    pub sync_interval_secs: u64,
+}
+
+fn default_importer_work_dir() -> String {
+    "./import-work".to_string()
+}
+
+fn default_importer_sync_interval() -> u64 {
+    3600
 }
 
 pub fn load() -> &'static ServerConfig {

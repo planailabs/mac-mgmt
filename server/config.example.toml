@@ -108,7 +108,13 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 # defaults for: auto_trigger, auto_trigger_provider/model, auto_approve,
 # fix_provider/model. An "Override server defaults" toggle enables/disables them.
 
-# Secrets vault: encrypted key-value store for daemon secrets.
+# Secrets vault: encrypted key-value store for daemon secrets (requires "mgmt" feature).
 # Daemons reference secrets in config via secret:NAME syntax.
-[secrets]
-encryption_key = "base64-encoded-32-byte-key"  # generate with: openssl rand -base64 32
+# [secrets]
+# encryption_key = "base64-encoded-32-byte-key"  # generate with: openssl rand -base64 32
+
+# Skill importer: import skills from git repos and ClawHub (requires "skill-importer" feature).
+# [importer]
+# work_dir = "./import-work"                     # temp dir for git clones
+# clawhub_url = "https://clawhub.ai"             # ClawHub registry URL
+# sync_interval_secs = 3600                      # auto-sync interval (seconds)

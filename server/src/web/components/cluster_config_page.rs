@@ -12,7 +12,8 @@ fn encrypt_secret_value(plaintext: &[u8]) -> Result<Vec<u8>, String> {
     use aes_gcm::{AeadCore, Aes256Gcm, Key};
 
     let cfg = crate::config::config();
-    let key_b64 = &cfg.secrets.encryption_key;
+    let secrets = cfg.secrets.as_ref().ok_or_else(|| "secrets not configured".to_string())?;
+    let key_b64 = &secrets.encryption_key;
     let key_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
         .map_err(|e| format!("invalid encryption key: {e}"))?;
     if key_bytes.len() != 32 {
