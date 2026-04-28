@@ -73,16 +73,32 @@ async fn list_skills() -> Result<Vec<CatalogEntry>, ServerFnError> {
     Ok(entries)
 }
 
+/// Mirror of `crate::xzar::SyncResult` that is visible in WASM builds
+/// (the xzar module is behind the `server` feature gate).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct SyncResult {
+    created_skills: u32,
+    created_channels: u32,
+    removed_channels: u32,
+    removed_skills: u32,
+}
+
 /// Fetch all pins from xzar, parse `skill/{slug}/{channel}` pins, and upsert
 /// skills + channels into the database.
 #[server]
-async fn sync_from_xzar() -> Result<crate::xzar::SyncResult, ServerFnError> {
+async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    crate::xzar::sync_skills_db(&pool)
+    let r = crate::xzar::sync_skills_db(&pool)
         .await
-        .map_err(|e| ServerFnError::new(e))
+        .map_err(|e| ServerFnError::new(e))?;
+    Ok(SyncResult {
+        created_skills: r.created_skills,
+        created_channels: r.created_channels,
+        removed_channels: r.removed_channels,
+        removed_skills: r.removed_skills,
+    })
 }
 
 #[component]
