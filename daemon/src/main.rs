@@ -114,6 +114,10 @@ enum Commands {
         #[command(subcommand)]
         action: SupervisorCmd,
     },
+    /// Run the PII cleaner MCP server (stdio transport)
+    McpCleaner(plan_ai_cleaner::Cli),
+    /// Run the multi-AI cloud MCP server (stdio transport)
+    McpCloud(plan_ai_cloud::Cli),
 }
 
 #[derive(Subcommand)]
@@ -496,6 +500,12 @@ async fn main() -> Result<()> {
                 }
             }
             println!("{found} service(s) imported");
+        }
+        Commands::McpCleaner(cli) => {
+            plan_ai_cleaner::run(cli).await?;
+        }
+        Commands::McpCloud(cli) => {
+            plan_ai_cloud::run(cli).await?;
         }
     }
 

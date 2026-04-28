@@ -6090,6 +6090,8 @@ dependencies = [
  "mac-mgmt-ws",
  "multihash",
  "notify",
+ "plan-ai-cleaner",
+ "plan-ai-cloud",
  "prometheus",
  "ramhorns",
  "rand 0.8.6",

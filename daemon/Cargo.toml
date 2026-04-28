@@ -64,4 +64,6 @@ regex = "1"
 which = { workspace = true }
 ramhorns = "1"
 mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, optional = true }
+plan-ai-cleaner = { path = "../plan-ai-cleaner" }
+plan-ai-cloud = { path = "../plan-ai-cloud" }
 aes-gcm = "0.10"

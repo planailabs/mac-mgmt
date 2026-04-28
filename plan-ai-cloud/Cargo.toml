@@ -3,6 +3,10 @@ name = "plan-ai-cloud"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "plan_ai_cloud"
+path = "src/lib.rs"
+
 [[bin]]
 name = "plan-ai-cloud"
 path = "src/main.rs"
