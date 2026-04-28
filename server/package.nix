@@ -11,6 +11,11 @@
   tailwindcss_3,
   lld,
   gitSha ? "unknown",
+  # Override to build a feature-subset variant.
+  # Empty string = default features (monolith).
+  featureFlags ? "",
+  pnameSuffix ? "",
+  description ? "Mac management server with web UI",
 }:
 
 let
@@ -18,10 +23,13 @@ let
     url = "https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.17.14.zip";
     hash = "sha256-SBJE0IEgl7Efuu73n3HZQrFxYX+cn5UU5jrL4T5xzNw=";
   };
+  dxFeatureArgs =
+    if featureFlags == "" then ""
+    else "--no-default-features --features \"${featureFlags}\"";
 in
 
 rustPlatform.buildRustPackage {
-  pname = "mac-mgmt-server";
+  pname = "mac-mgmt-server${pnameSuffix}";
   version = "0.1.0";
   src = ./..;
   cargoLock.lockFile = ../Cargo.lock;
@@ -57,7 +65,7 @@ rustPlatform.buildRustPackage {
     npm run tailwind:build
     popd
 
-    dx build --release --fullstack --package mac-mgmt-server
+    dx build --release --fullstack --package mac-mgmt-server ${dxFeatureArgs}
 
     runHook postBuild
   '';
@@ -77,7 +85,7 @@ rustPlatform.buildRustPackage {
   '';
 
   meta = {
-    description = "Mac management server with web UI";
+    inherit description;
     license = lib.licenses.asl20;
     mainProgram = "mac-mgmt-server";
   };

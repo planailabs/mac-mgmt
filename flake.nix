@@ -38,7 +38,7 @@
           pkgs.libiconv
         ];
 
-        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh;
+        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh;
         relay-ssh = mac-mgmt-relay-ssh;
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
@@ -87,6 +87,9 @@
         packages = {
           default = mac-mgmt;
           server = mac-mgmt-server;
+          server-mgmt = mac-mgmt-server-mgmt;
+          server-skill-center = mac-mgmt-server-skill-center;
+          server-skill-importer = mac-mgmt-server-skill-importer;
           relay = mac-mgmt-relay;
           runner = mac-mgmt-runner;
           relay-ssh = relay-ssh;
