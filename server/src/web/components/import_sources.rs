@@ -398,8 +398,9 @@ pub fn ImportSourceDetail(id: String) -> Element {
 
     let mut form_error = use_signal(|| None::<String>);
     let mut syncing = use_signal(|| false);
+    let mut editing = use_signal(|| false);
 
-    // Form signals — populated from source data via effect
+    // Form signals — populated from source data when entering edit mode
     let mut form_name = use_signal(String::new);
     let mut form_type = use_signal(String::new);
     let mut form_repo_url = use_signal(String::new);
@@ -408,35 +409,13 @@ pub fn ImportSourceDetail(id: String) -> Element {
     let mut form_clawhub_slug = use_signal(String::new);
     let mut form_channel = use_signal(String::new);
     let mut form_auto_sync = use_signal(|| false);
-    let mut form_loaded = use_signal(|| false);
-
-    // Populate form from fetched source (once)
-    if let Some(Ok(s)) = &*source.read() {
-        if !form_loaded() {
-            form_name.set(s.name.clone());
-            form_type.set(s.source_type.clone());
-            form_channel.set(s.channel.clone());
-            form_auto_sync.set(s.auto_sync);
-            match s.source_type.as_str() {
-                "git" => {
-                    form_repo_url.set(s.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                    form_branch.set(s.source_config.get("branch").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                    form_glob.set(s.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("skills/*").to_string());
-                }
-                "clawhub" => {
-                    form_clawhub_slug.set(s.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                }
-                _ => {}
-            }
-            form_loaded.set(true);
-        }
-    }
 
     match &*source.read() {
         Some(Ok(s)) => {
             let source_id = s.id.clone();
             let source_name = s.name.clone();
             let source_type = s.source_type.clone();
+            let desc = source_description(s);
             let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
             let synced_label = s.last_synced_at
                 .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
@@ -445,6 +424,9 @@ pub fn ImportSourceDetail(id: String) -> Element {
             let sid_sync = source_id.clone();
             let sid_del = source_id.clone();
             let sid_save = source_id.clone();
+
+            // Clone source data for populating form on edit click
+            let edit_source = s.clone();
 
             rsx! {
                 div { class: "px-6 py-8 max-w-5xl mx-auto",
@@ -457,12 +439,47 @@ pub fn ImportSourceDetail(id: String) -> Element {
                         }
                         div { class: "flex items-center justify-between mt-1",
                             div {
-                                div { class: "flex items-center gap-2",
+                                div { class: "flex items-center gap-3",
                                     h2 { class: "text-2xl font-bold dark:text-white", "{source_name}" }
                                     span { class: "text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400",
                                         "{source_type}"
                                     }
+                                    span { class: "text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                                        "{s.channel}"
+                                    }
+                                    if s.auto_sync {
+                                        span { class: "text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
+                                            {t!("import-badge-auto")}
+                                        }
+                                    }
+                                    if !editing() {
+                                        button {
+                                            class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
+                                            onclick: move |_| {
+                                                // Populate form from current source data
+                                                form_name.set(edit_source.name.clone());
+                                                form_type.set(edit_source.source_type.clone());
+                                                form_channel.set(edit_source.channel.clone());
+                                                form_auto_sync.set(edit_source.auto_sync);
+                                                match edit_source.source_type.as_str() {
+                                                    "git" => {
+                                                        form_repo_url.set(edit_source.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                                                        form_branch.set(edit_source.source_config.get("branch").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                                                        form_glob.set(edit_source.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("skills/*").to_string());
+                                                    }
+                                                    "clawhub" => {
+                                                        form_clawhub_slug.set(edit_source.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                                                    }
+                                                    _ => {}
+                                                }
+                                                editing.set(true);
+                                                form_error.set(None);
+                                            },
+                                            {t!("edit")}
+                                        }
+                                    }
                                 }
+                                p { class: "text-sm text-gray-500 dark:text-gray-400 font-mono mt-1", "{desc}" }
                                 p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1",
                                     {t!("cluster-detail-created", date: created)}
                                     " · "
@@ -513,30 +530,40 @@ pub fn ImportSourceDetail(id: String) -> Element {
                         p { class: "text-red-500 text-sm mb-4", "{err}" }
                     }
 
-                    // Edit form
-                    div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6 border dark:border-gray-700",
-                        h3 { class: "text-lg font-semibold mb-4 dark:text-white", {t!("import-edit-source")} }
-                        { render_source_form(&form_name, &form_type, &form_repo_url, &form_branch, &form_glob, &form_clawhub_slug, &form_channel, &form_auto_sync, true) }
-                        button {
-                            class: "bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 mt-4",
-                            onclick: move |_| {
-                                let sid = sid_save.clone();
-                                let name = form_name();
-                                let stype = form_type();
-                                let channel = form_channel();
-                                let auto_sync = form_auto_sync();
-                                let source_config = build_source_config(&stype, &form_repo_url(), &form_branch(), &form_glob(), &form_clawhub_slug());
-                                spawn(async move {
-                                    match update_import_source(sid, name, source_config, channel, auto_sync).await {
-                                        Ok(()) => {
-                                            form_error.set(None);
-                                            source.restart();
-                                        }
-                                        Err(e) => form_error.set(Some(e.to_string())),
-                                    }
-                                });
-                            },
-                            {t!("save")}
+                    // Edit form (hidden until edit button clicked)
+                    if editing() {
+                        div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6 border dark:border-gray-700",
+                            h3 { class: "text-lg font-semibold mb-4 dark:text-white", {t!("import-edit-source")} }
+                            { render_source_form(&form_name, &form_type, &form_repo_url, &form_branch, &form_glob, &form_clawhub_slug, &form_channel, &form_auto_sync, true) }
+                            div { class: "flex items-center gap-2 mt-4",
+                                button {
+                                    class: "bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700",
+                                    onclick: move |_| {
+                                        let sid = sid_save.clone();
+                                        let name = form_name();
+                                        let stype = form_type();
+                                        let channel = form_channel();
+                                        let auto_sync = form_auto_sync();
+                                        let source_config = build_source_config(&stype, &form_repo_url(), &form_branch(), &form_glob(), &form_clawhub_slug());
+                                        spawn(async move {
+                                            match update_import_source(sid, name, source_config, channel, auto_sync).await {
+                                                Ok(()) => {
+                                                    form_error.set(None);
+                                                    editing.set(false);
+                                                    source.restart();
+                                                }
+                                                Err(e) => form_error.set(Some(e.to_string())),
+                                            }
+                                        });
+                                    },
+                                    {t!("save")}
+                                }
+                                button {
+                                    class: "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-4 py-2 rounded text-sm",
+                                    onclick: move |_| editing.set(false),
+                                    {t!("cancel")}
+                                }
+                            }
                         }
                     }
 
