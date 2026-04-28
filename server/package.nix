@@ -11,11 +11,6 @@
   tailwindcss_3,
   lld,
   gitSha ? "unknown",
-  # Runtime server mode written to a wrapper script.
-  # Empty = monolith (all modules). Otherwise one of: mgmt, skill-center, skill-importer.
-  serverMode ? "",
-  pnameSuffix ? "",
-  description ? "Mac management server with web UI",
 }:
 
 let
@@ -26,7 +21,7 @@ let
 in
 
 rustPlatform.buildRustPackage {
-  pname = "mac-mgmt-server${pnameSuffix}";
+  pname = "mac-mgmt-server";
   version = "0.1.0";
   src = ./..;
   cargoLock.lockFile = ../Cargo.lock;
@@ -73,27 +68,16 @@ rustPlatform.buildRustPackage {
     mkdir -p $out/bin $out/share
     cp -r target/dx/mac-mgmt-server/release/web $out/share/mac-mgmt-server
     if [ -e $out/share/mac-mgmt-server/mac-mgmt-server ]; then
-      ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server-unwrapped
+      ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server
     else
-      ln -s $out/share/mac-mgmt-server/server $out/bin/mac-mgmt-server-unwrapped
+      ln -s $out/share/mac-mgmt-server/server $out/bin/mac-mgmt-server
     fi
-  '' + (if serverMode != "" then ''
-    # Wrapper that sets MAC_MGMT_SERVER_MODE for runtime module selection
-    cat > $out/bin/mac-mgmt-server <<WRAPPER
-    #!/bin/sh
-    export MAC_MGMT_SERVER_MODE="${serverMode}"
-    exec "$out/bin/mac-mgmt-server-unwrapped" "\$@"
-    WRAPPER
-    chmod +x $out/bin/mac-mgmt-server
-  '' else ''
-    ln -sf mac-mgmt-server-unwrapped $out/bin/mac-mgmt-server
-  '') + ''
 
     runHook postInstall
   '';
 
   meta = {
-    inherit description;
+    description = "Mac management server with web UI";
     license = lib.licenses.asl20;
     mainProgram = "mac-mgmt-server";
   };

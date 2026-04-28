@@ -1,6 +1,23 @@
 { gitSha ? "unknown" }:
 
 final: prev:
+let
+  # Thin wrapper that re-exports the monolith server binary with a
+  # MAC_MGMT_SERVER_MODE env var preset, so only the selected API
+  # route group is mounted at runtime.  The heavy build happens once
+  # in mac-mgmt-server; these just write a small shell script.
+  mkServerMode = { mode, pnameSuffix, description }:
+    prev.runCommand "mac-mgmt-server${pnameSuffix}" {} ''
+      mkdir -p $out/bin $out/share
+      ln -s ${final.mac-mgmt-server}/share/mac-mgmt-server $out/share/mac-mgmt-server
+      cat > $out/bin/mac-mgmt-server <<'WRAPPER'
+      #!/bin/sh
+      export MAC_MGMT_SERVER_MODE="${mode}"
+      exec "${final.mac-mgmt-server}/bin/mac-mgmt-server" "$@"
+      WRAPPER
+      chmod +x $out/bin/mac-mgmt-server
+    '';
+in
 {
   mac-mgmt = prev.rustPlatform.buildRustPackage {
     pname = "mac-mgmt";
@@ -14,25 +31,22 @@ final: prev:
 
   mac-mgmt-server = prev.callPackage ./server/package.nix { inherit gitSha; };
 
-  mac-mgmt-server-mgmt = prev.callPackage ./server/package.nix {
-    inherit gitSha;
+  mac-mgmt-server-mgmt = mkServerMode {
+    mode = "mgmt";
     pnameSuffix = "-mgmt";
-    serverMode = "mgmt";
-    description = "Mac management server (mgmt only) with web UI";
+    description = "Mac management server (mgmt only)";
   };
 
-  mac-mgmt-server-skill-center = prev.callPackage ./server/package.nix {
-    inherit gitSha;
+  mac-mgmt-server-skill-center = mkServerMode {
+    mode = "skill-center";
     pnameSuffix = "-skill-center";
-    serverMode = "skill-center";
-    description = "Mac management server (skill center only) with web UI";
+    description = "Mac management server (skill center only)";
   };
 
-  mac-mgmt-server-skill-importer = prev.callPackage ./server/package.nix {
-    inherit gitSha;
+  mac-mgmt-server-skill-importer = mkServerMode {
+    mode = "skill-importer";
     pnameSuffix = "-skill-importer";
-    serverMode = "skill-importer";
-    description = "Mac management server (skill importer only) with web UI";
+    description = "Mac management server (skill importer only)";
   };
 
   mac-mgmt-relay = prev.callPackage ./relay/package.nix { };
