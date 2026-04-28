@@ -25,6 +25,14 @@ let
     hash = "sha256-SBJE0IEgl7Efuu73n3HZQrFxYX+cn5UU5jrL4T5xzNw=";
   };
   isSplit = serverFeatures != "";
+  # Client features = server features with server-only items swapped out.
+  # "server" → "web" (dioxus/web instead of dioxus/server + tokio/sqlx),
+  # "skill-importer" removed (pulls in zip/tokio-util that can't target WASM).
+  # App-level features (skill-center, mgmt) stay so routes/components match.
+  clientFeatures = builtins.replaceStrings
+    ["server" ",skill-importer"]
+    ["web"    ""]
+    serverFeatures;
 in
 
 rustPlatform.buildRustPackage {
@@ -68,8 +76,8 @@ rustPlatform.buildRustPackage {
     popd
 
   '' + (if isSplit then ''
-    # Split build: client WASM with web-only features, server native with full features
-    dx build --release --platform web --package mac-mgmt-server --no-default-features --features "web,webui"
+    # Split build: client WASM with matching app features (minus server deps), server native
+    dx build --release --platform web --package mac-mgmt-server --no-default-features --features "${clientFeatures}"
     cargo build --release -p mac-mgmt-server --no-default-features --features "${serverFeatures}"
   '' else ''
     # Monolith: dx fullstack handles feature splitting automatically
