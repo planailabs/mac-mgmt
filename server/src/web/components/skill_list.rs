@@ -73,156 +73,16 @@ async fn list_skills() -> Result<Vec<CatalogEntry>, ServerFnError> {
     Ok(entries)
 }
 
-/// Sync result returned to the UI.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SyncResult {
-    pub created_skills: u32,
-    pub created_channels: u32,
-    pub removed_channels: u32,
-    pub removed_skills: u32,
-}
-
 /// Fetch all pins from xzar, parse `skill/{slug}/{channel}` pins, and upsert
 /// skills + channels into the database.
 #[server]
-async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
+async fn sync_from_xzar() -> Result<crate::xzar::SyncResult, ServerFnError> {
     let user = current_user().await?;
     user.require_admin()?;
     let pool = crate::server_pool()?;
-    let cfg = crate::config::config();
-
-    let xzar = cfg
-        .xzar
-        .as_ref()
-        .ok_or_else(|| ServerFnError::new("xzar not configured".to_string()))?;
-    let pins = crate::xzar::fetch_pins(&xzar.url, &xzar.token)
+    crate::xzar::sync_skills_db(&pool)
         .await
-        .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
-
-    let mut created_skills: u32 = 0;
-    let mut created_channels: u32 = 0;
-
-    for pin in &pins {
-        if pin.abandoned || pin.roots.is_empty() {
-            continue;
-        }
-
-        // Parse pins matching "skill/{slug}/{channel}/{arch}"
-        let parts: Vec<&str> = pin.name.splitn(4, '/').collect();
-        if parts.len() != 4 || parts[0] != "skill" {
-            continue;
-        }
-        let slug = parts[1];
-        let channel = parts[2];
-        // parts[3] is architecture — we don't store it, just deduplicate (slug, channel)
-
-        // Upsert skill
-        let inserted = sqlx::query_scalar::<_, bool>(
-            "INSERT INTO skills (slug, name) VALUES ($1, $1) \
-             ON CONFLICT (slug) DO NOTHING \
-             RETURNING true",
-        )
-        .bind(slug)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        if inserted.is_some() {
-            created_skills += 1;
-        }
-
-        // Get the skill id
-        let skill_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM skills WHERE slug = $1")
-            .bind(slug)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        // Upsert channel
-        let ch_inserted = sqlx::query_scalar::<_, bool>(
-            "INSERT INTO skill_channels (skill_id, channel) VALUES ($1, $2) \
-             ON CONFLICT (skill_id, channel) DO NOTHING \
-             RETURNING true",
-        )
-        .bind(skill_id)
-        .bind(channel)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-        if ch_inserted.is_some() {
-            created_channels += 1;
-        }
-    }
-
-    // Collect the set of valid (slug, channel) pairs from xzar
-    let mut valid_pairs: std::collections::HashSet<(String, String)> =
-        std::collections::HashSet::new();
-    for pin in &pins {
-        if pin.abandoned || pin.roots.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = pin.name.splitn(4, '/').collect();
-        if parts.len() == 4 && parts[0] == "skill" {
-            valid_pairs.insert((parts[1].to_string(), parts[2].to_string()));
-        }
-    }
-
-    // Resolve which clusters are affected BEFORE deleting — the cascade
-    // will wipe cluster_skills/bundle_items rows and we'd otherwise lose
-    // the ability to push them a sync.
-    let slugs_vec: Vec<String> = valid_pairs.iter().map(|(s, _)| s.clone()).collect();
-    let channels_vec: Vec<String> = valid_pairs.iter().map(|(_, c)| c.clone()).collect();
-    let to_remove_channel_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
-        "SELECT sc.id FROM skill_channels sc \
-         JOIN skills s ON sc.skill_id = s.id \
-         WHERE NOT EXISTS ( \
-             SELECT 1 FROM unnest($1::text[], $2::text[]) AS v(slug, channel) \
-             WHERE v.slug = s.slug AND v.channel = sc.channel \
-         )",
-    )
-    .bind(&slugs_vec)
-    .bind(&channels_vec)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if !to_remove_channel_ids.is_empty() {
-        crate::api::push::notify_federation_global();
-        crate::api::push::notify_skill_channels_global(&to_remove_channel_ids).await;
-    }
-
-    // Remove channels that no longer exist in xzar
-    let removed_channels = sqlx::query_scalar::<_, i64>(
-        "WITH deleted AS ( \
-             DELETE FROM skill_channels WHERE id = ANY($1) RETURNING id \
-         ) SELECT count(*) FROM deleted",
-    )
-    .bind(&to_remove_channel_ids)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Remove skills that have no channels left
-    let removed_skills = sqlx::query_scalar::<_, i64>(
-        "WITH deleted AS ( \
-             DELETE FROM skills s \
-             WHERE NOT EXISTS ( \
-                 SELECT 1 FROM skill_channels sc WHERE sc.skill_id = s.id \
-             ) \
-             RETURNING s.id \
-         ) SELECT count(*) FROM deleted",
-    )
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(SyncResult {
-        created_skills,
-        created_channels,
-        removed_channels: removed_channels as u32,
-        removed_skills: removed_skills as u32,
-    })
+        .map_err(|e| ServerFnError::new(e))
 }
 
 #[component]

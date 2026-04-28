@@ -39,6 +39,8 @@ use super::components::rollout_list::RolloutList;
 use super::components::shell_commands::FleetShell;
 use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
+#[cfg(feature = "skill-importer")]
+use super::components::import_sources::ImportSources;
 use super::components::staff_pings_page::StaffPings;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
@@ -133,6 +135,9 @@ pub enum Route {
     SkillCenterForm {},
     #[route("/skill-centers/:id")]
     SkillCenterDetail { id: String },
+    #[cfg(feature = "skill-importer")]
+    #[route("/import-sources")]
+    ImportSources {},
     #[route("/docs")]
     DocList {},
     #[route("/docs/:slug")]

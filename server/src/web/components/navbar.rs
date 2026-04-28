@@ -169,6 +169,14 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             ],
         });
 
+        #[cfg(feature = "skill-importer")]
+        groups.push(NavGroup {
+            title: "nav-import".to_string(),
+            links: vec![
+                NavLink::Internal(Route::ImportSources {}, "nav-import-sources".to_string()),
+            ],
+        });
+
         #[cfg(feature = "mgmt")]
         {
             let admin_links = vec![

@@ -309,6 +309,11 @@ pub async fn search_clawhub(
 
 // ── Sync logic ─────────────────────────────────────────────────────────
 
+/// Run a sync for a source. Public so the web UI can trigger it.
+pub async fn run_sync_public(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32, String> {
+    run_sync(pool, source, job_id).await
+}
+
 async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32, String> {
     // Mark job as running
     let _ = sqlx::query("UPDATE import_jobs SET status = 'running', updated_at = now() WHERE id = $1")
@@ -370,6 +375,21 @@ async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32
         }
     };
 
+    // Sync xzar pins → DB (upserts new skills, removes stale ones, notifies federation)
+    append_log(pool, job_id, "Syncing skills from xzar pins to DB...").await;
+    match crate::xzar::sync_skills_db(pool).await {
+        Ok(sync) => {
+            append_log(pool, job_id, &format!(
+                "DB sync: +{} skills, +{} channels, -{} channels, -{} skills",
+                sync.created_skills, sync.created_channels,
+                sync.removed_channels, sync.removed_skills,
+            )).await;
+        }
+        Err(e) => {
+            append_log(pool, job_id, &format!("WARN: DB sync failed: {e}")).await;
+        }
+    }
+
     // Update source last_synced_at
     let _ = sqlx::query("UPDATE import_sources SET last_synced_at = now() WHERE id = $1")
         .bind(source.id)
@@ -382,9 +402,6 @@ async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32
         .bind(job_id)
         .execute(pool)
         .await;
-
-    // Notify federation subscribers
-    super::push::notify_federation_global();
 
     Ok(count)
 }
@@ -506,9 +523,6 @@ async fn run_git_sync(
             continue;
         }
 
-        // Upsert skill + channel in DB
-        upsert_skill(pool, slug, channel).await?;
-
         // Track in import_source_skills
         sqlx::query(
             "INSERT INTO import_source_skills (source_id, skill_slug, content_hash) \
@@ -627,9 +641,6 @@ async fn run_clawhub_sync(
     )
     .await?;
 
-    // Upsert skill + channel
-    upsert_skill(pool, skill_slug, channel).await?;
-
     // Track
     sqlx::query(
         "INSERT INTO import_source_skills (source_id, skill_slug, content_hash) \
@@ -667,39 +678,7 @@ async fn nix_content_hash(store_path: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Upsert a skill and channel into the DB (same pattern as sync_from_xzar).
-async fn upsert_skill(pool: &PgPool, slug: &str, channel: &str) -> Result<(), String> {
-    // Upsert skill
-    sqlx::query(
-        "INSERT INTO skills (slug, name) VALUES ($1, $1) \
-         ON CONFLICT (slug) DO NOTHING",
-    )
-    .bind(slug)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("failed to upsert skill: {e}"))?;
 
-    // Get skill id
-    let skill_id: Uuid =
-        sqlx::query_scalar("SELECT id FROM skills WHERE slug = $1")
-            .bind(slug)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("failed to fetch skill id: {e}"))?;
-
-    // Upsert channel
-    sqlx::query(
-        "INSERT INTO skill_channels (skill_id, channel) VALUES ($1, $2) \
-         ON CONFLICT (skill_id, channel) DO NOTHING",
-    )
-    .bind(skill_id)
-    .bind(channel)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("failed to upsert skill channel: {e}"))?;
-
-    Ok(())
-}
 
 // ── Periodic sync loop ─────────────────────────────────────────────────
 
