@@ -306,6 +306,9 @@ pub fn ImportSources(
     prefill_slug: Option<String>,
     prefill_name: Option<String>,
 ) -> Element {
+    let navigator = navigator();
+    let has_prefill = prefill_slug.as_ref().is_some_and(|s| !s.is_empty());
+
     let mut sources = use_server_future(list_import_sources)?;
     let mut show_form = use_signal(|| false);
     let mut editing = use_signal(|| None::<ImportSourceRow>);
@@ -336,6 +339,15 @@ pub fn ImportSources(
         }
         prefilled.set(true);
     }
+
+    let clear_prefill = {
+        let navigator = navigator.clone();
+        move || {
+            if has_prefill {
+                navigator.replace(Route::ImportSources { prefill_slug: None, prefill_name: None });
+            }
+        }
+    };
 
     let mut reset_form = move || {
         form_name.set(String::new());
@@ -403,6 +415,7 @@ pub fn ImportSources(
                             if show_form() {
                                 reset_form();
                                 show_form.set(false);
+                                clear_prefill();
                             } else {
                                 reset_form();
                                 show_form.set(true);
@@ -543,6 +556,7 @@ pub fn ImportSources(
                                                     form_error.set(None);
                                                     editing.set(None);
                                                     sources.restart();
+                                                    clear_prefill();
                                                 }
                                                 Err(e) => form_error.set(Some(e.to_string())),
                                             }
