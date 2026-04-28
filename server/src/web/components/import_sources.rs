@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::web::app::Route;
+
 // ── Server functions ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -24,6 +26,14 @@ pub struct ImportJobRow {
     pub log: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ClawHubHit {
+    pub slug: String,
+    pub display_name: String,
+    pub summary: String,
+    pub version: Option<String>,
 }
 
 #[server]
@@ -88,6 +98,34 @@ async fn create_import_source(
     .bind(&source_config)
     .bind(&channel)
     .bind(auto_sync)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[server]
+async fn update_import_source(
+    source_id: uuid::Uuid,
+    name: String,
+    source_config: serde_json::Value,
+    channel: String,
+    auto_sync: bool,
+) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+
+    sqlx::query(
+        "UPDATE import_sources SET name = $1, source_config = $2, channel = $3, auto_sync = $4 \
+         WHERE id = $5",
+    )
+    .bind(&name)
+    .bind(&source_config)
+    .bind(&channel)
+    .bind(auto_sync)
+    .bind(source_id)
     .execute(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -238,12 +276,39 @@ async fn list_import_jobs(source_id: uuid::Uuid) -> Result<Vec<ImportJobRow>, Se
         .collect())
 }
 
-// ── Component ──────────────────────────────────────────────────────────
+#[server]
+async fn search_clawhub(query: String) -> Result<Vec<ClawHubHit>, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    user.require_admin()?;
+    let cfg = crate::config::config();
+    let importer = cfg.importer.as_ref().ok_or_else(|| ServerFnError::new("importer not configured"))?;
+    let client = crate::clawhub_client::ClawHubClient::new(&importer.clawhub_url);
+    let results = client
+        .search(&query, 20)
+        .await
+        .map_err(|e| ServerFnError::new(e))?;
+
+    Ok(results
+        .into_iter()
+        .map(|r| ClawHubHit {
+            slug: r.slug,
+            display_name: r.display_name,
+            summary: r.summary,
+            version: r.version,
+        })
+        .collect())
+}
+
+// ── Import Sources list page ──────────────────────────────────────────
 
 #[component]
-pub fn ImportSources() -> Element {
+pub fn ImportSources(
+    prefill_slug: Option<String>,
+    prefill_name: Option<String>,
+) -> Element {
     let mut sources = use_server_future(list_import_sources)?;
     let mut show_form = use_signal(|| false);
+    let mut editing = use_signal(|| None::<ImportSourceRow>);
     let mut form_error = use_signal(|| None::<String>);
     let mut syncing = use_signal(|| None::<uuid::Uuid>);
     let mut expanded_source = use_signal(|| None::<uuid::Uuid>);
@@ -258,145 +323,240 @@ pub fn ImportSources() -> Element {
     let mut form_channel = use_signal(|| "stable".to_string());
     let mut form_auto_sync = use_signal(|| false);
 
+    // Prefill from query params (for ClawHub search → import flow)
+    let mut prefilled = use_signal(|| false);
+    if !prefilled() {
+        if let Some(slug) = &prefill_slug {
+            if !slug.is_empty() {
+                form_clawhub_slug.set(slug.clone());
+                form_type.set("clawhub".to_string());
+                form_name.set(prefill_name.clone().unwrap_or_else(|| slug.clone()));
+                show_form.set(true);
+            }
+        }
+        prefilled.set(true);
+    }
+
+    let mut reset_form = move || {
+        form_name.set(String::new());
+        form_type.set("git".to_string());
+        form_repo_url.set(String::new());
+        form_branch.set(String::new());
+        form_glob.set("skills/*".to_string());
+        form_clawhub_slug.set(String::new());
+        form_channel.set("stable".to_string());
+        form_auto_sync.set(false);
+        form_error.set(None);
+        editing.set(None);
+    };
+
+    // Signal for edit requests from source cards
+    let mut edit_request = use_signal(|| None::<ImportSourceRow>);
+
+    // Process edit requests
+    if let Some(source) = edit_request.write().take() {
+        form_name.set(source.name.clone());
+        form_type.set(source.source_type.clone());
+        form_channel.set(source.channel.clone());
+        form_auto_sync.set(source.auto_sync);
+        match source.source_type.as_str() {
+            "git" => {
+                form_repo_url.set(
+                    source.source_config.get("repo_url")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                );
+                form_branch.set(
+                    source.source_config.get("branch")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                );
+                form_glob.set(
+                    source.source_config.get("glob")
+                        .and_then(|v| v.as_str()).unwrap_or("skills/*").to_string(),
+                );
+            }
+            "clawhub" => {
+                form_clawhub_slug.set(
+                    source.source_config.get("slug")
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                );
+            }
+            _ => {}
+        }
+        editing.set(Some(source));
+        show_form.set(true);
+        form_error.set(None);
+    }
+
     rsx! {
         div { class: "px-6 py-8 max-w-5xl mx-auto",
             div { class: "flex items-center justify-between mb-6",
                 h1 { class: "text-2xl font-bold dark:text-white", {t!("import-title")} }
-                button {
-                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                    onclick: move |_| show_form.set(!show_form()),
-                    if show_form() { {t!("cancel")} } else { {t!("import-add-source")} }
+                div { class: "flex items-center gap-2",
+                    Link {
+                        to: Route::ImportSourcesSearch {},
+                        class: "bg-purple-600 text-white px-4 py-2 rounded text-sm hover:bg-purple-700",
+                        {t!("import-search-clawhub")}
+                    }
+                    button {
+                        class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                        onclick: move |_| {
+                            if show_form() {
+                                reset_form();
+                                show_form.set(false);
+                            } else {
+                                reset_form();
+                                show_form.set(true);
+                            }
+                        },
+                        if show_form() { {t!("cancel")} } else { {t!("import-add-source")} }
+                    }
                 }
             }
 
-            // ── Create form ────────────────────────────────────────
+            // ── Create/Edit form ──────────────────────────────────────
             if show_form() {
-                div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6 border dark:border-gray-700",
-                    h2 { class: "text-lg font-semibold mb-4 dark:text-white", {t!("import-new-source")} }
+                {
+                    let is_edit = editing().is_some();
+                    rsx! {
+                        div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6 border dark:border-gray-700",
+                            h2 { class: "text-lg font-semibold mb-4 dark:text-white",
+                                if is_edit { {t!("import-edit-source")} } else { {t!("import-new-source")} }
+                            }
 
-                    if let Some(err) = form_error() {
-                        p { class: "text-red-500 text-sm mb-3", "{err}" }
-                    }
+                            if let Some(err) = form_error() {
+                                p { class: "text-red-500 text-sm mb-3", "{err}" }
+                            }
 
-                    div { class: "space-y-4",
-                        div {
-                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-name")} }
-                            input {
-                                class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
-                                value: "{form_name}",
-                                oninput: move |e| form_name.set(e.value()),
-                                placeholder: t!("import-name-placeholder"),
-                            }
-                        }
-                        div {
-                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-type")} }
-                            select {
-                                class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
-                                value: "{form_type}",
-                                onchange: move |e| form_type.set(e.value()),
-                                option { value: "git", {t!("import-type-git")} }
-                                option { value: "clawhub", {t!("import-type-clawhub")} }
-                            }
-                        }
-
-                        if form_type() == "git" {
-                            div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-repo-url")} }
-                                input {
-                                    class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
-                                    value: "{form_repo_url}",
-                                    oninput: move |e| form_repo_url.set(e.value()),
-                                    placeholder: "https://github.com/org/skills.git",
-                                }
-                            }
-                            div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-branch")} }
-                                input {
-                                    class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
-                                    value: "{form_branch}",
-                                    oninput: move |e| form_branch.set(e.value()),
-                                    placeholder: "main",
-                                }
-                            }
-                            div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-glob")} }
-                                input {
-                                    class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
-                                    value: "{form_glob}",
-                                    oninput: move |e| form_glob.set(e.value()),
-                                    placeholder: "skills/*",
-                                }
-                            }
-                        } else {
-                            div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-clawhub-slug")} }
-                                input {
-                                    class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
-                                    value: "{form_clawhub_slug}",
-                                    oninput: move |e| form_clawhub_slug.set(e.value()),
-                                    placeholder: "my-skill",
-                                }
-                            }
-                        }
-
-                        div {
-                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-channel")} }
-                            input {
-                                class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
-                                value: "{form_channel}",
-                                oninput: move |e| form_channel.set(e.value()),
-                                placeholder: "stable",
-                            }
-                        }
-                        div { class: "flex items-center gap-2",
-                            input {
-                                r#type: "checkbox",
-                                checked: form_auto_sync(),
-                                onchange: move |e| form_auto_sync.set(e.checked()),
-                            }
-                            label { class: "text-sm dark:text-gray-300", {t!("import-auto-sync")} }
-                        }
-                        button {
-                            class: "bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700",
-                            onclick: move |_| {
-                                let name = form_name();
-                                let source_type = form_type();
-                                let channel = form_channel();
-                                let auto_sync = form_auto_sync();
-
-                                let source_config = if source_type == "git" {
-                                    let branch = form_branch();
-                                    serde_json::json!({
-                                        "type": "git",
-                                        "repo_url": form_repo_url(),
-                                        "branch": if branch.is_empty() { None } else { Some(branch) },
-                                        "glob": form_glob(),
-                                    })
-                                } else {
-                                    serde_json::json!({
-                                        "type": "clawhub",
-                                        "slug": form_clawhub_slug(),
-                                    })
-                                };
-
-                                spawn(async move {
-                                    match create_import_source(name, source_type, source_config, channel, auto_sync).await {
-                                        Ok(()) => {
-                                            show_form.set(false);
-                                            form_error.set(None);
-                                            sources.restart();
-                                        }
-                                        Err(e) => form_error.set(Some(e.to_string())),
+                            div { class: "space-y-4",
+                                div {
+                                    label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-name")} }
+                                    input {
+                                        class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                                        value: "{form_name}",
+                                        oninput: move |e| form_name.set(e.value()),
+                                        placeholder: t!("import-name-placeholder"),
                                     }
-                                });
-                            },
-                            {t!("import-create")}
+                                }
+                                if !is_edit {
+                                    div {
+                                        label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-type")} }
+                                        select {
+                                            class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                                            value: "{form_type}",
+                                            onchange: move |e| form_type.set(e.value()),
+                                            option { value: "git", {t!("import-type-git")} }
+                                            option { value: "clawhub", {t!("import-type-clawhub")} }
+                                        }
+                                    }
+                                }
+
+                                if form_type() == "git" {
+                                    div {
+                                        label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-repo-url")} }
+                                        input {
+                                            class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                                            value: "{form_repo_url}",
+                                            oninput: move |e| form_repo_url.set(e.value()),
+                                            placeholder: "https://github.com/org/skills.git",
+                                        }
+                                    }
+                                    div {
+                                        label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-branch")} }
+                                        input {
+                                            class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                                            value: "{form_branch}",
+                                            oninput: move |e| form_branch.set(e.value()),
+                                            placeholder: "main",
+                                        }
+                                    }
+                                    div {
+                                        label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-glob")} }
+                                        input {
+                                            class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                                            value: "{form_glob}",
+                                            oninput: move |e| form_glob.set(e.value()),
+                                            placeholder: "skills/*",
+                                        }
+                                    }
+                                } else {
+                                    div {
+                                        label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-clawhub-slug")} }
+                                        input {
+                                            class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                                            value: "{form_clawhub_slug}",
+                                            oninput: move |e| form_clawhub_slug.set(e.value()),
+                                            placeholder: "my-skill",
+                                        }
+                                    }
+                                }
+
+                                div {
+                                    label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-channel")} }
+                                    input {
+                                        class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                                        value: "{form_channel}",
+                                        oninput: move |e| form_channel.set(e.value()),
+                                        placeholder: "stable",
+                                    }
+                                }
+                                div { class: "flex items-center gap-2",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: form_auto_sync(),
+                                        onchange: move |e| form_auto_sync.set(e.checked()),
+                                    }
+                                    label { class: "text-sm dark:text-gray-300", {t!("import-auto-sync")} }
+                                }
+                                button {
+                                    class: "bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700",
+                                    onclick: move |_| {
+                                        let name = form_name();
+                                        let source_type = form_type();
+                                        let channel = form_channel();
+                                        let auto_sync = form_auto_sync();
+                                        let edit_source = editing();
+
+                                        let source_config = if source_type == "git" {
+                                            let branch = form_branch();
+                                            serde_json::json!({
+                                                "type": "git",
+                                                "repo_url": form_repo_url(),
+                                                "branch": if branch.is_empty() { None } else { Some(branch) },
+                                                "glob": form_glob(),
+                                            })
+                                        } else {
+                                            serde_json::json!({
+                                                "type": "clawhub",
+                                                "slug": form_clawhub_slug(),
+                                            })
+                                        };
+
+                                        spawn(async move {
+                                            let result = if let Some(existing) = edit_source {
+                                                update_import_source(existing.id, name, source_config, channel, auto_sync).await
+                                            } else {
+                                                create_import_source(name, source_type, source_config, channel, auto_sync).await
+                                            };
+                                            match result {
+                                                Ok(()) => {
+                                                    show_form.set(false);
+                                                    form_error.set(None);
+                                                    editing.set(None);
+                                                    sources.restart();
+                                                }
+                                                Err(e) => form_error.set(Some(e.to_string())),
+                                            }
+                                        });
+                                    },
+                                    if is_edit { {t!("save")} } else { {t!("import-create")} }
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // ── Sources table ──────────────────────────────────────
+            // ── Sources list ──────────────────────────────────────────
             {
                 let snapshot = sources.read().clone();
                 match snapshot {
@@ -406,7 +566,7 @@ pub fn ImportSources() -> Element {
                         } else {
                             div { class: "space-y-4",
                                 for source in list {
-                                    {render_source_card(&source, &mut syncing, &mut expanded_source, &mut sources)}
+                                    {render_source_card(&source, &mut syncing, &mut expanded_source, &mut sources, &mut edit_request)}
                                 }
                             }
                         }
@@ -424,6 +584,7 @@ fn render_source_card(
     syncing: &mut Signal<Option<uuid::Uuid>>,
     expanded: &mut Signal<Option<uuid::Uuid>>,
     sources: &mut Resource<Result<Vec<ImportSourceRow>, ServerFnError>>,
+    edit_request: &mut Signal<Option<ImportSourceRow>>,
 ) -> Element {
     let source_id = source.id;
     let source_name = source.name.clone();
@@ -456,6 +617,9 @@ fn render_source_card(
         .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| t!("import-never-synced").to_string());
 
+    let edit_source = source.clone();
+    let mut edit_request = *edit_request;
+
     rsx! {
         div { class: "bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700",
             div { class: "p-4 flex items-center justify-between",
@@ -480,6 +644,13 @@ fn render_source_card(
                     }
                 }
                 div { class: "flex items-center gap-2",
+                    button {
+                        class: "text-sm px-3 py-1 rounded border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300",
+                        onclick: move |_| {
+                            edit_request.set(Some(edit_source.clone()));
+                        },
+                        {t!("edit")}
+                    }
                     button {
                         class: "text-sm px-3 py-1 rounded border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300",
                         disabled: is_syncing,
@@ -580,6 +751,113 @@ fn render_jobs_panel(source_id: uuid::Uuid) -> Element {
                 },
                 Some(Err(e)) => rsx! { p { class: "text-sm text-red-500", {t!("error-message", message: e.to_string())} } },
                 None => rsx! { p { class: "text-sm text-gray-500", {t!("loading")} } },
+            }
+        }
+    }
+}
+
+// ── ClawHub Search page ───────────────────────────────────────────────
+
+#[component]
+pub fn ImportSourcesSearch() -> Element {
+    let mut query = use_signal(String::new);
+    let mut results = use_signal(|| None::<Vec<ClawHubHit>>);
+    let mut searching = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    rsx! {
+        div { class: "px-6 py-8 max-w-5xl mx-auto",
+            div { class: "mb-6",
+                Link {
+                    to: Route::ImportSources { prefill_slug: None, prefill_name: None },
+                    class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
+                    "← {t!(\"import-title\")}"
+                }
+                h1 { class: "text-2xl font-bold dark:text-white mt-1", {t!("import-search-clawhub")} }
+            }
+
+            form {
+                class: "flex gap-2 mb-6",
+                onsubmit: move |evt: FormEvent| {
+                    evt.prevent_default();
+                    let q = query();
+                    if q.trim().is_empty() {
+                        return;
+                    }
+                    searching.set(true);
+                    error.set(None);
+                    spawn(async move {
+                        match search_clawhub(q).await {
+                            Ok(hits) => {
+                                results.set(Some(hits));
+                                searching.set(false);
+                            }
+                            Err(e) => {
+                                error.set(Some(e.to_string()));
+                                searching.set(false);
+                            }
+                        }
+                    });
+                },
+                input {
+                    class: "flex-1 border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                    r#type: "text",
+                    value: "{query}",
+                    oninput: move |e| query.set(e.value()),
+                    placeholder: t!("import-search-placeholder"),
+                }
+                button {
+                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                    r#type: "submit",
+                    disabled: searching(),
+                    if searching() { {t!("import-searching")} } else { {t!("import-search-button")} }
+                }
+            }
+
+            if let Some(err) = error() {
+                p { class: "text-red-500 text-sm mb-4", "{err}" }
+            }
+
+            match results() {
+                Some(hits) if hits.is_empty() => rsx! {
+                    p { class: "text-gray-500 dark:text-gray-400", {t!("import-search-no-results")} }
+                },
+                Some(hits) => rsx! {
+                    div { class: "space-y-3",
+                        for hit in hits {
+                            {
+                                let slug = hit.slug.clone();
+                                let name = hit.display_name.clone();
+                                let slug_link = slug.clone();
+                                let name_link = name.clone();
+                                rsx! {
+                                    div { class: "bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700 p-4 flex items-center justify-between",
+                                        div {
+                                            div { class: "flex items-center gap-2",
+                                                h3 { class: "font-semibold dark:text-white", "{name}" }
+                                                span { class: "text-xs font-mono text-gray-500 dark:text-gray-400", "{slug}" }
+                                                if let Some(v) = &hit.version {
+                                                    span { class: "text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                                                        "v{v}"
+                                                    }
+                                                }
+                                            }
+                                            if !hit.summary.is_empty() {
+                                                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{hit.summary}" }
+                                            }
+                                        }
+                                        Link {
+                                            to: Route::ImportSources { prefill_slug: Some(slug_link), prefill_name: Some(name_link) },
+                                            class: "bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 whitespace-nowrap",
+                                            {t!("import-search-import")}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                None => rsx! {},
             }
         }
     }

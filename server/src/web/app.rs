@@ -40,7 +40,7 @@ use super::components::rollout_list::RolloutList;
 use super::components::shell_commands::FleetShell;
 use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
-use super::components::import_sources::ImportSources;
+use super::components::import_sources::{ImportSources, ImportSourcesSearch};
 use super::components::staff_pings_page::StaffPings;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
@@ -137,8 +137,10 @@ pub enum Route {
     SkillCenterForm {},
     #[route("/skill-centers/:id")]
     SkillCenterDetail { id: String },
-    #[route("/import-sources")]
-    ImportSources {},
+    #[route("/import-sources?:prefill_slug&:prefill_name")]
+    ImportSources { prefill_slug: Option<String>, prefill_name: Option<String> },
+    #[route("/import-sources/search")]
+    ImportSourcesSearch {},
     #[route("/docs")]
     DocList {},
     #[route("/docs/:slug")]

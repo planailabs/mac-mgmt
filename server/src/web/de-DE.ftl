@@ -887,6 +887,13 @@ import-syncing = Synchronisiere...
 import-recent-jobs = Letzte Jobs
 import-no-jobs = Noch keine Jobs.
 import-skills-imported = { $count } Skill(s) importiert
+import-edit-source = Import-Quelle bearbeiten
+import-search-clawhub = ClawHub durchsuchen
+import-search-placeholder = Nach Skills suchen...
+import-search-button = Suchen
+import-searching = Suche...
+import-search-no-results = Keine Ergebnisse gefunden.
+import-search-import = Importieren
 
 easy-access-title = Schnellzugriff
 easy-access-no-nodes = Keine Online-Knoten mit konfigurierten Tunneln.

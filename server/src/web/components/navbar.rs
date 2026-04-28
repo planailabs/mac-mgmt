@@ -168,7 +168,7 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
         groups.push(NavGroup {
             title: "nav-import".to_string(),
             links: vec![
-                NavLink::Internal(Route::ImportSources {}, "nav-import-sources".to_string()),
+                NavLink::Internal(Route::ImportSources { prefill_slug: None, prefill_name: None }, "nav-import-sources".to_string()),
             ],
         });
 
