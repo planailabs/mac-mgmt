@@ -40,7 +40,7 @@ use super::components::rollout_list::RolloutList;
 use super::components::shell_commands::FleetShell;
 use super::components::skill_detail::SkillDetail;
 use super::components::skill_list::SkillList;
-use super::components::import_sources::{ImportSources, ImportSourcesSearch};
+use super::components::import_sources::{ImportSourceDetail, ImportSources, ImportSourcesSearch};
 use super::components::staff_pings_page::StaffPings;
 use super::components::user_detail::UserDetail;
 use super::components::user_form::UserForm;
@@ -141,6 +141,8 @@ pub enum Route {
     ImportSources { prefill_slug: Option<String>, prefill_name: Option<String> },
     #[route("/import-sources/search")]
     ImportSourcesSearch {},
+    #[route("/import-sources/:id")]
+    ImportSourceDetail { id: String },
     #[route("/docs")]
     DocList {},
     #[route("/docs/:slug")]
