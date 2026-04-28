@@ -2,16 +2,11 @@
 //! Results are cached in the `commit_counts` database table.
 //! In-flight resolution is deduplicated via a per-repo lock set.
 
-#[cfg(feature = "server")]
 use std::collections::{HashMap, HashSet};
-#[cfg(feature = "server")]
 use std::path::PathBuf;
-#[cfg(feature = "server")]
 use std::sync::OnceLock;
-#[cfg(feature = "server")]
 use tokio::sync::Mutex;
 
-#[cfg(feature = "server")]
 struct RepoCache {
     repo: &'static str,
     clone_path: PathBuf,
@@ -24,7 +19,6 @@ struct RepoCache {
     fetching: Mutex<()>,
 }
 
-#[cfg(feature = "server")]
 impl RepoCache {
     fn new(repo: &'static str, clone_path: PathBuf, git_url: String) -> Self {
         Self {
@@ -305,11 +299,9 @@ impl RepoCache {
 
 // ── mac-mgmt ───────────────────────────────────────────────────────────
 
-#[cfg(feature = "server")]
 static MAC_MGMT: OnceLock<RepoCache> = OnceLock::new();
 
 /// Fetch commit counts for mac-mgmt SHAs.
-#[cfg(feature = "server")]
 pub async fn mac_mgmt_commit_counts(shas: &HashSet<String>) -> HashMap<String, u64> {
     let cfg = &crate::config::config().git;
     MAC_MGMT
@@ -326,11 +318,9 @@ pub async fn mac_mgmt_commit_counts(shas: &HashSet<String>) -> HashMap<String, u
 
 // ── nixpkgs ────────────────────────────────────────────────────────────
 
-#[cfg(feature = "server")]
 static NIXPKGS: OnceLock<RepoCache> = OnceLock::new();
 
 /// Fetch commit counts for nixpkgs SHAs.
-#[cfg(feature = "server")]
 pub async fn nixpkgs_commit_counts(shas: &HashSet<String>) -> HashMap<String, u64> {
     let cfg = &crate::config::config().git;
     NIXPKGS
@@ -347,7 +337,6 @@ pub async fn nixpkgs_commit_counts(shas: &HashSet<String>) -> HashMap<String, u6
 
 // ── Background fetch loop ──────────────────────────────────────────────
 
-#[cfg(feature = "server")]
 pub fn spawn_fetch_loop() {
     let interval_secs = crate::config::config().git.fetch_interval_secs;
     tokio::spawn(async move {

@@ -115,7 +115,7 @@ struct SampleSummaryView {
 #[server]
 async fn get_nixpkgs_commit_count_rollout(sha: String) -> Result<Option<u64>, ServerFnError> {
     let shas = std::collections::HashSet::from([sha.clone()]);
-    let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+    let counts = crate::commit_count::nixpkgs_commit_counts(&shas).await;
     Ok(counts.get(&sha).copied())
 }
 

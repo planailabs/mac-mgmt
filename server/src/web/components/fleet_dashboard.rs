@@ -193,13 +193,13 @@ async fn get_fleet_status(stage_id: Option<String>) -> Result<FleetStatusResult,
 #[server]
 async fn get_commit_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
-    Ok(super::commit_count::mac_mgmt_commit_counts(&set).await)
+    Ok(crate::commit_count::mac_mgmt_commit_counts(&set).await)
 }
 
 #[server]
 async fn get_nixpkgs_commit_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
-    Ok(super::commit_count::nixpkgs_commit_counts(&set).await)
+    Ok(crate::commit_count::nixpkgs_commit_counts(&set).await)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

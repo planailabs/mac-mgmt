@@ -198,7 +198,7 @@ async fn create_rollout(
 
         let mut all_shas: std::collections::HashSet<String> = [nix.clone()].into_iter().collect();
         all_shas.extend(current_commits.iter().cloned());
-        let counts = super::commit_count::nixpkgs_commit_counts(&all_shas).await;
+        let counts = crate::commit_count::nixpkgs_commit_counts(&all_shas).await;
 
         let new_count = counts.get(nix).ok_or_else(|| {
             ServerFnError::new(format!("unknown nixpkgs commit {nix}"))

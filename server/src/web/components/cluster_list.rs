@@ -11,7 +11,7 @@ use crate::web::user::current_user;
 #[server]
 async fn get_cluster_nixpkgs_counts(shas: Vec<String>) -> Result<std::collections::HashMap<String, u64>, ServerFnError> {
     let set: std::collections::HashSet<String> = shas.into_iter().collect();
-    Ok(super::commit_count::nixpkgs_commit_counts(&set).await)
+    Ok(crate::commit_count::nixpkgs_commit_counts(&set).await)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -176,7 +176,7 @@ async fn set_nixpkgs_commit(id: String, commit: String) -> Result<(), ServerFnEr
         if let Some(ref current) = current_commit {
             shas.insert(current.clone());
         }
-        let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+        let counts = crate::commit_count::nixpkgs_commit_counts(&shas).await;
         let new_count = counts.get(&c).ok_or_else(|| {
             ServerFnError::new(format!("unknown nixpkgs commit {c}"))
         })?;
@@ -698,7 +698,7 @@ fn PinnedVersion(
 #[server]
 async fn get_nixpkgs_commit_count(sha: String) -> Result<Option<u64>, ServerFnError> {
     let shas = std::collections::HashSet::from([sha.clone()]);
-    let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+    let counts = crate::commit_count::nixpkgs_commit_counts(&shas).await;
     Ok(counts.get(&sha).copied())
 }
 

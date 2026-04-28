@@ -3,6 +3,8 @@ mod anthropic;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod api;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
+mod commit_count;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod config;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod db;
@@ -217,7 +219,7 @@ async fn init_server() -> (
 
     // Background task: periodic git fetch for commit count resolution.
     #[cfg(feature = "webui")]
-    web::components::commit_count::spawn_fetch_loop();
+    crate::commit_count::spawn_fetch_loop();
 
     // Initialize healer state
     let healer_connector = mac_mgmt_healer::ConnectorConfig {

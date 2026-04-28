@@ -83,14 +83,14 @@ struct ProbeEntry {
 #[server]
 async fn get_mac_mgmt_commit_count(sha: String) -> Result<Option<u64>, ServerFnError> {
     let shas = std::collections::HashSet::from([sha.clone()]);
-    let counts = super::commit_count::mac_mgmt_commit_counts(&shas).await;
+    let counts = crate::commit_count::mac_mgmt_commit_counts(&shas).await;
     Ok(counts.get(&sha).copied())
 }
 
 #[server]
 async fn get_nixpkgs_commit_count_detail(sha: String) -> Result<Option<u64>, ServerFnError> {
     let shas = std::collections::HashSet::from([sha.clone()]);
-    let counts = super::commit_count::nixpkgs_commit_counts(&shas).await;
+    let counts = crate::commit_count::nixpkgs_commit_counts(&shas).await;
     Ok(counts.get(&sha).copied())
 }
 
