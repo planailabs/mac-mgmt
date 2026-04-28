@@ -23,7 +23,7 @@ pub struct ServerConfig {
     pub skill_centers: SkillCentersConfig,
     #[serde(default)]
     pub secrets: Option<SecretsConfig>,
-    #[serde(default)]
+    #[serde(default = "default_importer")]
     pub importer: Option<ImporterConfig>,
     /// Runtime server mode: controls which API route groups are mounted.
     /// Set via `MAC_MGMT_SERVER_MODE` env var or config file.
@@ -430,15 +430,28 @@ pub struct ImporterConfig {
     /// Directory for temporary git clones and builds.
     #[serde(default = "default_importer_work_dir")]
     pub work_dir: String,
-    /// ClawHub registry URL (e.g. "https://clawhub.ai").
-    pub clawhub_url: Option<String>,
+    /// ClawHub registry URL.
+    #[serde(default = "default_clawhub_url")]
+    pub clawhub_url: String,
     /// Interval in seconds for auto-sync of import sources.
     #[serde(default = "default_importer_sync_interval")]
     pub sync_interval_secs: u64,
 }
 
+fn default_importer() -> Option<ImporterConfig> {
+    Some(ImporterConfig {
+        work_dir: default_importer_work_dir(),
+        clawhub_url: default_clawhub_url(),
+        sync_interval_secs: default_importer_sync_interval(),
+    })
+}
+
+fn default_clawhub_url() -> String {
+    "https://wry-manatee-359.convex.site".to_string()
+}
+
 fn default_importer_work_dir() -> String {
-    "./import-work".to_string()
+    "/tmp/mac-mgmt-import".to_string()
 }
 
 fn default_importer_sync_interval() -> u64 {

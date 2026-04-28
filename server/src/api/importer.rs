@@ -280,12 +280,7 @@ pub async fn search_clawhub(
 ) -> Result<Json<Vec<SearchHit>>, Status> {
     let cfg = crate::config::config();
     let importer = cfg.importer.as_ref().ok_or(Status::ServiceUnavailable)?;
-    let clawhub_url = importer
-        .clawhub_url
-        .as_ref()
-        .ok_or(Status::ServiceUnavailable)?;
-
-    let client = crate::clawhub_client::ClawHubClient::new(clawhub_url);
+    let client = crate::clawhub_client::ClawHubClient::new(&importer.clawhub_url);
     let results = client
         .search(q, 20)
         .await
@@ -354,10 +349,6 @@ async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32
             version,
             skill_slug,
         } => {
-            let clawhub_url = importer
-                .clawhub_url
-                .as_ref()
-                .ok_or("clawhub_url not configured")?;
             run_clawhub_sync(
                 pool,
                 source.id,
@@ -365,7 +356,7 @@ async fn run_sync(pool: &PgPool, source: &SourceRow, job_id: Uuid) -> Result<u32
                 &xzar.url,
                 &xzar.token,
                 &importer.work_dir,
-                clawhub_url,
+                &importer.clawhub_url,
                 &slug,
                 version.as_deref(),
                 skill_slug.as_deref(),

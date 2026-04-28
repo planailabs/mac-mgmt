@@ -120,6 +120,6 @@ public_key = "xzar.example.com:BASE64PUBKEY="
 
 # Skill importer: import skills from git repos and ClawHub (requires "skill-importer" feature).
 # [importer]
-# work_dir = "./import-work"                     # temp dir for git clones
-# clawhub_url = "https://clawhub.ai"             # ClawHub registry URL
+# work_dir = "/tmp/mac-mgmt-import"               # temp dir for git clones (default)
+# clawhub_url = "https://wry-manatee-359.convex.site"  # ClawHub API URL (default)
 # sync_interval_secs = 3600                      # auto-sync interval (seconds)
