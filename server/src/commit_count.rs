@@ -267,33 +267,48 @@ impl RepoCache {
     }
 
     async fn db_lookup(&self, shas: &[String]) -> HashMap<String, u64> {
-        let Ok(pool) = crate::server_pool() else {
-            return HashMap::new();
-        };
-        let rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT sha, count FROM commit_counts WHERE repo = $1 AND sha = ANY($2)",
-        )
-        .bind(self.repo)
-        .bind(shas)
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
-        rows.into_iter().map(|(sha, c)| (sha, c as u64)).collect()
+        #[cfg(all(feature = "server", feature = "webui"))]
+        {
+            let Ok(pool) = crate::server_pool() else {
+                return HashMap::new();
+            };
+            let rows: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT sha, count FROM commit_counts WHERE repo = $1 AND sha = ANY($2)",
+            )
+            .bind(self.repo)
+            .bind(shas)
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+            return rows.into_iter().map(|(sha, c)| (sha, c as u64)).collect();
+        }
+        #[cfg(not(all(feature = "server", feature = "webui")))]
+        {
+            let _ = shas;
+            HashMap::new()
+        }
     }
 
     async fn db_store(&self, sha: &str, count: u64) {
-        let Ok(pool) = crate::server_pool() else {
-            return;
-        };
-        let _ = sqlx::query(
-            "INSERT INTO commit_counts (repo, sha, count) VALUES ($1, $2, $3) \
-             ON CONFLICT (repo, sha) DO NOTHING",
-        )
-        .bind(self.repo)
-        .bind(sha)
-        .bind(count as i64)
-        .fetch_optional(&pool)
-        .await;
+        #[cfg(all(feature = "server", feature = "webui"))]
+        {
+            let Ok(pool) = crate::server_pool() else {
+                return;
+            };
+            let _ = sqlx::query(
+                "INSERT INTO commit_counts (repo, sha, count) VALUES ($1, $2, $3) \
+                 ON CONFLICT (repo, sha) DO NOTHING",
+            )
+            .bind(self.repo)
+            .bind(sha)
+            .bind(count as i64)
+            .fetch_optional(&pool)
+            .await;
+        }
+        #[cfg(not(all(feature = "server", feature = "webui")))]
+        {
+            let _ = (sha, count);
+        }
     }
 }
 
