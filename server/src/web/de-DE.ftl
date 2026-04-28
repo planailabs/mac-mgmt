@@ -859,6 +859,35 @@ push-request-assessment-desc = Sofortige Zustandsprüfung auslösen
 
 ## ── Schnellzugriff ─────────────────────────────────────────────
 
+## ── Import-Quellen ─────────────────────────────────────────────
+
+import-title = Import-Quellen
+import-add-source = Quelle hinzufügen
+import-new-source = Neue Import-Quelle
+import-field-name = Name
+import-name-placeholder = Meine Skill-Quelle
+import-field-type = Typ
+import-type-git = Git-Repository
+import-type-clawhub = ClawHub
+import-field-repo-url = Repository-URL
+import-field-branch = Branch (optional)
+import-field-glob = Glob-Muster
+import-field-clawhub-slug = ClawHub-Skill-Slug
+import-field-channel = Channel
+import-auto-sync = Automatisch periodisch synchronisieren
+import-create = Erstellen
+import-no-sources = Keine Import-Quellen konfiguriert.
+import-badge-auto = auto
+import-last-synced = Zuletzt synchronisiert: { $time }
+import-never-synced = nie
+import-show-jobs = Jobs
+import-hide-jobs = Jobs ausblenden
+import-sync-now = Jetzt synchronisieren
+import-syncing = Synchronisiere...
+import-recent-jobs = Letzte Jobs
+import-no-jobs = Noch keine Jobs.
+import-skills-imported = { $count } Skill(s) importiert
+
 easy-access-title = Schnellzugriff
 easy-access-no-nodes = Keine Online-Knoten mit konfigurierten Tunneln.
 easy-access-files = Dateien

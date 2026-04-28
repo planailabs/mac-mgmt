@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_i18n::t;
 
 // ── Server functions ───────────────────────────────────────────────────
 
@@ -100,7 +101,6 @@ async fn trigger_sync(source_id: uuid::Uuid) -> Result<uuid::Uuid, ServerFnError
     user.require_admin()?;
     let pool = crate::server_pool()?;
 
-    // Create job
     let job_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO import_jobs (source_id) VALUES ($1) RETURNING id",
     )
@@ -109,7 +109,6 @@ async fn trigger_sync(source_id: uuid::Uuid) -> Result<uuid::Uuid, ServerFnError
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Fetch source for the background task
     #[derive(sqlx::FromRow)]
     struct SourceRow {
         id: uuid::Uuid,
@@ -130,7 +129,6 @@ async fn trigger_sync(source_id: uuid::Uuid) -> Result<uuid::Uuid, ServerFnError
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Spawn background sync — reuse the API importer's run_sync logic
     let pool_clone = pool.clone();
     tokio::spawn(async move {
         let source_row = crate::api::importer::SourceRow {
@@ -263,18 +261,18 @@ pub fn ImportSources() -> Element {
     rsx! {
         div { class: "px-6 py-8 max-w-5xl mx-auto",
             div { class: "flex items-center justify-between mb-6",
-                h1 { class: "text-2xl font-bold dark:text-white", "Import Sources" }
+                h1 { class: "text-2xl font-bold dark:text-white", {t!("import-title")} }
                 button {
                     class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
                     onclick: move |_| show_form.set(!show_form()),
-                    if show_form() { "Cancel" } else { "Add Source" }
+                    if show_form() { {t!("cancel")} } else { {t!("import-add-source")} }
                 }
             }
 
             // ── Create form ────────────────────────────────────────
             if show_form() {
                 div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6 border dark:border-gray-700",
-                    h2 { class: "text-lg font-semibold mb-4 dark:text-white", "New Import Source" }
+                    h2 { class: "text-lg font-semibold mb-4 dark:text-white", {t!("import-new-source")} }
 
                     if let Some(err) = form_error() {
                         p { class: "text-red-500 text-sm mb-3", "{err}" }
@@ -282,28 +280,28 @@ pub fn ImportSources() -> Element {
 
                     div { class: "space-y-4",
                         div {
-                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", "Name" }
+                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-name")} }
                             input {
                                 class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
                                 value: "{form_name}",
                                 oninput: move |e| form_name.set(e.value()),
-                                placeholder: "My skill source",
+                                placeholder: t!("import-name-placeholder"),
                             }
                         }
                         div {
-                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", "Type" }
+                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-type")} }
                             select {
                                 class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
                                 value: "{form_type}",
                                 onchange: move |e| form_type.set(e.value()),
-                                option { value: "git", "Git Repository" }
-                                option { value: "clawhub", "ClawHub" }
+                                option { value: "git", {t!("import-type-git")} }
+                                option { value: "clawhub", {t!("import-type-clawhub")} }
                             }
                         }
 
                         if form_type() == "git" {
                             div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", "Repository URL" }
+                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-repo-url")} }
                                 input {
                                     class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
                                     value: "{form_repo_url}",
@@ -312,7 +310,7 @@ pub fn ImportSources() -> Element {
                                 }
                             }
                             div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", "Branch (optional)" }
+                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-branch")} }
                                 input {
                                     class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
                                     value: "{form_branch}",
@@ -321,7 +319,7 @@ pub fn ImportSources() -> Element {
                                 }
                             }
                             div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", "Glob pattern" }
+                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-glob")} }
                                 input {
                                     class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
                                     value: "{form_glob}",
@@ -331,7 +329,7 @@ pub fn ImportSources() -> Element {
                             }
                         } else {
                             div {
-                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", "ClawHub Skill Slug" }
+                                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-clawhub-slug")} }
                                 input {
                                     class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
                                     value: "{form_clawhub_slug}",
@@ -342,7 +340,7 @@ pub fn ImportSources() -> Element {
                         }
 
                         div {
-                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", "Channel" }
+                            label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-channel")} }
                             input {
                                 class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
                                 value: "{form_channel}",
@@ -356,7 +354,7 @@ pub fn ImportSources() -> Element {
                                 checked: form_auto_sync(),
                                 onchange: move |e| form_auto_sync.set(e.checked()),
                             }
-                            label { class: "text-sm dark:text-gray-300", "Auto-sync periodically" }
+                            label { class: "text-sm dark:text-gray-300", {t!("import-auto-sync")} }
                         }
                         button {
                             class: "bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700",
@@ -392,7 +390,7 @@ pub fn ImportSources() -> Element {
                                     }
                                 });
                             },
-                            "Create"
+                            {t!("import-create")}
                         }
                     }
                 }
@@ -404,7 +402,7 @@ pub fn ImportSources() -> Element {
                 match snapshot {
                     Some(Ok(list)) => rsx! {
                         if list.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400", "No import sources configured." }
+                            p { class: "text-gray-500 dark:text-gray-400", {t!("import-no-sources")} }
                         } else {
                             div { class: "space-y-4",
                                 for source in list {
@@ -413,8 +411,8 @@ pub fn ImportSources() -> Element {
                             }
                         }
                     },
-                    Some(Err(e)) => rsx! { p { class: "text-red-500", "Error: {e}" } },
-                    None => rsx! { p { class: "text-gray-500", "Loading..." } },
+                    Some(Err(e)) => rsx! { p { class: "text-red-500", {t!("error-message", message: e.to_string())} } },
+                    None => rsx! { p { class: "text-gray-500", {t!("loading")} } },
                 }
             }
         }
@@ -435,7 +433,6 @@ fn render_source_card(
     let mut expanded = *expanded;
     let mut sources = *sources;
 
-    // Build description from source_config
     let desc = match source.source_type.as_str() {
         "git" => {
             let url = source.source_config.get("repo_url")
@@ -457,7 +454,7 @@ fn render_source_card(
 
     let synced_label = source.last_synced_at
         .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "never".to_string());
+        .unwrap_or_else(|| t!("import-never-synced").to_string());
 
     rsx! {
         div { class: "bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700",
@@ -473,13 +470,13 @@ fn render_source_card(
                         }
                         if source.auto_sync {
                             span { class: "text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
-                                "auto"
+                                {t!("import-badge-auto")}
                             }
                         }
                     }
                     p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1 font-mono", "{desc}" }
                     p { class: "text-xs text-gray-400 dark:text-gray-500 mt-0.5",
-                        "Last synced: {synced_label}"
+                        {t!("import-last-synced", time: synced_label)}
                     }
                 }
                 div { class: "flex items-center gap-2",
@@ -489,7 +486,7 @@ fn render_source_card(
                         onclick: move |_| {
                             expanded.set(if is_expanded { None } else { Some(source_id) });
                         },
-                        if is_expanded { "Hide Jobs" } else { "Jobs" }
+                        if is_expanded { {t!("import-hide-jobs")} } else { {t!("import-show-jobs")} }
                     }
                     button {
                         class: "text-sm px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50",
@@ -509,7 +506,7 @@ fn render_source_card(
                                 }
                             });
                         },
-                        if is_syncing { "Syncing..." } else { "Sync Now" }
+                        if is_syncing { {t!("import-syncing")} } else { {t!("import-sync-now")} }
                     }
                     button {
                         class: "text-sm px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700",
@@ -521,12 +518,11 @@ fn render_source_card(
                                 sources.restart();
                             });
                         },
-                        "Delete"
+                        {t!("delete")}
                     }
                 }
             }
 
-            // ── Expanded: show recent jobs ─────────────────────────
             if is_expanded {
                 { render_jobs_panel(source_id) }
             }
@@ -539,11 +535,11 @@ fn render_jobs_panel(source_id: uuid::Uuid) -> Element {
 
     rsx! {
         div { class: "border-t dark:border-gray-700 p-4",
-            h4 { class: "text-sm font-semibold dark:text-gray-300 mb-2", "Recent Jobs" }
+            h4 { class: "text-sm font-semibold dark:text-gray-300 mb-2", {t!("import-recent-jobs")} }
             match &*jobs.read() {
                 Some(Ok(list)) => rsx! {
                     if list.is_empty() {
-                        p { class: "text-sm text-gray-500", "No jobs yet." }
+                        p { class: "text-sm text-gray-500", {t!("import-no-jobs")} }
                     } else {
                         div { class: "space-y-2",
                             for job in list {
@@ -569,7 +565,7 @@ fn render_jobs_panel(source_id: uuid::Uuid) -> Element {
                                     }
                                     if job.skills_imported > 0 {
                                         p { class: "text-xs text-gray-600 dark:text-gray-400",
-                                            "{job.skills_imported} skill(s) imported"
+                                            {t!("import-skills-imported", count: job.skills_imported)}
                                         }
                                     }
                                     if !job.log.is_empty() {
@@ -582,8 +578,8 @@ fn render_jobs_panel(source_id: uuid::Uuid) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-sm text-red-500", "Error: {e}" } },
-                None => rsx! { p { class: "text-sm text-gray-500", "Loading..." } },
+                Some(Err(e)) => rsx! { p { class: "text-sm text-red-500", {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { class: "text-sm text-gray-500", {t!("loading")} } },
             }
         }
     }

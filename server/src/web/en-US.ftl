@@ -857,6 +857,35 @@ push-self-update-desc = Trigger daemon binary update
 push-request-assessment = Request Assessment
 push-request-assessment-desc = Trigger immediate health probe
 
+## ── Import Sources ─────────────────────────────────────────────
+
+import-title = Import Sources
+import-add-source = Add Source
+import-new-source = New Import Source
+import-field-name = Name
+import-name-placeholder = My skill source
+import-field-type = Type
+import-type-git = Git Repository
+import-type-clawhub = ClawHub
+import-field-repo-url = Repository URL
+import-field-branch = Branch (optional)
+import-field-glob = Glob pattern
+import-field-clawhub-slug = ClawHub Skill Slug
+import-field-channel = Channel
+import-auto-sync = Auto-sync periodically
+import-create = Create
+import-no-sources = No import sources configured.
+import-badge-auto = auto
+import-last-synced = Last synced: { $time }
+import-never-synced = never
+import-show-jobs = Jobs
+import-hide-jobs = Hide Jobs
+import-sync-now = Sync Now
+import-syncing = Syncing...
+import-recent-jobs = Recent Jobs
+import-no-jobs = No jobs yet.
+import-skills-imported = { $count } skill(s) imported
+
 ## ── Easy Access ─────────────────────────────────────────────────
 
 easy-access-title = Easy Access
