@@ -9,6 +9,7 @@ pub mod cluster_form;
 pub mod cluster_healer_settings;
 pub mod cluster_list;
 pub mod cluster_mcp_servers;
+pub mod cluster_packages;
 pub mod cluster_skills;
 pub mod cluster_ssh_keys;
 pub mod config_editor;

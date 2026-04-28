@@ -34,6 +34,7 @@ pub async fn send_push_event(
         "sync_ssh_keys" => mac_mgmt_common::PushEvent::SyncSshKeys,
         "self_update" => mac_mgmt_common::PushEvent::SelfUpdate,
         "sync_nixpkgs" => mac_mgmt_common::PushEvent::SyncNixpkgs,
+        "sync_packages" => mac_mgmt_common::PushEvent::SyncPackages,
         "request_assessment" => mac_mgmt_common::PushEvent::RequestAssessment,
         other => return Ok(PushResult {
             ok: false,
@@ -60,6 +61,7 @@ const ACTIONS: &[PushAction] = &[
     PushAction { key: "sync_mcp_servers", label_key: "push-sync-mcp", desc_key: "push-sync-mcp-desc" },
     PushAction { key: "sync_ssh_keys", label_key: "push-sync-ssh", desc_key: "push-sync-ssh-desc" },
     PushAction { key: "sync_nixpkgs", label_key: "push-sync-nixpkgs", desc_key: "push-sync-nixpkgs-desc" },
+    PushAction { key: "sync_packages", label_key: "push-sync-packages", desc_key: "push-sync-packages-desc" },
     PushAction { key: "self_update", label_key: "push-self-update", desc_key: "push-self-update-desc" },
     PushAction { key: "request_assessment", label_key: "push-request-assessment", desc_key: "push-request-assessment-desc" },
 ];

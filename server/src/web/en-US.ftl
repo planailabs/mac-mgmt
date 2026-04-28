@@ -110,6 +110,8 @@ cluster-detail-tab-config-history = Config History
 cluster-detail-tab-skills = Skills
 cluster-detail-tab-mcp-servers = MCP Servers
 cluster-detail-tab-ssh-keys = SSH Keys
+cluster-detail-tab-packages = Packages
+cluster-detail-open-packages = Manage Packages
 cluster-detail-tab-healer = Healer
 cluster-detail-version-label = Version:
 cluster-detail-version-value = v{ $version }
@@ -314,6 +316,9 @@ skill-detail-hide = Hide from public catalog
 skill-detail-channels = Channels
 skill-detail-channels-synced = Channels are synced from xzar.
 skill-detail-no-channels = No channels synced yet.
+skill-detail-nix-deps = Nix Dependencies
+skill-detail-nix-placeholder = package-name
+skill-detail-no-nix-deps = No nix dependencies.
 skill-detail-mcp-deps = MCP Dependencies
 skill-detail-select-mcp = Select MCP server...
 skill-detail-no-mcp-deps = No MCP dependencies.
@@ -845,6 +850,8 @@ push-sync-ssh = Sync SSH Keys
 push-sync-ssh-desc = Push SSH key changes
 push-sync-nixpkgs = Sync Nixpkgs
 push-sync-nixpkgs-desc = Push nixpkgs pin
+push-sync-packages = Sync Packages
+push-sync-packages-desc = Push unified nix package sync
 push-self-update = Self Update
 push-self-update-desc = Trigger daemon binary update
 push-request-assessment = Request Assessment
@@ -890,6 +897,14 @@ fleet-reachable-zero-hint = 0 of { $total } daemons reachable — none have an a
 
 cluster-config-back = Back to cluster
 cluster-detail-open-config = Open Config & Secrets
+
+## ── Cluster Packages Page ──────────────────────────────────────────
+
+cluster-packages-title = Packages
+cluster-packages-manual = Manual Packages
+cluster-packages-all = All Packages (all sources)
+cluster-packages-add-placeholder = package-name
+cluster-packages-no-manual = No manual packages added.
 
 ## ── Secrets ────────────────────────────────────────────────────────
 

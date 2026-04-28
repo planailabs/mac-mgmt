@@ -7,6 +7,7 @@ use super::components::bundle_form::BundleForm;
 use super::components::bundle_list::BundleList;
 use super::components::cluster_config_page::ClusterConfigPage;
 use super::components::cluster_detail::ClusterDetail;
+use super::components::cluster_packages::ClusterPackagesPage;
 use super::components::cluster_form::ClusterForm;
 use super::components::cluster_list::ClusterList;
 use super::components::daemon_version_detail::DaemonVersionDetail;
@@ -57,6 +58,8 @@ pub enum Route {
     ClusterDetail { id: String },
     #[route("/clusters/:id/config")]
     ClusterConfigPage { id: String },
+    #[route("/clusters/:id/packages")]
+    ClusterPackagesPage { id: String },
     #[route("/skills")]
     SkillList {},
     #[route("/skills/:id")]

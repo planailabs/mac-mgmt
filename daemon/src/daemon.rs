@@ -61,7 +61,7 @@ impl Daemon {
         })
     }
 
-    /// Spawn a background task to sync skills and MCP servers.
+    /// Spawn a background task to sync skills, MCP servers, and packages.
     fn spawn_sync_skills_and_mcp(&self) {
         if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
             let u = url.clone();
@@ -73,6 +73,9 @@ impl Daemon {
                 }
                 if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
                     tracing::warn!("MCP servers sync failed: {e}");
+                }
+                if let Err(e) = crate::packages::sync_packages(&u, &t).await {
+                    tracing::warn!("package sync failed: {e}");
                 }
             });
         }
@@ -699,6 +702,21 @@ impl Daemon {
                     tokio::spawn(async move {
                         if let Err(e) = crate::mcp_servers::sync_mcp_servers(&u, &t).await {
                             tracing::warn!("push MCP sync failed: {e}");
+                        }
+                        if let Err(e) = crate::packages::sync_packages(&u, &t).await {
+                            tracing::warn!("push package sync failed: {e}");
+                        }
+                    });
+                }
+                false
+            }
+            PushCommand::SyncPackages => {
+                if let (Some(url), Some(token)) = (&self.server_url, &self.server_token) {
+                    let u = url.clone();
+                    let t = token.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::packages::sync_packages(&u, &t).await {
+                            tracing::warn!("push package sync failed: {e}");
                         }
                     });
                 }

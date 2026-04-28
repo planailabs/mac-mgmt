@@ -428,6 +428,220 @@ pub async fn get_mcp_servers(
     Ok(Json(merged))
 }
 
+// ── Unified packages endpoint ─────────────────────────────────────────
+
+use mac_mgmt_common::{PackageSource, PackageSyncResponse};
+
+#[derive(sqlx::FromRow)]
+struct PkgRow {
+    slug: String,
+    nix_packages: Vec<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/packages",
+    tag = "Sync",
+    summary = "Unified package list for daemon sync (MCP + skill + manual)",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Package-to-sources map"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Sync token required"),
+    ),
+)]
+#[rocket::get("/packages")]
+pub async fn get_packages(
+    auth: SyncAuth,
+    pool: &State<PgPool>,
+    cache: &State<crate::skill_center_cache::SkillCenterCache>,
+) -> Result<Json<PackageSyncResponse>, Status> {
+    let mut packages: HashMap<String, Vec<PackageSource>> = HashMap::new();
+
+    // ── 1. MCP server packages (direct + bundle + transitive from skills) ──
+    let mcp_rows = sqlx::query_as::<_, PkgRow>(
+        "SELECT ms.slug, ms.nix_packages \
+         FROM cluster_mcp_servers cms \
+         JOIN mcp_servers ms ON ms.id = cms.mcp_server_id \
+         WHERE cms.cluster_id = $1 AND ms.nix_packages != '{}' \
+         UNION ALL \
+         SELECT ms.slug, ms.nix_packages \
+         FROM cluster_mcp_bundles cmb \
+         JOIN mcp_server_bundle_items msbi ON msbi.bundle_id = cmb.bundle_id \
+         JOIN mcp_servers ms ON ms.id = msbi.mcp_server_id \
+         WHERE cmb.cluster_id = $1 AND ms.nix_packages != '{}'",
+    )
+    .bind(auth.cluster_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    for row in &mcp_rows {
+        for pkg in &row.nix_packages {
+            packages
+                .entry(pkg.clone())
+                .or_default()
+                .push(PackageSource::McpServer { slug: row.slug.clone() });
+        }
+    }
+
+    // Transitive MCP deps from winning skill channels
+    let winning = resolve_winning_skill_channels(auth.cluster_id, pool.inner()).await?;
+    let channel_ids: Vec<Uuid> = winning.values().copied().collect();
+
+    if !channel_ids.is_empty() {
+        let trans_mcp = sqlx::query_as::<_, PkgRow>(
+            "SELECT ms.slug, ms.nix_packages \
+             FROM skill_mcp_dependencies smd \
+             JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
+             WHERE smd.skill_channel_id = ANY($1) AND ms.nix_packages != '{}'",
+        )
+        .bind(&channel_ids)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+        for row in &trans_mcp {
+            for pkg in &row.nix_packages {
+                packages
+                    .entry(pkg.clone())
+                    .or_default()
+                    .push(PackageSource::McpServer { slug: row.slug.clone() });
+            }
+        }
+    }
+
+    // Remote MCP server packages (from federation)
+    let remote_mcp = aggregate_remote_mcp_servers(auth.cluster_id, pool.inner(), cache.inner()).await;
+    for (slug, entry) in &remote_mcp {
+        for pkg in &entry.nix_packages {
+            packages
+                .entry(pkg.clone())
+                .or_default()
+                .push(PackageSource::McpServer { slug: slug.clone() });
+        }
+    }
+
+    // ── 2. Skill channel packages ──
+    if !channel_ids.is_empty() {
+        let skill_rows = sqlx::query_as::<_, PkgRow>(
+            "SELECT s.slug, sc.nix_packages \
+             FROM skill_channels sc \
+             JOIN skills s ON s.id = sc.skill_id \
+             WHERE sc.id = ANY($1) AND sc.nix_packages != '{}'",
+        )
+        .bind(&channel_ids)
+        .fetch_all(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+
+        for row in &skill_rows {
+            for pkg in &row.nix_packages {
+                packages
+                    .entry(pkg.clone())
+                    .or_default()
+                    .push(PackageSource::Skill { slug: row.slug.clone() });
+            }
+        }
+    }
+
+    // Remote skill channel packages (from federation cache)
+    {
+        let all_caches = cache.get_all().await;
+        // Collect remote skill slugs+channels assigned to this cluster
+        #[derive(sqlx::FromRow)]
+        struct RemoteSkillRef {
+            skill_center_id: Option<Uuid>,
+            slug: Option<String>,
+        }
+        let direct_remote: Vec<RemoteSkillRef> = sqlx::query_as(
+            "SELECT skill_center_id, slug FROM cluster_skills \
+             WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
+        )
+        .bind(auth.cluster_id)
+        .fetch_all(pool.inner())
+        .await
+        .unwrap_or_default();
+
+        for r in &direct_remote {
+            if let (Some(sc_id), Some(slug)) = (r.skill_center_id, &r.slug) {
+                if let Some(cached) = all_caches.get(&sc_id) {
+                    for sc in &cached.catalog.skill_channels {
+                        if sc.skill_slug == *slug {
+                            for pkg in &sc.nix_packages {
+                                packages
+                                    .entry(pkg.clone())
+                                    .or_default()
+                                    .push(PackageSource::Skill { slug: slug.clone() });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remote bundle skill packages
+        #[derive(sqlx::FromRow)]
+        struct RemoteBundleRef {
+            skill_center_id: Option<Uuid>,
+            remote_id: Option<Uuid>,
+        }
+        let bundle_remote: Vec<RemoteBundleRef> = sqlx::query_as(
+            "SELECT skill_center_id, remote_id FROM cluster_bundles \
+             WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
+        )
+        .bind(auth.cluster_id)
+        .fetch_all(pool.inner())
+        .await
+        .unwrap_or_default();
+
+        for b in &bundle_remote {
+            if let (Some(sc_id), Some(rid)) = (b.skill_center_id, b.remote_id) {
+                if let Some(cached) = all_caches.get(&sc_id) {
+                    if let Some(bundle) = cached.catalog.bundles.iter().find(|fb| fb.id == rid) {
+                        for skill in &bundle.skills {
+                            for sc in &cached.catalog.skill_channels {
+                                if sc.skill_slug == skill.skill_slug && sc.channel == skill.channel {
+                                    for pkg in &sc.nix_packages {
+                                        packages
+                                            .entry(pkg.clone())
+                                            .or_default()
+                                            .push(PackageSource::Skill { slug: skill.skill_slug.clone() });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 3. Manual cluster packages ──
+    let manual: Vec<String> = sqlx::query_scalar(
+        "SELECT package FROM cluster_packages WHERE cluster_id = $1",
+    )
+    .bind(auth.cluster_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    for pkg in manual {
+        packages
+            .entry(pkg)
+            .or_default()
+            .push(PackageSource::Manual);
+    }
+
+    // Deduplicate sources per package
+    for sources in packages.values_mut() {
+        sources.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        sources.dedup();
+    }
+
+    Ok(Json(PackageSyncResponse { packages }))
+}
+
 #[utoipa::path(
     get,
     path = "/api/config",
@@ -1670,6 +1884,180 @@ pub async fn setting_batch_mcp_bundles(
     }
     tx.commit().await.map_err(|_| Status::InternalServerError)?;
     push::notify(channels, auth.cluster_id, PushMessage::SyncMcpServers).await;
+    Ok(Status::Ok)
+}
+
+// ── Setting — manual cluster packages ──────────────────────────────────
+
+#[derive(Clone, Serialize, ToSchema, sqlx::FromRow)]
+pub(crate) struct ClusterPackageRow {
+    id: Uuid,
+    package: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AddPackageBody {
+    package: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct BatchPackagesBody {
+    #[serde(default)]
+    add: Vec<String>,
+    #[serde(default)]
+    remove: Vec<Uuid>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/setting/packages",
+    tag = "Setting — Packages",
+    summary = "List manual packages for cluster",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, description = "Manual packages", body = Vec<ClusterPackageRow>),
+    ),
+)]
+#[rocket::get("/setting/packages")]
+pub async fn setting_list_packages(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+) -> Result<Json<Vec<ClusterPackageRow>>, Status> {
+    let rows: Vec<ClusterPackageRow> = sqlx::query_as(
+        "SELECT id, package, created_at FROM cluster_packages \
+         WHERE cluster_id = $1 ORDER BY package",
+    )
+    .bind(auth.cluster_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/setting/packages",
+    tag = "Setting — Packages",
+    summary = "Add a manual package to the cluster",
+    security(("bearer" = [])),
+    request_body = AddPackageBody,
+    responses(
+        (status = 201, description = "Package added"),
+        (status = 409, description = "Package already exists"),
+    ),
+)]
+#[rocket::post("/setting/packages", data = "<body>")]
+pub async fn setting_add_package(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    body: Json<AddPackageBody>,
+) -> Result<Status, Status> {
+    let pkg = body.package.trim().to_string();
+    if pkg.is_empty() {
+        return Err(Status::BadRequest);
+    }
+    sqlx::query(
+        "INSERT INTO cluster_packages (cluster_id, package) VALUES ($1, $2) \
+         ON CONFLICT (cluster_id, package) DO NOTHING",
+    )
+    .bind(auth.cluster_id)
+    .bind(&pkg)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    push::notify(channels, auth.cluster_id, PushMessage::SyncPackages).await;
+    Ok(Status::Created)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/setting/packages/{id}",
+    tag = "Setting — Packages",
+    summary = "Remove a manual package from the cluster",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "cluster_packages row ID")),
+    responses(
+        (status = 204, description = "Removed"),
+        (status = 404, description = "Not found"),
+    ),
+)]
+#[rocket::delete("/setting/packages/<id>")]
+pub async fn setting_remove_package(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    id: &str,
+) -> Result<Status, Status> {
+    let id: Uuid = id.parse().map_err(|_| Status::BadRequest)?;
+    let deleted = sqlx::query(
+        "DELETE FROM cluster_packages WHERE id = $1 AND cluster_id = $2",
+    )
+    .bind(id)
+    .bind(auth.cluster_id)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?
+    .rows_affected();
+
+    if deleted == 0 {
+        return Err(Status::NotFound);
+    }
+
+    push::notify(channels, auth.cluster_id, PushMessage::SyncPackages).await;
+    Ok(Status::NoContent)
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/setting/packages/batch",
+    tag = "Setting — Packages",
+    summary = "Batch add/remove manual packages",
+    security(("bearer" = [])),
+    request_body = BatchPackagesBody,
+    responses(
+        (status = 200, description = "Batch applied"),
+    ),
+)]
+#[rocket::patch("/setting/packages/batch", data = "<body>")]
+pub async fn setting_batch_packages(
+    auth: SettingAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    body: Json<BatchPackagesBody>,
+) -> Result<Status, Status> {
+    let mut tx = pool
+        .inner()
+        .begin()
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    for id in &body.remove {
+        sqlx::query("DELETE FROM cluster_packages WHERE id = $1 AND cluster_id = $2")
+            .bind(id)
+            .bind(auth.cluster_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    }
+    for pkg in &body.add {
+        let pkg = pkg.trim();
+        if !pkg.is_empty() {
+            sqlx::query(
+                "INSERT INTO cluster_packages (cluster_id, package) VALUES ($1, $2) \
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(auth.cluster_id)
+            .bind(pkg)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+        }
+    }
+    tx.commit().await.map_err(|_| Status::InternalServerError)?;
+    push::notify(channels, auth.cluster_id, PushMessage::SyncPackages).await;
     Ok(Status::Ok)
 }
 
@@ -3000,6 +3388,82 @@ pub async fn admin_remove_skill_mcp_dep(
         crate::api::push::notify_federation(federation_push.inner());
         Ok(Status::Ok)
     }
+}
+
+// ── Admin — skill channel nix packages ─────────────────────────────────
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/skill-channels/{skill_channel_id}/nix-packages",
+    tag = "Admin — Skills",
+    summary = "Get nix packages for a skill channel",
+    security(("bearer" = [])),
+    params(("skill_channel_id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "Nix packages list", body = Vec<String>),
+    ),
+)]
+#[rocket::get("/admin/skill-channels/<skill_channel_id>/nix-packages")]
+pub async fn admin_get_skill_nix_packages(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    skill_channel_id: &str,
+) -> Result<Json<Vec<String>>, Status> {
+    let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
+    let pkgs: Vec<String> = sqlx::query_scalar(
+        "SELECT unnest(nix_packages) FROM skill_channels WHERE id = $1",
+    )
+    .bind(sc_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    Ok(Json(pkgs))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SetNixPackagesBody {
+    packages: Vec<String>,
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/admin/skill-channels/{skill_channel_id}/nix-packages",
+    tag = "Admin — Skills",
+    summary = "Set nix packages for a skill channel",
+    security(("bearer" = [])),
+    params(("skill_channel_id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "Updated"),
+        (status = 404, description = "Skill channel not found"),
+    ),
+)]
+#[rocket::put("/admin/skill-channels/<skill_channel_id>/nix-packages", data = "<body>")]
+pub async fn admin_set_skill_nix_packages(
+    _auth: AdminAuth,
+    pool: &State<PgPool>,
+    channels: &State<PushChannels>,
+    federation_push: &State<crate::api::push::FederationPushChannel>,
+    skill_channel_id: &str,
+    body: Json<SetNixPackagesBody>,
+) -> Result<Status, Status> {
+    let sc_id: Uuid = skill_channel_id.parse().map_err(|_| Status::BadRequest)?;
+    let res = sqlx::query(
+        "UPDATE skill_channels SET nix_packages = $1 WHERE id = $2",
+    )
+    .bind(&body.packages)
+    .bind(sc_id)
+    .execute(pool.inner())
+    .await
+    .map_err(|_| Status::InternalServerError)?;
+
+    if res.rows_affected() == 0 {
+        return Err(Status::NotFound);
+    }
+
+    crate::api::push::notify_federation(federation_push.inner());
+    push::notify_skill_channel_clusters(channels, pool.inner(), &[sc_id]).await;
+    Ok(Status::Ok)
 }
 
 // ── SSH key routes ─────────────────────────────────────────────────────

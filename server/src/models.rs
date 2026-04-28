@@ -53,6 +53,7 @@ pub struct SkillChannel {
     pub skill_id: Uuid,
     pub channel: String,
     pub created_at: DateTime<Utc>,
+    pub nix_packages: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

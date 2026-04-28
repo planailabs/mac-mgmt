@@ -379,14 +379,14 @@ settings_tool! {
 #[derive(Deserialize, JsonSchema)]
 struct SendPushParams {
     /// Push event type: sync_config, sync_skills, sync_mcp_servers, sync_ssh_keys,
-    /// self_update, sync_nixpkgs, request_assessment
+    /// self_update, sync_nixpkgs, sync_packages, request_assessment
     event: String,
 }
 
 settings_tool! {
     name: "send_push",
     struct_name: SendPushTool,
-    description: "Send a push event to all daemons in the cluster via SSE. Available events: sync_config (reload config), sync_skills (re-sync skills), sync_mcp_servers (re-sync MCP servers), sync_ssh_keys (re-sync SSH keys), self_update (trigger self-update check), sync_nixpkgs (re-sync nixpkgs pin), request_assessment (trigger immediate probe run).",
+    description: "Send a push event to all daemons in the cluster via SSE. Available events: sync_config (reload config), sync_skills (re-sync skills), sync_mcp_servers (re-sync MCP servers), sync_ssh_keys (re-sync SSH keys), self_update (trigger self-update check), sync_nixpkgs (re-sync nixpkgs pin), sync_packages (re-sync unified nix packages), request_assessment (trigger immediate probe run).",
     params: SendPushParams,
     handler: |ctx, params| {
         let event = match params.event.as_str() {
@@ -396,9 +396,10 @@ settings_tool! {
             "sync_ssh_keys" => mac_mgmt_common::PushEvent::SyncSshKeys,
             "self_update" => mac_mgmt_common::PushEvent::SelfUpdate,
             "sync_nixpkgs" => mac_mgmt_common::PushEvent::SyncNixpkgs,
+            "sync_packages" => mac_mgmt_common::PushEvent::SyncPackages,
             "request_assessment" => mac_mgmt_common::PushEvent::RequestAssessment,
             other => return Ok(ToolOutput::Text(format!(
-                "Unknown event '{other}'. Valid: sync_config, sync_skills, sync_mcp_servers, sync_ssh_keys, self_update, sync_nixpkgs, request_assessment"
+                "Unknown event '{other}'. Valid: sync_config, sync_skills, sync_mcp_servers, sync_ssh_keys, self_update, sync_nixpkgs, sync_packages, request_assessment"
             ))),
         };
         if let Some(push_fn) = &ctx.push_fn {

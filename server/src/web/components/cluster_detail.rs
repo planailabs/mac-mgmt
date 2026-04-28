@@ -530,6 +530,14 @@ pub fn ClusterDetail(id: String) -> Element {
                         ClusterMcpServers { cluster_id: cid2.clone(), read_only }
                     }
                     div {
+                        h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-packages")} }
+                        Link {
+                            to: Route::ClusterPackagesPage { id: cid2.clone() },
+                            class: "inline-block bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                            {t!("cluster-detail-open-packages")}
+                        }
+                    }
+                    div {
                         h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-ssh-keys")} }
                         ClusterSshKeys { cluster_id: cid2.clone(), read_only: !can_admin }
                     }

@@ -403,6 +403,7 @@ pub fn SkillDetail(id: String) -> Element {
                                                             " {path}"
                                                         }
                                                     }
+                                                    ChannelNixPackages { channel_id: ch_id.clone() }
                                                     ChannelMcpDeps { channel_id: ch_id }
                                                 }
                                             }
@@ -493,6 +494,155 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                                                 spawn(async move {
                                                     if remove_channel_mcp_dep(did).await.is_ok() {
                                                         deps.restart();
+                                                    }
+                                                });
+                                            },
+                                            {t!("remove")}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-xs", {t!("error-message", message: e.to_string())} } },
+                None => rsx! { p { class: "text-xs", {t!("loading")} } },
+            }}
+        }
+    }
+}
+
+// ── Channel nix packages sub-component ────────────────────────────────
+
+#[server]
+async fn get_channel_nix_packages(channel_id: String) -> Result<Vec<String>, ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    let pkgs: Vec<String> = sqlx::query_scalar(
+        "SELECT unnest(nix_packages) FROM skill_channels WHERE id = $1",
+    )
+    .bind(uuid)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(pkgs)
+}
+
+#[server]
+async fn add_channel_nix_package(
+    channel_id: String,
+    package: String,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "UPDATE skill_channels SET nix_packages = array_append(nix_packages, $1) \
+         WHERE id = $2 AND NOT ($1 = ANY(nix_packages))",
+    )
+    .bind(&package)
+    .bind(uuid)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
+    crate::api::push::notify_skill_channels_global(&[uuid]).await;
+    Ok(())
+}
+
+#[server]
+async fn remove_channel_nix_package(
+    channel_id: String,
+    package: String,
+) -> Result<(), ServerFnError> {
+    let user = current_user().await?;
+    user.require_admin()?;
+    let pool = crate::server_pool()?;
+    let uuid: uuid::Uuid = channel_id
+        .parse()
+        .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
+    sqlx::query(
+        "UPDATE skill_channels SET nix_packages = array_remove(nix_packages, $1) WHERE id = $2",
+    )
+    .bind(&package)
+    .bind(uuid)
+    .execute(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+    crate::api::push::notify_federation_global();
+    crate::api::push::notify_skill_channels_global(&[uuid]).await;
+    Ok(())
+}
+
+#[component]
+fn ChannelNixPackages(channel_id: String) -> Element {
+    let cid = channel_id.clone();
+    let mut pkgs = use_server_future(move || {
+        let id = cid.clone();
+        async move { get_channel_nix_packages(id).await }
+    })?;
+
+    let mut new_pkg = use_signal(String::new);
+
+    rsx! {
+        div { class: "mt-3",
+            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("skill-detail-nix-deps")} }
+            form {
+                class: "flex gap-2 mb-3",
+                onsubmit: move |evt: FormEvent| {
+                    evt.prevent_default();
+                    let pkg = new_pkg.read().clone();
+                    let ch = channel_id.clone();
+                    spawn(async move {
+                        if !pkg.trim().is_empty() {
+                            if add_channel_nix_package(ch, pkg).await.is_ok() {
+                                new_pkg.set(String::new());
+                                pkgs.restart();
+                            }
+                        }
+                    });
+                },
+                input {
+                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                    r#type: "text",
+                    placeholder: t!("skill-detail-nix-placeholder"),
+                    value: "{new_pkg}",
+                    oninput: move |e| new_pkg.set(e.value()),
+                }
+                button {
+                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                    r#type: "submit",
+                    {t!("add")}
+                }
+            }
+            {match &*pkgs.read() {
+                Some(Ok(list)) if list.is_empty() => rsx! {
+                    p { class: "text-xs text-gray-400 dark:text-gray-500", {t!("skill-detail-no-nix-deps")} }
+                },
+                Some(Ok(list)) => rsx! {
+                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        for pkg in list {
+                            {
+                                let pkg_name = pkg.clone();
+                                let ch = channel_id.clone();
+                                rsx! {
+                                    li { class: "py-1 flex justify-between items-center",
+                                        span { class: "text-sm font-mono", "{pkg_name}" }
+                                        button {
+                                            class: "text-xs text-red-600 dark:text-red-400 hover:underline",
+                                            onclick: move |_| {
+                                                let p = pkg_name.clone();
+                                                let c = ch.clone();
+                                                spawn(async move {
+                                                    if remove_channel_nix_package(c, p).await.is_ok() {
+                                                        pkgs.restart();
                                                     }
                                                 });
                                             },

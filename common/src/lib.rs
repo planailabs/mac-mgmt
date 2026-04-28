@@ -126,6 +126,8 @@ pub enum PushEvent {
     SyncNixpkgs,
     /// Request an immediate system-assessment snapshot + probe run.
     RequestAssessment,
+    /// Unified package sync (MCP + skill + manual packages).
+    SyncPackages,
 }
 
 /// Daemon → server heartbeat body (`POST /api/heartbeat`).
@@ -473,6 +475,27 @@ pub struct McpServerEntry {
     pub nix_packages: Vec<String>,
 }
 
+// ── Unified package manager types ────────────────────────────────────
+
+/// Source that requires a nix package.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PackageSource {
+    /// Package required by an MCP server (identified by slug).
+    McpServer { slug: String },
+    /// Package required directly by a skill channel (identified by skill slug).
+    Skill { slug: String },
+    /// Package manually added to the cluster.
+    Manual,
+}
+
+/// Unified package sync response (`GET /api/packages`).
+/// Maps nixpkgs attribute name → list of sources requiring it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PackageSyncResponse {
+    pub packages: std::collections::HashMap<String, Vec<PackageSource>>,
+}
+
 // ── Federation types (skill center ↔ management server protocol) ────
 
 /// Push notification sent from skill center to management server via SSE.
@@ -500,6 +523,8 @@ pub struct FederationSkillChannel {
     pub skill_description: String,
     pub channel: String,
     pub hidden: bool,
+    #[serde(default)]
+    pub nix_packages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

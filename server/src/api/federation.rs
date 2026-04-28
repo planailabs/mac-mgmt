@@ -47,6 +47,7 @@ struct SkillChannelDbRow {
     skill_description: String,
     channel: String,
     hidden: bool,
+    nix_packages: Vec<String>,
 }
 
 async fn fetch_skill_channels(
@@ -57,7 +58,7 @@ async fn fetch_skill_channels(
     let query = format!(
         "SELECT sc.id, s.slug AS skill_slug, s.name AS skill_name, \
          s.description AS skill_description, sc.channel, \
-         s.hide_from_public_catalog AS hidden \
+         s.hide_from_public_catalog AS hidden, sc.nix_packages \
          FROM skill_channels sc \
          JOIN skills s ON s.id = sc.skill_id \
          WHERE {filter} \
@@ -77,6 +78,7 @@ async fn fetch_skill_channels(
             skill_description: r.skill_description,
             channel: r.channel,
             hidden: r.hidden,
+            nix_packages: r.nix_packages,
         })
         .collect())
 }

@@ -24,6 +24,7 @@ pub mod logs;
 #[cfg(feature = "services")]
 pub mod managed_service;
 pub mod mcp_servers;
+pub mod packages;
 pub mod metrics;
 pub mod metrics_server;
 pub mod nix;

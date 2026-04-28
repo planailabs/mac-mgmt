@@ -33,6 +33,7 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::get_nix_caches,
         routes::get_skills,
         routes::get_mcp_servers,
+        routes::get_packages,
         // Setting — config
         routes::setting_config_schema,
         routes::setting_get_config,
@@ -58,6 +59,11 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::setting_add_mcp_bundle,
         routes::setting_remove_mcp_bundle,
         routes::setting_batch_mcp_bundles,
+        // Setting — packages
+        routes::setting_list_packages,
+        routes::setting_add_package,
+        routes::setting_remove_package,
+        routes::setting_batch_packages,
         // Setting — available
         routes::setting_available_skill_channels,
         routes::setting_available_bundles,
@@ -141,6 +147,9 @@ use utoipa_swagger_ui::SwaggerUi;
         routes::CreatedToken,
         routes::SshKeyRow,
         routes::AddSshKeyBody,
+        routes::ClusterPackageRow,
+        routes::AddPackageBody,
+        routes::BatchPackagesBody,
         routes::CreateRolloutGroupBody,
         routes::RolloutGroupRow,
         routes::AddGroupMemberBody,
@@ -209,6 +218,7 @@ pub fn build_rocket(
         routes::get_nix_caches,
         routes::get_skills,
         routes::get_mcp_servers,
+        routes::get_packages,
         // Setting token routes — config
         routes::setting_config_schema,
         routes::setting_get_config,
@@ -260,10 +270,18 @@ pub fn build_rocket(
         routes::setting_mcp_bundle_servers,
         // Setting — catalog
         routes::setting_catalog,
+        // Setting — manual packages
+        routes::setting_list_packages,
+        routes::setting_add_package,
+        routes::setting_remove_package,
+        routes::setting_batch_packages,
         // Admin — skill MCP dependencies
         routes::admin_list_skill_mcp_deps,
         routes::admin_add_skill_mcp_dep,
         routes::admin_remove_skill_mcp_dep,
+        // Admin — skill nix packages
+        routes::admin_get_skill_nix_packages,
+        routes::admin_set_skill_nix_packages,
         // Federation API
         federation::federation_catalog,
         federation::federation_resolve_skills,

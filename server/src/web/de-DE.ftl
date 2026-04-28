@@ -110,6 +110,8 @@ cluster-detail-tab-config-history = Konfigurationsverlauf
 cluster-detail-tab-skills = Skills
 cluster-detail-tab-mcp-servers = MCP Server
 cluster-detail-tab-ssh-keys = SSH Keys
+cluster-detail-tab-packages = Pakete
+cluster-detail-open-packages = Pakete verwalten
 cluster-detail-tab-healer = Healer
 cluster-detail-version-label = Version:
 cluster-detail-version-value = v{ $version }
@@ -314,6 +316,9 @@ skill-detail-hide = Im öffentlichen Katalog ausblenden
 skill-detail-channels = Channels
 skill-detail-channels-synced = Channels werden von xzar synchronisiert.
 skill-detail-no-channels = Noch keine Channels synchronisiert.
+skill-detail-nix-deps = Nix-Abhängigkeiten
+skill-detail-nix-placeholder = paket-name
+skill-detail-no-nix-deps = Keine Nix-Abhängigkeiten.
 skill-detail-mcp-deps = MCP-Abhängigkeiten
 skill-detail-select-mcp = MCP Server auswählen...
 skill-detail-no-mcp-deps = Keine MCP-Abhängigkeiten.
@@ -845,6 +850,8 @@ push-sync-ssh = SSH Keys synchronisieren
 push-sync-ssh-desc = SSH-Key-Änderungen senden
 push-sync-nixpkgs = Nixpkgs synchronisieren
 push-sync-nixpkgs-desc = Nixpkgs-Pin senden
+push-sync-packages = Pakete synchronisieren
+push-sync-packages-desc = Unified-Paket-Sync senden
 push-self-update = Self-Update
 push-self-update-desc = Daemon-Binary-Update auslösen
 push-request-assessment = Bewertung anfordern
@@ -890,6 +897,14 @@ fleet-reachable-zero-hint = 0 von { $total } Daemons erreichbar — keiner hat d
 
 cluster-config-back = Zurück zum Cluster
 cluster-detail-open-config = Konfiguration & Secrets öffnen
+
+## ── Cluster-Pakete ─────────────────────────────────────────────────
+
+cluster-packages-title = Pakete
+cluster-packages-manual = Manuelle Pakete
+cluster-packages-all = Alle Pakete (alle Quellen)
+cluster-packages-add-placeholder = paket-name
+cluster-packages-no-manual = Keine manuellen Pakete hinzugefügt.
 
 ## ── Secrets ────────────────────────────────────────────────────────
 
