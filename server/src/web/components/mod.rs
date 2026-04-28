@@ -27,7 +27,6 @@ pub mod generate_all_button;
 pub mod generate_button;
 pub mod healer_page;
 pub mod hidden_badge;
-#[cfg(feature = "skill-importer")]
 pub mod import_sources;
 pub mod layout;
 pub mod log_viewer;

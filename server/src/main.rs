@@ -24,9 +24,9 @@ mod skill_center_cache;
 mod skill_center_client;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod xzar;
-#[cfg(feature = "skill-importer")]
+#[cfg(feature = "server")]
 mod xzar_upload;
-#[cfg(feature = "skill-importer")]
+#[cfg(feature = "server")]
 mod clawhub_client;
 
 #[cfg(all(feature = "server", feature = "webui"))]
@@ -315,7 +315,6 @@ async fn init_server() -> (
     }
 
     // Skill importer: spawn periodic sync loop for auto-sync sources
-    #[cfg(feature = "skill-importer")]
     if cfg.importer.is_some() {
         let importer_pool = pool.clone();
         tokio::spawn(api::importer::sync_loop(importer_pool));

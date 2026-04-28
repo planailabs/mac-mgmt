@@ -144,21 +144,17 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
     let mut overview_links = vec![
         NavLink::Internal(Route::ClusterList {}, "nav-clusters".to_string()),
     ];
-    #[cfg(feature = "mgmt")]
-    {
-        overview_links.push(NavLink::Internal(
-            Route::FleetDashboard { stage_id: None },
-            "nav-fleet".to_string(),
-        ));
-        overview_links.push(NavLink::Internal(Route::EasyAccess {}, "nav-easy-access".to_string()));
-    }
+    overview_links.push(NavLink::Internal(
+        Route::FleetDashboard { stage_id: None },
+        "nav-fleet".to_string(),
+    ));
+    overview_links.push(NavLink::Internal(Route::EasyAccess {}, "nav-easy-access".to_string()));
     let mut groups = vec![NavGroup {
         title: "nav-overview".to_string(),
         links: overview_links,
     }];
 
     if is_admin {
-        #[cfg(feature = "skill-center")]
         groups.push(NavGroup {
             title: "nav-mcp-skills".to_string(),
             links: vec![
@@ -169,7 +165,6 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             ],
         });
 
-        #[cfg(feature = "skill-importer")]
         groups.push(NavGroup {
             title: "nav-import".to_string(),
             links: vec![
@@ -177,7 +172,6 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
             ],
         });
 
-        #[cfg(feature = "mgmt")]
         {
             let admin_links = vec![
                 NavLink::Internal(Route::AdminTokens {}, "nav-admin-tokens".to_string()),
