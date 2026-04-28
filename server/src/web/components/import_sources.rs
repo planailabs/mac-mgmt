@@ -396,11 +396,143 @@ pub fn ImportSourceDetail(id: String) -> Element {
         async move { list_import_jobs(sid).await }
     })?;
 
-    let mut form_error = use_signal(|| None::<String>);
+    let mut error = use_signal(|| None::<String>);
     let mut syncing = use_signal(|| false);
-    let mut editing = use_signal(|| false);
 
-    // Form signals — populated from source data when entering edit mode
+    match &*source.read() {
+        Some(Ok(s)) => {
+            let source_id = s.id.clone();
+            let source_name = s.name.clone();
+            let source_type = s.source_type.clone();
+            let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
+            let synced_label = s.last_synced_at
+                .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| t!("import-never-synced").to_string());
+
+            let sid_sync = source_id.clone();
+            let sid_del = source_id.clone();
+
+            let repo_url = s.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let branch = s.source_config.get("branch").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let glob = s.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let clawhub_slug = s.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let channel = s.channel.clone();
+            let auto_sync = s.auto_sync;
+
+            rsx! {
+                div { class: "flex items-center gap-3 mb-1",
+                    h2 { class: "text-2xl font-bold", "{source_name}" }
+                    span { class: "text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400",
+                        "{source_type}"
+                    }
+                    span { class: "text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                        "{s.channel}"
+                    }
+                    if s.auto_sync {
+                        span { class: "text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
+                            {t!("import-badge-auto")}
+                        }
+                    }
+                    Link {
+                        to: Route::ImportSourceEdit { id: source_id.clone() },
+                        class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
+                        {t!("edit")}
+                    }
+                    button {
+                        class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400",
+                        onclick: move |_| {
+                            let sid = sid_del.clone();
+                            let nav = navigator.clone();
+                            spawn(async move {
+                                if delete_import_source(sid, true).await.is_ok() {
+                                    nav.push(Route::ImportSources { prefill_slug: None, prefill_name: None });
+                                }
+                            });
+                        },
+                        {t!("delete")}
+                    }
+                    button {
+                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                        disabled: syncing(),
+                        onclick: move |_| {
+                            let sid = sid_sync.clone();
+                            syncing.set(true);
+                            spawn(async move {
+                                match trigger_sync(sid).await {
+                                    Ok(()) => {
+                                        syncing.set(false);
+                                        source.restart();
+                                        jobs.restart();
+                                    }
+                                    Err(e) => {
+                                        error.set(Some(e.to_string()));
+                                        syncing.set(false);
+                                    }
+                                }
+                            });
+                        },
+                        if syncing() { {t!("import-syncing")} } else { {t!("import-sync-now")} }
+                    }
+                }
+                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6",
+                    {t!("cluster-detail-created", date: created)}
+                    " · "
+                    {t!("import-last-synced", time: synced_label)}
+                }
+
+                if let Some(err) = error() {
+                    p { class: "text-red-500 text-sm mb-4", "{err}" }
+                }
+
+                // Source configuration
+                div { class: "mb-6",
+                    h3 { class: "text-lg font-semibold mb-3", {t!("import-source-config")} }
+                    div { class: "space-y-3",
+                        { render_detail_field(t!("import-field-type"), &source_type) }
+                        if source_type == "git" {
+                            { render_detail_field(t!("import-field-repo-url"), &repo_url) }
+                            if !branch.is_empty() {
+                                { render_detail_field(t!("import-field-branch"), &branch) }
+                            }
+                            { render_detail_field(t!("import-field-glob"), &glob) }
+                        } else {
+                            { render_detail_field(t!("import-field-clawhub-slug"), &clawhub_slug) }
+                        }
+                        { render_detail_field(t!("import-field-channel"), &channel) }
+                        div {
+                            span { class: "block text-sm font-medium text-gray-500 dark:text-gray-400", {t!("import-auto-sync")} }
+                            span { class: "text-sm",
+                                if auto_sync { {t!("yes")} } else { {t!("no")} }
+                            }
+                        }
+                    }
+                }
+
+                // Recent jobs
+                div {
+                    h3 { class: "text-lg font-semibold mb-3", {t!("import-recent-jobs")} }
+                    { render_jobs(&jobs) }
+                }
+            }
+        }
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Edit page: /import-sources/:id/edit
+// ══════════════════════════════════════════════════════════════════════
+
+#[component]
+pub fn ImportSourceEdit(id: String) -> Element {
+    let id_load = id.clone();
+    let existing = use_server_future(move || {
+        let id = id_load.clone();
+        async move { get_import_source(id).await }
+    })?;
+
+    let navigator = navigator();
     let mut form_name = use_signal(String::new);
     let mut form_type = use_signal(String::new);
     let mut form_repo_url = use_signal(String::new);
@@ -409,174 +541,72 @@ pub fn ImportSourceDetail(id: String) -> Element {
     let mut form_clawhub_slug = use_signal(String::new);
     let mut form_channel = use_signal(String::new);
     let mut form_auto_sync = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let mut loaded = use_signal(|| false);
 
-    match &*source.read() {
-        Some(Ok(s)) => {
-            let source_id = s.id.clone();
-            let source_name = s.name.clone();
-            let source_type = s.source_type.clone();
-            let desc = source_description(s);
-            let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
-            let synced_label = s.last_synced_at
-                .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-                .unwrap_or_else(|| t!("import-never-synced").to_string());
+    // Pre-fill signals once when data arrives
+    if let Some(Ok(s)) = &*existing.read() {
+        if !*loaded.read() {
+            form_name.set(s.name.clone());
+            form_type.set(s.source_type.clone());
+            form_channel.set(s.channel.clone());
+            form_auto_sync.set(s.auto_sync);
+            match s.source_type.as_str() {
+                "git" => {
+                    form_repo_url.set(s.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                    form_branch.set(s.source_config.get("branch").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                    form_glob.set(s.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("skills/*").to_string());
+                }
+                "clawhub" => {
+                    form_clawhub_slug.set(s.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                }
+                _ => {}
+            }
+            loaded.set(true);
+        }
+    }
 
-            let sid_sync = source_id.clone();
-            let sid_del = source_id.clone();
-            let sid_save = source_id.clone();
-
-            // Clone source data for populating form on edit click
-            let edit_source = s.clone();
-
+    match &*existing.read() {
+        Some(Ok(_)) => {
+            let edit_id = id.clone();
+            let nav_id = id.clone();
             rsx! {
-                div { class: "px-6 py-8 max-w-5xl mx-auto",
-                    // Header
-                    div { class: "mb-6",
-                        Link {
-                            to: Route::ImportSources { prefill_slug: None, prefill_name: None },
-                            class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
-                            "← {t!(\"import-title\")}"
-                        }
-                        div { class: "flex items-center justify-between mt-1",
-                            div {
-                                div { class: "flex items-center gap-3",
-                                    h2 { class: "text-2xl font-bold dark:text-white", "{source_name}" }
-                                    span { class: "text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400",
-                                        "{source_type}"
-                                    }
-                                    span { class: "text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-                                        "{s.channel}"
-                                    }
-                                    if s.auto_sync {
-                                        span { class: "text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
-                                            {t!("import-badge-auto")}
-                                        }
-                                    }
-                                    if !editing() {
-                                        button {
-                                            class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
-                                            onclick: move |_| {
-                                                // Populate form from current source data
-                                                form_name.set(edit_source.name.clone());
-                                                form_type.set(edit_source.source_type.clone());
-                                                form_channel.set(edit_source.channel.clone());
-                                                form_auto_sync.set(edit_source.auto_sync);
-                                                match edit_source.source_type.as_str() {
-                                                    "git" => {
-                                                        form_repo_url.set(edit_source.source_config.get("repo_url").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                                                        form_branch.set(edit_source.source_config.get("branch").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                                                        form_glob.set(edit_source.source_config.get("glob").and_then(|v| v.as_str()).unwrap_or("skills/*").to_string());
-                                                    }
-                                                    "clawhub" => {
-                                                        form_clawhub_slug.set(edit_source.source_config.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string());
-                                                    }
-                                                    _ => {}
-                                                }
-                                                editing.set(true);
-                                                form_error.set(None);
-                                            },
-                                            {t!("edit")}
-                                        }
-                                    }
+                h2 { class: "text-2xl font-bold mb-4", {t!("import-edit-source")} }
+                if let Some(err) = &*error.read() {
+                    p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
+                }
+                { render_source_form(&form_name, &form_type, &form_repo_url, &form_branch, &form_glob, &form_clawhub_slug, &form_channel, &form_auto_sync, true) }
+                div { class: "flex gap-3 items-center mt-4",
+                    button {
+                        class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
+                        onclick: move |_| {
+                            let sid = edit_id.clone();
+                            let nid = nav_id.clone();
+                            let name = form_name();
+                            let stype = form_type();
+                            let channel = form_channel();
+                            let auto_sync = form_auto_sync();
+                            let source_config = build_source_config(&stype, &form_repo_url(), &form_branch(), &form_glob(), &form_clawhub_slug());
+                            let nav = navigator.clone();
+                            spawn(async move {
+                                match update_import_source(sid, name, source_config, channel, auto_sync).await {
+                                    Ok(()) => { nav.push(Route::ImportSourceDetail { id: nid }); }
+                                    Err(e) => error.set(Some(e.to_string())),
                                 }
-                                p { class: "text-sm text-gray-500 dark:text-gray-400 font-mono mt-1", "{desc}" }
-                                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1",
-                                    {t!("cluster-detail-created", date: created)}
-                                    " · "
-                                    {t!("import-last-synced", time: synced_label)}
-                                }
-                            }
-                            div { class: "flex items-center gap-2",
-                                button {
-                                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
-                                    disabled: syncing(),
-                                    onclick: move |_| {
-                                        let sid = sid_sync.clone();
-                                        syncing.set(true);
-                                        spawn(async move {
-                                            match trigger_sync(sid).await {
-                                                Ok(()) => {
-                                                    syncing.set(false);
-                                                    source.restart();
-                                                    jobs.restart();
-                                                }
-                                                Err(e) => {
-                                                    form_error.set(Some(e.to_string()));
-                                                    syncing.set(false);
-                                                }
-                                            }
-                                        });
-                                    },
-                                    if syncing() { {t!("import-syncing")} } else { {t!("import-sync-now")} }
-                                }
-                                button {
-                                    class: "bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700",
-                                    onclick: move |_| {
-                                        let sid = sid_del.clone();
-                                        let nav = navigator.clone();
-                                        spawn(async move {
-                                            if delete_import_source(sid, true).await.is_ok() {
-                                                nav.push(Route::ImportSources { prefill_slug: None, prefill_name: None });
-                                            }
-                                        });
-                                    },
-                                    {t!("delete")}
-                                }
-                            }
-                        }
+                            });
+                        },
+                        {t!("save")}
                     }
-
-                    if let Some(err) = form_error() {
-                        p { class: "text-red-500 text-sm mb-4", "{err}" }
-                    }
-
-                    // Edit form (hidden until edit button clicked)
-                    if editing() {
-                        div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6 border dark:border-gray-700",
-                            h3 { class: "text-lg font-semibold mb-4 dark:text-white", {t!("import-edit-source")} }
-                            { render_source_form(&form_name, &form_type, &form_repo_url, &form_branch, &form_glob, &form_clawhub_slug, &form_channel, &form_auto_sync, true) }
-                            div { class: "flex items-center gap-2 mt-4",
-                                button {
-                                    class: "bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700",
-                                    onclick: move |_| {
-                                        let sid = sid_save.clone();
-                                        let name = form_name();
-                                        let stype = form_type();
-                                        let channel = form_channel();
-                                        let auto_sync = form_auto_sync();
-                                        let source_config = build_source_config(&stype, &form_repo_url(), &form_branch(), &form_glob(), &form_clawhub_slug());
-                                        spawn(async move {
-                                            match update_import_source(sid, name, source_config, channel, auto_sync).await {
-                                                Ok(()) => {
-                                                    form_error.set(None);
-                                                    editing.set(false);
-                                                    source.restart();
-                                                }
-                                                Err(e) => form_error.set(Some(e.to_string())),
-                                            }
-                                        });
-                                    },
-                                    {t!("save")}
-                                }
-                                button {
-                                    class: "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-4 py-2 rounded text-sm",
-                                    onclick: move |_| editing.set(false),
-                                    {t!("cancel")}
-                                }
-                            }
-                        }
-                    }
-
-                    // Jobs list
-                    div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700",
-                        h3 { class: "text-lg font-semibold mb-4 dark:text-white", {t!("import-recent-jobs")} }
-                        { render_jobs(&jobs) }
+                    Link {
+                        to: Route::ImportSourceDetail { id: id.clone() },
+                        class: "px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white",
+                        {t!("cancel")}
                     }
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 p-6", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { class: "p-6", {t!("loading")} } },
+        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { {t!("loading")} } },
     }
 }
 
@@ -682,6 +712,17 @@ pub fn ImportSourcesSearch() -> Element {
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────
+
+fn render_detail_field(label: impl std::fmt::Display, value: &str) -> Element {
+    let label = label.to_string();
+    let value = value.to_string();
+    rsx! {
+        div {
+            span { class: "block text-sm font-medium text-gray-500 dark:text-gray-400", "{label}" }
+            span { class: "text-sm font-mono", "{value}" }
+        }
+    }
+}
 
 fn source_description(source: &ImportSourceRow) -> String {
     match source.source_type.as_str() {
@@ -820,13 +861,13 @@ fn render_source_form(
 fn render_jobs(jobs: &Resource<Result<Vec<ImportJobRow>, ServerFnError>>) -> Element {
     match &*jobs.read() {
         Some(Ok(list)) if list.is_empty() => rsx! {
-            p { class: "text-sm text-gray-500 dark:text-gray-400", {t!("import-no-jobs")} }
+            p { class: "text-sm text-gray-400 dark:text-gray-500", {t!("import-no-jobs")} }
         },
         Some(Ok(list)) => rsx! {
-            div { class: "space-y-2",
+            div { class: "space-y-3",
                 for job in list {
-                    div { class: "text-sm border dark:border-gray-700 rounded p-3",
-                        div { class: "flex items-center justify-between mb-1",
+                    div { class: "text-sm border dark:border-gray-700 rounded-lg p-4",
+                        div { class: "flex items-center gap-2 mb-1",
                             {
                                 let ts = job.created_at.format("%Y-%m-%d %H:%M").to_string();
                                 rsx! {
@@ -842,14 +883,14 @@ fn render_jobs(jobs: &Resource<Result<Vec<ImportJobRow>, ServerFnError>>) -> Ele
                                 },
                                 "{job.status}"
                             }
-                        }
-                        if job.skills_imported > 0 {
-                            p { class: "text-xs text-gray-600 dark:text-gray-400",
-                                {t!("import-skills-imported", count: job.skills_imported)}
+                            if job.skills_imported > 0 {
+                                span { class: "text-xs text-gray-600 dark:text-gray-400",
+                                    {t!("import-skills-imported", count: job.skills_imported)}
+                                }
                             }
                         }
                         if !job.log.is_empty() {
-                            pre { class: "text-xs mt-1 p-2 bg-gray-50 dark:bg-gray-900 rounded overflow-x-auto max-h-40 text-gray-700 dark:text-gray-300",
+                            pre { class: "text-xs mt-1 p-2 bg-gray-100 dark:bg-gray-700 rounded overflow-x-auto max-h-40 text-gray-700 dark:text-gray-300",
                                 "{job.log}"
                             }
                         }
@@ -857,7 +898,7 @@ fn render_jobs(jobs: &Resource<Result<Vec<ImportJobRow>, ServerFnError>>) -> Ele
                 }
             }
         },
-        Some(Err(e)) => rsx! { p { class: "text-sm text-red-500", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { class: "text-sm text-gray-500", {t!("loading")} } },
+        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { class: "text-sm", {t!("loading")} } },
     }
 }

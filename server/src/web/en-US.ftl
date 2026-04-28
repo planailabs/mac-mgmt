@@ -882,6 +882,7 @@ import-show-jobs = Jobs
 import-hide-jobs = Hide Jobs
 import-sync-now = Sync Now
 import-syncing = Syncing...
+import-source-config = Source Configuration
 import-recent-jobs = Recent Jobs
 import-no-jobs = No jobs yet.
 import-skills-imported = { $count } skill(s) imported
