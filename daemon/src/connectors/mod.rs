@@ -50,6 +50,15 @@ pub trait Connector: Send + Sync {
     /// config provider dependencies.
     fn connect(&self, configs: &std::collections::HashMap<String, serde_json::Value>)
     -> Result<()>;
+    /// Return environment variables to inject into the given service's SpawnSpec.
+    /// Called after `connect()`, results are merged into the SpawnSpec before spawn.
+    fn service_env(
+        &self,
+        _service_name: &str,
+        _configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> std::collections::HashMap<String, String> {
+        Default::default()
+    }
 }
 
 /// Build the list of managed services based on per-provider `enabled` flags.
@@ -241,6 +250,11 @@ pub fn build_connectors(
 /// Return Some only if the string is non-empty.
 pub(crate) fn non_empty(s: &Option<String>) -> Option<&str> {
     s.as_deref().filter(|s| !s.is_empty())
+}
+
+/// Return Some only if the secret is present and non-empty.
+pub(crate) fn non_empty_secret(s: &Option<mac_mgmt_common::Secret>) -> Option<&str> {
+    s.as_ref().map(|s| s.expose()).filter(|s| !s.is_empty())
 }
 
 /// Extract all enabled CloudConfigs from the configs map.

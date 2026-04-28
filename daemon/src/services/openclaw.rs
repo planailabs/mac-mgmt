@@ -166,7 +166,7 @@ impl OpenClaw {
         if let Some(tg) = &self.config.telegram {
             let mut tg_cfg = serde_json::json!({ "enabled": tg.enabled });
             if !tg.bot_token.is_empty() {
-                tg_cfg["botToken"] = serde_json::json!(tg.bot_token);
+                tg_cfg["botToken"] = serde_json::json!(tg.bot_token.expose());
             }
             if !tg.allowed_chat_ids.is_empty() {
                 tg_cfg["allowFrom"] = serde_json::json!(tg.allowed_chat_ids);

@@ -1,8 +1,111 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fmt;
 
 pub mod config_migrate;
+
+// ── Secret wrapper for sensitive config values ──────────────────────────
+
+/// A string value that should be treated as sensitive.
+///
+/// - `Debug` and `Display` print `[REDACTED]` instead of the value.
+/// - Serialization is transparent (round-trips the raw string).
+/// - JSON Schema includes `"x-secret": true` for downstream redaction.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    /// Access the underlying secret value.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume and return the inner string.
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Resolve `env:VAR` and `secret:NAME` references in-place.
+    ///
+    /// - `env:VAR` looks up `VAR` in the provided `env_vars` map (loaded from `.env` file).
+    /// - `secret:NAME` looks up `NAME` in the provided `vault` map (fetched from server).
+    /// - Literal values are left unchanged.
+    pub fn resolve(
+        &mut self,
+        env_vars: &std::collections::HashMap<String, String>,
+        vault: &std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
+        if let Some(var) = self.0.strip_prefix("env:") {
+            self.0 = env_vars
+                .get(var)
+                .ok_or_else(|| format!("env var '{var}' not found in .env file"))?
+                .clone();
+        } else if let Some(name) = self.0.strip_prefix("secret:") {
+            self.0 = vault
+                .get(name)
+                .ok_or_else(|| format!("secret '{name}' not found in vault"))?
+                .clone();
+        }
+        Ok(())
+    }
+}
+
+impl Default for Secret {
+    fn default() -> Self {
+        Self(String::new())
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl fmt::Display for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl From<String> for Secret {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+}
+
+impl schemars::JsonSchema for Secret {
+    fn schema_name() -> Cow<'static, str> {
+        "Secret".into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        Cow::Borrowed(concat!(module_path!(), "::Secret"))
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "x-secret": true
+        })
+    }
+}
 #[cfg(feature = "sentry")]
 pub mod sentry_ext;
 #[cfg(feature = "tracing-init")]
@@ -920,7 +1023,7 @@ pub struct CloudConfig {
     pub provider: CloudProvider,
     #[schemars(description = "API key for the cloud provider")]
     #[serde(default)]
-    pub api_key: Option<String>,
+    pub api_key: Option<Secret>,
     #[schemars(description = "Default model (e.g. anthropic/claude-sonnet-4-6, openai/gpt-5.4)")]
     #[serde(default = "default_cloud_model")]
     pub default_model: String,
@@ -977,7 +1080,7 @@ pub struct OpenClawSkillsConfig {
 #[serde(deny_unknown_fields)]
 pub struct OpenClawTelegramConfig {
     #[schemars(description = "Telegram bot token from @BotFather")]
-    pub bot_token: String,
+    pub bot_token: Secret,
     #[schemars(description = "Allowed Telegram chat IDs. If empty, all chats are allowed.")]
     #[serde(default)]
     pub allowed_chat_ids: Vec<i64>,
@@ -1083,7 +1186,7 @@ impl Default for MetricsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DaemonServerConfig {
     pub url: Option<String>,
-    pub token: Option<String>,
+    pub token: Option<Secret>,
 }
 
 // ── Global ─────────────────────────────────────────────────────────────
@@ -1474,6 +1577,32 @@ impl ClusterConfig {
     pub fn default_cloud(&self) -> Option<&CloudConfig> {
         self.cloud.iter().find(|c| c.enabled)
     }
+
+    /// Resolve `env:` and `secret:` references in all Secret fields.
+    pub fn resolve_secrets(
+        &mut self,
+        env_vars: &std::collections::HashMap<String, String>,
+        vault: &std::collections::HashMap<String, String>,
+    ) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
+        for (i, cloud) in self.cloud.iter_mut().enumerate() {
+            if let Some(ref mut key) = cloud.api_key {
+                if let Err(e) = key.resolve(env_vars, vault) {
+                    errors.push(format!("cloud[{i}].api_key: {e}"));
+                }
+            }
+        }
+        if let Some(ref mut tg) = self.openclaw.telegram {
+            if let Err(e) = tg.bot_token.resolve(env_vars, vault) {
+                errors.push(format!("openclaw.telegram.bot_token: {e}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 // ── Relay ──────────────────────────────────────────────────────────────
@@ -1587,6 +1716,39 @@ impl DaemonConfig {
         config.ollama.validate().map_err(|e| e.to_string())?;
         config.relay.validate().map_err(|e| e.to_string())?;
         Ok(config)
+    }
+
+    /// Resolve `env:` and `secret:` references in all Secret fields,
+    /// including the server token and all ClusterConfig fields.
+    pub fn resolve_secrets(
+        &mut self,
+        env_vars: &std::collections::HashMap<String, String>,
+        vault: &std::collections::HashMap<String, String>,
+    ) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
+        if let Some(ref mut token) = self.server.token {
+            if let Err(e) = token.resolve(env_vars, vault) {
+                errors.push(format!("server.token: {e}"));
+            }
+        }
+        // Resolve ClusterConfig fields (cloud keys, bot token, etc.)
+        for (i, cloud) in self.cloud.iter_mut().enumerate() {
+            if let Some(ref mut key) = cloud.api_key {
+                if let Err(e) = key.resolve(env_vars, vault) {
+                    errors.push(format!("cloud[{i}].api_key: {e}"));
+                }
+            }
+        }
+        if let Some(ref mut tg) = self.openclaw.telegram {
+            if let Err(e) = tg.bot_token.resolve(env_vars, vault) {
+                errors.push(format!("openclaw.telegram.bot_token: {e}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 
@@ -1952,7 +2114,7 @@ allowed_chat_ids = [111, 222]
 "#;
         let config = ClusterConfig::from_toml(toml).unwrap();
         let tg = config.openclaw.telegram.unwrap();
-        assert_eq!(tg.bot_token, "123456:ABC-DEF");
+        assert_eq!(tg.bot_token.expose(), "123456:ABC-DEF");
         assert_eq!(tg.allowed_chat_ids, vec![111, 222]);
         assert!(tg.enabled); // default true
     }
@@ -1965,7 +2127,7 @@ bot_token = "tok"
 "#;
         let config = ClusterConfig::from_toml(toml).unwrap();
         let tg = config.openclaw.telegram.unwrap();
-        assert_eq!(tg.bot_token, "tok");
+        assert_eq!(tg.bot_token.expose(), "tok");
         assert!(tg.allowed_chat_ids.is_empty());
         assert!(tg.enabled);
     }
@@ -2060,6 +2222,121 @@ upgrade_window = "bogus"
         assert!(is_within_window_at(start, end, at_midnight));
         assert!(is_within_window_at(start, end, at_23_30));
         assert!(!is_within_window_at(start, end, at_noon));
+    }
+
+    // ── Secret type tests ──────────────────────────────────────────────
+
+    #[test]
+    fn secret_debug_redacts() {
+        let s = Secret::new("hunter2");
+        assert_eq!(format!("{:?}", s), "[REDACTED]");
+        assert_eq!(format!("{}", s), "[REDACTED]");
+    }
+
+    #[test]
+    fn secret_serde_roundtrip() {
+        let s = Secret::new("hunter2");
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json, "\"hunter2\"");
+        let back: Secret = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.expose(), "hunter2");
+    }
+
+    #[test]
+    fn secret_schema_has_extension() {
+        let schema = schemars::schema_for!(Secret);
+        let json = serde_json::to_value(&schema).unwrap();
+        assert_eq!(json["x-secret"], serde_json::json!(true));
+        assert_eq!(json["type"], serde_json::json!("string"));
+    }
+
+    #[test]
+    fn secret_default_is_empty() {
+        let s = Secret::default();
+        assert!(s.is_empty());
+        assert_eq!(s.expose(), "");
+    }
+
+    #[test]
+    fn secret_option_serde() {
+        #[derive(Serialize, Deserialize)]
+        struct T {
+            #[serde(default)]
+            key: Option<Secret>,
+        }
+        let t: T = serde_json::from_str(r#"{"key":"abc"}"#).unwrap();
+        assert_eq!(t.key.as_ref().unwrap().expose(), "abc");
+        let t: T = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(t.key.is_none());
+    }
+
+    // ── Secret resolution tests ─────────────────────────────────────────
+
+    #[test]
+    fn secret_resolve_env() {
+        let mut s = Secret::new("env:MY_KEY");
+        let env = std::collections::HashMap::from([("MY_KEY".into(), "resolved-value".into())]);
+        let vault = std::collections::HashMap::new();
+        s.resolve(&env, &vault).unwrap();
+        assert_eq!(s.expose(), "resolved-value");
+    }
+
+    #[test]
+    fn secret_resolve_vault() {
+        let mut s = Secret::new("secret:my-secret");
+        let env = std::collections::HashMap::new();
+        let vault =
+            std::collections::HashMap::from([("my-secret".into(), "vault-value".into())]);
+        s.resolve(&env, &vault).unwrap();
+        assert_eq!(s.expose(), "vault-value");
+    }
+
+    #[test]
+    fn secret_resolve_literal_unchanged() {
+        let mut s = Secret::new("sk-ant-literal");
+        let env = std::collections::HashMap::new();
+        let vault = std::collections::HashMap::new();
+        s.resolve(&env, &vault).unwrap();
+        assert_eq!(s.expose(), "sk-ant-literal");
+    }
+
+    #[test]
+    fn secret_resolve_missing_env_errors() {
+        let mut s = Secret::new("env:MISSING");
+        let env = std::collections::HashMap::new();
+        let vault = std::collections::HashMap::new();
+        let err = s.resolve(&env, &vault).unwrap_err();
+        assert!(err.contains("MISSING"), "error should name the var: {err}");
+    }
+
+    #[test]
+    fn secret_resolve_missing_vault_errors() {
+        let mut s = Secret::new("secret:nope");
+        let env = std::collections::HashMap::new();
+        let vault = std::collections::HashMap::new();
+        let err = s.resolve(&env, &vault).unwrap_err();
+        assert!(err.contains("nope"), "error should name the secret: {err}");
+    }
+
+    #[test]
+    fn cluster_config_resolve_secrets() {
+        let toml = r#"
+[[cloud]]
+provider = "anthropic"
+api_key = "env:ANT_KEY"
+
+[openclaw.telegram]
+bot_token = "secret:tg-token"
+"#;
+        let mut config = ClusterConfig::from_toml(toml).unwrap();
+        let env = std::collections::HashMap::from([("ANT_KEY".into(), "sk-ant-xxx".into())]);
+        let vault = std::collections::HashMap::from([("tg-token".into(), "123:ABC".into())]);
+        config.resolve_secrets(&env, &vault).unwrap();
+        assert_eq!(config.cloud[0].api_key.as_ref().unwrap().expose(), "sk-ant-xxx");
+        assert_eq!(
+            config.openclaw.telegram.as_ref().unwrap().bot_token.expose(),
+            "123:ABC"
+        );
     }
 
     // ── Schema description tests ───────────────────────────────────────

@@ -3,6 +3,8 @@ pub(crate) mod healer_routes;
 pub(crate) mod metrics_routes;
 pub mod push;
 pub(crate) mod routes;
+#[cfg(feature = "mgmt")]
+pub(crate) mod secrets;
 
 #[cfg(feature = "skill-center")]
 pub(crate) mod federation;
@@ -323,6 +325,11 @@ pub fn build_rocket(
         routes::admin_delete_skill_center,
         // Admin — federation tokens
         routes::admin_create_federation_token,
+        // Secrets vault
+        secrets::get_secrets,
+        secrets::create_secret,
+        secrets::update_secret,
+        secrets::delete_secret,
     ]);
 
     rocket::custom(config)

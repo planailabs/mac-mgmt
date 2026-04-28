@@ -1,6 +1,8 @@
 use anyhow::Result;
 
-use super::{enabled_cloud_configs, non_empty, resolve_model, Connector, ConnectorPhase};
+use super::{
+    enabled_cloud_configs, non_empty, non_empty_secret, resolve_model, Connector, ConnectorPhase,
+};
 use crate::sentry_ext;
 use crate::services::openclaw::{config_path, merge_and_validate};
 
@@ -75,9 +77,8 @@ impl Connector for CloudOpenClaw {
             if let Some(ref auth) = config.auth {
                 provider_cfg["auth"] = serde_json::json!(auth);
             }
-            if let Some(key) = non_empty(&config.api_key) {
-                provider_cfg["apiKey"] = serde_json::json!(key);
-            }
+            // API keys are passed via environment variables (service_env),
+            // not embedded in the config file.
             let model_id = model.split('/').last().unwrap_or(&model);
             provider_cfg["models"] =
                 serde_json::json!([{ "id": model_id, "name": model_id }]);
@@ -105,5 +106,23 @@ impl Connector for CloudOpenClaw {
         }
 
         Ok(())
+    }
+
+    fn service_env(
+        &self,
+        service_name: &str,
+        configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> std::collections::HashMap<String, String> {
+        if service_name != "openclaw" {
+            return Default::default();
+        }
+        let enabled = enabled_cloud_configs(configs);
+        let mut env = std::collections::HashMap::new();
+        for config in &enabled {
+            if let Some(key) = non_empty_secret(&config.api_key) {
+                env.insert(config.provider.env_var().to_string(), key.to_string());
+            }
+        }
+        env
     }
 }

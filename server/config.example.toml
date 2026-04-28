@@ -106,3 +106,8 @@ token = "xzar-api-token-here"
 # and stored in the healer_cluster_settings table. They override these global
 # defaults for: auto_trigger, auto_trigger_provider/model, auto_approve,
 # fix_provider/model. An "Override server defaults" toggle enables/disables them.
+
+# Secrets vault: encrypted key-value store for daemon secrets.
+# Daemons reference secrets in config via secret:NAME syntax.
+# [secrets]
+# encryption_key = "base64-encoded-32-byte-key"  # generate with: openssl rand -base64 32

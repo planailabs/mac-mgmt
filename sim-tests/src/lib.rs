@@ -41,7 +41,7 @@ pub fn daemon_config_with_intervals(
 ) -> mac_mgmt_common::DaemonConfig {
     let mut cfg = mac_mgmt_common::DaemonConfig::default();
     cfg.server.url = Some(format!("http://{addr}"));
-    cfg.server.token = Some("test-token".to_string());
+    cfg.server.token = Some(mac_mgmt_common::Secret::from("test-token"));
     cfg.daemon.health_interval = health_interval.to_string();
     cfg.daemon.update_interval = update_interval.to_string();
     cfg

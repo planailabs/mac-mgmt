@@ -74,6 +74,9 @@ struct ServiceState {
     /// When `phase == CrashBackoff`, the earliest `Instant` at which the
     /// service may be repaired and restarted.
     restart_at: Option<Instant>,
+    /// Environment variables collected from connectors (secrets, etc.).
+    /// Merged into SpawnSpec at registration time.
+    connector_env: std::collections::HashMap<String, String>,
 }
 
 struct ConnectorState {
@@ -139,6 +142,7 @@ impl ServiceManager {
                     running_store_path: None,
                     registered: false,
                     restart_at: None,
+                connector_env: std::collections::HashMap::new(),
                 }
             })
             .collect();
@@ -253,6 +257,7 @@ impl ServiceManager {
                 running_store_path: None,
                 registered: false,
                 restart_at: None,
+                connector_env: std::collections::HashMap::new(),
             });
         }
 
@@ -272,6 +277,9 @@ impl ServiceManager {
         // Run pre-start connectors before services are spawned so they
         // boot with the correct config (cloud keys, ollama provider, etc.).
         Self::run_prestart_connectors(&mut connectors, &config_store);
+
+        // Collect env vars from connectors (secrets passed via environment).
+        Self::collect_connector_env(&mut services, &connectors, &config_store);
 
         Ok(Self {
             services,
@@ -401,7 +409,10 @@ impl ServiceManager {
                 // the resolved binary path. Schedule a graceful restart
                 // if either changed (e.g. args changed, or nix upgrade
                 // installed a new store path for the same program name).
-                let desired_spec = state.service.spawn_spec();
+                let mut desired_spec = state.service.spawn_spec();
+                for (k, v) in &state.connector_env {
+                    desired_spec.env.entry(k.clone()).or_insert_with(|| v.clone());
+                }
                 if let Some(running_spec) = &status.spec {
                     if *running_spec != desired_spec {
                         tracing::info!("{name} spec changed, scheduling restart");
@@ -440,7 +451,11 @@ impl ServiceManager {
         if let Err(e) = state.service.configure() {
             tracing::warn!("{name} configure failed: {e}");
         }
-        let spec = state.service.spawn_spec();
+        let mut spec = state.service.spawn_spec();
+        // Merge environment variables contributed by connectors (e.g. API keys).
+        for (k, v) in &state.connector_env {
+            spec.env.entry(k.clone()).or_insert_with(|| v.clone());
+        }
         // `running_store_path` is populated from the supervisor's view of the
         // actual running binary via `refresh_running_store_paths` below, so
         // don't speculatively set it from `which` here — that was masking
@@ -815,6 +830,32 @@ impl ServiceManager {
         }
     }
 
+    /// Collect env vars from connectors for each service.
+    /// Connectors contribute secrets (API keys, etc.) as env vars via `service_env()`.
+    fn collect_connector_env(
+        services: &mut [ServiceState],
+        connectors: &[ConnectorState],
+        config_store: &ConfigStore,
+    ) {
+        for state in services.iter_mut() {
+            let mut env = std::collections::HashMap::new();
+            for cs in connectors {
+                let deps = cs.connector.depends_on();
+                let configs = config_store.values_for(deps);
+                let vars = cs.connector.service_env(&state.name, &configs);
+                env.extend(vars);
+            }
+            if !env.is_empty() {
+                tracing::debug!(
+                    "{}: {} connector env var(s) collected",
+                    state.name,
+                    env.len()
+                );
+            }
+            state.connector_env = env;
+        }
+    }
+
     /// Run post-start connectors (need running services).
     fn run_connectors(&mut self) {
         for cs in &mut self.connectors {
@@ -958,6 +999,9 @@ impl ServiceManager {
         // Run pre-start connectors so config patches are applied before
         // schedule_restart() restarts services.
         Self::run_prestart_connectors(&mut self.connectors, &self.config_store);
+
+        // Re-collect connector env vars (secrets may have changed).
+        Self::collect_connector_env(&mut self.services, &self.connectors, &self.config_store);
     }
 
     // ── Status collection ────────────────────────────────────────────

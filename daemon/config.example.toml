@@ -224,7 +224,9 @@ flavour = "cpu"
 # [[cloud]]
 # provider = "anthropic"                # anthropic, openai, google, mistral, groq, xai,
 #                                       # deepseek, openrouter, together, bedrock
-# api_key = "sk-ant-xxx"
+# api_key = "sk-ant-xxx"                # literal value
+# api_key = "env:ANTHROPIC_API_KEY"     # from ~/.config/mac-mgmt/.env
+# api_key = "secret:anthropic-key"      # from server vault
 # default_model = "anthropic/claude-sonnet-4-6"
 # enabled = true
 # [[cloud]]

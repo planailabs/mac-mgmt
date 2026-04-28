@@ -64,3 +64,4 @@ regex = "1"
 which = { workspace = true }
 ramhorns = "1"
 mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, optional = true }
+aes-gcm = "0.10"

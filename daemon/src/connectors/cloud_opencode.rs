@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::{enabled_cloud_configs, resolve_model, Connector, ConnectorPhase};
+use super::{enabled_cloud_configs, non_empty_secret, resolve_model, Connector, ConnectorPhase};
 use crate::sentry_ext;
 use crate::services::opencode::{config_path, merge_and_write};
 
@@ -55,11 +55,8 @@ impl Connector for CloudOpencode {
         for config in &enabled {
             let provider = config.provider.as_str();
             let mut opts = serde_json::json!({});
-            if let Some(key) = &config.api_key {
-                if !key.is_empty() {
-                    opts["apiKey"] = serde_json::json!(key);
-                }
-            }
+            // API keys are passed via environment variables (service_env),
+            // not embedded in the config file.
             if let Some(url) = &config.base_url {
                 if !url.is_empty() {
                     opts["baseURL"] = serde_json::json!(url);
@@ -82,5 +79,23 @@ impl Connector for CloudOpencode {
             enabled.len()
         );
         Ok(())
+    }
+
+    fn service_env(
+        &self,
+        service_name: &str,
+        configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> std::collections::HashMap<String, String> {
+        if service_name != "opencode" {
+            return Default::default();
+        }
+        let enabled = enabled_cloud_configs(configs);
+        let mut env = std::collections::HashMap::new();
+        for config in &enabled {
+            if let Some(key) = non_empty_secret(&config.api_key) {
+                env.insert(config.provider.env_var().to_string(), key.to_string());
+            }
+        }
+        env
     }
 }

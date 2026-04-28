@@ -871,7 +871,7 @@ pub async fn run(
     let metrics_port = cfg.metrics.port;
 
     let server_url = cfg.server.url.clone();
-    let server_token = cfg.server.token.clone();
+    let server_token = cfg.server.token.as_ref().map(|s| s.expose().to_string());
     let skills_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/root"))
         .join(".plan-ai-skills");
@@ -1098,9 +1098,9 @@ pub async fn run(
         let connector_config = mac_mgmt_healer::connector::ConnectorConfig {
             ollama_url: Some(format!("http://{}:{}", cfg.ollama.host, cfg.ollama.port)),
             ollama_model: Some(cfg.ollama.default_model.clone()),
-            anthropic_api_key: cloud_anthropic.and_then(|c| c.api_key.clone()),
+            anthropic_api_key: cloud_anthropic.and_then(|c| c.api_key.as_ref().map(|s| s.expose().to_string())),
             anthropic_model: None,
-            openrouter_api_key: cloud_openrouter.and_then(|c| c.api_key.clone()),
+            openrouter_api_key: cloud_openrouter.and_then(|c| c.api_key.as_ref().map(|s| s.expose().to_string())),
             openrouter_model: None,
             openai_compat_api_key: None,
             openai_compat_url: None,
@@ -1567,7 +1567,7 @@ pub async fn run_sim(
 
     let metrics_port = cfg.metrics.port;
     let server_url = cfg.server.url.clone();
-    let server_token = cfg.server.token.clone();
+    let server_token = cfg.server.token.as_ref().map(|s| s.expose().to_string());
     let skills_dir = std::path::PathBuf::from("/tmp/sim-skills");
 
     let dispatcher = Arc::new(Dispatcher::new(Vec::new(), None));
@@ -1823,7 +1823,7 @@ pub async fn run_sim_with_services(
 
     let metrics_port = cfg.metrics.port;
     let server_url = cfg.server.url.clone();
-    let server_token = cfg.server.token.clone();
+    let server_token = cfg.server.token.as_ref().map(|s| s.expose().to_string());
     let skills_dir = std::path::PathBuf::from("/tmp/sim-skills");
 
     let dispatcher = Arc::new(Dispatcher::new(Vec::new(), None));

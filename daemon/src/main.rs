@@ -231,7 +231,7 @@ async fn main() -> Result<()> {
                 // just to get the [server] url and token.
                 let cfg = config::load_local()?;
                 let (Some(url), Some(token)) =
-                    (cfg.server.url.as_deref(), cfg.server.token.as_deref())
+                    (cfg.server.url.as_deref(), cfg.server.token.as_ref().map(|s| s.expose()))
                 else {
                     anyhow::bail!("no [server] url/token configured — can't fetch update target");
                 };
