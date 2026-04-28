@@ -17,11 +17,7 @@ use aes_gcm::{AeadCore, Aes256Gcm, Key, Nonce};
 
 fn encryption_key() -> Result<Key<Aes256Gcm>, Status> {
     let cfg = crate::config::config();
-    let key_b64 = cfg
-        .secrets
-        .encryption_key
-        .as_deref()
-        .ok_or(Status::ServiceUnavailable)?;
+    let key_b64 = &cfg.secrets.encryption_key;
     let key_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64)
         .map_err(|_| Status::InternalServerError)?;
     if key_bytes.len() != 32 {

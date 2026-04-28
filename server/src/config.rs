@@ -21,7 +21,6 @@ pub struct ServerConfig {
     pub git: GitConfig,
     #[serde(default)]
     pub skill_centers: SkillCentersConfig,
-    #[serde(default)]
     pub secrets: SecretsConfig,
 }
 
@@ -397,16 +396,7 @@ impl HealerModelEntry {
 pub struct SecretsConfig {
     /// Base64-encoded 32-byte AES-256 key for encrypting secrets at rest.
     /// Generate with: `openssl rand -base64 32`
-    /// Required to enable the secrets vault.
-    pub encryption_key: Option<String>,
-}
-
-impl Default for SecretsConfig {
-    fn default() -> Self {
-        Self {
-            encryption_key: None,
-        }
-    }
+    pub encryption_key: String,
 }
 
 pub fn load() -> &'static ServerConfig {

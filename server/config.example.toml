@@ -109,5 +109,5 @@ token = "xzar-api-token-here"
 
 # Secrets vault: encrypted key-value store for daemon secrets.
 # Daemons reference secrets in config via secret:NAME syntax.
-# [secrets]
-# encryption_key = "base64-encoded-32-byte-key"  # generate with: openssl rand -base64 32
+[secrets]
+encryption_key = "base64-encoded-32-byte-key"  # generate with: openssl rand -base64 32
