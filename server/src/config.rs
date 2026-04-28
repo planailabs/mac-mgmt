@@ -25,6 +25,26 @@ pub struct ServerConfig {
     pub secrets: Option<SecretsConfig>,
     #[serde(default)]
     pub importer: Option<ImporterConfig>,
+    /// Runtime server mode: controls which API route groups are mounted.
+    /// Set via `MAC_MGMT_SERVER_MODE` env var or config file.
+    /// Values: "mgmt", "skill-center", "skill-importer", or empty/absent for monolith.
+    #[serde(default)]
+    pub mode: ServerMode,
+}
+
+/// Runtime server mode — controls which API route modules are active.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ServerMode {
+    /// All modules enabled (default).
+    #[default]
+    Monolith,
+    /// Management server only (fleet, rollouts, healer).
+    Mgmt,
+    /// Skill center only (catalog, federation, packages).
+    SkillCenter,
+    /// Skill center + importer.
+    SkillImporter,
 }
 
 #[derive(Debug, Deserialize)]
@@ -430,8 +450,19 @@ pub fn load() -> &'static ServerConfig {
         let path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "./config.toml".to_string());
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("failed to read config from {path}: {e}"));
-        let config: ServerConfig = toml::from_str(&content)
+        let mut config: ServerConfig = toml::from_str(&content)
             .unwrap_or_else(|e| panic!("failed to parse config from {path}: {e}"));
+
+        // Env var override for server mode (used by nix wrapper scripts).
+        if let Ok(mode) = std::env::var("MAC_MGMT_SERVER_MODE") {
+            config.mode = match mode.as_str() {
+                "mgmt" => ServerMode::Mgmt,
+                "skill-center" => ServerMode::SkillCenter,
+                "skill-importer" => ServerMode::SkillImporter,
+                "" | "monolith" => ServerMode::Monolith,
+                other => panic!("unknown MAC_MGMT_SERVER_MODE: {other}"),
+            };
+        }
 
         #[cfg(feature = "webui")]
         if cfg!(not(debug_assertions))

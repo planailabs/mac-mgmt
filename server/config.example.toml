@@ -6,6 +6,11 @@ url = "postgresql://planai:changeme123@localhost:5432/planai"
 port = 7378
 # external_url = "https://mgmt.example.com:7378"  # used by web UI for download links and swagger-ui (default: http://localhost:<port>)
 
+# Server mode — controls which API route groups are mounted at runtime.
+# Values: "monolith" (default, all modules), "mgmt", "skill-center", "skill-importer"
+# Can also be set via MAC_MGMT_SERVER_MODE env var.
+# mode = "monolith"
+
 [web]
 port = 7377
 

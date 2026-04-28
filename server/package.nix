@@ -11,10 +11,9 @@
   tailwindcss_3,
   lld,
   gitSha ? "unknown",
-  # Server-side feature flags. Empty string = default features (monolith).
-  # When set, builds client/server separately to avoid the Dioxus fullstack
-  # SSR WASM issue (server deps like tokio/mio can't compile to WASM).
-  serverFeatures ? "",
+  # Runtime server mode written to a wrapper script.
+  # Empty = monolith (all modules). Otherwise one of: mgmt, skill-center, skill-importer.
+  serverMode ? "",
   pnameSuffix ? "",
   description ? "Mac management server with web UI",
 }:
@@ -24,15 +23,6 @@ let
     url = "https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.17.14.zip";
     hash = "sha256-SBJE0IEgl7Efuu73n3HZQrFxYX+cn5UU5jrL4T5xzNw=";
   };
-  isSplit = serverFeatures != "";
-  # Client features = server features with server-only items swapped out.
-  # "server" → "web" (dioxus/web instead of dioxus/server + tokio/sqlx),
-  # "skill-importer" removed (pulls in zip/tokio-util that can't target WASM).
-  # App-level features (skill-center, mgmt) stay so routes/components match.
-  clientFeatures = builtins.replaceStrings
-    ["server" ",skill-importer"]
-    ["web"    ""]
-    serverFeatures;
 in
 
 rustPlatform.buildRustPackage {
@@ -63,10 +53,7 @@ rustPlatform.buildRustPackage {
 
   doCheck = false;
 
-  # Build with dx instead of cargo so assets and WASM are bundled.
-  # For split feature builds, we build client (WASM) and server separately
-  # because Dioxus fullstack mode does an internal WASM build of the server
-  # for SSR, which fails when server deps (tokio/mio) can't target WASM.
+  # Build with dx instead of cargo so assets and WASM are bundled
   buildPhase = ''
     runHook preBuild
 
@@ -75,14 +62,7 @@ rustPlatform.buildRustPackage {
     npm run tailwind:build
     popd
 
-  '' + (if isSplit then ''
-    # Split build: client WASM with matching app features (minus server deps), server native
-    dx build --release --platform web --package mac-mgmt-server --no-default-features --features "${clientFeatures}"
-    cargo build --release -p mac-mgmt-server --no-default-features --features "${serverFeatures}"
-  '' else ''
-    # Monolith: dx fullstack handles feature splitting automatically
     dx build --release --fullstack --package mac-mgmt-server
-  '') + ''
 
     runHook postBuild
   '';
@@ -90,23 +70,23 @@ rustPlatform.buildRustPackage {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out/bin $out/share/mac-mgmt-server
-  '' + (if isSplit then ''
-    # Split build: assemble from separate outputs
-    # WASM client assets from dx
-    cp -r target/dx/mac-mgmt-server/release/web/public $out/share/mac-mgmt-server/public
-    # Server binary from cargo
-    cp target/release/mac-mgmt-server $out/share/mac-mgmt-server/mac-mgmt-server || \
-      cp target/release/server $out/share/mac-mgmt-server/mac-mgmt-server
-    ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server
-  '' else ''
-    # Monolith: dx fullstack output
-    cp -r target/dx/mac-mgmt-server/release/web/* $out/share/mac-mgmt-server/
+    mkdir -p $out/bin $out/share
+    cp -r target/dx/mac-mgmt-server/release/web $out/share/mac-mgmt-server
     if [ -e $out/share/mac-mgmt-server/mac-mgmt-server ]; then
-      ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server
+      ln -s $out/share/mac-mgmt-server/mac-mgmt-server $out/bin/mac-mgmt-server-unwrapped
     else
-      ln -s $out/share/mac-mgmt-server/server $out/bin/mac-mgmt-server
+      ln -s $out/share/mac-mgmt-server/server $out/bin/mac-mgmt-server-unwrapped
     fi
+  '' + (if serverMode != "" then ''
+    # Wrapper that sets MAC_MGMT_SERVER_MODE for runtime module selection
+    cat > $out/bin/mac-mgmt-server <<WRAPPER
+    #!/bin/sh
+    export MAC_MGMT_SERVER_MODE="${serverMode}"
+    exec "$out/bin/mac-mgmt-server-unwrapped" "\$@"
+    WRAPPER
+    chmod +x $out/bin/mac-mgmt-server
+  '' else ''
+    ln -sf mac-mgmt-server-unwrapped $out/bin/mac-mgmt-server
   '') + ''
 
     runHook postInstall

@@ -237,8 +237,12 @@ pub fn build_rocket(
         metrics_routes::get_metrics,
     ];
 
+    let mode = &crate::config::config().mode;
+    use crate::config::ServerMode;
+
     // Skill center routes — catalog CRUD for skills, bundles, MCP servers, MCP bundles
     #[cfg(feature = "skill-center")]
+    if matches!(mode, ServerMode::Monolith | ServerMode::SkillCenter | ServerMode::SkillImporter) {
     api_routes.append(&mut rocket::routes![
         // Setting — skills
         routes::setting_list_skills,
@@ -288,9 +292,11 @@ pub fn build_rocket(
         federation::federation_resolve_mcp_servers,
         federation::federation_events,
     ]);
+    }
 
     // Skill importer routes — import from git repos and ClawHub
     #[cfg(feature = "skill-importer")]
+    if matches!(mode, ServerMode::Monolith | ServerMode::SkillImporter) {
     api_routes.append(&mut rocket::routes![
         importer::create_source,
         importer::list_sources,
@@ -300,9 +306,11 @@ pub fn build_rocket(
         importer::get_job,
         importer::search_clawhub,
     ]);
+    }
 
     // Management server routes — fleet orchestration, clusters, rollouts, healer
     #[cfg(feature = "mgmt")]
+    if matches!(mode, ServerMode::Monolith | ServerMode::Mgmt) {
     api_routes.append(&mut rocket::routes![
         // Admin — clusters
         routes::admin_list_clusters,
@@ -366,6 +374,7 @@ pub fn build_rocket(
         secrets::update_secret,
         secrets::delete_secret,
     ]);
+    }
 
     rocket::custom(config)
         .manage(pool)

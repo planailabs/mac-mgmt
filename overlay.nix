@@ -17,21 +17,21 @@ final: prev:
   mac-mgmt-server-mgmt = prev.callPackage ./server/package.nix {
     inherit gitSha;
     pnameSuffix = "-mgmt";
-    serverFeatures = "server,webui,mgmt";
+    serverMode = "mgmt";
     description = "Mac management server (mgmt only) with web UI";
   };
 
   mac-mgmt-server-skill-center = prev.callPackage ./server/package.nix {
     inherit gitSha;
     pnameSuffix = "-skill-center";
-    serverFeatures = "server,webui,skill-center";
+    serverMode = "skill-center";
     description = "Mac management server (skill center only) with web UI";
   };
 
   mac-mgmt-server-skill-importer = prev.callPackage ./server/package.nix {
     inherit gitSha;
     pnameSuffix = "-skill-importer";
-    serverFeatures = "server,webui,skill-center,skill-importer";
+    serverMode = "skill-importer";
     description = "Mac management server (skill importer only) with web UI";
   };
 
