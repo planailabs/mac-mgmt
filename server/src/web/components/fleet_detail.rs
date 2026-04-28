@@ -6,6 +6,25 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
+/// Build a tunnel URL from the proxy URL and subdomain prefix.
+///
+/// Given `"https://relay.plan.ai"`, prefix `"abc-ollama"` →
+///   `"https://abc-ollama.relay.plan.ai/proxy"`
+/// Given `"http://localhost:7379"`, prefix `"abc-ollama"` →
+///   `"http://abc-ollama.localhost:7379/proxy"`
+pub fn build_tunnel_url(proxy_url: &str, subdomain_prefix: &str, proxy_token: &str) -> String {
+    let scheme = if proxy_url.starts_with("https://") {
+        "https://"
+    } else {
+        "http://"
+    };
+    let without_scheme = proxy_url
+        .strip_prefix(scheme)
+        .unwrap_or(proxy_url)
+        .trim_end_matches('/');
+    format!("{scheme}{subdomain_prefix}.{without_scheme}/proxy?proxy_token={proxy_token}")
+}
+
 /// Per-instance extended assessment page. Reachable at /fleet/:instance_id
 /// from the fleet dashboard. Surfaces the latest inventory + security posture
 /// + dynamic sample + per-service probe results.
@@ -314,9 +333,8 @@ fn render_detail(d: &FleetDetailData) -> Element {
         .unwrap_or_default();
     service_badges.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Tunnel entries paired with the relay hostname. Present only when
-    // the daemon published both — a daemon behind a relay it can't reach
-    // won't emit relay_proxy_hostname so we won't show clickable buttons.
+    // Tunnel entries. Present only when the daemon has a relay_proxy_url —
+    // a daemon behind a relay it can't reach won't have one.
     let tunnels: Vec<(String, String)> = d
         .tunnels
         .as_ref()
@@ -336,7 +354,6 @@ fn render_detail(d: &FleetDetailData) -> Element {
         })
         .unwrap_or_default();
     let proxy_url = d.relay_proxy_url.clone();
-    let proxy_hostname = d.relay_proxy_hostname.clone();
     let instance_prefix: String = d.instance_id.chars().take(12).collect();
 
     rsx! {
@@ -446,7 +463,6 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                 let has_proxy = proxy_url.is_some();
                                 let tn = tname.clone();
                                 let pu = proxy_url.clone().unwrap_or_default();
-                                let ph = proxy_hostname.clone().unwrap_or_default();
                                 let iid = instance_prefix.clone();
                                 rsx! {
                                     tr {
@@ -460,16 +476,12 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                                     onclick: move |_| {
                                                         let tn = tn.clone();
                                                         let pu = pu.clone();
-                                                        let ph = ph.clone();
                                                         let iid = iid.clone();
                                                         async move {
                                                             match create_proxy_token().await {
                                                                 Ok(res) => {
-                                                                    let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
-                                                                    let url = format!(
-                                                                        "{scheme}{iid}-{tn}.{ph}/proxy?proxy_token={}",
-                                                                        res.proxy_token
-                                                                    );
+                                                                    let prefix = format!("{iid}-{tn}");
+                                                                    let url = build_tunnel_url(&pu, &prefix, &res.proxy_token);
                                                                     let _ = document::eval(&format!(
                                                                         "window.open('{}', '_blank')",
                                                                         url.replace('\'', "\\'"),

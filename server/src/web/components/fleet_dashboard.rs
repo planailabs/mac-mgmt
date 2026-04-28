@@ -863,7 +863,6 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                 td { class: "px-6 py-4 text-sm",
                                                     {
                                                         let proxy_url = entry.relay_proxy_url.clone();
-                                                        let proxy_hostname = entry.relay_proxy_hostname.clone();
                                                         let tunnel_names: Vec<String> = entry.tunnels
                                                             .as_array()
                                                             .map(|arr| arr.iter().filter_map(|t| {
@@ -880,7 +879,6 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                                 let iid = entry.instance_id.chars().take(12).collect::<String>();
                                                                                 let tn = tname.clone();
                                                                                 let pu = purl.clone();
-                                                                                let ph = proxy_hostname.clone().unwrap_or_default();
                                                                                 rsx! {
                                                                                     button {
                                                                                         class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
@@ -888,15 +886,11 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                                             let iid = iid.clone();
                                                                                             let tn = tn.clone();
                                                                                             let pu = pu.clone();
-                                                                                            let ph = ph.clone();
                                                                                             async move {
                                                                                                 match create_proxy_token().await {
                                                                                                     Ok(result) => {
-                                                                                                        let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
-                                                                                                        let url = format!(
-                                                                                                            "{scheme}{iid}-{tn}.{ph}/proxy?proxy_token={}",
-                                                                                                            result.proxy_token
-                                                                                                        );
+                                                                                                        let prefix = format!("{iid}-{tn}");
+                                                                                                        let url = super::fleet_detail::build_tunnel_url(&pu, &prefix, &result.proxy_token);
                                                                                                         // Open in new tab
                                                                                                         let _ = document::eval(&format!(
                                                                                                             "window.open('{}', '_blank')",

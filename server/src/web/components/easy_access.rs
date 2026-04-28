@@ -18,7 +18,6 @@ struct EasyAccessNode {
     /// TCP tunnel names reported via heartbeat.
     tunnel_names: Vec<String>,
     relay_proxy_url: String,
-    relay_proxy_hostname: String,
     /// Whether the node also exposes file tunnels.
     has_files: bool,
     /// Whether the node also exposes shell tunnels.
@@ -38,6 +37,7 @@ async fn get_easy_access_nodes() -> Result<Vec<EasyAccessNode>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     #[derive(sqlx::FromRow)]
+    #[allow(dead_code)]
     struct Row {
         instance_id: String,
         hostname: String,
@@ -46,6 +46,7 @@ async fn get_easy_access_nodes() -> Result<Vec<EasyAccessNode>, ServerFnError> {
         file_tunnels: serde_json::Value,
         shell_tunnels: serde_json::Value,
         relay_proxy_url: Option<String>,
+        /// Deprecated: kept for DB column mapping only.
         relay_proxy_hostname: Option<String>,
         reported_at: chrono::DateTime<Utc>,
     }
@@ -88,8 +89,7 @@ async fn get_easy_access_nodes() -> Result<Vec<EasyAccessNode>, ServerFnError> {
         }
 
         // Must have a relay proxy configured.
-        let (Some(relay_url), Some(relay_host)) = (r.relay_proxy_url, r.relay_proxy_hostname)
-        else {
+        let Some(relay_url) = r.relay_proxy_url else {
             continue;
         };
 
@@ -125,7 +125,6 @@ async fn get_easy_access_nodes() -> Result<Vec<EasyAccessNode>, ServerFnError> {
             cluster_name: r.cluster_name,
             tunnel_names,
             relay_proxy_url: relay_url,
-            relay_proxy_hostname: relay_host,
             has_files,
             has_shell,
         });
@@ -200,7 +199,6 @@ pub fn EasyAccess() -> Element {
                                         let iid = node.instance_id.chars().take(12).collect::<String>();
                                         let tn = tname.clone();
                                         let pu = node.relay_proxy_url.clone();
-                                        let ph = node.relay_proxy_hostname.clone();
                                         let icon_path = service_icon(&tn);
                                         let display_name = tn.clone();
                                         rsx! {
@@ -217,15 +215,11 @@ pub fn EasyAccess() -> Element {
                                                     let iid = iid.clone();
                                                     let tn = tn.clone();
                                                     let pu = pu.clone();
-                                                    let ph = ph.clone();
                                                     async move {
                                                         match create_proxy_token().await {
                                                             Ok(result) => {
-                                                                let scheme = if pu.starts_with("https://") { "https://" } else { "http://" };
-                                                                let url = format!(
-                                                                    "{scheme}{iid}-{tn}.{ph}/proxy?proxy_token={}",
-                                                                    result.proxy_token
-                                                                );
+                                                                let prefix = format!("{iid}-{tn}");
+                                                                let url = super::fleet_detail::build_tunnel_url(&pu, &prefix, &result.proxy_token);
                                                                 let _ = document::eval(&format!(
                                                                     "window.open('{}', '_blank')",
                                                                     url

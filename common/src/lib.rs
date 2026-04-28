@@ -141,7 +141,8 @@ pub struct HeartbeatBody {
     /// Exposed TCP tunnels for browser proxying through the relay.
     #[serde(default)]
     pub tunnels: serde_json::Value,
-    /// Relay proxy hostname (e.g. "relay.plan.ai"), received from the relay.
+    /// Deprecated: use `relay_proxy_url` instead to derive the hostname.
+    /// Kept for backwards compatibility with older daemons.
     #[serde(default)]
     pub relay_proxy_hostname: Option<String>,
     /// Full relay API URL (e.g. "https://relay.plan.ai" or "http://localhost:8080").
