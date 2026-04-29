@@ -194,13 +194,15 @@ impl P2pManager {
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
 
-        // Listen on QUIC
-        let quic_addr: Multiaddr = format!("/ip4/0.0.0.0/udp/{}/quic-v1", config.p2p_port)
+        // Listen on QUIC (both IPv4 and IPv6)
+        let quic_v4: Multiaddr = format!("/ip4/0.0.0.0/udp/{}/quic-v1", config.p2p_port)
             .parse()
             .context("invalid QUIC listen address")?;
-        swarm
-            .listen_on(quic_addr)
-            .context("failed to listen on QUIC")?;
+        swarm.listen_on(quic_v4).context("failed to listen on QUIC IPv4")?;
+        let quic_v6: Multiaddr = format!("/ip6/::/udp/{}/quic-v1", config.p2p_port)
+            .parse()
+            .context("invalid QUIC IPv6 listen address")?;
+        swarm.listen_on(quic_v6).context("failed to listen on QUIC IPv6")?;
 
         // Connect to relay if configured
         if let Some(ref relay_addr) = config.relay_multiaddr {
@@ -273,7 +275,7 @@ async fn swarm_loop(
     let mut ad_interval = tokio::time::interval(Duration::from_secs(30));
     let mut evict_interval = tokio::time::interval(Duration::from_secs(15));
     let mut relay_tick = tokio::time::interval(Duration::from_secs(10));
-    let mut authorized_peers: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
+    let mut authorized_cluster_peers: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
 
     // Initialize relay state machine.
     let mut relay = RelayState::new(config.relay_multiaddr.clone());
@@ -304,7 +306,7 @@ async fn swarm_loop(
                         Some(RelayEvent::ConnectionEstablished { peer_id: *peer_id })
                     }
                     SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                        authorized_peers.remove(peer_id);
+                        authorized_cluster_peers.remove(peer_id);
                         Some(RelayEvent::ConnectionClosed { peer_id: *peer_id })
                     }
                     SwarmEvent::Behaviour(ClusterBehaviourEvent::Identify(
@@ -318,7 +320,7 @@ async fn swarm_loop(
                                 continue;
                             }
                         }
-                        authorized_peers.insert(*peer_id);
+                        authorized_cluster_peers.insert(*peer_id);
 
                         for addr in &info.listen_addrs {
                             swarm.add_peer_address(*peer_id, addr.clone());
@@ -336,14 +338,14 @@ async fn swarm_loop(
                 if let Some(re) = relay_event {
                     let actions = relay.handle_event(re);
                     execute_relay_actions(
-                        actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                        actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
                     ).await;
                 }
 
                 // Handle non-relay swarm events.
                 handle_general_event(
                     event, &event_tx, &peer_registry, &mut swarm,
-                    &authorized_peers,
+                    &authorized_cluster_peers,
                 ).await;
             }
 
@@ -364,7 +366,7 @@ async fn swarm_loop(
                             peer_id: relay.peer_id().unwrap_or(PeerId::random()),
                         });
                         execute_relay_actions(
-                            actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                            actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
                         ).await;
                     }
                 }
@@ -384,7 +386,7 @@ async fn swarm_loop(
                 // Drive relay state machine tick (reconnect, re-register).
                 let actions = relay.handle_event(RelayEvent::Tick);
                 execute_relay_actions(
-                    actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                    actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
                 ).await;
 
                 // If Identified but no RPC stream yet, try opening one.
@@ -395,7 +397,7 @@ async fn swarm_loop(
                             Ok(stream) => {
                                 let actions = relay.handle_event(RelayEvent::RpcStreamOpened { stream });
                                 execute_relay_actions(
-                                    actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                                    actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
                                 ).await;
                             }
                             Err(e) => {
@@ -433,7 +435,7 @@ async fn execute_relay_actions(
     actions: Vec<RelayAction>,
     swarm: &mut Swarm<ClusterBehaviour>,
     relay_proxy_url: &Arc<RwLock<Option<String>>>,
-    authorized_peers: &mut std::collections::HashSet<PeerId>,
+    authorized_cluster_peers: &mut std::collections::HashSet<PeerId>,
 ) {
     for action in actions {
         match action {
@@ -450,10 +452,10 @@ async fn execute_relay_actions(
                 *relay_proxy_url.write().await = url;
             }
             RelayAction::AuthorizePeer(peer_id) => {
-                authorized_peers.insert(peer_id);
+                authorized_cluster_peers.insert(peer_id);
             }
             RelayAction::DeauthorizePeer(peer_id) => {
-                authorized_peers.remove(&peer_id);
+                authorized_cluster_peers.remove(&peer_id);
             }
             RelayAction::Log(level, msg) => {
                 match level {
@@ -473,7 +475,7 @@ async fn handle_general_event(
     event_tx: &mpsc::Sender<P2pEvent>,
     peer_registry: &Arc<RwLock<PeerRegistry>>,
     swarm: &mut Swarm<ClusterBehaviour>,
-    authorized_peers: &std::collections::HashSet<PeerId>,
+    authorized_cluster_peers: &std::collections::HashSet<PeerId>,
 ) {
     match event {
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
@@ -498,7 +500,7 @@ async fn handle_general_event(
                 ..
             },
         )) => {
-            if !authorized_peers.contains(&peer) {
+            if !authorized_cluster_peers.contains(&peer) {
                 tracing::warn!(%peer, "rejecting AI proxy request from unauthorized peer");
                 return;
             }

@@ -196,6 +196,16 @@ impl RelaySwarm {
             .context("invalid WS listen address")?;
         swarm.listen_on(ws_addr)?;
 
+        // IPv4 listeners (for hosts without dual-stack)
+        let quic_v4: Multiaddr = format!("/ip4/0.0.0.0/udp/{p2p_port}/quic-v1")
+            .parse()
+            .context("invalid IPv4 QUIC listen address")?;
+        swarm.listen_on(quic_v4)?;
+        let ws_v4: Multiaddr = format!("/ip4/0.0.0.0/tcp/{p2p_port}/ws")
+            .parse()
+            .context("invalid IPv4 WS listen address")?;
+        swarm.listen_on(ws_v4)?;
+
         let peer_metadata = Arc::new(RwLock::new(HashMap::new()));
         let daemon_rpc_map: DaemonRpcMap = Arc::new(RwLock::new(HashMap::new()));
 
