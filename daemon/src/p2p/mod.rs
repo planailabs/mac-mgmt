@@ -263,7 +263,9 @@ async fn swarm_loop(
 ) {
     let mut ad_interval = tokio::time::interval(Duration::from_secs(30));
     let mut evict_interval = tokio::time::interval(Duration::from_secs(15));
+    let mut relay_reconnect_interval = tokio::time::interval(Duration::from_secs(60));
     let mut relay_peer_id: Option<PeerId> = None;
+    let mut registered_with_relay = false;
 
     // Subscribe to cluster gossipsub topic
     let cluster_topic = gossipsub::IdentTopic::new(format!(
@@ -286,16 +288,70 @@ async fn swarm_loop(
                     &relay_proxy_url,
                     &mut relay_peer_id,
                 ).await;
+
+                // After identifying the relay, register immediately.
+                if relay_peer_id.is_some() && !registered_with_relay {
+                    let req = control::ControlRequest::Register {
+                        instance_id: config.instance_id.clone(),
+                        cluster_id: None,
+                        hostname: hostname::get()
+                            .ok()
+                            .map(|h| h.to_string_lossy().to_string()),
+                        agent_name: None,
+                    };
+                    let _ = swarm.behaviour_mut().control.send_request(
+                        relay_peer_id.as_ref().unwrap(),
+                        req,
+                    );
+                    registered_with_relay = true;
+                    tracing::info!("registered with relay after Identify");
+                }
             }
             Some(cmd) = cmd_rx.recv() => {
                 handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs, &relay_peer_id).await;
             }
             _ = ad_interval.tick() => {
-                // Periodically publish our backend advertisement
                 publish_advertisement(&mut swarm, &cluster_topic, &active_jobs).await;
             }
             _ = evict_interval.tick() => {
                 peer_registry.write().await.evict_stale();
+            }
+            _ = relay_reconnect_interval.tick() => {
+                // Re-dial relay if disconnected.
+                if let Some(ref relay_addr) = config.relay_multiaddr {
+                    if relay_peer_id.is_none() {
+                        tracing::info!("relay not connected, re-dialing {relay_addr}");
+                        if let Err(e) = swarm.dial(relay_addr.clone()) {
+                            tracing::warn!("failed to re-dial relay: {e}");
+                        }
+                    }
+                }
+                // Re-register if connected (handles relay restarts).
+                if let Some(relay) = relay_peer_id {
+                    if swarm.is_connected(&relay) {
+                        let req = control::ControlRequest::Register {
+                            instance_id: config.instance_id.clone(),
+                            cluster_id: None,
+                            hostname: hostname::get()
+                                .ok()
+                                .map(|h| h.to_string_lossy().to_string()),
+                            agent_name: None,
+                        };
+                        let _ = swarm.behaviour_mut().control.send_request(&relay, req);
+                        tracing::debug!("re-registered with relay (periodic)");
+                    } else {
+                        // Relay peer known but disconnected — clear and re-dial.
+                        tracing::info!("relay peer {relay} disconnected, clearing");
+                        relay_peer_id = None;
+                        registered_with_relay = false;
+                        *relay_proxy_url.write().await = None;
+                        if let Some(ref relay_addr) = config.relay_multiaddr {
+                            if let Err(e) = swarm.dial(relay_addr.clone()) {
+                                tracing::warn!("failed to re-dial relay: {e}");
+                            }
+                        }
+                    }
+                }
             }
         }
     }
