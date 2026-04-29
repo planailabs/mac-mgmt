@@ -272,7 +272,21 @@ impl RelaySwarm {
         // Extract the stream control handle before moving the swarm.
         let stream_control = swarm.behaviour().streams.new_control();
 
-        // Spawn the event loop
+        // Accept incoming RPC streams from daemons.
+        let rpc_protocol = libp2p::StreamProtocol::new("/mac-mgmt/rpc/1.0.0");
+        let mut incoming_streams = stream_control.clone().accept(rpc_protocol).unwrap();
+        let registry_for_rpc = Arc::clone(&registry);
+        tokio::spawn(async move {
+            while let Some((peer_id, stream)) = incoming_streams.next().await {
+                tracing::info!(%peer_id, "daemon opened RPC stream");
+                let registry = Arc::clone(&registry_for_rpc);
+                tokio::spawn(async move {
+                    handle_daemon_rpc(peer_id, stream, registry).await;
+                });
+            }
+        });
+
+        // Spawn the swarm event loop
         let pm_clone = Arc::clone(&peer_metadata);
         tokio::spawn(async move {
             relay_event_loop(swarm, registry, pm_clone, outbound_rx).await;
@@ -456,5 +470,112 @@ async fn handle_relay_event(
             }
         }
         _ => {}
+    }
+}
+
+/// Handle a persistent RPC stream from a single daemon.
+/// Reads length-prefixed JSON frames, dispatches register/tunnel_advertisement,
+/// sends responses back.
+async fn handle_daemon_rpc(
+    peer_id: PeerId,
+    mut stream: libp2p::Stream,
+    registry: Arc<DaemonRegistry>,
+) {
+    use futures_util::{AsyncReadExt, AsyncWriteExt};
+    let mut instance_id: Option<String> = None;
+    let mut connected_at: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    loop {
+        // Read a frame.
+        let mut len_buf = [0u8; 4];
+        if stream.read_exact(&mut len_buf).await.is_err() {
+            break;
+        }
+        let len = u32::from_be_bytes(len_buf);
+        if len > 16 * 1024 * 1024 {
+            tracing::warn!(%peer_id, "RPC frame too large: {len}");
+            break;
+        }
+        let mut buf = vec![0u8; len as usize];
+        if stream.read_exact(&mut buf).await.is_err() {
+            break;
+        }
+
+        let Ok(request) = serde_json::from_slice::<serde_json::Value>(&buf) else {
+            tracing::warn!(%peer_id, "invalid JSON in RPC frame");
+            continue;
+        };
+
+        let msg_type = request["type"].as_str().unwrap_or("");
+        let req_id = request["id"].clone();
+
+        let resp = match msg_type {
+            "register" => {
+                let iid = request["instance_id"].as_str().unwrap_or("").to_string();
+                let cluster_id = request["cluster_id"]
+                    .as_str()
+                    .and_then(|s| s.parse().ok());
+                let hostname = request["hostname"].as_str().map(String::from);
+                let agent_name = request["agent_name"].as_str().map(String::from);
+                let now = chrono::Utc::now();
+
+                if !iid.is_empty() {
+                    tracing::info!(%peer_id, %iid, "daemon registered via RPC stream");
+                    registry.register(crate::daemon_registry::DaemonConn {
+                        instance_id: iid.clone(),
+                        cluster_id,
+                        cluster_name: None,
+                        agent_name,
+                        hostname,
+                        connected_at: now,
+                        tunnels: Vec::new(),
+                        file_tunnels: serde_json::Value::Array(vec![]),
+                        shell_tunnels: serde_json::Value::Array(vec![]),
+                        peer_id: Some(peer_id),
+                    });
+                    instance_id = Some(iid);
+                    connected_at = Some(now);
+                }
+                serde_json::json!({ "type": "ok", "id": req_id })
+            }
+            "tunnel_advertisement" => {
+                if let Some(iid) = &instance_id {
+                    let tunnels: Vec<crate::daemon_registry::ServiceTunnel> = request["tunnels"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|t| {
+                                    Some(crate::daemon_registry::ServiceTunnel {
+                                        name: t["name"].as_str()?.to_string(),
+                                        tcp_port: t["port"].as_u64()? as u16,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let file_tunnels = request["file_tunnels"].clone();
+                    let shell_tunnels = request["shell_tunnels"].clone();
+                    registry.update_all_tunnels(iid, tunnels, file_tunnels, shell_tunnels);
+                    tracing::debug!(%peer_id, %iid, "tunnel advertisement via RPC");
+                }
+                serde_json::json!({ "type": "ok", "id": req_id })
+            }
+            _ => {
+                tracing::debug!(%peer_id, %msg_type, "unknown RPC request");
+                serde_json::json!({ "type": "error", "message": "unknown request", "id": req_id })
+            }
+        };
+
+        // Write response frame.
+        let data = serde_json::to_vec(&resp).unwrap_or_default();
+        let _ = stream.write_all(&(data.len() as u32).to_be_bytes()).await;
+        let _ = stream.write_all(&data).await;
+        let _ = stream.flush().await;
+    }
+
+    tracing::info!(%peer_id, "RPC stream closed");
+    // Clean up registration.
+    if let (Some(iid), Some(cat)) = (instance_id, connected_at) {
+        registry.unregister(&iid, cat);
     }
 }
