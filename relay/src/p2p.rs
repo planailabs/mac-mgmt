@@ -254,14 +254,14 @@ impl RelaySwarm {
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
             .build();
 
-        // Listen on QUIC
-        let quic_addr: Multiaddr = format!("/ip4/0.0.0.0/udp/{p2p_port}/quic-v1")
+        // Listen on QUIC (IPv6 dual-stack covers IPv4 too)
+        let quic_addr: Multiaddr = format!("/ip6/::/udp/{p2p_port}/quic-v1")
             .parse()
             .context("invalid QUIC listen address")?;
         swarm.listen_on(quic_addr)?;
 
-        // Also listen on WSS for daemons behind restrictive firewalls
-        let ws_addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{p2p_port}/ws")
+        // Also listen on WS for daemons behind restrictive firewalls
+        let ws_addr: Multiaddr = format!("/ip6/::/tcp/{p2p_port}/ws")
             .parse()
             .context("invalid WS listen address")?;
         swarm.listen_on(ws_addr)?;
