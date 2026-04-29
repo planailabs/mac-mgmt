@@ -297,45 +297,28 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
         });
     });
 
+    // Toggle the theme by flipping the `.dark` class on `<html>`; CSS
+    // variables in `input.css` drive every color from there. No color
+    // literals belong in this script.
     let toggle_theme = move |_| {
         let next = theme().next();
         theme.set(next);
-        let js = match next {
-            ThemeMode::System => {
-                r#"
-                localStorage.removeItem('theme');
-                var d = document.documentElement;
-                if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                    d.classList.add('dark');
-                    d.style.colorScheme = 'dark';
-                    d.style.backgroundColor = '#111827';
-                } else {
-                    d.classList.remove('dark');
-                    d.style.colorScheme = 'light';
-                    d.style.backgroundColor = '#f9fafb';
-                }
-            "#
-            }
-            ThemeMode::Light => {
-                r#"
-                localStorage.setItem('theme', 'light');
-                var d = document.documentElement;
-                d.classList.remove('dark');
-                d.style.colorScheme = 'light';
-                d.style.backgroundColor = '#f9fafb';
-            "#
-            }
-            ThemeMode::Dark => {
-                r#"
-                localStorage.setItem('theme', 'dark');
-                var d = document.documentElement;
-                d.classList.add('dark');
-                d.style.colorScheme = 'dark';
-                d.style.backgroundColor = '#111827';
-            "#
-            }
+        let store = match next {
+            ThemeMode::System => "localStorage.removeItem('theme');",
+            ThemeMode::Light  => "localStorage.setItem('theme', 'light');",
+            ThemeMode::Dark   => "localStorage.setItem('theme', 'dark');",
         };
-        document::eval(js);
+        let js = format!(
+            r#"
+            {store}
+            var d = document.documentElement;
+            var t = localStorage.getItem('theme');
+            var dark = t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            d.classList.toggle('dark', dark);
+            d.style.colorScheme = dark ? 'dark' : 'light';
+            "#
+        );
+        document::eval(&js);
     };
 
     let current_aria = match theme() {
