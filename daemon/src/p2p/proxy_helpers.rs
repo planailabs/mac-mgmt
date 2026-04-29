@@ -41,19 +41,27 @@ pub fn apply_fake_origin(
     headers: &mut reqwest::header::HeaderMap,
     target: &TunnelTarget,
 ) {
+    let local_origin = format!("http://{}:{}", target.host, target.port);
+
     // Set Host.
-    let host_val = format!("{}:{}", target.host, target.port);
-    if let Ok(v) = host_val.parse() {
+    if let Ok(v) = format!("{}:{}", target.host, target.port).parse() {
         headers.insert("Host", v);
     }
-    // Set Referer to local origin.
-    let local_origin = format!("http://{}:{}/", target.host, target.port);
-    if let Ok(v) = local_origin.parse() {
-        headers.insert("Referer", v);
+    // Replace Origin if present (don't add if absent).
+    if headers.contains_key("origin") {
+        if let Ok(v) = local_origin.parse() {
+            headers.insert("Origin", v);
+        }
+    }
+    // Replace Referer if present.
+    if headers.contains_key("referer") {
+        if let Ok(v) = format!("{local_origin}/").parse() {
+            headers.insert("Referer", v);
+        }
     }
     // Strip remaining origin-revealing headers.
     for &name in FAKE_ORIGIN_DROP_HEADERS {
-        if name != "host" && name != "referer" {
+        if name != "host" && name != "origin" && name != "referer" {
             headers.remove(name);
         }
     }
@@ -95,8 +103,8 @@ pub fn apply_headers_vec(
             continue;
         }
         if fake_origin_local && FAKE_ORIGIN_DROP_HEADERS.contains(&lk.as_str()) {
-            // Referer gets rewritten, everything else is dropped.
-            if lk == "referer" {
+            // Origin and Referer get rewritten, everything else is dropped.
+            if lk == "referer" || lk == "origin" {
                 if let Some(rewritten) = rewrite_url_origin(v, target) {
                     req = req.header(k.as_str(), rewritten);
                 }
@@ -122,7 +130,7 @@ pub fn apply_headers_json(
                 continue;
             }
             if fake_origin_local && FAKE_ORIGIN_DROP_HEADERS.contains(&lk.as_str()) {
-                if lk == "referer" {
+                if lk == "referer" || lk == "origin" {
                     if let Some(val) = v.as_str() {
                         if let Some(rewritten) = rewrite_url_origin(val, target) {
                             req = req.header(k.as_str(), rewritten);
