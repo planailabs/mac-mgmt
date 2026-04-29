@@ -151,25 +151,34 @@ async fn handle_proxy(
 }
 
 async fn handle_file_list(
-    state: &HandlerState,
-    request_id: String,
-    tunnel_name: String,
-    path: Option<String>,
+    _state: &HandlerState,
+    _request_id: String,
+    _tunnel_name: String,
+    _path: Option<String>,
 ) -> ControlResponse {
-    let registry = state.file_tunnel_registry.read().await;
-    let Some(tunnel) = registry.get(&tunnel_name) else {
-        return ControlResponse::Error {
-            message: format!("unknown file tunnel: {tunnel_name}"),
+    #[cfg(feature = "services")]
+    {
+        let registry = _state.file_tunnel_registry.read().await;
+        let Some(tunnel) = registry.get(&_tunnel_name) else {
+            return ControlResponse::Error {
+                message: format!("unknown file tunnel: {_tunnel_name}"),
+            };
         };
-    };
 
-    let (status, data) =
-        crate::file_tunnels::handle_list(tunnel, path.as_deref());
-    if status == 200 {
-        ControlResponse::FileResponse { request_id, data }
-    } else {
+        let (status, data) =
+            crate::file_tunnels::handle_list(tunnel, _path.as_deref());
+        if status == 200 {
+            ControlResponse::FileResponse { request_id: _request_id, data }
+        } else {
+            ControlResponse::Error {
+                message: format!("file list failed ({status}): {data}"),
+            }
+        }
+    }
+    #[cfg(not(feature = "services"))]
+    {
         ControlResponse::Error {
-            message: format!("file list failed ({status}): {data}"),
+            message: "services feature not enabled".into(),
         }
     }
 }
