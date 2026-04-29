@@ -2,6 +2,9 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::ui::{
+    Button, ButtonKind, ErrorText, FormField, HelpText, PageHeader,
+};
 
 #[server]
 async fn create_skill_center(
@@ -100,68 +103,61 @@ pub fn SkillCenterForm() -> Element {
 
     rsx! {
         div { class: "px-6 py-8 max-w-lg mx-auto",
-            h2 { class: "text-2xl font-bold mb-4 dark:text-white", {t!("skill-center-form-title")} }
+            PageHeader { {t!("skill-center-form-title")} }
             form { onsubmit: submit,
-                class: "space-y-4",
                 if let Some(err) = &*error.read() {
-                    p { class: "text-red-600 text-sm", "{err}" }
+                    ErrorText { class: "mb-4", "{err}" }
                 }
-                div {
-                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("name")} }
+                FormField { label: t!("name"),
                     input {
+                        class: "input",
                         r#type: "text",
                         value: "{name}",
                         oninput: move |e| name.set(e.value()),
-                        class: "w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
                         placeholder: t!("skill-center-form-name-placeholder"),
                         autofocus: true,
                     }
                 }
-                div {
-                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("skill-center-form-url-label")} }
+                FormField { label: t!("skill-center-form-url-label"),
                     input {
+                        class: "input",
                         r#type: "text",
                         value: "{url}",
                         oninput: move |e| url.set(e.value()),
-                        class: "w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
                         placeholder: t!("skill-center-form-url-placeholder"),
                     }
                 }
-                div {
-                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("skill-center-form-token-label")} }
+                FormField { label: t!("skill-center-form-token-label"),
                     input {
+                        class: "input",
                         r#type: "password",
                         value: "{federation_token}",
                         oninput: move |e| federation_token.set(e.value()),
-                        class: "w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
                         placeholder: t!("skill-center-form-token-placeholder"),
                     }
                 }
-                div {
-                    label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("skill-center-form-priority-label")} }
+                FormField { label: t!("skill-center-form-priority-label"),
                     input {
+                        class: "input",
                         r#type: "number",
                         value: "{priority}",
                         oninput: move |e| priority.set(e.value()),
-                        class: "w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
                     }
-                    p { class: "text-xs text-gray-500 dark:text-gray-400 mt-1", {t!("skill-center-form-priority-help")} }
+                    HelpText { xs: true, class: "mt-1", {t!("skill-center-form-priority-help")} }
                 }
-                div { class: "flex items-center gap-2",
+                div { class: "flex items-center gap-2 mb-4",
                     input {
                         r#type: "checkbox",
                         checked: "{enabled}",
                         oninput: move |e| enabled.set(e.value() == "true"),
-                        class: "rounded border-gray-300 dark:border-gray-600",
+                        class: "rounded border-line",
                         id: "enabled-checkbox",
                     }
-                    label { r#for: "enabled-checkbox", class: "text-sm text-gray-700 dark:text-gray-300", {t!("skill-center-form-enabled")} }
+                    label { r#for: "enabled-checkbox", class: "text-sm text-fg",
+                        {t!("skill-center-form-enabled")}
+                    }
                 }
-                button {
-                    r#type: "submit",
-                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                    {t!("create")}
-                }
+                Button { kind: ButtonKind::Submit, {t!("create")} }
             }
         }
     }

@@ -5,6 +5,9 @@ use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::McpServerBundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
+use crate::web::components::ui::{
+    Button, ButtonKind, ErrorText, FormField, PageHeader,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -40,16 +43,14 @@ pub fn McpBundleForm() -> Element {
 
     let on_submit = move |evt: FormEvent| {
         evt.prevent_default();
-        let nav = navigator.clone();
+        let nav = navigator;
         let slug_val = slug.read().clone();
         let name_val = name.read().clone();
         let desc_val = description.read().clone();
         spawn(async move {
             match create_mcp_bundle(slug_val, name_val, desc_val).await {
                 Ok(bundle) => {
-                    nav.push(Route::McpBundleDetail {
-                        id: bundle.id.to_string(),
-                    });
+                    nav.push(Route::McpBundleDetail { id: bundle.id.to_string() });
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
@@ -59,15 +60,14 @@ pub fn McpBundleForm() -> Element {
     };
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("mcp-bundle-form-title")} }
+        PageHeader { {t!("mcp-bundle-form-title")} }
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
+            ErrorText { class: "mb-4", "{err}" }
         }
         form { onsubmit: on_submit,
-            div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("slug")} }
+            FormField { label: t!("slug"),
                 input {
-                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono dark:bg-gray-700 dark:text-white",
+                    class: "input font-mono",
                     r#type: "text",
                     required: true,
                     placeholder: t!("mcp-bundle-slug-placeholder"),
@@ -75,31 +75,25 @@ pub fn McpBundleForm() -> Element {
                     oninput: move |evt| slug.set(evt.value()),
                 }
             }
-            div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("name")} }
+            FormField { label: t!("name"),
                 input {
-                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
+                    class: "input",
                     r#type: "text",
                     required: true,
                     value: "{name}",
                     oninput: move |evt| name.set(evt.value()),
                 }
             }
-            div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("description")} }
+            FormField { label: t!("description"),
                 textarea {
-                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
+                    class: "input",
                     rows: "3",
                     value: "{description}",
                     oninput: move |evt| description.set(evt.value()),
                 }
             }
             div { class: "flex gap-3 items-center",
-                button {
-                    class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                    r#type: "submit",
-                    {t!("create")}
-                }
+                Button { kind: ButtonKind::Submit, {t!("create")} }
                 GenerateButton {
                     context: GenerateContext::McpBundle { slug: slug.read().clone(), items: vec![] },
                     current_name: name.read().clone(),
