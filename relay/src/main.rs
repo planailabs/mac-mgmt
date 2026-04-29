@@ -131,20 +131,15 @@ async fn main() -> Result<()> {
         }
     }));
 
-    // Listen on two ports: the main HTTP port (axum) and a separate
-    // internal listener that detects libp2p WS upgrades and bridges them.
-    // We accept TCP connections manually, peek at the first bytes, and
-    // either bridge to the libp2p WS listener (port p2p_port) or pass
-    // to axum.
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {}", cfg.listen_addr);
 
     let p2p_port = cfg.p2p_port;
+    let proxy_hostname = cfg.proxy_hostname.clone();
 
-    // Spawn axum on a random internal port, then proxy non-WS requests to it.
+    // Spawn axum on a random internal port.
     let axum_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let axum_port = axum_listener.local_addr()?.port();
-    tracing::debug!("internal axum listener on 127.0.0.1:{axum_port}");
 
     tokio::spawn(async move {
         axum::serve(
@@ -155,51 +150,62 @@ async fn main() -> Result<()> {
         .expect("axum serve failed");
     });
 
+    // Accept TCP connections and route:
+    //  - WS upgrade to a proxy subdomain → axum (browser tunnel proxy)
+    //  - WS upgrade to anything else → libp2p (daemon p2p connection)
+    //  - Non-WS → axum
     loop {
         let (tcp_stream, remote_addr) = listener.accept().await?;
+        let proxy_hostname = proxy_hostname.clone();
         tokio::spawn(async move {
-            let mut peek_buf = [0u8; 512];
+            let mut peek_buf = [0u8; 1024];
             let n = match tcp_stream.peek(&mut peek_buf).await {
                 Ok(n) if n > 0 => n,
                 _ => return,
             };
 
-            let is_ws_upgrade = {
-                let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
-                let first_line = peek_str.lines().next().unwrap_or("");
-                (first_line.starts_with("GET / ") || first_line.starts_with("GET /ws "))
-                    && peek_str.to_lowercase().contains("upgrade: websocket")
-            };
+            let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
+            let peek_lower = peek_str.to_lowercase();
+            let is_ws = peek_lower.contains("upgrade: websocket");
 
-            if is_ws_upgrade {
-                tracing::debug!(%remote_addr, "bridging WS to libp2p listener");
-                let upstream = match tokio::net::TcpStream::connect(
-                    format!("127.0.0.1:{p2p_port}"),
-                )
-                .await
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!("failed to connect to libp2p WS: {e}");
-                        return;
-                    }
-                };
-                bridge::bridge_bidir(tcp_stream, upstream).await;
+            if is_ws {
+                // Check if the Host header targets a proxy subdomain.
+                let is_proxy_subdomain = proxy_hostname.as_ref().is_some_and(|ph| {
+                    let host_needle = format!("host: ");
+                    peek_lower
+                        .lines()
+                        .find(|l| l.starts_with(&host_needle))
+                        .and_then(|l| l.strip_prefix(&host_needle))
+                        .map(|h| h.split(':').next().unwrap_or(h))
+                        .is_some_and(|h| {
+                            h.ends_with(&format!(".{}", ph.to_lowercase()))
+                        })
+                });
+
+                if is_proxy_subdomain {
+                    // Browser WS to a proxy subdomain → axum handles it.
+                    tracing::debug!(%remote_addr, "proxy subdomain WS → axum");
+                    forward_to(tcp_stream, axum_port).await;
+                } else {
+                    // Main host / no host / unknown host WS → libp2p.
+                    tracing::debug!(%remote_addr, "WS upgrade → libp2p bridge");
+                    forward_to(tcp_stream, p2p_port).await;
+                }
             } else {
-                // Forward to internal axum listener.
-                let upstream = match tokio::net::TcpStream::connect(
-                    format!("127.0.0.1:{axum_port}"),
-                )
-                .await
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!("failed to connect to internal axum: {e}");
-                        return;
-                    }
-                };
-                bridge::bridge_bidir(tcp_stream, upstream).await;
+                // Regular HTTP → axum.
+                forward_to(tcp_stream, axum_port).await;
             }
         });
     }
+}
+
+async fn forward_to(client: tokio::net::TcpStream, port: u16) {
+    let upstream = match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("failed to connect to 127.0.0.1:{port}: {e}");
+            return;
+        }
+    };
+    bridge::bridge_bidir(client, upstream).await;
 }
