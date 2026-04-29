@@ -124,11 +124,52 @@ async fn main() -> Result<()> {
         let api = api_router.clone();
         let proxy = proxy_router.clone();
         async move {
-            let host_no_port = hostname.split(':').next().unwrap_or(&hostname);
+            let host_no_port: String = hostname.split(':').next().unwrap_or(&hostname).to_string();
 
-            // Proxy subdomain → proxy router.
+            // Proxy subdomain.
             if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
                 if host_no_port.ends_with(&format!(".{proxy_hostname}")) {
+                    let is_proxy_ws = req.headers().get("upgrade")
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+
+                    if is_proxy_ws {
+                        use axum::extract::FromRequestParts;
+                        let (mut parts, _body) = req.into_parts();
+                        if let Ok(ws) = axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+                            let prefix = host_no_port
+                                .strip_suffix(&format!(".{proxy_hostname}"))
+                                .unwrap_or("")
+                                .to_string();
+                            let relay_swarm_clone = relay_swarm.clone();
+                            return ws.on_upgrade(move |socket| async move {
+                                let (instance_prefix, tunnel_name) = prefix
+                                    .rsplit_once('-')
+                                    .unwrap_or((&prefix, ""));
+                                if let Some(peer_id) = relay_swarm_clone.registry_resolve_peer_id(instance_prefix) {
+                                    if let Ok(tunnel) = relay_swarm_clone.open_tunnel_stream(peer_id).await {
+                                        let handshake = serde_json::json!({
+                                            "type": "proxy",
+                                            "tunnel_name": tunnel_name,
+                                            "method": "WEBSOCKET",
+                                            "path": "/",
+                                            "headers": [],
+                                        });
+                                        let data = serde_json::to_vec(&handshake).unwrap_or_default();
+                                        use futures_util::AsyncWriteExt;
+                                        let mut tunnel = tunnel;
+                                        let _ = tunnel.write_all(&(data.len() as u32).to_be_bytes()).await;
+                                        let _ = tunnel.write_all(&data).await;
+                                        let _ = tunnel.flush().await;
+                                        crate::ws_bridge::bridge_ws_to_stream(socket, tunnel).await;
+                                    }
+                                }
+                            });
+                        }
+                        // WS upgrade extraction failed — fall through to 400.
+                        return axum::http::StatusCode::BAD_REQUEST.into_response();
+                    }
+
                     return proxy_router.clone().oneshot(req).await.into_response();
                 }
             }

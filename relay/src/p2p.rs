@@ -73,6 +73,8 @@ pub struct RelaySwarm {
     pub stream_control: libp2p_stream::Control,
     /// RPC channels to connected daemons, keyed by PeerId.
     daemon_rpc_map: DaemonRpcMap,
+    /// Shared daemon registry for lookups.
+    registry: Arc<DaemonRegistry>,
 }
 
 /// Protocol for tunnel data substreams.
@@ -104,6 +106,11 @@ impl RelaySwarm {
         resp_rx
             .await
             .map_err(|_| "daemon RPC response dropped".to_string())?
+    }
+
+    /// Resolve a daemon's PeerId by instance_id prefix.
+    pub fn registry_resolve_peer_id(&self, prefix: &str) -> Option<PeerId> {
+        self.registry.resolve_peer_id(prefix)
     }
 
     /// Open a raw bidirectional substream to a peer for tunnel data.
@@ -242,11 +249,13 @@ impl RelaySwarm {
 
         // Spawn the swarm event loop
         let pm_clone = Arc::clone(&peer_metadata);
+        let registry_for_self = Arc::clone(&registry);
         tokio::spawn(async move {
             relay_event_loop(swarm, registry, pm_clone).await;
         });
 
         Ok(Self {
+            registry: registry_for_self,
             daemon_rpc_map,
             stream_control,
             local_peer_id,
