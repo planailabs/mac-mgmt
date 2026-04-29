@@ -78,7 +78,7 @@ pub async fn watch(tx: mpsc::Sender<RemoteSshCommand>) -> Result<()> {
         }
 
         // lines returned None — FIFO closed by all writers, re-open
-        tracing::debug!("FIFO EOF, re-opening");
+        tracing::trace!("FIFO EOF, re-opening");
     }
 }
 
