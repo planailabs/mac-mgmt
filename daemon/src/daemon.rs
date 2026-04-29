@@ -1574,7 +1574,8 @@ async fn do_send_heartbeat(
 
     let url = format!("{server_url}/api/heartbeat");
     tracing::debug!(
-        "heartbeat → {url} instance={instance_id} host={hostname} signed_at={signed_at} services={svc_count} tunnels={tunnel_count}"
+        "heartbeat → {url} instance={instance_id} host={hostname} signed_at={signed_at} services={svc_count} tunnels={tunnel_count} relay_proxy_url={:?}",
+        body.relay_proxy_url,
     );
     match tokio::time::timeout(
         std::time::Duration::from_secs(10),
