@@ -478,7 +478,7 @@ pub async fn handle_read_session<S>(
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
 
     let (content, mtime) = match read_file(tunnel, rel_path) {
         Ok(result) => result,
@@ -525,7 +525,7 @@ pub async fn handle_write_session<S>(
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use crate::p2p::stream_framing::{self, TaggedFrame};
+    use mac_mgmt_common::framing::{self as stream_framing, TaggedFrame};
 
     macro_rules! send_result {
         ($result:expr) => {{

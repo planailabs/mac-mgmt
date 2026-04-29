@@ -12,8 +12,6 @@ pub mod protocols;
 pub mod proxy_helpers;
 pub mod relay_state;
 pub mod rpc;
-pub mod stream_framing;
-pub mod transport;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -26,7 +24,7 @@ use tokio::sync::{RwLock, mpsc};
 
 use behaviour::{ClusterBehaviour, ClusterBehaviourEvent};
 use discovery::{BackendAdvertisement, PeerRegistry};
-use protocols::{ai_proxy, control};
+use protocols::ai_proxy;
 use relay_state::{RelayState, RelayEvent, RelayAction};
 
 /// Commands the daemon event loop can send to the P2pManager.
@@ -116,7 +114,6 @@ impl P2pManager {
                 config.instance_id
             )
         };
-        let _mdns_enabled = config.mdns_enabled;
         let keypair_clone = keypair.clone();
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
@@ -362,10 +359,10 @@ async fn swarm_loop(
             rpc_msg = rpc_recv => {
                 match rpc_msg {
                     Ok(rpc::RpcMessage::Request { payload }) => {
-                        // Relay-initiated request (proxy, metrics, etc.)
-                        if let Some(hs) = &config.handler_state {
-                            handle_rpc_request(payload, hs, &mut relay).await;
-                        }
+                        // Relay-initiated requests now use tunnel substreams,
+                        // not the RPC stream. Log unexpected requests.
+                        let msg_type = payload["type"].as_str().unwrap_or("?");
+                        tracing::debug!("unexpected RPC request from relay: {msg_type}");
                     }
                     Ok(rpc::RpcMessage::Response { .. }) => {
                         // Response to one of our requests — already dispatched by RpcStream.
@@ -384,7 +381,7 @@ async fn swarm_loop(
             }
 
             Some(cmd) = cmd_rx.recv() => {
-                handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs, &relay).await;
+                handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs).await;
             }
 
             _ = ad_interval.tick() => {
@@ -540,41 +537,12 @@ async fn handle_general_event(
     }
 }
 
-/// Handle an incoming RPC request from the relay.
-async fn handle_rpc_request(
-    payload: serde_json::Value,
-    handler_state: &Arc<handler::HandlerState>,
-    relay: &mut RelayState,
-) {
-    let msg_type = payload["type"].as_str().unwrap_or("");
-    let _request_id = payload["request_id"].as_str().unwrap_or("");
-
-    // Parse into ControlRequest and handle.
-    let request: Result<control::ControlRequest, _> = serde_json::from_value(payload.clone());
-    match request {
-        Ok(req) => {
-            let response = handler::handle_control_request(handler_state, req).await;
-            // Send response back on the RPC stream.
-            if let Some(rpc) = relay.rpc() {
-                let mut resp_json = serde_json::to_value(&response).unwrap_or_default();
-                resp_json["id"] = payload["id"].clone(); // echo the request id
-                if let Err(e) = rpc.send(resp_json).await {
-                    tracing::warn!("failed to send RPC response: {e}");
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("failed to parse relay RPC request ({msg_type}): {e}");
-        }
-    }
-}
 
 async fn handle_command(
     cmd: P2pCommand,
     swarm: &mut Swarm<ClusterBehaviour>,
     cluster_topic: &gossipsub::IdentTopic,
     active_jobs: &Arc<AtomicU32>,
-    _relay: &RelayState,
 ) {
     match cmd {
         P2pCommand::AdvertiseTunnels => {
@@ -693,7 +661,7 @@ async fn handle_streamed_proxy(
     stream: &mut libp2p::Stream,
     handler_state: &Arc<handler::HandlerState>,
 ) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
 
     let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
     let method = handshake["method"].as_str().unwrap_or("GET");
@@ -900,7 +868,7 @@ async fn handle_streamed_metrics(
     stream: &mut libp2p::Stream,
     handler_state: &Arc<handler::HandlerState>,
 ) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
 
     let path = handshake["path"].as_str().unwrap_or("/metrics");
     let url = format!("http://127.0.0.1:{}{path}", handler_state.metrics_port);
@@ -947,7 +915,7 @@ async fn handle_file_list_stream(
     stream: &mut libp2p::Stream,
     handler_state: &Arc<handler::HandlerState>,
 ) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
 
     let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
     let path = handshake["path"].as_str();
@@ -973,7 +941,7 @@ async fn handle_file_read_stream(
     stream: &mut libp2p::Stream,
     handler_state: &Arc<handler::HandlerState>,
 ) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
 
     let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
     let path = handshake["path"].as_str();
@@ -1015,7 +983,7 @@ async fn handle_file_write_stream(
     stream: &mut libp2p::Stream,
     handler_state: &Arc<handler::HandlerState>,
 ) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
 
     let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
     let path = handshake["path"].as_str();
@@ -1054,19 +1022,19 @@ async fn handle_file_write_stream(
 
 #[cfg(not(feature = "services"))]
 async fn handle_file_list_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
     let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
     let _ = stream_framing::write_end(stream).await;
 }
 #[cfg(not(feature = "services"))]
 async fn handle_file_read_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
     let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
     let _ = stream_framing::write_end(stream).await;
 }
 #[cfg(not(feature = "services"))]
 async fn handle_file_write_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
     let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
     let _ = stream_framing::write_end(stream).await;
 }
@@ -1079,7 +1047,7 @@ async fn handle_streamed_shell(
     stream: &mut libp2p::Stream,
     handler_state: &Arc<handler::HandlerState>,
 ) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
 
     let command_name = handshake["command_name"].as_str().unwrap_or("");
     let user_arg = handshake["user_arg"].as_str();
@@ -1214,7 +1182,7 @@ async fn handle_streamed_shell(
     stream: &mut libp2p::Stream,
     _handler_state: &Arc<handler::HandlerState>,
 ) {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
     let err = serde_json::json!({ "exit_code": -1, "error": "services feature not enabled" });
     let _ = stream_framing::write_json(stream, &err).await;
     let _ = stream_framing::write_end(stream).await;

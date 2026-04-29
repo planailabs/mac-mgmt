@@ -161,7 +161,7 @@ pub async fn handle_exec_session<S>(
 ) where
     S: futures_util::AsyncRead + futures_util::AsyncWrite + Unpin + Send,
 {
-    use crate::p2p::stream_framing;
+    use mac_mgmt_common::framing as stream_framing;
     use tokio::io::AsyncBufReadExt;
 
     macro_rules! send_error {
