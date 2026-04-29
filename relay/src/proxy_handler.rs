@@ -501,12 +501,11 @@ async fn proxy_catchall(
         Some(base64::engine::general_purpose::STANDARD.encode(&body_bytes))
     };
 
-    let request_id = Uuid::new_v4().to_string();
-    tracing::debug!("proxy {method} {path} -> {instance_id}/{tunnel_name} via p2p");
+    tracing::debug!("proxy {method} {path} -> {instance_id}/{tunnel_name} via tunnel stream");
 
-    let req_json = serde_json::json!({
-        "type": "proxy_request",
-        "request_id": request_id,
+    // Open a tunnel data substream to the daemon and stream the proxy request/response.
+    let handshake = serde_json::json!({
+        "type": "proxy",
         "tunnel_name": tunnel_name,
         "method": method.to_string(),
         "path": path,
@@ -514,60 +513,115 @@ async fn proxy_catchall(
         "body": body_b64,
     });
 
-    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req_json))
-        .await
+    let mut tunnel = match tokio::time::timeout(
+        Duration::from_secs(10),
+        swarm.open_tunnel_stream(peer_id),
+    )
+    .await
     {
-        Ok(Ok(resp)) => {
-            let status = resp["status"].as_u64().unwrap_or(502) as u16;
-            let resp_headers: Vec<(String, String)> = resp["headers"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| {
-                            let pair = v.as_array()?;
-                            Some((
-                                pair.first()?.as_str()?.to_string(),
-                                pair.get(1)?.as_str()?.to_string(),
-                            ))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let body_str = resp["body"].as_str().unwrap_or("");
-
-            let mut builder = axum::response::Response::builder().status(status);
-            for (k, v) in &resp_headers {
-                let lk = k.to_lowercase();
-                if lk == "transfer-encoding" || lk == "content-length" || lk == "content-encoding"
-                {
-                    continue;
-                }
-                if let Ok(val) = HeaderValue::from_str(v) {
-                    builder = builder.header(k.as_str(), val);
-                }
-            }
-
-            // Decode base64 body if present
-            let body_data = if body_str.is_empty() {
-                Vec::new()
-            } else {
-                use base64::Engine;
-                base64::engine::general_purpose::STANDARD
-                    .decode(body_str)
-                    .unwrap_or_else(|_| body_str.as_bytes().to_vec())
-            };
-
-            builder
-                .body(Body::from(body_data))
-                .unwrap()
-                .into_response()
-        }
+        Ok(Ok(s)) => s,
         Ok(Err(e)) => {
-            tracing::warn!(%peer_id, "p2p proxy catchall failed: {e}");
-            StatusCode::BAD_GATEWAY.into_response()
+            tracing::warn!(%peer_id, "failed to open tunnel stream: {e}");
+            return StatusCode::BAD_GATEWAY.into_response();
         }
-        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+        Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+    };
+
+    // Send handshake frame.
+    {
+        use futures_util::AsyncWriteExt;
+        let data = serde_json::to_vec(&handshake).unwrap_or_default();
+        let len = (data.len() as u32).to_be_bytes();
+        if tunnel.write_all(&len).await.is_err() || tunnel.write_all(&data).await.is_err() {
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+        let _ = tunnel.flush().await;
     }
+
+    // Read streamed response using stream_framing protocol:
+    // 1. JSON frame with { status, headers }
+    // 2. Binary chunks (response body)
+    // 3. End marker
+    use futures_util::AsyncReadExt;
+
+    // Read header frame (tag 0x01 = JSON).
+    let mut tag = [0u8; 1];
+    if tunnel.read_exact(&mut tag).await.is_err() || tag[0] != 0x01 {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+    let mut len_buf = [0u8; 4];
+    if tunnel.read_exact(&mut len_buf).await.is_err() {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > 1024 * 1024 {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+    let mut hdr_buf = vec![0u8; len];
+    if tunnel.read_exact(&mut hdr_buf).await.is_err() {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+    let Ok(hdr) = serde_json::from_slice::<serde_json::Value>(&hdr_buf) else {
+        return StatusCode::BAD_GATEWAY.into_response();
+    };
+
+    let status = hdr["status"].as_u64().unwrap_or(502) as u16;
+
+    // Check for error response
+    if let Some(error) = hdr["error"].as_str() {
+        return (StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), error.to_string()).into_response();
+    }
+
+    let resp_headers: Vec<(String, String)> = hdr["headers"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let pair = v.as_array()?;
+                    Some((
+                        pair.first()?.as_str()?.to_string(),
+                        pair.get(1)?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Read body chunks until end marker.
+    let mut body_data = Vec::new();
+    loop {
+        let mut tag = [0u8; 1];
+        if tunnel.read_exact(&mut tag).await.is_err() {
+            break;
+        }
+        match tag[0] {
+            0x02 => {
+                // Binary chunk
+                let mut len_buf = [0u8; 4];
+                if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
+                let chunk_len = u32::from_be_bytes(len_buf) as usize;
+                if chunk_len > 16 * 1024 * 1024 { break; }
+                let mut chunk = vec![0u8; chunk_len];
+                if tunnel.read_exact(&mut chunk).await.is_err() { break; }
+                body_data.extend_from_slice(&chunk);
+            }
+            0x03 => break, // End marker
+            _ => break,
+        }
+    }
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (k, v) in &resp_headers {
+        let lk = k.to_lowercase();
+        if lk == "transfer-encoding" || lk == "content-length" || lk == "content-encoding" {
+            continue;
+        }
+        if let Ok(val) = HeaderValue::from_str(v) {
+            builder = builder.header(k.as_str(), val);
+        }
+    }
+
+    builder.body(Body::from(body_data)).unwrap().into_response()
 }
 
 // ── POST /proxy_request — JSON request/response API ────────────────────

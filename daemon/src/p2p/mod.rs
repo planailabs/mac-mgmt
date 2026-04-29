@@ -221,6 +221,21 @@ impl P2pManager {
         // Extract stream control for opening RPC streams.
         let stream_control = swarm.behaviour().streams.new_control();
 
+        // Accept incoming tunnel data substreams from the relay.
+        let tunnel_protocol = libp2p::StreamProtocol::new("/mac-mgmt/tunnel/1.0.0");
+        let mut incoming_tunnels = stream_control.clone().accept(tunnel_protocol).unwrap();
+        if let Some(hs) = &config.handler_state {
+            let handler = Arc::clone(hs);
+            tokio::spawn(async move {
+                while let Some((peer_id, stream)) = incoming_tunnels.next().await {
+                    let h = Arc::clone(&handler);
+                    tokio::spawn(async move {
+                        handle_tunnel_stream(peer_id, stream, &h).await;
+                    });
+                }
+            });
+        }
+
         let peer_registry_clone = Arc::clone(&peer_registry);
         let active_jobs_clone = Arc::clone(&active_jobs);
         let relay_proxy_url_clone = Arc::clone(&relay_proxy_url);
@@ -594,6 +609,187 @@ async fn send_tunnel_advertisement_rpc(
     });
     if let Err(e) = rpc.send(req).await {
         tracing::warn!("failed to send tunnel advertisement via RPC: {e}");
+    }
+}
+
+/// Handle an incoming tunnel data substream from the relay.
+/// Reads a JSON handshake with the proxy request details, makes the
+/// local HTTP request, and streams the response back using stream_framing.
+async fn handle_tunnel_stream(
+    peer_id: PeerId,
+    mut stream: libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use futures_util::{AsyncReadExt, AsyncWriteExt};
+
+    // Read the handshake frame (JSON with request details).
+    let mut len_buf = [0u8; 4];
+    if stream.read_exact(&mut len_buf).await.is_err() {
+        return;
+    }
+    let len = u32::from_be_bytes(len_buf);
+    if len > 1024 * 1024 {
+        return;
+    }
+    let mut buf = vec![0u8; len as usize];
+    if stream.read_exact(&mut buf).await.is_err() {
+        return;
+    }
+
+    let Ok(handshake) = serde_json::from_slice::<serde_json::Value>(&buf) else {
+        return;
+    };
+
+    let msg_type = handshake["type"].as_str().unwrap_or("");
+    match msg_type {
+        "proxy" => {
+            handle_streamed_proxy(handshake, &mut stream, handler_state).await;
+        }
+        "metrics" => {
+            handle_streamed_metrics(handshake, &mut stream, handler_state).await;
+        }
+        _ => {
+            tracing::warn!(%peer_id, %msg_type, "unknown tunnel handshake type");
+        }
+    }
+
+    let _ = stream.close().await;
+}
+
+/// Handle a streamed proxy request over a tunnel substream.
+async fn handle_streamed_proxy(
+    handshake: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use crate::p2p::stream_framing;
+
+    let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
+    let method = handshake["method"].as_str().unwrap_or("GET");
+    let path = handshake["path"].as_str().unwrap_or("/");
+    let headers: Vec<(String, String)> = handshake["headers"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let pair = v.as_array()?;
+                    Some((
+                        pair.first()?.as_str()?.to_string(),
+                        pair.get(1)?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let body_b64 = handshake["body"].as_str().map(String::from);
+
+    let tunnel_defs = handler_state.tunnel_defs.read().await;
+    let Some(target) = tunnel_defs.get(tunnel_name).cloned() else {
+        let err = serde_json::json!({ "status": 404, "error": "tunnel not found" });
+        let _ = stream_framing::write_json(stream, &err).await;
+        let _ = stream_framing::write_end(stream).await;
+        return;
+    };
+    drop(tunnel_defs);
+
+    let req = proxy_helpers::build_proxy_request(
+        &handler_state.client,
+        &target,
+        method,
+        path,
+        handler_state.fake_origin_local,
+    );
+    let req = proxy_helpers::apply_headers_vec(req, &headers, handler_state.fake_origin_local, &target);
+    let req = proxy_helpers::apply_body_b64(req, body_b64);
+
+    match req.timeout(std::time::Duration::from_secs(300)).send().await {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let resp_headers: Vec<(String, String)> = resp
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect();
+
+            // Send response header frame.
+            let header = serde_json::json!({
+                "status": status,
+                "headers": resp_headers,
+            });
+            if stream_framing::write_json(stream, &header).await.is_err() {
+                return;
+            }
+
+            // Stream body chunks.
+            use futures_util::StreamExt;
+            let mut byte_stream = resp.bytes_stream();
+            while let Some(chunk) = byte_stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        if stream_framing::write_binary(stream, &bytes).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("proxy stream chunk error: {e}");
+                        break;
+                    }
+                }
+            }
+
+            let _ = stream_framing::write_end(stream).await;
+        }
+        Err(e) => {
+            let err = serde_json::json!({ "status": 502, "error": format!("proxy error: {e}") });
+            let _ = stream_framing::write_json(stream, &err).await;
+            let _ = stream_framing::write_end(stream).await;
+        }
+    }
+}
+
+/// Handle a streamed metrics request over a tunnel substream.
+async fn handle_streamed_metrics(
+    handshake: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use crate::p2p::stream_framing;
+
+    let path = handshake["path"].as_str().unwrap_or("/metrics");
+    let url = format!("http://127.0.0.1:{}{path}", handler_state.metrics_port);
+
+    match handler_state
+        .client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/plain")
+                .to_string();
+            let body = resp.text().await.unwrap_or_default();
+
+            let header = serde_json::json!({
+                "status": status,
+                "content_type": content_type,
+            });
+            if stream_framing::write_json(stream, &header).await.is_err() {
+                return;
+            }
+            let _ = stream_framing::write_binary(stream, body.as_bytes()).await;
+            let _ = stream_framing::write_end(stream).await;
+        }
+        Err(e) => {
+            let err = serde_json::json!({ "status": 502, "error": format!("metrics error: {e}") });
+            let _ = stream_framing::write_json(stream, &err).await;
+            let _ = stream_framing::write_end(stream).await;
+        }
     }
 }
 
