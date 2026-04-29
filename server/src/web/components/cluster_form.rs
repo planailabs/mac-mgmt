@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 
 use crate::models::Cluster;
 use crate::web::app::Route;
+use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -28,7 +29,7 @@ pub fn ClusterForm() -> Element {
 
     let on_submit = move |evt: FormEvent| {
         evt.prevent_default();
-        let nav = navigator.clone();
+        let nav = navigator;
         let name_val = name.read().clone();
         spawn(async move {
             match create_cluster(name_val).await {
@@ -45,26 +46,21 @@ pub fn ClusterForm() -> Element {
     };
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("cluster-form-title")} }
+        PageHeader { {t!("cluster-form-title")} }
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
+            ErrorText { class: "mb-4", "{err}" }
         }
         form { onsubmit: on_submit,
-            div { class: "mb-4",
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("name")} }
+            FormField { label: t!("name"),
                 input {
-                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
+                    class: "input",
                     r#type: "text",
                     required: true,
                     value: "{name}",
                     oninput: move |evt| name.set(evt.value()),
                 }
             }
-            button {
-                class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                r#type: "submit",
-                {t!("create")}
-            }
+            Button { kind: ButtonKind::Submit, {t!("create")} }
         }
     }
 }

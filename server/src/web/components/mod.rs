@@ -56,6 +56,7 @@ pub mod skill_list;
 pub mod staff_pings_page;
 pub mod table_utils;
 pub mod token_list;
+pub mod ui;
 pub mod user_detail;
 pub mod user_form;
 pub mod user_list;
