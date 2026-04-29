@@ -96,7 +96,6 @@ async fn main() -> Result<()> {
         Arc::clone(&registry),
         cfg.server_api_url.clone(),
         Arc::clone(&relay_swarm),
-        cfg.p2p_port,
         batch_token,
     );
 
@@ -132,13 +131,75 @@ async fn main() -> Result<()> {
         }
     }));
 
+    // Listen on two ports: the main HTTP port (axum) and a separate
+    // internal listener that detects libp2p WS upgrades and bridges them.
+    // We accept TCP connections manually, peek at the first bytes, and
+    // either bridge to the libp2p WS listener (port p2p_port) or pass
+    // to axum.
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {}", cfg.listen_addr);
 
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
-    Ok(())
+    let p2p_port = cfg.p2p_port;
+
+    // Spawn axum on a random internal port, then proxy non-WS requests to it.
+    let axum_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let axum_port = axum_listener.local_addr()?.port();
+    tracing::debug!("internal axum listener on 127.0.0.1:{axum_port}");
+
+    tokio::spawn(async move {
+        axum::serve(
+            axum_listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .expect("axum serve failed");
+    });
+
+    loop {
+        let (tcp_stream, remote_addr) = listener.accept().await?;
+        tokio::spawn(async move {
+            let mut peek_buf = [0u8; 512];
+            let n = match tcp_stream.peek(&mut peek_buf).await {
+                Ok(n) if n > 0 => n,
+                _ => return,
+            };
+
+            let is_ws_upgrade = {
+                let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
+                let first_line = peek_str.lines().next().unwrap_or("");
+                (first_line.starts_with("GET / ") || first_line.starts_with("GET /ws "))
+                    && peek_str.to_lowercase().contains("upgrade: websocket")
+            };
+
+            if is_ws_upgrade {
+                tracing::debug!(%remote_addr, "bridging WS to libp2p listener");
+                let upstream = match tokio::net::TcpStream::connect(
+                    format!("127.0.0.1:{p2p_port}"),
+                )
+                .await
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("failed to connect to libp2p WS: {e}");
+                        return;
+                    }
+                };
+                bridge::bridge_bidir(tcp_stream, upstream).await;
+            } else {
+                // Forward to internal axum listener.
+                let upstream = match tokio::net::TcpStream::connect(
+                    format!("127.0.0.1:{axum_port}"),
+                )
+                .await
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("failed to connect to internal axum: {e}");
+                        return;
+                    }
+                };
+                bridge::bridge_bidir(tcp_stream, upstream).await;
+            }
+        });
+    }
 }
