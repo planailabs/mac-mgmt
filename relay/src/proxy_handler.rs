@@ -945,33 +945,73 @@ async fn shell_exec(
     let arg_str = body.user_arg.as_deref().unwrap_or("");
     tracing::info!(instance = %instance_id, command = %command_name, arg = %arg_str, "shell_exec");
 
-    let request_id = Uuid::new_v4().to_string();
-    let req = serde_json::json!({
-        "type": "shell_exec_request",
-        "request_id": request_id,
+    // Open a tunnel substream for shell execution.
+    let handshake = serde_json::json!({
+        "type": "shell",
         "command_name": command_name,
         "user_arg": body.user_arg,
     });
 
-    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req)).await {
-        Ok(Ok(resp)) => {
-            let status = resp["status"].as_u64().unwrap_or(500) as u16;
-            axum::response::Response::builder()
-                .status(status)
-                .header("content-type", "application/json")
-                .body(Body::from(resp.to_string()))
-                .unwrap()
-                .into_response()
-        }
+    let mut tunnel = match tokio::time::timeout(
+        Duration::from_secs(10),
+        swarm.open_tunnel_stream(peer_id),
+    ).await {
+        Ok(Ok(s)) => s,
         Ok(Err(e)) => {
-            tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec p2p failed: {e}");
-            StatusCode::BAD_GATEWAY.into_response()
+            tracing::warn!(%instance_id, "shell_exec: failed to open tunnel: {e}");
+            return StatusCode::BAD_GATEWAY.into_response();
         }
-        Err(_) => {
-            tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: timeout (60s)");
-            StatusCode::GATEWAY_TIMEOUT.into_response()
+        Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+    };
+
+    // Send handshake.
+    {
+        use futures_util::AsyncWriteExt;
+        let data = serde_json::to_vec(&handshake).unwrap_or_default();
+        if tunnel.write_all(&(data.len() as u32).to_be_bytes()).await.is_err()
+            || tunnel.write_all(&data).await.is_err()
+        {
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+        let _ = tunnel.flush().await;
+    }
+
+    // Read streamed response using stream_framing:
+    // JSON frames with { stream, data } or { exit_code } + end marker.
+    use futures_util::AsyncReadExt;
+    let mut output_lines: Vec<serde_json::Value> = Vec::new();
+    let mut exit_code: Option<i32> = None;
+
+    loop {
+        let mut tag = [0u8; 1];
+        if tunnel.read_exact(&mut tag).await.is_err() { break; }
+        match tag[0] {
+            0x01 => { // JSON frame
+                let mut len_buf = [0u8; 4];
+                if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
+                let len = u32::from_be_bytes(len_buf) as usize;
+                if len > 1024 * 1024 { break; }
+                let mut buf = vec![0u8; len];
+                if tunnel.read_exact(&mut buf).await.is_err() { break; }
+                if let Ok(frame) = serde_json::from_slice::<serde_json::Value>(&buf) {
+                    if let Some(code) = frame["exit_code"].as_i64() {
+                        exit_code = Some(code as i32);
+                    } else {
+                        output_lines.push(frame);
+                    }
+                }
+            }
+            0x03 => break, // End marker
+            _ => break,
         }
     }
+
+    let resp = serde_json::json!({
+        "status": 200,
+        "exit_code": exit_code.unwrap_or(-1),
+        "output": output_lines,
+    });
+    Json(resp).into_response()
 }
 
 // ── Log tunnel endpoint ───────────────────────────────────────────────

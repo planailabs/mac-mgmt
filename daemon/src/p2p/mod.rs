@@ -652,6 +652,10 @@ async fn handle_tunnel_stream(
         "metrics" => {
             handle_streamed_metrics(handshake, &mut stream, handler_state).await;
         }
+        #[cfg(feature = "services")]
+        "shell" => {
+            handle_streamed_shell(handshake, &mut stream, handler_state).await;
+        }
         "ssh" => {
             handle_ssh_session(stream, handler_state).await;
             return; // stream consumed by SSH, don't close
@@ -917,6 +921,155 @@ async fn handle_streamed_metrics(
             let _ = stream_framing::write_end(stream).await;
         }
     }
+}
+
+/// Handle a shell command execution over a tunnel substream.
+/// Uses stream_framing to send output lines and exit code.
+#[cfg(feature = "services")]
+async fn handle_streamed_shell(
+    handshake: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use crate::p2p::stream_framing;
+
+    let command_name = handshake["command_name"].as_str().unwrap_or("");
+    let user_arg = handshake["user_arg"].as_str();
+
+    // Read everything from registry, then drop it before async work.
+    let (virtual_handler, exec_timeout, cmd_result) = {
+        let registry = handler_state.shell_tunnel_registry.read().await;
+        let Some(tunnel) = registry.get(command_name) else {
+            let err = serde_json::json!({ "exit_code": -1, "error": format!("unknown command: {command_name}") });
+            let _ = stream_framing::write_json(stream, &err).await;
+            let _ = stream_framing::write_end(stream).await;
+            return;
+        };
+
+        let virtual_handler = registry.get_virtual(command_name).cloned();
+
+        if let Err(e) = crate::shell_tunnels::validate_args(tunnel, user_arg) {
+            let err = serde_json::json!({ "exit_code": -1, "error": e });
+            let _ = stream_framing::write_json(stream, &err).await;
+            let _ = stream_framing::write_end(stream).await;
+            return;
+        }
+
+        let timeout = tunnel.def.timeout_secs.unwrap_or(crate::shell_tunnels::DEFAULT_EXEC_SECS);
+        let cmd = crate::shell_tunnels::build_command(tunnel, user_arg);
+        (virtual_handler, timeout, cmd)
+    };
+
+    if let Some(handler) = &virtual_handler {
+        let output = handler(user_arg);
+        for (strm, data) in &output.lines {
+            let msg = serde_json::json!({ "stream": strm, "data": data });
+            if stream_framing::write_json(stream, &msg).await.is_err() { return; }
+        }
+        let msg = serde_json::json!({ "exit_code": output.exit_code });
+        let _ = stream_framing::write_json(stream, &msg).await;
+        let _ = stream_framing::write_end(stream).await;
+        return;
+    }
+
+    let mut cmd = cmd_result;
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let err = serde_json::json!({ "exit_code": -1, "error": format!("spawn failed: {e}") });
+            let _ = stream_framing::write_json(stream, &err).await;
+            let _ = stream_framing::write_end(stream).await;
+            return;
+        }
+    };
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
+    let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
+
+    use tokio::io::AsyncBufReadExt;
+    let exec_timeout = exec_timeout;
+    let timeout = tokio::time::sleep(std::time::Duration::from_secs(exec_timeout));
+    tokio::pin!(timeout);
+
+    loop {
+        tokio::select! {
+            line = stdout_reader.next_line() => {
+                match line {
+                    Ok(Some(data)) => {
+                        let msg = serde_json::json!({ "stream": "stdout", "data": data });
+                        if stream_framing::write_json(stream, &msg).await.is_err() {
+                            let _ = child.kill().await;
+                            return;
+                        }
+                    }
+                    Ok(None) => {
+                        while let Ok(Some(data)) = stderr_reader.next_line().await {
+                            let msg = serde_json::json!({ "stream": "stderr", "data": data });
+                            if stream_framing::write_json(stream, &msg).await.is_err() {
+                                let _ = child.kill().await;
+                                return;
+                            }
+                        }
+                        break;
+                    }
+                    Err(_) => break,
+                }
+            }
+            line = stderr_reader.next_line() => {
+                match line {
+                    Ok(Some(data)) => {
+                        let msg = serde_json::json!({ "stream": "stderr", "data": data });
+                        if stream_framing::write_json(stream, &msg).await.is_err() {
+                            let _ = child.kill().await;
+                            return;
+                        }
+                    }
+                    Ok(None) => {
+                        while let Ok(Some(data)) = stdout_reader.next_line().await {
+                            let msg = serde_json::json!({ "stream": "stdout", "data": data });
+                            if stream_framing::write_json(stream, &msg).await.is_err() {
+                                let _ = child.kill().await;
+                                return;
+                            }
+                        }
+                        break;
+                    }
+                    Err(_) => break,
+                }
+            }
+            _ = &mut timeout => {
+                let _ = child.kill().await;
+                let msg = serde_json::json!({ "exit_code": -1, "error": format!("timeout ({exec_timeout}s)") });
+                let _ = stream_framing::write_json(stream, &msg).await;
+                let _ = stream_framing::write_end(stream).await;
+                return;
+            }
+        }
+    }
+
+    let exit_code = match child.wait().await {
+        Ok(status) => status.code().unwrap_or(-1),
+        Err(_) => -1,
+    };
+
+    let msg = serde_json::json!({ "exit_code": exit_code });
+    let _ = stream_framing::write_json(stream, &msg).await;
+    let _ = stream_framing::write_end(stream).await;
+}
+
+#[cfg(not(feature = "services"))]
+async fn handle_streamed_shell(
+    _handshake: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    _handler_state: &Arc<handler::HandlerState>,
+) {
+    use crate::p2p::stream_framing;
+    let err = serde_json::json!({ "exit_code": -1, "error": "services feature not enabled" });
+    let _ = stream_framing::write_json(stream, &err).await;
+    let _ = stream_framing::write_end(stream).await;
 }
 
 /// Handle an SSH session over a tunnel substream.
