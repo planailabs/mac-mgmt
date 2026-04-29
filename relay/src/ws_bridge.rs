@@ -60,7 +60,7 @@ pub async fn bridge_ws_to_stream(ws: WebSocket, mut stream: libp2p::Stream) {
 pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
     use tokio_tungstenite::tungstenite;
 
-    let url = format!("ws://127.0.0.1:{p2p_port}");
+    let url = format!("ws://[::1]:{p2p_port}");
     let connect_result = tokio_tungstenite::connect_async(&url).await;
     let (upstream, _) = match connect_result {
         Ok(pair) => pair,
