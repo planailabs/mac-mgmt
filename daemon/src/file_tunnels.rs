@@ -50,6 +50,32 @@ impl FileTunnelRegistry {
     pub fn get(&self, name: &str) -> Option<&FileTunnel> {
         self.tunnels.get(name)
     }
+
+    /// Serialize all file tunnels as JSON for relay advertisement.
+    pub fn to_json(&self) -> Vec<serde_json::Value> {
+        self.tunnels
+            .values()
+            .map(|ft| {
+                let mut val = serde_json::json!({
+                    "name": ft.name(),
+                    "service": ft.service,
+                    "path": ft.path(),
+                    "writable": ft.writable(),
+                    "description": ft.description(),
+                });
+                if let FileTunnelDef::Folder { include, .. } = &ft.def {
+                    val.as_object_mut().unwrap().insert("kind".into(), "directory".into());
+                    val.as_object_mut().unwrap().insert(
+                        "include".into(),
+                        serde_json::to_value(include).unwrap_or(serde_json::Value::Null),
+                    );
+                } else {
+                    val.as_object_mut().unwrap().insert("kind".into(), "file".into());
+                }
+                val
+            })
+            .collect()
+    }
 }
 
 // ── Path resolution + security ──────────────────────────────────────────

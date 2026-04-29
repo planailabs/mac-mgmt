@@ -70,6 +70,23 @@ impl ShellTunnelRegistry {
     pub fn get_virtual(&self, name: &str) -> Option<&VirtualHandler> {
         self.virtual_handlers.get(name)
     }
+
+    /// Serialize all shell tunnels as JSON for relay advertisement.
+    pub fn to_json(&self) -> Vec<serde_json::Value> {
+        self.tunnels
+            .values()
+            .map(|st| {
+                serde_json::json!({
+                    "name": st.def.name,
+                    "service": st.service,
+                    "description": st.def.description,
+                    "requires_arg": st.def.arg_template.is_some(),
+                    "arg_label": st.def.arg_template.as_ref().map(|t| &t.label),
+                    "arg_placeholder": st.def.arg_template.as_ref().map(|t| &t.placeholder),
+                })
+            })
+            .collect()
+    }
 }
 
 // ── Shell command execution (data session) ─────────────────────────────

@@ -589,11 +589,27 @@ async fn send_tunnel_advertisement_rpc(
         .collect();
     drop(tunnel_defs);
 
+    #[cfg(feature = "services")]
+    let file_tunnels = {
+        let reg = hs.file_tunnel_registry.read().await;
+        serde_json::Value::Array(reg.to_json())
+    };
+    #[cfg(not(feature = "services"))]
+    let file_tunnels = serde_json::Value::Array(vec![]);
+
+    #[cfg(feature = "services")]
+    let shell_tunnels = {
+        let reg = hs.shell_tunnel_registry.read().await;
+        serde_json::Value::Array(reg.to_json())
+    };
+    #[cfg(not(feature = "services"))]
+    let shell_tunnels = serde_json::Value::Array(vec![]);
+
     let req = serde_json::json!({
         "type": "tunnel_advertisement",
         "tunnels": tunnels,
-        "file_tunnels": [],
-        "shell_tunnels": [],
+        "file_tunnels": file_tunnels,
+        "shell_tunnels": shell_tunnels,
     });
     if let Err(e) = rpc.send(req).await {
         tracing::warn!("failed to send tunnel advertisement via RPC: {e}");
