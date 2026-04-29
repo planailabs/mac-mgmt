@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use libp2p::identity::Keypair;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
@@ -100,21 +100,14 @@ struct RelayBehaviour {
 
 fn load_or_generate_key(path: &Path) -> Result<Keypair> {
     if path.exists() {
-        let pem = std::fs::read_to_string(path)
+        let bytes = std::fs::read(path)
             .with_context(|| format!("failed to read key from {}", path.display()))?;
-        // Parse PKCS8 PEM → Ed25519 seed → libp2p Keypair
-        // Same logic as daemon/src/p2p/identity.rs
-        let der = decode_pem_to_der(&pem)?;
-        let seed = extract_ed25519_seed(&der)?;
-        let secret = libp2p::identity::ed25519::SecretKey::try_from_bytes(seed)
-            .map_err(|e| anyhow::anyhow!("invalid Ed25519 seed: {e}"))?;
-        let ed_kp = libp2p::identity::ed25519::Keypair::from(secret);
-        Ok(Keypair::from(ed_kp))
+        let kp = Keypair::from_protobuf_encoding(&bytes)
+            .map_err(|e| anyhow::anyhow!("failed to decode key: {e}"))?;
+        Ok(kp)
     } else {
         tracing::info!("generating new relay Ed25519 key at {}", path.display());
         let kp = Keypair::generate_ed25519();
-        // Save as PKCS8 PEM for persistence
-        // For simplicity, save the raw key bytes
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -128,27 +121,6 @@ fn load_or_generate_key(path: &Path) -> Result<Keypair> {
         }
         Ok(kp)
     }
-}
-
-fn decode_pem_to_der(pem: &str) -> Result<Vec<u8>> {
-    use base64::Engine;
-    let mut b64 = String::new();
-    let mut in_block = false;
-    for line in pem.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("-----BEGIN ") { in_block = true; continue; }
-        if trimmed.starts_with("-----END ") { break; }
-        if in_block { b64.push_str(trimmed); }
-    }
-    if b64.is_empty() { bail!("no PEM data found"); }
-    base64::engine::general_purpose::STANDARD.decode(&b64).context("invalid base64 in PEM")
-}
-
-fn extract_ed25519_seed(der: &[u8]) -> Result<[u8; 32]> {
-    if der.len() < 48 { bail!("DER too short for Ed25519 PKCS8"); }
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(&der[16..48]);
-    Ok(seed)
 }
 
 // ── Public API ───────────────────────────────────────────────────────
