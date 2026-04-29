@@ -353,8 +353,7 @@ impl<R: Row + GetRowData<LinkData>> TableColumn<R> for LinkColumn {
         let header = self.header;
         let indicator = sort_indicator(context);
         rsx! {
-            th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
+            th { class: "th-sortable",
                 onclick: move |_| toggle_sort(context),
                 "{header} {indicator}"
             }
@@ -372,19 +371,15 @@ impl<R: Row + GetRowData<LinkData>> TableColumn<R> for LinkColumn {
             let mono_class = if data.mono { " font-mono text-sm" } else { "" };
             let source = source.clone();
             rsx! {
-                td { class: "px-6 py-4 text-purple-700 dark:text-purple-400",
+                td { class: "td text-accent-strong",
                     span { class: "{mono_class}", "{data.label}" }
-                    span { class: "text-xs text-purple-500 dark:text-purple-500 ml-2", {t!("table-via", source: source)} }
+                    span { class: "text-xs text-accent ml-2", {t!("table-via", source: source)} }
                 }
             }
         } else {
-            let class = if data.mono {
-                "text-blue-600 dark:text-blue-400 hover:underline font-mono text-sm"
-            } else {
-                "text-blue-600 dark:text-blue-400 hover:underline"
-            };
+            let class = if data.mono { "link-mono" } else { "link" };
             rsx! {
-                td { class: "px-6 py-4 dark:text-gray-200",
+                td { class: "td",
                     Link { to: data.route, class, "{data.label}" }
                 }
             }
@@ -412,8 +407,7 @@ impl<R: Row + GetRowData<TextData>> TableColumn<R> for TextColumn {
         let header = self.header;
         let indicator = sort_indicator(context);
         rsx! {
-            th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
+            th { class: "th-sortable",
                 onclick: move |_| toggle_sort(context),
                 "{header} {indicator}"
             }
@@ -428,7 +422,7 @@ impl<R: Row + GetRowData<TextData>> TableColumn<R> for TextColumn {
     ) -> Element {
         let data: TextData = row.get();
         rsx! {
-            td { class: "px-6 py-4 dark:text-gray-200", "{data.0}" }
+            td { class: "td", "{data.0}" }
         }
     }
 
@@ -450,8 +444,7 @@ impl<R: Row + GetRowData<CreatedAtData>> TableColumn<R> for CreatedAtColumn {
     fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
         let indicator = sort_indicator(context);
         rsx! {
-            th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
+            th { class: "th-sortable",
                 onclick: move |_| toggle_sort(context),
                 "Created {indicator}"
             }
@@ -466,7 +459,7 @@ impl<R: Row + GetRowData<CreatedAtData>> TableColumn<R> for CreatedAtColumn {
     ) -> Element {
         let data: CreatedAtData = row.get();
         rsx! {
-            td { class: "px-6 py-4 text-gray-500 dark:text-gray-400", "{data.0}" }
+            td { class: "td-muted", "{data.0}" }
         }
     }
 
@@ -493,8 +486,7 @@ impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
     fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
         let indicator = sort_indicator(context);
         rsx! {
-            th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
+            th { class: "th-sortable",
                 onclick: move |_| toggle_sort(context),
                 "Version {indicator}"
             }
@@ -510,12 +502,12 @@ impl<R: Row + GetRowData<VersionData>> TableColumn<R> for VersionColumn {
         let data: VersionData = row.get();
         match data.0 {
             Some(ver) => rsx! {
-                td { class: "px-6 py-4",
-                    span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", {t!("table-version-prefix", version: ver)} }
+                td { class: "td",
+                    span { class: "font-mono text-sm", {t!("table-version-prefix", version: ver)} }
                 }
             },
             None => rsx! {
-                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
+                td { class: "td-muted text-sm", {t!("dash")} }
             },
         }
     }
@@ -543,8 +535,7 @@ impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitCol
     fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
         let indicator = sort_indicator(context);
         rsx! {
-            th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
+            th { class: "th-sortable",
                 onclick: move |_| toggle_sort(context),
                 "Nixpkgs {indicator}"
             }
@@ -562,13 +553,13 @@ impl<R: Row + GetRowData<NixpkgsCommitData>> TableColumn<R> for NixpkgsCommitCol
             Some(commit) => {
                 let short = commit.chars().take(7).collect::<String>();
                 rsx! {
-                    td { class: "px-6 py-4",
-                        span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", "{short}" }
+                    td { class: "td",
+                        span { class: "font-mono text-sm", "{short}" }
                     }
                 }
             }
             None => rsx! {
-                td { class: "px-6 py-4 text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
+                td { class: "td-muted text-sm", {t!("dash")} }
             },
         }
     }
