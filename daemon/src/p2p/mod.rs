@@ -41,6 +41,8 @@ pub enum P2pCommand {
 /// Events the P2pManager emits to the daemon event loop.
 #[derive(Debug)]
 pub enum P2pEvent {
+    /// The relay's proxy_url was learned — daemon should send a heartbeat.
+    RelayProxyUrlAcquired,
     /// An AI proxy request from a peer.
     AiProxyRequest {
         peer: PeerId,
@@ -346,6 +348,7 @@ async fn swarm_loop(
                     let actions = relay.handle_event(re);
                     execute_relay_actions(
                         actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
+                        &event_tx,
                     ).await;
                 }
 
@@ -374,6 +377,7 @@ async fn swarm_loop(
                         });
                         execute_relay_actions(
                             actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
+                            &event_tx,
                         ).await;
                     }
                 }
@@ -394,6 +398,7 @@ async fn swarm_loop(
                 let actions = relay.handle_event(RelayEvent::Tick);
                 execute_relay_actions(
                     actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
+                    &event_tx,
                 ).await;
 
                 // If Identified but no RPC stream yet, try opening one.
@@ -405,6 +410,7 @@ async fn swarm_loop(
                                 let actions = relay.handle_event(RelayEvent::RpcStreamOpened { stream });
                                 execute_relay_actions(
                                     actions, &mut swarm, &relay_proxy_url, &mut authorized_cluster_peers,
+                                    &event_tx,
                                 ).await;
                             }
                             Err(e) => {
@@ -443,6 +449,7 @@ async fn execute_relay_actions(
     swarm: &mut Swarm<ClusterBehaviour>,
     relay_proxy_url: &Arc<RwLock<Option<String>>>,
     authorized_cluster_peers: &mut std::collections::HashSet<PeerId>,
+    event_tx: &mpsc::Sender<P2pEvent>,
 ) {
     for action in actions {
         match action {
@@ -456,7 +463,11 @@ async fn execute_relay_actions(
                 // Handled in the relay_tick branch where we have &mut relay.
             }
             RelayAction::SetProxyUrl(url) => {
+                let acquired = url.is_some();
                 *relay_proxy_url.write().await = url;
+                if acquired {
+                    let _ = event_tx.send(P2pEvent::RelayProxyUrlAcquired).await;
+                }
             }
             RelayAction::AuthorizePeer(peer_id) => {
                 authorized_cluster_peers.insert(peer_id);

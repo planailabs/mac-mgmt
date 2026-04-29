@@ -1389,6 +1389,25 @@ pub async fn run(
                 tracing::debug!("relay signalled heartbeat");
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
             }
+            // P2p event: relay proxy URL acquired → send heartbeat immediately.
+            _p2p_evt = async {
+                #[cfg(all(feature = "relay", not(feature = "sim")))]
+                {
+                    if let Some(mgr) = _p2p_mgr.as_mut() {
+                        mgr.recv_event().await
+                    } else {
+                        std::future::pending().await
+                    }
+                }
+                #[cfg(any(not(feature = "relay"), feature = "sim"))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                #[cfg(all(feature = "relay", not(feature = "sim")))]
+                if matches!(_p2p_evt, Some(crate::p2p::P2pEvent::RelayProxyUrlAcquired)) {
+                    tracing::info!("relay proxy URL acquired, sending immediate heartbeat");
+                    daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
+                }
+            }
         }
     }
 
