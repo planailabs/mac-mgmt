@@ -36,18 +36,6 @@ pub enum P2pCommand {
     AdvertiseTunnels,
     /// Notify that the set of active AI proxy jobs changed.
     UpdateActiveJobs(u32),
-    /// Register with the relay (sent after connecting).
-    RegisterWithRelay {
-        instance_id: String,
-        cluster_id: Option<String>,
-        hostname: Option<String>,
-    },
-    /// Send tunnel definitions to the relay.
-    SendTunnelAdvertisement {
-        tunnels: serde_json::Value,
-        file_tunnels: serde_json::Value,
-        shell_tunnels: serde_json::Value,
-    },
 }
 
 /// Events the P2pManager emits to the daemon event loop.
@@ -76,8 +64,6 @@ pub struct P2pConfig {
     pub ai_proxy_distribution: bool,
     /// Handler state for processing incoming control requests.
     pub handler_state: Option<Arc<handler::HandlerState>>,
-    /// Cluster ID from the server token (for relay registration).
-    pub cluster_id: Option<String>,
 }
 
 /// Manages the libp2p swarm for cluster p2p networking.
@@ -434,7 +420,6 @@ async fn swarm_loop(
                         let reg = serde_json::json!({
                             "type": "register",
                             "instance_id": config.instance_id,
-                            "cluster_id": config.cluster_id,
                             "hostname": hostname::get().ok().map(|h| h.to_string_lossy().to_string()),
                         });
                         if let Err(e) = rpc.send(reg).await {
@@ -586,10 +571,6 @@ async fn handle_command(
         }
         P2pCommand::UpdateActiveJobs(count) => {
             active_jobs.store(count, Ordering::Relaxed);
-        }
-        P2pCommand::RegisterWithRelay { .. } | P2pCommand::SendTunnelAdvertisement { .. } => {
-            // These are now handled via the RPC stream in the relay state machine.
-            // Kept for backwards compat but no-op.
         }
     }
 }

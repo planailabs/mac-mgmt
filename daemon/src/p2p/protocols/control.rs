@@ -61,7 +61,6 @@ pub enum ControlRequest {
     /// Register with the relay node.
     Register {
         instance_id: String,
-        cluster_id: Option<String>,
         hostname: Option<String>,
         agent_name: Option<String>,
     },
