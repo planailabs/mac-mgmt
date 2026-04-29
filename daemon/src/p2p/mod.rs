@@ -738,9 +738,7 @@ async fn handle_streamed_proxy(
         use futures_util::{SinkExt, StreamExt, AsyncWriteExt as _};
         use tokio_tungstenite::tungstenite;
 
-        const TAG_TEXT: u8 = 0x01;
-        const TAG_BINARY: u8 = 0x02;
-        const TAG_CLOSE: u8 = 0x03;
+        use mac_mgmt_common::framing::{TAG_JSON as TAG_TEXT, TAG_BINARY, TAG_END as TAG_CLOSE};
 
         let (mut ws_sink, mut ws_stream) = local_ws.split();
 

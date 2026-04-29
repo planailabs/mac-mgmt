@@ -11,6 +11,7 @@ observability = ["sentry", "tracing-init"]
 
 [dependencies]
 chrono = "0.4"
+futures-util = { version = "0.3", default-features = false, features = ["io"] }
 humantime = "2"
 schemars = { version = "1.2.1", features = ["derive"] }
 sentry = { workspace = true, features = ["tracing"], optional = true }

@@ -12,13 +12,10 @@
 //! Both sides can send at any time (full duplex via tokio::select on
 //! the split read/write halves).
 
-use anyhow::{Result, bail};
-use futures_util::{AsyncReadExt, AsyncWriteExt};
+use anyhow::Result;
+use mac_mgmt_common::framing;
 use std::collections::HashMap;
 use tokio::sync::oneshot;
-
-/// Maximum RPC frame payload: 16 MiB.
-const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
 
 /// Protocol for the persistent RPC stream.
 pub const RPC_PROTOCOL: libp2p::StreamProtocol =
@@ -129,28 +126,12 @@ impl RpcStream {
 
     /// Write a single length-prefixed JSON frame.
     async fn write_frame(&mut self, value: &serde_json::Value) -> Result<()> {
-        let data = serde_json::to_vec(value)?;
-        if data.len() > MAX_FRAME_SIZE as usize {
-            bail!("RPC frame too large: {} bytes", data.len());
-        }
-        self.writer
-            .write_all(&(data.len() as u32).to_be_bytes())
-            .await?;
-        self.writer.write_all(&data).await?;
-        self.writer.flush().await?;
+        framing::write_lp_json(&mut self.writer, value).await?;
         Ok(())
     }
 
     /// Read a single length-prefixed JSON frame.
     async fn read_frame(&mut self) -> Result<serde_json::Value> {
-        let mut len_buf = [0u8; 4];
-        self.reader.read_exact(&mut len_buf).await?;
-        let len = u32::from_be_bytes(len_buf);
-        if len > MAX_FRAME_SIZE {
-            bail!("RPC frame too large: {len} bytes");
-        }
-        let mut buf = vec![0u8; len as usize];
-        self.reader.read_exact(&mut buf).await?;
-        Ok(serde_json::from_slice(&buf)?)
+        Ok(framing::read_lp_json(&mut self.reader).await?)
     }
 }

@@ -1,3 +1,5 @@
+pub mod framing;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

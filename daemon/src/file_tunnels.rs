@@ -525,7 +525,7 @@ pub async fn handle_write_session<S>(
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use crate::p2p::stream_framing::{self, FrameMsg};
+    use crate::p2p::stream_framing::{self, TaggedFrame};
 
     macro_rules! send_result {
         ($result:expr) => {{
@@ -546,15 +546,15 @@ pub async fn handle_write_session<S>(
     // Receive file content into memory
     let mut content = Vec::new();
     loop {
-        match stream_framing::read_frame(stream).await {
-            Ok(Some(FrameMsg::Binary(data))) => {
+        match stream_framing::read_tagged_frame(stream).await {
+            Ok(Some(TaggedFrame::Binary(data))) => {
                 content.extend_from_slice(&data);
                 if content.len() as u64 > MAX_FILE_SIZE {
                     send_result!(serde_json::json!({ "status": 413, "error": "file too large" }));
                 }
             }
-            Ok(Some(FrameMsg::End)) | Ok(None) => break,
-            Ok(Some(FrameMsg::Json(_))) => {
+            Ok(Some(TaggedFrame::End)) | Ok(None) => break,
+            Ok(Some(TaggedFrame::Json(_))) => {
                 // JSON during data phase = end signal (backwards compat)
                 break;
             }

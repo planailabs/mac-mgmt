@@ -10,10 +10,7 @@
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
-
-const TAG_TEXT: u8 = 0x01;
-const TAG_BINARY: u8 = 0x02;
-const TAG_CLOSE: u8 = 0x03;
+use mac_mgmt_common::framing::{TAG_JSON as TAG_TEXT, TAG_BINARY, TAG_END as TAG_CLOSE};
 
 /// Bridge an axum WebSocket to a libp2p `Stream` (tunnel substream).
 pub async fn bridge_ws_to_stream(ws: WebSocket, mut stream: libp2p::Stream) {
