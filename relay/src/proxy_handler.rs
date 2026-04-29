@@ -1005,42 +1005,36 @@ async fn shell_exec(
         let _ = tunnel.flush().await;
     }
 
-    // Read streamed response using stream_framing:
-    // JSON frames with { stream, data } or { exit_code } + end marker.
-    use futures_util::AsyncReadExt;
-    let mut output_lines: Vec<serde_json::Value> = Vec::new();
-    let mut exit_code: Option<i32> = None;
+    // Stream output as SSE events in real-time.
+    use axum::response::sse::{Event, KeepAlive, Sse};
 
-    loop {
-        let mut tag = [0u8; 1];
-        if tunnel.read_exact(&mut tag).await.is_err() { break; }
-        match tag[0] {
-            0x01 => { // JSON frame
-                let mut len_buf = [0u8; 4];
-                if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
-                let len = u32::from_be_bytes(len_buf) as usize;
-                if len > 1024 * 1024 { break; }
-                let mut buf = vec![0u8; len];
-                if tunnel.read_exact(&mut buf).await.is_err() { break; }
-                if let Ok(frame) = serde_json::from_slice::<serde_json::Value>(&buf) {
-                    if let Some(code) = frame["exit_code"].as_i64() {
-                        exit_code = Some(code as i32);
-                    } else {
-                        output_lines.push(frame);
+    let stream = async_stream::stream! {
+        use futures_util::AsyncReadExt;
+        loop {
+            let mut tag = [0u8; 1];
+            if tunnel.read_exact(&mut tag).await.is_err() { break; }
+            match tag[0] {
+                0x01 => {
+                    let mut len_buf = [0u8; 4];
+                    if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
+                    let len = u32::from_be_bytes(len_buf) as usize;
+                    if len > 1024 * 1024 { break; }
+                    let mut buf = vec![0u8; len];
+                    if tunnel.read_exact(&mut buf).await.is_err() { break; }
+                    if let Ok(frame) = serde_json::from_slice::<serde_json::Value>(&buf) {
+                        let data = serde_json::to_string(&frame).unwrap_or_default();
+                        yield Ok::<_, std::convert::Infallible>(Event::default().data(data));
                     }
                 }
+                0x03 => break,
+                _ => break,
             }
-            0x03 => break, // End marker
-            _ => break,
         }
-    }
+    };
 
-    let resp = serde_json::json!({
-        "status": 200,
-        "exit_code": exit_code.unwrap_or(-1),
-        "output": output_lines,
-    });
-    Json(resp).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 // ── Log tunnel endpoint ───────────────────────────────────────────────

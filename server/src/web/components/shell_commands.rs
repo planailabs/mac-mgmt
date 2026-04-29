@@ -187,6 +187,8 @@ fn ShellCommandCard(
 
     let run_name = name.clone();
 
+    let mut show_modal = use_signal(|| false);
+
     rsx! {
         div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-3",
             div { class: "flex items-center gap-3 mb-2",
@@ -202,9 +204,12 @@ fn ShellCommandCard(
                             let arg = arg_value.read().clone();
                             running.set(true);
                             output.set(String::new());
+                            show_modal.set(true);
                             async move {
                                 let user_arg = if arg.is_empty() { "null".to_string() } else { format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\"")) };
                                 let body = format!("{{\"user_arg\":{user_arg}}}");
+                                // Use SSE EventSource for real-time streaming.
+                                // POST isn't supported by EventSource, so we use fetch + ReadableStream.
                                 let js = format!(
                                     r#"
                                     try {{
@@ -219,12 +224,16 @@ fn ShellCommandCard(
                                         const reader = resp.body.getReader();
                                         const decoder = new TextDecoder();
                                         let result = "";
+                                        let buf = "";
                                         while (true) {{
                                             const {{done, value}} = await reader.read();
                                             if (done) break;
-                                            const text = decoder.decode(value, {{stream: true}});
-                                            const lines = text.split("\n");
-                                            for (const line of lines) {{
+                                            buf += decoder.decode(value, {{stream: true}});
+                                            while (true) {{
+                                                const idx = buf.indexOf("\n");
+                                                if (idx === -1) break;
+                                                const line = buf.slice(0, idx);
+                                                buf = buf.slice(idx + 1);
                                                 if (line.startsWith("data: ")) {{
                                                     try {{
                                                         const obj = JSON.parse(line.slice(6));
@@ -237,6 +246,12 @@ fn ShellCommandCard(
                                                         }}
                                                     }} catch(e) {{}}
                                                 }}
+                                            }}
+                                            // Update the modal output element in real-time.
+                                            const el = document.getElementById("shell-output");
+                                            if (el) {{
+                                                el.textContent = result;
+                                                el.scrollTop = el.scrollHeight;
                                             }}
                                         }}
                                         return result;
@@ -279,9 +294,41 @@ fn ShellCommandCard(
                     }
                 }
             }
-            if !output.read().is_empty() {
-                pre { class: "mt-2 p-2 bg-gray-900 text-green-400 text-xs font-mono rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap",
-                    "{output}"
+        }
+
+        // Output modal
+        if *show_modal.read() {
+            div {
+                class: "fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4",
+                onclick: move |_| {
+                    if !*running.read() {
+                        show_modal.set(false);
+                    }
+                },
+                div {
+                    class: "bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col",
+                    onclick: move |e| e.stop_propagation(),
+                    // Header
+                    div { class: "flex items-center justify-between px-4 py-3 border-b dark:border-gray-700",
+                        h3 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200",
+                            "{name}"
+                            if *running.read() {
+                                span { class: "ml-2 text-yellow-500 animate-pulse", "running..." }
+                            }
+                        }
+                        button {
+                            class: "text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-lg cursor-pointer",
+                            disabled: *running.read(),
+                            onclick: move |_| show_modal.set(false),
+                            "x"
+                        }
+                    }
+                    // Output
+                    pre {
+                        id: "shell-output",
+                        class: "flex-1 p-4 bg-gray-900 text-green-400 text-xs font-mono overflow-auto whitespace-pre-wrap min-h-[200px]",
+                        "{output}"
+                    }
                 }
             }
         }
