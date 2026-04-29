@@ -682,43 +682,80 @@ async fn handle_streamed_proxy(
             }
         };
 
-        // Bridge: tunnel substream (raw bytes from relay's ws_bridge) ↔ local WS.
-        // The relay side converts browser WS messages to raw bytes on the substream.
-        // We need to convert those raw bytes to WS messages for the local service.
-        use futures_util::{SinkExt, StreamExt};
+        // Bridge: tunnel substream (framed messages from relay) ↔ local WS.
+        // Uses the same tag+length framing protocol as relay's ws_bridge:
+        //   0x01 + len + data = Text, 0x02 + len + data = Binary, 0x03 = Close.
+        use futures_util::{SinkExt, StreamExt, AsyncWriteExt as _};
         use tokio_tungstenite::tungstenite;
+
+        const TAG_TEXT: u8 = 0x01;
+        const TAG_BINARY: u8 = 0x02;
+        const TAG_CLOSE: u8 = 0x03;
 
         let (mut ws_sink, mut ws_stream) = local_ws.split();
 
         loop {
             tokio::select! {
-                // Tunnel substream → local WS
-                data = async {
+                // Tunnel substream → local WS (read framed messages)
+                tag_result = async {
                     use futures_util::AsyncReadExt;
-                    let mut buf = vec![0u8; 64 * 1024];
-                    stream.read(&mut buf).await.map(|n| buf[..n].to_vec())
+                    let mut tag = [0u8; 1];
+                    stream.read_exact(&mut tag).await.map(|_| tag[0])
                 } => {
-                    match data {
-                        Ok(bytes) if !bytes.is_empty() => {
-                            if ws_sink.send(tungstenite::Message::Binary(bytes.into())).await.is_err() {
-                                break;
-                            }
+                    let Ok(tag) = tag_result else { break };
+                    match tag {
+                        TAG_TEXT => {
+                            use futures_util::AsyncReadExt;
+                            let mut len_buf = [0u8; 4];
+                            if stream.read_exact(&mut len_buf).await.is_err() { break; }
+                            let len = u32::from_be_bytes(len_buf) as usize;
+                            if len > 16 * 1024 * 1024 { break; }
+                            let mut data = vec![0u8; len];
+                            if stream.read_exact(&mut data).await.is_err() { break; }
+                            let text = String::from_utf8_lossy(&data);
+                            if ws_sink.send(tungstenite::Message::text(text.as_ref())).await.is_err() { break; }
                         }
+                        TAG_BINARY => {
+                            use futures_util::AsyncReadExt;
+                            let mut len_buf = [0u8; 4];
+                            if stream.read_exact(&mut len_buf).await.is_err() { break; }
+                            let len = u32::from_be_bytes(len_buf) as usize;
+                            if len > 16 * 1024 * 1024 { break; }
+                            let mut data = vec![0u8; len];
+                            if stream.read_exact(&mut data).await.is_err() { break; }
+                            if ws_sink.send(tungstenite::Message::Binary(data.into())).await.is_err() { break; }
+                        }
+                        TAG_CLOSE => break,
                         _ => break,
                     }
                 }
-                // Local WS → tunnel substream
+                // Local WS → tunnel substream (write framed messages)
                 msg = ws_stream.next() => {
                     match msg {
-                        Some(Ok(tungstenite::Message::Binary(data))) => {
-                            use futures_util::AsyncWriteExt;
-                            if stream.write_all(&data).await.is_err() { break; }
-                        }
                         Some(Ok(tungstenite::Message::Text(text))) => {
-                            use futures_util::AsyncWriteExt;
-                            if stream.write_all(text.as_bytes()).await.is_err() { break; }
+                            let bytes = text.as_bytes();
+                            if stream.write_all(&[TAG_TEXT]).await.is_err()
+                                || stream.write_all(&(bytes.len() as u32).to_be_bytes()).await.is_err()
+                                || stream.write_all(bytes).await.is_err()
+                            { break; }
+                            let _ = stream.flush().await;
                         }
-                        Some(Ok(tungstenite::Message::Close(_))) | None => break,
+                        Some(Ok(tungstenite::Message::Binary(data))) => {
+                            if stream.write_all(&[TAG_BINARY]).await.is_err()
+                                || stream.write_all(&(data.len() as u32).to_be_bytes()).await.is_err()
+                                || stream.write_all(&data).await.is_err()
+                            { break; }
+                            let _ = stream.flush().await;
+                        }
+                        Some(Ok(tungstenite::Message::Ping(data))) => {
+                            // Respond locally.
+                            let _ = ws_sink.send(tungstenite::Message::Pong(data)).await;
+                        }
+                        Some(Ok(tungstenite::Message::Pong(_))) => {}
+                        Some(Ok(tungstenite::Message::Close(_))) | None => {
+                            let _ = stream.write_all(&[TAG_CLOSE]).await;
+                            break;
+                        }
                         _ => {}
                     }
                 }

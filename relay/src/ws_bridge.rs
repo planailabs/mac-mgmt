@@ -1,47 +1,84 @@
 //! Bridges between axum WebSocket connections and libp2p substreams.
 //!
-//! Two use cases:
-//! 1. **End-user proxy**: Browser opens WS to the relay proxy subdomain,
-//!    relay opens a libp2p tunnel substream to the daemon, bridges the two.
-//! 2. **libp2p-over-WS**: Daemon connects via WS on the main HTTP port,
-//!    relay bridges the raw WS connection to a TCP connection to the local
-//!    libp2p WS listener so the daemon gets a full libp2p connection.
+//! Uses a simple framing protocol on the substream to preserve WS
+//! message types:
+//!   Tag 0x01 + length-prefixed payload = Text message
+//!   Tag 0x02 + length-prefixed payload = Binary message
+//!   Tag 0x03 = Close
+//!
+//! Ping/Pong are handled locally at each end (not forwarded).
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
 
+const TAG_TEXT: u8 = 0x01;
+const TAG_BINARY: u8 = 0x02;
+const TAG_CLOSE: u8 = 0x03;
+
 /// Bridge an axum WebSocket to a libp2p `Stream` (tunnel substream).
-///
-/// WS binary messages are forwarded as raw bytes on the substream.
-/// WS text messages are forwarded as UTF-8 bytes.
-/// Runs until either side closes or errors.
 pub async fn bridge_ws_to_stream(ws: WebSocket, mut stream: libp2p::Stream) {
     let (mut ws_sink, mut ws_stream) = ws.split();
-    let mut buf = vec![0u8; 64 * 1024];
+    let mut read_buf = vec![0u8; 64 * 1024];
 
     loop {
         tokio::select! {
             ws_msg = ws_stream.next() => {
                 match ws_msg {
-                    Some(Ok(Message::Binary(data))) => {
-                        if stream.write_all(&data).await.is_err() { break; }
-                    }
                     Some(Ok(Message::Text(text))) => {
-                        if stream.write_all(text.as_bytes()).await.is_err() { break; }
+                        let bytes = text.as_bytes();
+                        let header = [TAG_TEXT];
+                        let len = (bytes.len() as u32).to_be_bytes();
+                        if stream.write_all(&header).await.is_err()
+                            || stream.write_all(&len).await.is_err()
+                            || stream.write_all(bytes).await.is_err()
+                        { break; }
+                        let _ = stream.flush().await;
                     }
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    _ => {}
+                    Some(Ok(Message::Binary(data))) => {
+                        let header = [TAG_BINARY];
+                        let len = (data.len() as u32).to_be_bytes();
+                        if stream.write_all(&header).await.is_err()
+                            || stream.write_all(&len).await.is_err()
+                            || stream.write_all(&data).await.is_err()
+                        { break; }
+                        let _ = stream.flush().await;
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        // Respond to ping locally.
+                        let _ = ws_sink.send(Message::Pong(data)).await;
+                    }
+                    Some(Ok(Message::Pong(_))) => {} // ignore
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
+                        let _ = stream.write_all(&[TAG_CLOSE]).await;
+                        break;
+                    }
                 }
             }
-            read_result = stream.read(&mut buf) => {
-                match read_result {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if ws_sink.send(Message::Binary(buf[..n].to_vec().into())).await.is_err() {
-                            break;
-                        }
+            // Read framed messages from the substream.
+            read_result = stream.read_exact(&mut read_buf[..1]) => {
+                if read_result.is_err() { break; }
+                match read_buf[0] {
+                    TAG_TEXT => {
+                        let mut len_buf = [0u8; 4];
+                        if stream.read_exact(&mut len_buf).await.is_err() { break; }
+                        let len = u32::from_be_bytes(len_buf) as usize;
+                        if len > 16 * 1024 * 1024 { break; }
+                        let mut data = vec![0u8; len];
+                        if stream.read_exact(&mut data).await.is_err() { break; }
+                        let text = String::from_utf8_lossy(&data);
+                        if ws_sink.send(Message::Text(text.into_owned().into())).await.is_err() { break; }
                     }
-                    Err(_) => break,
+                    TAG_BINARY => {
+                        let mut len_buf = [0u8; 4];
+                        if stream.read_exact(&mut len_buf).await.is_err() { break; }
+                        let len = u32::from_be_bytes(len_buf) as usize;
+                        if len > 16 * 1024 * 1024 { break; }
+                        let mut data = vec![0u8; len];
+                        if stream.read_exact(&mut data).await.is_err() { break; }
+                        if ws_sink.send(Message::Binary(data.into())).await.is_err() { break; }
+                    }
+                    TAG_CLOSE => break,
+                    _ => break,
                 }
             }
         }
@@ -54,9 +91,6 @@ pub async fn bridge_ws_to_stream(ws: WebSocket, mut stream: libp2p::Stream) {
 /// Bridge an axum WebSocket to a TCP connection to the local libp2p
 /// WS listener, allowing daemons to establish libp2p connections
 /// through the main HTTP port.
-///
-/// Forwards raw WebSocket frames bidirectionally between the incoming
-/// axum WS and a new WS connection to `localhost:{p2p_port}`.
 pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
     use tokio_tungstenite::tungstenite;
 
@@ -73,7 +107,6 @@ pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
     let (mut up_sink, mut up_stream) = upstream.split();
     let (mut ws_sink, mut ws_stream) = ws.split();
 
-    // client WS → libp2p WS
     let client_to_upstream = async {
         while let Some(msg) = ws_stream.next().await {
             let tung_msg = match msg {
@@ -95,7 +128,6 @@ pub async fn bridge_ws_to_libp2p_listener(ws: WebSocket, p2p_port: u16) {
         }
     };
 
-    // libp2p WS → client WS
     let upstream_to_client = async {
         while let Some(msg) = up_stream.next().await {
             let axum_msg = match msg {
