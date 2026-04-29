@@ -162,6 +162,7 @@
 
   .btn-primary   { @apply bg-brand text-fg-invert hover:bg-brand-strong focus:ring-brand; }
   .btn-danger    { @apply bg-danger text-fg-invert hover:bg-danger-strong focus:ring-danger; }
+  .btn-warn      { @apply bg-warn text-warn-strong hover:bg-warn-strong hover:text-fg-invert; }
   .btn-secondary { @apply bg-surface-3 text-fg hover:bg-surface-strong; }
   .btn-ghost     { @apply text-fg-muted hover:text-fg-strong hover:bg-surface-2; }
   .btn-accent    { @apply bg-accent-soft text-accent hover:opacity-80; }

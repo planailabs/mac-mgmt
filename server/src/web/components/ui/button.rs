@@ -6,6 +6,7 @@ pub enum ButtonVariant {
     Primary,
     Secondary,
     Danger,
+    Warn,
     Ghost,
     Accent,
 }
@@ -16,6 +17,7 @@ impl ButtonVariant {
             Self::Primary   => "btn-primary",
             Self::Secondary => "btn-secondary",
             Self::Danger    => "btn-danger",
+            Self::Warn      => "btn-warn",
             Self::Ghost     => "btn-ghost",
             Self::Accent    => "btn-accent",
         }
