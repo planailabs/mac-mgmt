@@ -11,81 +11,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use libp2p::identity::Keypair;
-use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, Transport, identify};
 use tokio::sync::RwLock;
 
 use crate::daemon_registry::DaemonRegistry;
-
-// ── Protocol types (shared with daemon) ──────────────────────────────
-
-/// Re-use the same control protocol wire format as the daemon.
-/// We inline the codec here to avoid a cross-crate dep on the daemon.
-mod control_codec {
-    use async_trait::async_trait;
-    use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-    use libp2p::request_response;
-    use libp2p::StreamProtocol;
-
-    pub const PROTOCOL_NAME: StreamProtocol = StreamProtocol::new("/mac-mgmt/control/1.0.0");
-
-    pub type ControlRequest = serde_json::Value;
-    pub type ControlResponse = serde_json::Value;
-
-    #[derive(Debug, Clone, Default)]
-    pub struct ControlCodec;
-
-    const MAX_MSG_SIZE: u64 = 16 * 1024 * 1024;
-
-    #[async_trait]
-    impl request_response::Codec for ControlCodec {
-        type Protocol = StreamProtocol;
-        type Request = ControlRequest;
-        type Response = ControlResponse;
-
-        async fn read_request<T>(&mut self, _: &StreamProtocol, io: &mut T) -> std::io::Result<Self::Request>
-        where T: AsyncRead + Unpin + Send {
-            read_lp(io).await
-        }
-
-        async fn read_response<T>(&mut self, _: &StreamProtocol, io: &mut T) -> std::io::Result<Self::Response>
-        where T: AsyncRead + Unpin + Send {
-            read_lp(io).await
-        }
-
-        async fn write_request<T>(&mut self, _: &StreamProtocol, io: &mut T, req: Self::Request) -> std::io::Result<()>
-        where T: AsyncWrite + Unpin + Send {
-            write_lp(io, &req).await
-        }
-
-        async fn write_response<T>(&mut self, _: &StreamProtocol, io: &mut T, resp: Self::Response) -> std::io::Result<()>
-        where T: AsyncWrite + Unpin + Send {
-            write_lp(io, &resp).await
-        }
-    }
-
-    async fn read_lp<T, M>(io: &mut T) -> std::io::Result<M>
-    where T: AsyncRead + Unpin + Send, M: serde::de::DeserializeOwned {
-        let mut len_buf = [0u8; 4];
-        io.read_exact(&mut len_buf).await?;
-        let len = u32::from_be_bytes(len_buf) as u64;
-        if len > MAX_MSG_SIZE {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "msg too large"));
-        }
-        let mut buf = vec![0u8; len as usize];
-        io.read_exact(&mut buf).await?;
-        serde_json::from_slice(&buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-    }
-
-    async fn write_lp<T, M>(io: &mut T, msg: &M) -> std::io::Result<()>
-    where T: AsyncWrite + Unpin + Send, M: serde::Serialize {
-        let data = serde_json::to_vec(msg).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        io.write_all(&(data.len() as u32).to_be_bytes()).await?;
-        io.write_all(&data).await?;
-        io.close().await
-    }
-}
 
 // ── Behaviour ────────────────────────────────────────────────────────
 
@@ -93,7 +23,6 @@ mod control_codec {
 struct RelayBehaviour {
     identify: identify::Behaviour,
     relay_server: libp2p::relay::Behaviour,
-    control: request_response::Behaviour<control_codec::ControlCodec>,
     streams: libp2p_stream::Behaviour,
 }
 
@@ -126,10 +55,12 @@ fn load_or_generate_key(path: &Path) -> Result<Keypair> {
 
 // ── Public API ───────────────────────────────────────────────────────
 
-/// A control request to send to a peer, with a channel for the response.
-pub struct OutboundRequest {
-    pub peer_id: PeerId,
-    pub request: serde_json::Value,
+/// Map of PeerId → channel to send RPC requests to a daemon's RPC handler.
+type DaemonRpcMap = Arc<RwLock<HashMap<PeerId, tokio::sync::mpsc::Sender<DaemonRpcRequest>>>>;
+
+/// A request to send to a daemon via its RPC stream.
+pub struct DaemonRpcRequest {
+    pub payload: serde_json::Value,
     pub response_tx: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
 }
 
@@ -137,12 +68,10 @@ pub struct OutboundRequest {
 #[allow(dead_code)]
 pub struct RelaySwarm {
     pub local_peer_id: PeerId,
-    /// Map PeerId → instance metadata (cluster_id, tunnels, etc.)
     pub peer_metadata: Arc<RwLock<HashMap<PeerId, PeerMetadata>>>,
-    /// Channel to send control requests to the swarm event loop.
-    outbound_tx: tokio::sync::mpsc::Sender<OutboundRequest>,
-    /// Control handle for opening raw substreams to peers.
     pub stream_control: libp2p_stream::Control,
+    /// RPC channels to connected daemons, keyed by PeerId.
+    daemon_rpc_map: DaemonRpcMap,
 }
 
 /// Protocol for tunnel data substreams.
@@ -150,22 +79,30 @@ pub const TUNNEL_STREAM_PROTOCOL: libp2p::StreamProtocol =
     libp2p::StreamProtocol::new("/mac-mgmt/tunnel/1.0.0");
 
 impl RelaySwarm {
-    /// Send a control request to a peer and wait for the response.
+    /// Send a control request to a daemon via its RPC stream and wait for the response.
     pub async fn send_request(
         &self,
         peer_id: PeerId,
         request: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.outbound_tx
-            .send(OutboundRequest {
-                peer_id,
-                request,
-                response_tx: tx,
-            })
+        let rpc_map = self.daemon_rpc_map.read().await;
+        let tx = rpc_map
+            .get(&peer_id)
+            .ok_or_else(|| format!("no RPC stream for peer {peer_id}"))?
+            .clone();
+        drop(rpc_map);
+
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        tx.send(DaemonRpcRequest {
+            payload: request,
+            response_tx: resp_tx,
+        })
+        .await
+        .map_err(|_| "daemon RPC channel closed".to_string())?;
+
+        resp_rx
             .await
-            .map_err(|_| "swarm channel closed".to_string())?;
-        rx.await.map_err(|_| "response channel dropped".to_string())?
+            .map_err(|_| "daemon RPC response dropped".to_string())?
     }
 
     /// Open a raw bidirectional substream to a peer for tunnel data.
@@ -238,16 +175,9 @@ impl RelaySwarm {
                     libp2p::relay::Config::default(),
                 );
 
-                let control = request_response::Behaviour::new(
-                    [(control_codec::PROTOCOL_NAME, ProtocolSupport::Full)],
-                    request_response::Config::default()
-                        .with_request_timeout(Duration::from_secs(30)),
-                );
-
                 Ok(RelayBehaviour {
                     identify: identify::Behaviour::new(identify_cfg),
                     relay_server,
-                    control,
                     streams: libp2p_stream::Behaviour::new(),
                 })
             })?
@@ -267,7 +197,7 @@ impl RelaySwarm {
         swarm.listen_on(ws_addr)?;
 
         let peer_metadata = Arc::new(RwLock::new(HashMap::new()));
-        let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(256);
+        let daemon_rpc_map: DaemonRpcMap = Arc::new(RwLock::new(HashMap::new()));
 
         // Extract the stream control handle before moving the swarm.
         let stream_control = swarm.behaviour().streams.new_control();
@@ -276,12 +206,21 @@ impl RelaySwarm {
         let rpc_protocol = libp2p::StreamProtocol::new("/mac-mgmt/rpc/1.0.0");
         let mut incoming_streams = stream_control.clone().accept(rpc_protocol).unwrap();
         let registry_for_rpc = Arc::clone(&registry);
+        let rpc_map_for_accept = Arc::clone(&daemon_rpc_map);
         tokio::spawn(async move {
             while let Some((peer_id, stream)) = incoming_streams.next().await {
                 tracing::info!(%peer_id, "daemon opened RPC stream");
                 let registry = Arc::clone(&registry_for_rpc);
+                let rpc_map = Arc::clone(&rpc_map_for_accept);
+
+                // Create a channel for the relay to send outbound requests to this daemon.
+                let (req_tx, req_rx) = tokio::sync::mpsc::channel(64);
+                rpc_map.write().await.insert(peer_id, req_tx);
+
+                let rpc_map_cleanup = Arc::clone(&rpc_map);
                 tokio::spawn(async move {
-                    handle_daemon_rpc(peer_id, stream, registry).await;
+                    handle_daemon_rpc(peer_id, stream, registry, req_rx).await;
+                    rpc_map_cleanup.write().await.remove(&peer_id);
                 });
             }
         });
@@ -289,11 +228,11 @@ impl RelaySwarm {
         // Spawn the swarm event loop
         let pm_clone = Arc::clone(&peer_metadata);
         tokio::spawn(async move {
-            relay_event_loop(swarm, registry, pm_clone, outbound_rx).await;
+            relay_event_loop(swarm, registry, pm_clone).await;
         });
 
         Ok(Self {
-            outbound_tx,
+            daemon_rpc_map,
             stream_control,
             local_peer_id,
             peer_metadata,
@@ -305,171 +244,46 @@ use futures_util::StreamExt;
 
 async fn relay_event_loop(
     mut swarm: Swarm<RelayBehaviour>,
-    registry: Arc<DaemonRegistry>,
+    _registry: Arc<DaemonRegistry>,
     peer_metadata: Arc<RwLock<HashMap<PeerId, PeerMetadata>>>,
-    mut outbound_rx: tokio::sync::mpsc::Receiver<OutboundRequest>,
 ) {
-    // Map PeerId → instance_id for cleanup on disconnect.
-    let mut peer_instance_map: HashMap<PeerId, (String, chrono::DateTime<chrono::Utc>)> =
-        HashMap::new();
-    // Track pending outbound request responses by request_id.
-    let mut pending_responses: HashMap<
-        request_response::OutboundRequestId,
-        tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
-    > = HashMap::new();
-
+    // Registration/tunnel management is now handled by the persistent
+    // RPC stream handlers (handle_daemon_rpc). This event loop only
+    // handles Identify and connection lifecycle.
     loop {
-        tokio::select! {
-            event = swarm.select_next_some() => {
-                handle_relay_event(
-                    event,
-                    &peer_metadata,
-                    &mut swarm,
-                    &mut pending_responses,
-                    &registry,
-                    &mut peer_instance_map,
-                ).await;
-            }
-            Some(req) = outbound_rx.recv() => {
-                let req_id = swarm.behaviour_mut().control.send_request(
-                    &req.peer_id,
-                    req.request,
+        match swarm.select_next_some().await {
+            SwarmEvent::Behaviour(RelayBehaviourEvent::Identify(
+                identify::Event::Received { peer_id, info, .. },
+            )) => {
+                tracing::info!(%peer_id, agent = %info.agent_version, "peer identified");
+                for addr in &info.listen_addrs {
+                    swarm.add_peer_address(peer_id, addr.clone());
+                }
+                peer_metadata.write().await.insert(
+                    peer_id,
+                    PeerMetadata {
+                        agent_version: info.agent_version,
+                        listen_addrs: info.listen_addrs,
+                    },
                 );
-                pending_responses.insert(req_id, req.response_tx);
             }
-        }
-    }
-}
-
-async fn handle_relay_event(
-    event: SwarmEvent<RelayBehaviourEvent>,
-    peer_metadata: &Arc<RwLock<HashMap<PeerId, PeerMetadata>>>,
-    swarm: &mut Swarm<RelayBehaviour>,
-    pending_responses: &mut HashMap<
-        request_response::OutboundRequestId,
-        tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
-    >,
-    registry: &Arc<DaemonRegistry>,
-    peer_instance_map: &mut HashMap<PeerId, (String, chrono::DateTime<chrono::Utc>)>,
-) {
-    match event {
-        SwarmEvent::Behaviour(RelayBehaviourEvent::Identify(
-            identify::Event::Received { peer_id, info, .. },
-        )) => {
-            tracing::info!(%peer_id, agent = %info.agent_version, "daemon identified");
-            for addr in &info.listen_addrs {
-                swarm.add_peer_address(peer_id, addr.clone());
+            SwarmEvent::Behaviour(RelayBehaviourEvent::RelayServer(event)) => {
+                tracing::debug!(?event, "relay server event");
             }
-            peer_metadata.write().await.insert(
-                peer_id,
-                PeerMetadata {
-                    agent_version: info.agent_version,
-                    listen_addrs: info.listen_addrs,
-                },
-            );
-        }
-        SwarmEvent::Behaviour(RelayBehaviourEvent::RelayServer(event)) => {
-            tracing::debug!(?event, "relay server event");
-        }
-        SwarmEvent::Behaviour(RelayBehaviourEvent::Control(
-            request_response::Event::Message {
-                peer,
-                message: request_response::Message::Request { channel, request, .. },
-                ..
-            },
-        )) => {
-            let msg_type = request["type"].as_str().unwrap_or("");
-            match msg_type {
-                "register" => {
-                    let instance_id = request["instance_id"].as_str().unwrap_or("").to_string();
-                    let cluster_id = request["cluster_id"]
-                        .as_str()
-                        .and_then(|s| s.parse().ok());
-                    let hostname = request["hostname"].as_str().map(String::from);
-                    let agent_name = request["agent_name"].as_str().map(String::from);
-                    let now = chrono::Utc::now();
-
-                    if !instance_id.is_empty() {
-                        tracing::info!(%peer, %instance_id, "daemon registered via p2p");
-                        registry.register(crate::daemon_registry::DaemonConn {
-                            instance_id: instance_id.clone(),
-                            cluster_id,
-                            cluster_name: None,
-                            agent_name,
-                            hostname,
-                            connected_at: now,
-                            tunnels: Vec::new(),
-                            file_tunnels: serde_json::Value::Array(vec![]),
-                            shell_tunnels: serde_json::Value::Array(vec![]),
-                            peer_id: Some(peer),
-                        });
-                        peer_instance_map.insert(peer, (instance_id, now));
-                    }
-
-                    let resp = serde_json::json!({ "type": "ok" });
-                    let _ = swarm.behaviour_mut().control.send_response(channel, resp);
-                }
-                "tunnel_advertisement" => {
-                    if let Some((instance_id, _)) = peer_instance_map.get(&peer) {
-                        let tunnels: Vec<crate::daemon_registry::ServiceTunnel> = request["tunnels"]
-                            .as_array()
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|t| {
-                                        Some(crate::daemon_registry::ServiceTunnel {
-                                            name: t["name"].as_str()?.to_string(),
-                                            tcp_port: t["port"].as_u64()? as u16,
-                                        })
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let file_tunnels = request["file_tunnels"].clone();
-                        let shell_tunnels = request["shell_tunnels"].clone();
-                        registry.update_all_tunnels(instance_id, tunnels, file_tunnels, shell_tunnels);
-                        tracing::debug!(%peer, %instance_id, "tunnel advertisement received");
-                    }
-                    let resp = serde_json::json!({ "type": "ok" });
-                    let _ = swarm.behaviour_mut().control.send_response(channel, resp);
-                }
-                _ => {
-                    tracing::debug!(%peer, %msg_type, "unknown control request");
-                    let resp = serde_json::json!({ "type": "error", "message": "unknown request type" });
-                    let _ = swarm.behaviour_mut().control.send_response(channel, resp);
-                }
+            SwarmEvent::NewListenAddr { address, .. } => {
+                tracing::info!(%address, "relay listening on");
             }
-        }
-        SwarmEvent::Behaviour(RelayBehaviourEvent::Control(
-            request_response::Event::Message {
-                message: request_response::Message::Response { request_id, response },
-                ..
-            },
-        )) => {
-            if let Some(tx) = pending_responses.remove(&request_id) {
-                let _ = tx.send(Ok(response));
+            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                tracing::info!(%peer_id, "peer connected to relay");
             }
-        }
-        SwarmEvent::Behaviour(RelayBehaviourEvent::Control(
-            request_response::Event::OutboundFailure { request_id, error, .. },
-        )) => {
-            if let Some(tx) = pending_responses.remove(&request_id) {
-                let _ = tx.send(Err(format!("outbound request failed: {error}")));
+            SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                tracing::info!(%peer_id, "peer disconnected from relay");
+                peer_metadata.write().await.remove(&peer_id);
+                // Note: daemon unregistration is handled by the RPC stream
+                // handler (handle_daemon_rpc) when the stream closes.
             }
+            _ => {}
         }
-        SwarmEvent::NewListenAddr { address, .. } => {
-            tracing::info!(%address, "relay listening on");
-        }
-        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-            tracing::info!(%peer_id, "peer connected to relay");
-        }
-        SwarmEvent::ConnectionClosed { peer_id, .. } => {
-            tracing::info!(%peer_id, "peer disconnected from relay");
-            peer_metadata.write().await.remove(&peer_id);
-            if let Some((instance_id, connected_at)) = peer_instance_map.remove(&peer_id) {
-                registry.unregister(&instance_id, connected_at);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -478,45 +292,71 @@ async fn handle_relay_event(
 /// sends responses back.
 async fn handle_daemon_rpc(
     peer_id: PeerId,
-    mut stream: libp2p::Stream,
+    stream: libp2p::Stream,
     registry: Arc<DaemonRegistry>,
+    mut req_rx: tokio::sync::mpsc::Receiver<DaemonRpcRequest>,
 ) {
     use futures_util::{AsyncReadExt, AsyncWriteExt};
+    let (mut reader, mut writer) = stream.split();
     let mut instance_id: Option<String> = None;
     let mut connected_at: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut next_outbound_id: u64 = 1;
+    let mut pending_outbound: HashMap<u64, tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>> = HashMap::new();
 
     loop {
-        // Read a frame.
+        // Read a frame from the daemon OR handle an outbound request from the relay.
         let mut len_buf = [0u8; 4];
-        if stream.read_exact(&mut len_buf).await.is_err() {
-            break;
-        }
-        let len = u32::from_be_bytes(len_buf);
-        if len > 16 * 1024 * 1024 {
-            tracing::warn!(%peer_id, "RPC frame too large: {len}");
-            break;
-        }
-        let mut buf = vec![0u8; len as usize];
-        if stream.read_exact(&mut buf).await.is_err() {
-            break;
-        }
+        let frame_data = tokio::select! {
+            result = reader.read_exact(&mut len_buf) => {
+                if result.is_err() { break; }
+                let len = u32::from_be_bytes(len_buf);
+                if len > 16 * 1024 * 1024 { break; }
+                let mut buf = vec![0u8; len as usize];
+                if reader.read_exact(&mut buf).await.is_err() { break; }
+                Some(buf)
+            }
+            Some(outbound) = req_rx.recv() => {
+                // Relay wants to send a request to this daemon.
+                let id = next_outbound_id;
+                next_outbound_id += 1;
+                let mut payload = outbound.payload;
+                payload["id"] = serde_json::Value::Number(id.into());
+                let data = serde_json::to_vec(&payload).unwrap_or_default();
+                let _ = writer.write_all(&(data.len() as u32).to_be_bytes()).await;
+                let _ = writer.write_all(&data).await;
+                let _ = writer.flush().await;
+                pending_outbound.insert(id, outbound.response_tx);
+                continue;
+            }
+        };
 
-        let Ok(request) = serde_json::from_slice::<serde_json::Value>(&buf) else {
+        let Some(buf) = frame_data else { break };
+
+        let Ok(frame) = serde_json::from_slice::<serde_json::Value>(&buf) else {
             tracing::warn!(%peer_id, "invalid JSON in RPC frame");
             continue;
         };
 
-        let msg_type = request["type"].as_str().unwrap_or("");
-        let req_id = request["id"].clone();
+        // Check if this is a response to an outbound request we sent.
+        let frame_id = frame["id"].as_u64().unwrap_or(0);
+        if frame_id > 0 {
+            if let Some(tx) = pending_outbound.remove(&frame_id) {
+                let _ = tx.send(Ok(frame));
+                continue;
+            }
+        }
+
+        let msg_type = frame["type"].as_str().unwrap_or("");
+        let req_id = frame["id"].clone();
 
         let resp = match msg_type {
             "register" => {
-                let iid = request["instance_id"].as_str().unwrap_or("").to_string();
-                let cluster_id = request["cluster_id"]
+                let iid = frame["instance_id"].as_str().unwrap_or("").to_string();
+                let cluster_id = frame["cluster_id"]
                     .as_str()
                     .and_then(|s| s.parse().ok());
-                let hostname = request["hostname"].as_str().map(String::from);
-                let agent_name = request["agent_name"].as_str().map(String::from);
+                let hostname = frame["hostname"].as_str().map(String::from);
+                let agent_name = frame["agent_name"].as_str().map(String::from);
                 let now = chrono::Utc::now();
 
                 if !iid.is_empty() {
@@ -540,7 +380,7 @@ async fn handle_daemon_rpc(
             }
             "tunnel_advertisement" => {
                 if let Some(iid) = &instance_id {
-                    let tunnels: Vec<crate::daemon_registry::ServiceTunnel> = request["tunnels"]
+                    let tunnels: Vec<crate::daemon_registry::ServiceTunnel> = frame["tunnels"]
                         .as_array()
                         .map(|arr| {
                             arr.iter()
@@ -553,8 +393,8 @@ async fn handle_daemon_rpc(
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let file_tunnels = request["file_tunnels"].clone();
-                    let shell_tunnels = request["shell_tunnels"].clone();
+                    let file_tunnels = frame["file_tunnels"].clone();
+                    let shell_tunnels = frame["shell_tunnels"].clone();
                     registry.update_all_tunnels(iid, tunnels, file_tunnels, shell_tunnels);
                     tracing::debug!(%peer_id, %iid, "tunnel advertisement via RPC");
                 }
@@ -568,9 +408,9 @@ async fn handle_daemon_rpc(
 
         // Write response frame.
         let data = serde_json::to_vec(&resp).unwrap_or_default();
-        let _ = stream.write_all(&(data.len() as u32).to_be_bytes()).await;
-        let _ = stream.write_all(&data).await;
-        let _ = stream.flush().await;
+        let _ = writer.write_all(&(data.len() as u32).to_be_bytes()).await;
+        let _ = writer.write_all(&data).await;
+        let _ = writer.flush().await;
     }
 
     tracing::info!(%peer_id, "RPC stream closed");

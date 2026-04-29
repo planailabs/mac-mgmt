@@ -53,12 +53,6 @@ pub enum P2pCommand {
 /// Events the P2pManager emits to the daemon event loop.
 #[derive(Debug)]
 pub enum P2pEvent {
-    /// A control request from a peer (relay or another daemon).
-    ControlRequest {
-        peer: PeerId,
-        channel: request_response::ResponseChannel<control::ControlResponse>,
-        request: control::ControlRequest,
-    },
     /// An AI proxy request from a peer.
     AiProxyRequest {
         peer: PeerId,
@@ -182,12 +176,6 @@ impl P2pManager {
                 )
                 .expect("gossipsub behaviour");
 
-                let control_behaviour = request_response::Behaviour::new(
-                    [(control::PROTOCOL_NAME, request_response::ProtocolSupport::Full)],
-                    request_response::Config::default()
-                        .with_request_timeout(Duration::from_secs(30)),
-                );
-
                 let ai_proxy_behaviour = request_response::Behaviour::new(
                     [(ai_proxy::PROTOCOL_NAME, request_response::ProtocolSupport::Full)],
                     request_response::Config::default()
@@ -198,7 +186,6 @@ impl P2pManager {
                     identify: identify::Behaviour::new(identify_config),
                     mdns: mdns_behaviour,
                     relay_client,
-                    control: control_behaviour,
                     ai_proxy: ai_proxy_behaviour,
                     gossipsub: gossipsub_behaviour,
                     streams: libp2p_stream::Behaviour::new(),
@@ -356,7 +343,7 @@ async fn swarm_loop(
                 // Handle non-relay swarm events.
                 handle_general_event(
                     event, &event_tx, &peer_registry, &mut swarm,
-                    &config.handler_state, &authorized_peers,
+                    &authorized_peers,
                 ).await;
             }
 
@@ -486,7 +473,6 @@ async fn handle_general_event(
     event_tx: &mpsc::Sender<P2pEvent>,
     peer_registry: &Arc<RwLock<PeerRegistry>>,
     swarm: &mut Swarm<ClusterBehaviour>,
-    handler_state: &Option<Arc<handler::HandlerState>>,
     authorized_peers: &std::collections::HashSet<PeerId>,
 ) {
     match event {
@@ -503,26 +489,8 @@ async fn handle_general_event(
                 let _ = event_tx.send(P2pEvent::PeerUpdate { peer: peer_id, connected: false }).await;
             }
         }
-        SwarmEvent::Behaviour(ClusterBehaviourEvent::Control(
-            request_response::Event::Message {
-                peer,
-                message: request_response::Message::Request { channel, request, .. },
-                ..
-            },
-        )) => {
-            if !authorized_peers.contains(&peer) {
-                tracing::warn!(%peer, "rejecting control request from unauthorized peer");
-                let resp = control::ControlResponse::Error { message: "unauthorized".into() };
-                let _ = swarm.behaviour_mut().control.send_response(channel, resp);
-                return;
-            }
-            if let Some(hs) = handler_state {
-                let response = handler::handle_control_request(hs, request).await;
-                let _ = swarm.behaviour_mut().control.send_response(channel, response);
-            } else {
-                let _ = event_tx.send(P2pEvent::ControlRequest { peer, channel, request }).await;
-            }
-        }
+        // Control requests are now handled via the persistent RPC stream,
+        // not via request_response. The control behaviour has been removed.
         SwarmEvent::Behaviour(ClusterBehaviourEvent::AiProxy(
             request_response::Event::Message {
                 peer,

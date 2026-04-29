@@ -27,8 +27,7 @@ tower-http = { version = "0.6", features = ["trace"] }
 prometheus = "0.14"
 prometheus-parse = "0.2"
 protobuf = "3.7"
-async-trait = "0.1"
-libp2p = { version = "0.56", default-features = false, features = [
+libp2p ={ version = "0.56", default-features = false, features = [
     "tokio", "noise", "yamux", "quic", "tcp", "websocket", "dns",
     "relay", "identify", "request-response", "macros", "serde",
 ] }
