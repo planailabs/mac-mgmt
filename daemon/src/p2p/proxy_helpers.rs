@@ -126,6 +126,25 @@ pub fn apply_headers_json(
     req
 }
 
+/// Apply fake_origin_local header rewrites to a WebSocket upgrade request.
+/// Strips origin-revealing headers and sets Host to the local target.
+pub fn apply_fake_origin_ws(
+    headers: &mut reqwest::header::HeaderMap,
+    target: &TunnelTarget,
+) {
+    // Set Host to local target.
+    let host_val = format!("{}:{}", target.host, target.port);
+    if let Ok(v) = host_val.parse() {
+        headers.insert("Host", v);
+    }
+    // Strip origin-revealing headers.
+    for &name in FAKE_ORIGIN_DROP_HEADERS {
+        if name != "host" {
+            headers.remove(name);
+        }
+    }
+}
+
 /// Decode a base64-encoded body and attach it to the request.
 pub fn apply_body_b64(
     req: reqwest::RequestBuilder,
