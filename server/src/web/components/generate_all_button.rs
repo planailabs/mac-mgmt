@@ -56,7 +56,7 @@ pub fn GenerateAllButton(items: Vec<GenerateAllItem>, on_complete: EventHandler<
     rsx! {
         div { class: "inline-flex flex-col gap-1",
             button {
-                class: "text-xs bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-200 px-2 py-1 rounded hover:bg-purple-200 dark:hover:bg-purple-800 disabled:opacity-50",
+                class: "btn btn-xs btn-accent",
                 r#type: "button",
                 disabled: is_running || pending_count == 0,
                 onclick: move |_| {
@@ -119,22 +119,22 @@ pub fn GenerateAllButton(items: Vec<GenerateAllItem>, on_complete: EventHandler<
             }
             if is_running {
                 div { class: "w-48 mt-1",
-                    div { class: "flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1",
+                    div { class: "flex justify-between text-xs text-fg-muted mb-1",
                         span { {t!("generate-all-progress", done: done_val, total: total_val)} }
                         if let Some(slug) = &*current_slug.read() {
-                            span { class: "truncate ml-1 text-purple-600 dark:text-purple-400", "{slug}" }
+                            span { class: "truncate ml-1 text-accent", "{slug}" }
                         }
                     }
-                    div { class: "w-full bg-gray-200 dark:bg-gray-700 rounded h-3 overflow-hidden",
+                    div { class: "w-full bg-line-soft rounded h-3 overflow-hidden",
                         div {
-                            class: "bg-purple-600 h-3 rounded transition-all duration-300 ease-in-out",
+                            class: "bg-accent h-3 rounded transition-all duration-300 ease-in-out",
                             style: "width: {pct}%; min-width: {min_w}",
                         }
                     }
                 }
             }
             if let Some(err) = &*error_msg.read() {
-                span { class: "text-xs text-red-600 dark:text-red-400 max-w-xs truncate", "{err}" }
+                span { class: "text-xs text-danger max-w-xs truncate", "{err}" }
             }
         }
     }

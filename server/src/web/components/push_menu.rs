@@ -73,14 +73,12 @@ pub fn PushMenu(cluster_id: String) -> Element {
 
     rsx! {
         div { class: "relative inline-block",
-            button {
-                class: "px-3 py-1.5 text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600",
+            button { class: "btn btn-md btn-secondary",
                 onclick: move |_| { let v = *open.read(); open.set(!v); },
                 {t!("push-menu-button")}
             }
             if *open.read() {
-                div {
-                    class: "absolute right-0 mt-1 w-56 bg-white dark:bg-gray-800 rounded shadow-lg border border-gray-200 dark:border-gray-700 z-50",
+                div { class: "card shadow-lg border border-line-soft absolute right-0 mt-1 w-56 z-50",
                     for action in ACTIONS {
                         {
                             let key = action.key;
@@ -88,8 +86,7 @@ pub fn PushMenu(cluster_id: String) -> Element {
                             let desc = t!(action.desc_key);
                             let cid = cluster_id.clone();
                             rsx! {
-                                button {
-                                    class: "w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700",
+                                button { class: "w-full text-left px-3 py-2 text-sm hover:bg-surface-2",
                                     title: desc,
                                     onclick: move |_| {
                                         let cid = cid.clone();
@@ -111,11 +108,7 @@ pub fn PushMenu(cluster_id: String) -> Element {
             }
             if let Some((ok, msg)) = status.read().as_ref() {
                 {
-                    let cls = if *ok {
-                        "text-green-600 dark:text-green-400"
-                    } else {
-                        "text-red-600 dark:text-red-400"
-                    };
+                    let cls = if *ok { "text-success" } else { "text-danger" };
                     rsx! {
                         span { class: "ml-2 text-xs {cls}", "{msg}" }
                     }
