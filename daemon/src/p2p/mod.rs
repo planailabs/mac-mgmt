@@ -694,7 +694,7 @@ async fn handle_streamed_proxy(
             use tokio_tungstenite::tungstenite::client::IntoClientRequest;
             let mut request = ws_url.into_client_request().unwrap();
             if handler_state.fake_origin_local {
-                proxy_helpers::apply_fake_origin_ws(request.headers_mut(), &target);
+                proxy_helpers::apply_fake_origin(request.headers_mut(), &target);
             }
             tokio_tungstenite::connect_async(request).await
         };

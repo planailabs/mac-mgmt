@@ -2,8 +2,6 @@
 //!
 //! Extracted from relay_client.rs for reuse across WS and libp2p transports.
 
-use std::borrow::Cow;
-
 /// A tunnel definition mapping a name to a local host:port.
 #[derive(Debug, Clone)]
 pub struct TunnelTarget {
@@ -23,6 +21,7 @@ const FAKE_ORIGIN_DROP_HEADERS: &[&str] = &[
     "x-real-ip",
     "forwarded",
     "via",
+    "referer",
 ];
 
 /// Rewrite the origin (scheme + host + port) of a URL while preserving the
@@ -33,6 +32,31 @@ fn rewrite_url_origin(value: &str, target: &TunnelTarget) -> Option<String> {
     let _ = parsed.set_port(Some(target.port));
     let _ = parsed.set_scheme("http");
     Some(parsed.to_string())
+}
+
+/// Apply fake_origin_local rewrites to a raw `HeaderMap`.
+/// Sets Host and Referer to the local target, strips all other
+/// origin-revealing headers. Used by both HTTP and WS proxy paths.
+pub fn apply_fake_origin(
+    headers: &mut reqwest::header::HeaderMap,
+    target: &TunnelTarget,
+) {
+    // Set Host.
+    let host_val = format!("{}:{}", target.host, target.port);
+    if let Ok(v) = host_val.parse() {
+        headers.insert("Host", v);
+    }
+    // Set Referer to local origin.
+    let local_origin = format!("http://{}:{}/", target.host, target.port);
+    if let Ok(v) = local_origin.parse() {
+        headers.insert("Referer", v);
+    }
+    // Strip remaining origin-revealing headers.
+    for &name in FAKE_ORIGIN_DROP_HEADERS {
+        if name != "host" && name != "referer" {
+            headers.remove(name);
+        }
+    }
 }
 
 /// Build a reqwest request for the given HTTP method against a tunnel target.
@@ -58,22 +82,6 @@ pub fn build_proxy_request(
     req
 }
 
-/// Rewrite or drop a single header value when `fake_origin_local` is true.
-fn fake_origin_header<'a>(
-    key: &str,
-    value: &'a str,
-    target: &TunnelTarget,
-) -> Option<Cow<'a, str>> {
-    if key == "referer" {
-        return Some(
-            rewrite_url_origin(value, target)
-                .map(Cow::Owned)
-                .unwrap_or(Cow::Borrowed(value)),
-        );
-    }
-    None
-}
-
 /// Apply request headers from a Vec, filtering hop-by-hop headers.
 pub fn apply_headers_vec(
     mut req: reqwest::RequestBuilder,
@@ -87,8 +95,11 @@ pub fn apply_headers_vec(
             continue;
         }
         if fake_origin_local && FAKE_ORIGIN_DROP_HEADERS.contains(&lk.as_str()) {
-            if let Some(rewritten) = fake_origin_header(&lk, v, target) {
-                req = req.header(k.as_str(), rewritten.as_ref());
+            // Referer gets rewritten, everything else is dropped.
+            if lk == "referer" {
+                if let Some(rewritten) = rewrite_url_origin(v, target) {
+                    req = req.header(k.as_str(), rewritten);
+                }
             }
             continue;
         }
@@ -111,9 +122,11 @@ pub fn apply_headers_json(
                 continue;
             }
             if fake_origin_local && FAKE_ORIGIN_DROP_HEADERS.contains(&lk.as_str()) {
-                if let Some(val) = v.as_str() {
-                    if let Some(rewritten) = fake_origin_header(&lk, val, target) {
-                        req = req.header(k.as_str(), rewritten.as_ref());
+                if lk == "referer" {
+                    if let Some(val) = v.as_str() {
+                        if let Some(rewritten) = rewrite_url_origin(val, target) {
+                            req = req.header(k.as_str(), rewritten);
+                        }
                     }
                 }
                 continue;
@@ -124,29 +137,6 @@ pub fn apply_headers_json(
         }
     }
     req
-}
-
-/// Apply fake_origin_local header rewrites to a WebSocket upgrade request.
-/// Strips origin-revealing headers and sets Host to the local target.
-pub fn apply_fake_origin_ws(
-    headers: &mut reqwest::header::HeaderMap,
-    target: &TunnelTarget,
-) {
-    let host_val = format!("{}:{}", target.host, target.port);
-    if let Ok(v) = host_val.parse() {
-        headers.insert("Host", v);
-    }
-    // Rewrite Referer to point at the local target.
-    let local_origin = format!("http://{}:{}/", target.host, target.port);
-    if let Ok(v) = local_origin.parse() {
-        headers.insert("Referer", v);
-    }
-    // Strip origin-revealing headers (except Host and Referer which we just set).
-    for &name in FAKE_ORIGIN_DROP_HEADERS {
-        if name != "host" && name != "referer" {
-            headers.remove(name);
-        }
-    }
 }
 
 /// Decode a base64-encoded body and attach it to the request.
