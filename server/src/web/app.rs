@@ -151,23 +151,23 @@ pub enum Route {
     DocPage { slug: String },
 }
 
+// Pre-hydration loading banner. Self-contained styling because it must
+// render before WASM hydrates and is removed once the app boots. Hex
+// literals here are intentional and outside the theme owned by input.css —
+// they're the only place colors are baked into Rust.
 const WASM_LOADING_INNER: &str = r#"<style>@media(prefers-color-scheme:dark){#wasm-loading{background:#1a1f2e!important;color:#7b9fe0!important;border-bottom-color:#2a3040!important}}#wasm-loading svg{animation:wasm-spin 1s linear infinite;width:16px;height:16px}@keyframes wasm-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25"/><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" opacity="0.75"/></svg>Loading&hellip;"#;
 
+// Sets the `.dark` class on `<html>` before any CSS loads, so the right
+// theme is in place by the time the stylesheet arrives. Colors come from
+// `input.css` via CSS variables — this script never touches color values.
 const THEME_INIT_SCRIPT: &str = r#"
 (function(){
     try {
         var d = document.documentElement;
         var t = localStorage.getItem('theme');
         var dark = t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        if (dark) {
-            d.classList.add('dark');
-            d.style.colorScheme = 'dark';
-            d.style.backgroundColor = '#111827';
-        } else {
-            d.classList.remove('dark');
-            d.style.colorScheme = 'light';
-            d.style.backgroundColor = '#f9fafb';
-        }
+        d.classList.toggle('dark', dark);
+        d.style.colorScheme = dark ? 'dark' : 'light';
     } catch(e){}
 })();
 "#;

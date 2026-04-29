@@ -84,7 +84,7 @@ pub fn Layout() -> Element {
     };
 
     rsx! {
-        div { class: "h-screen w-full flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden",
+        div { class: "h-screen w-full flex flex-col overflow-hidden",
             // Top Nav
             Navbar { is_admin, display_name: display_name.clone() }
 
@@ -110,7 +110,7 @@ pub fn Layout() -> Element {
                 Sidebar { is_admin }
 
                 // Main content
-                main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-gray-50 dark:bg-gray-900",
+                main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8",
                     SuspenseBoundary {
                         fallback: |_| rsx! { LoadingSpinner {} },
                         Outlet::<Route> {}
