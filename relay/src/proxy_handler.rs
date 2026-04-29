@@ -316,6 +316,51 @@ async fn authenticate_proxy_scoped(
     Ok(())
 }
 
+/// Open a tunnel substream, send handshake, and return the stream.
+async fn open_tunnel(
+    swarm: &Arc<crate::p2p::RelaySwarm>,
+    peer_id: libp2p::PeerId,
+    handshake: &serde_json::Value,
+    timeout: Duration,
+) -> Result<libp2p::Stream, StatusCode> {
+    let mut tunnel = tokio::time::timeout(timeout, swarm.open_tunnel_stream(peer_id))
+        .await
+        .map_err(|_| StatusCode::GATEWAY_TIMEOUT)?
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    use futures_util::AsyncWriteExt;
+    let data = serde_json::to_vec(handshake).unwrap_or_default();
+    tunnel.write_all(&(data.len() as u32).to_be_bytes()).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    tunnel.write_all(&data).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    tunnel.flush().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    Ok(tunnel)
+}
+
+/// Open a tunnel substream, send handshake, read a single JSON response
+/// (stream_framing: JSON frame + end marker).
+async fn open_tunnel_and_read_json(
+    swarm: &Arc<crate::p2p::RelaySwarm>,
+    peer_id: libp2p::PeerId,
+    handshake: serde_json::Value,
+    timeout: Duration,
+) -> Result<serde_json::Value, StatusCode> {
+    let mut tunnel = open_tunnel(swarm, peer_id, &handshake, timeout).await?;
+
+    use futures_util::AsyncReadExt;
+    // Read JSON frame (tag 0x01).
+    let mut tag = [0u8; 1];
+    tunnel.read_exact(&mut tag).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if tag[0] != 0x01 { return Err(StatusCode::BAD_GATEWAY); }
+    let mut len_buf = [0u8; 4];
+    tunnel.read_exact(&mut len_buf).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > 16 * 1024 * 1024 { return Err(StatusCode::BAD_GATEWAY); }
+    let mut buf = vec![0u8; len];
+    tunnel.read_exact(&mut buf).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    serde_json::from_slice(&buf).map_err(|_| StatusCode::BAD_GATEWAY)
+}
+
 /// Resolve the relay swarm and peer ID for an instance, or return an error response.
 fn resolve_swarm_and_peer(
     state: &ProxyState,
@@ -724,37 +769,18 @@ async fn file_list(
     let path_str = query.path.as_deref().unwrap_or("/");
     tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_list");
 
-    let request_id = Uuid::new_v4().to_string();
-    let req = serde_json::json!({
-        "type": "file_list_request",
-        "request_id": request_id,
+    let handshake = serde_json::json!({
+        "type": "file_list",
         "tunnel_name": tunnel_name,
         "path": query.path,
     });
-
-    match tokio::time::timeout(Duration::from_secs(30), swarm.send_request(peer_id, req)).await {
-        Ok(Ok(resp)) => {
-            let status = resp["status"].as_u64().unwrap_or(500) as u16;
-            let body = resp.get("body").cloned().unwrap_or(serde_json::Value::Null);
-            axum::response::Response::builder()
-                .status(status)
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-                .into_response()
-        }
-        Ok(Err(e)) => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list p2p failed: {e}");
-            StatusCode::BAD_GATEWAY.into_response()
-        }
-        Err(_) => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list: timeout (30s)");
-            StatusCode::GATEWAY_TIMEOUT.into_response()
-        }
+    match open_tunnel_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(30)).await {
+        Ok(resp) => Json(resp).into_response(),
+        Err(status) => status.into_response(),
     }
 }
 
-/// Read a file via libp2p request.
+/// Read a file via tunnel substream.
 async fn file_read(
     headers: HeaderMap,
     Path(tunnel_name): Path<String>,
@@ -777,64 +803,77 @@ async fn file_read(
     let path_str = query.path.as_deref().unwrap_or("?");
     tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_read");
 
-    let request_id = Uuid::new_v4().to_string();
-    let req = serde_json::json!({
-        "type": "file_read_request",
-        "request_id": request_id,
+    let handshake = serde_json::json!({
+        "type": "file_read",
         "tunnel_name": tunnel_name,
         "path": query.path,
     });
 
-    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req)).await {
-        Ok(Ok(resp)) => {
-            let status = resp["status"].as_u64().unwrap_or(500) as u16;
-            if status != 200 {
-                let error = resp["error"].as_str().unwrap_or("unknown error");
-                tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, status, error, "file_read: daemon error");
-                return axum::response::Response::builder()
-                    .status(status)
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        serde_json::json!({ "error": error }).to_string(),
-                    ))
-                    .unwrap()
-                    .into_response();
+    // Open tunnel, read stream_framing response (JSON header + binary chunks).
+    let mut tunnel = match open_tunnel(&swarm, peer_id, &handshake, Duration::from_secs(10)).await {
+        Ok(t) => t,
+        Err(status) => return status.into_response(),
+    };
+
+    use futures_util::AsyncReadExt;
+    // Read JSON header frame.
+    let mut tag = [0u8; 1];
+    if tunnel.read_exact(&mut tag).await.is_err() || tag[0] != 0x01 {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+    let mut len_buf = [0u8; 4];
+    if tunnel.read_exact(&mut len_buf).await.is_err() { return StatusCode::BAD_GATEWAY.into_response(); }
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > 16 * 1024 * 1024 { return StatusCode::BAD_GATEWAY.into_response(); }
+    let mut hdr_buf = vec![0u8; len];
+    if tunnel.read_exact(&mut hdr_buf).await.is_err() { return StatusCode::BAD_GATEWAY.into_response(); }
+    let Ok(hdr) = serde_json::from_slice::<serde_json::Value>(&hdr_buf) else {
+        return StatusCode::BAD_GATEWAY.into_response();
+    };
+
+    let status = hdr["status"].as_u64().unwrap_or(502) as u16;
+    if status != 200 {
+        let error = hdr["error"].as_str().unwrap_or("error");
+        return axum::response::Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::json!({ "error": error }).to_string()))
+            .unwrap()
+            .into_response();
+    }
+
+    let size = hdr["size"].as_u64().unwrap_or(0);
+    let mtime = hdr["mtime"].as_i64().unwrap_or(0);
+
+    // Read binary body chunks.
+    let mut body_data = Vec::new();
+    loop {
+        let mut tag = [0u8; 1];
+        if tunnel.read_exact(&mut tag).await.is_err() { break; }
+        match tag[0] {
+            0x02 => {
+                let mut len_buf = [0u8; 4];
+                if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
+                let chunk_len = u32::from_be_bytes(len_buf) as usize;
+                if chunk_len > 16 * 1024 * 1024 { break; }
+                let mut chunk = vec![0u8; chunk_len];
+                if tunnel.read_exact(&mut chunk).await.is_err() { break; }
+                body_data.extend_from_slice(&chunk);
             }
-
-            let size = resp["size"].as_u64().unwrap_or(0);
-            let mtime = resp["mtime"].as_i64().unwrap_or(0);
-            tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, size, mtime, "file_read: completed");
-
-            // Decode base64 body
-            let body_data = resp["data"]
-                .as_str()
-                .map(|d| {
-                    use base64::Engine;
-                    base64::engine::general_purpose::STANDARD
-                        .decode(d)
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default();
-
-            axum::response::Response::builder()
-                .status(200)
-                .header("content-type", "application/octet-stream")
-                .header("x-file-mtime", mtime.to_string())
-                .header("x-file-size", size.to_string())
-                .header("access-control-expose-headers", "x-file-mtime, x-file-size")
-                .body(Body::from(body_data))
-                .unwrap()
-                .into_response()
-        }
-        Ok(Err(e)) => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read p2p failed: {e}");
-            StatusCode::BAD_GATEWAY.into_response()
-        }
-        Err(_) => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: timeout (60s)");
-            StatusCode::GATEWAY_TIMEOUT.into_response()
+            0x03 => break,
+            _ => break,
         }
     }
+
+    axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "application/octet-stream")
+        .header("x-file-mtime", mtime.to_string())
+        .header("x-file-size", size.to_string())
+        .header("access-control-expose-headers", "x-file-mtime, x-file-size")
+        .body(Body::from(body_data))
+        .unwrap()
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -843,7 +882,7 @@ struct FileWriteQuery {
     expected_mtime: Option<i64>,
 }
 
-/// Write a file via libp2p request.
+/// Write a file via tunnel substream.
 async fn file_write(
     headers: HeaderMap,
     Path(tunnel_name): Path<String>,
@@ -869,7 +908,7 @@ async fn file_write(
     let path_str = query.path.as_deref().unwrap_or("?");
     tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_write");
 
-    // Collect request body
+    // Collect request body.
     let mut body_stream = body.into_data_stream();
     let mut body_bytes = Vec::new();
     while let Some(chunk) = body_stream.next().await {
@@ -882,20 +921,17 @@ async fn file_write(
     use base64::Engine;
     let body_b64 = base64::engine::general_purpose::STANDARD.encode(&body_bytes);
 
-    let request_id = Uuid::new_v4().to_string();
-    let req = serde_json::json!({
-        "type": "file_write_request",
-        "request_id": request_id,
+    let handshake = serde_json::json!({
+        "type": "file_write",
         "tunnel_name": tunnel_name,
         "path": query.path,
         "expected_mtime": query.expected_mtime,
         "data": body_b64,
     });
 
-    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req)).await {
-        Ok(Ok(resp)) => {
+    match open_tunnel_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(60)).await {
+        Ok(resp) => {
             let status = resp["status"].as_u64().unwrap_or(500) as u16;
-            tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, status, "file_write: completed");
             axum::response::Response::builder()
                 .status(status)
                 .header("content-type", "application/json")
@@ -903,14 +939,7 @@ async fn file_write(
                 .unwrap()
                 .into_response()
         }
-        Ok(Err(e)) => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write p2p failed: {e}");
-            StatusCode::BAD_GATEWAY.into_response()
-        }
-        Err(_) => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: timeout (60s)");
-            StatusCode::GATEWAY_TIMEOUT.into_response()
-        }
+        Err(status) => status.into_response(),
     }
 }
 

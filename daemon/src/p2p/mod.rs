@@ -652,6 +652,14 @@ async fn handle_tunnel_stream(
         "metrics" => {
             handle_streamed_metrics(handshake, &mut stream, handler_state).await;
         }
+        "file_list" | "file_read" | "file_write" => {
+            match msg_type {
+                "file_list" => handle_file_list_stream(handshake, &mut stream, handler_state).await,
+                "file_read" => handle_file_read_stream(handshake, &mut stream, handler_state).await,
+                "file_write" => handle_file_write_stream(handshake, &mut stream, handler_state).await,
+                _ => unreachable!(),
+            }
+        }
         #[cfg(feature = "services")]
         "shell" => {
             handle_streamed_shell(handshake, &mut stream, handler_state).await;
@@ -921,6 +929,137 @@ async fn handle_streamed_metrics(
             let _ = stream_framing::write_end(stream).await;
         }
     }
+}
+
+/// Handle a file list request over a tunnel substream.
+#[cfg(feature = "services")]
+async fn handle_file_list_stream(
+    handshake: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use crate::p2p::stream_framing;
+
+    let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
+    let path = handshake["path"].as_str();
+
+    let registry = handler_state.file_tunnel_registry.read().await;
+    let Some(tunnel) = registry.get(tunnel_name) else {
+        let resp = serde_json::json!({ "status": 404, "error": "unknown file tunnel" });
+        let _ = stream_framing::write_json(stream, &resp).await;
+        let _ = stream_framing::write_end(stream).await;
+        return;
+    };
+
+    let (status, data) = crate::file_tunnels::handle_list(tunnel, path);
+    let resp = serde_json::json!({ "status": status, "body": data });
+    let _ = stream_framing::write_json(stream, &resp).await;
+    let _ = stream_framing::write_end(stream).await;
+}
+
+/// Handle a file read request over a tunnel substream.
+#[cfg(feature = "services")]
+async fn handle_file_read_stream(
+    handshake: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use crate::p2p::stream_framing;
+
+    let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
+    let path = handshake["path"].as_str();
+
+    let registry = handler_state.file_tunnel_registry.read().await;
+    let Some(tunnel) = registry.get(tunnel_name) else {
+        let resp = serde_json::json!({ "status": 404, "error": "unknown file tunnel" });
+        let _ = stream_framing::write_json(stream, &resp).await;
+        let _ = stream_framing::write_end(stream).await;
+        return;
+    };
+
+    match crate::file_tunnels::read_file(tunnel, path) {
+        Ok((content, mtime)) => {
+            let header = serde_json::json!({
+                "status": 200,
+                "size": content.len(),
+                "mtime": mtime.unwrap_or(0),
+            });
+            if stream_framing::write_json(stream, &header).await.is_err() { return; }
+            // Stream content in chunks.
+            for chunk in content.chunks(1024 * 1024) {
+                if stream_framing::write_binary(stream, chunk).await.is_err() { return; }
+            }
+            let _ = stream_framing::write_end(stream).await;
+        }
+        Err((status, error)) => {
+            let resp = serde_json::json!({ "status": status, "error": error });
+            let _ = stream_framing::write_json(stream, &resp).await;
+            let _ = stream_framing::write_end(stream).await;
+        }
+    }
+}
+
+/// Handle a file write request over a tunnel substream.
+#[cfg(feature = "services")]
+async fn handle_file_write_stream(
+    handshake: serde_json::Value,
+    stream: &mut libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use crate::p2p::stream_framing;
+
+    let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
+    let path = handshake["path"].as_str();
+    let expected_mtime = handshake["expected_mtime"].as_i64();
+
+    // Decode base64 data from handshake.
+    let content = handshake["data"]
+        .as_str()
+        .and_then(|d| {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.decode(d).ok()
+        })
+        .unwrap_or_default();
+
+    let registry = handler_state.file_tunnel_registry.read().await;
+    let Some(tunnel) = registry.get(tunnel_name) else {
+        let resp = serde_json::json!({ "status": 404, "error": "unknown file tunnel" });
+        let _ = stream_framing::write_json(stream, &resp).await;
+        let _ = stream_framing::write_end(stream).await;
+        return;
+    };
+
+    match crate::file_tunnels::write_file(tunnel, path, &content, expected_mtime) {
+        Ok(mtime) => {
+            let resp = serde_json::json!({ "status": 200, "mtime": mtime });
+            let _ = stream_framing::write_json(stream, &resp).await;
+            let _ = stream_framing::write_end(stream).await;
+        }
+        Err((status, error)) => {
+            let resp = serde_json::json!({ "status": status, "error": error });
+            let _ = stream_framing::write_json(stream, &resp).await;
+            let _ = stream_framing::write_end(stream).await;
+        }
+    }
+}
+
+#[cfg(not(feature = "services"))]
+async fn handle_file_list_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
+    use crate::p2p::stream_framing;
+    let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
+    let _ = stream_framing::write_end(stream).await;
+}
+#[cfg(not(feature = "services"))]
+async fn handle_file_read_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
+    use crate::p2p::stream_framing;
+    let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
+    let _ = stream_framing::write_end(stream).await;
+}
+#[cfg(not(feature = "services"))]
+async fn handle_file_write_stream(_: serde_json::Value, stream: &mut libp2p::Stream, _: &Arc<handler::HandlerState>) {
+    use crate::p2p::stream_framing;
+    let _ = stream_framing::write_json(stream, &serde_json::json!({ "status": 501, "error": "services not enabled" })).await;
+    let _ = stream_framing::write_end(stream).await;
 }
 
 /// Handle a shell command execution over a tunnel substream.
