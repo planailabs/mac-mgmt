@@ -65,6 +65,7 @@ mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, optio
 plan-ai-cleaner = { path = "../plan-ai-cleaner" }
 plan-ai-cloud = { path = "../plan-ai-cloud" }
 aes-gcm = "0.10"
+tokio-tungstenite = "0.26"
 libp2p = { version = "0.56", default-features = false, features = [
     "tokio", "noise", "yamux", "quic", "tcp", "websocket", "dns",
     "mdns", "relay", "request-response", "identify", "ping",

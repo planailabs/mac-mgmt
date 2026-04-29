@@ -655,6 +655,80 @@ async fn handle_streamed_proxy(
     let tunnel_name = handshake["tunnel_name"].as_str().unwrap_or("");
     let method = handshake["method"].as_str().unwrap_or("GET");
     let path = handshake["path"].as_str().unwrap_or("/");
+
+    // WebSocket proxy: bridge the tunnel substream to a local WS connection.
+    if method == "WEBSOCKET" {
+        let tunnel_defs = handler_state.tunnel_defs.read().await;
+        let Some(target) = tunnel_defs.get(tunnel_name).cloned() else {
+            let err = serde_json::json!({ "status": 404, "error": "tunnel not found" });
+            let _ = stream_framing::write_json(stream, &err).await;
+            let _ = stream_framing::write_end(stream).await;
+            return;
+        };
+        drop(tunnel_defs);
+
+        let ws_url = format!("ws://{}:{}{path}", target.host, target.port);
+        tracing::debug!("WS proxy: connecting to {ws_url}");
+
+        let connect_result = tokio_tungstenite::connect_async(&ws_url).await;
+        let (local_ws, _) = match connect_result {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::warn!("WS proxy connect failed: {e}");
+                let err = serde_json::json!({ "status": 502, "error": format!("ws connect failed: {e}") });
+                let _ = stream_framing::write_json(stream, &err).await;
+                let _ = stream_framing::write_end(stream).await;
+                return;
+            }
+        };
+
+        // Bridge: tunnel substream (raw bytes from relay's ws_bridge) ↔ local WS.
+        // The relay side converts browser WS messages to raw bytes on the substream.
+        // We need to convert those raw bytes to WS messages for the local service.
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite;
+
+        let (mut ws_sink, mut ws_stream) = local_ws.split();
+
+        loop {
+            tokio::select! {
+                // Tunnel substream → local WS
+                data = async {
+                    use futures_util::AsyncReadExt;
+                    let mut buf = vec![0u8; 64 * 1024];
+                    stream.read(&mut buf).await.map(|n| buf[..n].to_vec())
+                } => {
+                    match data {
+                        Ok(bytes) if !bytes.is_empty() => {
+                            if ws_sink.send(tungstenite::Message::Binary(bytes.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                // Local WS → tunnel substream
+                msg = ws_stream.next() => {
+                    match msg {
+                        Some(Ok(tungstenite::Message::Binary(data))) => {
+                            use futures_util::AsyncWriteExt;
+                            if stream.write_all(&data).await.is_err() { break; }
+                        }
+                        Some(Ok(tungstenite::Message::Text(text))) => {
+                            use futures_util::AsyncWriteExt;
+                            if stream.write_all(text.as_bytes()).await.is_err() { break; }
+                        }
+                        Some(Ok(tungstenite::Message::Close(_))) | None => break,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let _ = ws_sink.send(tungstenite::Message::Close(None)).await;
+        return;
+    }
+
     let headers: Vec<(String, String)> = handshake["headers"]
         .as_array()
         .map(|arr| {
