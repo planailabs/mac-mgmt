@@ -21,6 +21,7 @@ let
     Group = "mac-mgmt";
     StateDirectory = "mac-mgmt";
     WorkingDirectory = stateDir;
+    RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" "AF_NETLINK" ];
   } // lib.optionalAttrs (cfg.environmentFile != null) {
     EnvironmentFile = cfg.environmentFile;
   };
