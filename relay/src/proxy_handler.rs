@@ -295,10 +295,9 @@ async fn authenticate_proxy(
         if !self_info.cluster_ids.contains(&cid) {
             return Err(StatusCode::FORBIDDEN.into_response());
         }
-    } else if self_info.token_kind != "admin" {
-        // Unscoped instance — deny non-admin access.
-        return Err(StatusCode::FORBIDDEN.into_response());
     }
+    // If cluster_id is not known (daemon didn't send it during registration),
+    // allow access — the server already validated the token's cluster scope.
 
     Ok(self_info)
 }

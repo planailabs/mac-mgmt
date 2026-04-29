@@ -113,6 +113,11 @@ pub fn configure_os(dry_run: bool) -> Result<()> {
     // as a trusted user with flakes enabled.
     configure_nix(dry_run)?;
 
+    #[cfg(target_os = "linux")]
+    {
+        configure_ufw(dry_run)?;
+    }
+
     Ok(())
 }
 
@@ -216,4 +221,61 @@ fn restart_nix_daemon() {
             .args(["systemctl", "restart", "nix-daemon"])
             .status();
     }
+}
+
+#[cfg(target_os = "linux")]
+fn run_ufw(args: &[&str], dry_run: bool) -> Result<()> {
+    let display = format!("ufw {}", args.join(" "));
+    if dry_run {
+        println!("would run: {display}");
+        return Ok(());
+    }
+    let mut cmd = if is_root() {
+        let mut c = Command::new("ufw");
+        c.args(args);
+        c
+    } else {
+        let mut c = Command::new("sudo");
+        c.arg("ufw");
+        c.args(args);
+        c
+    };
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to run {display}"))?;
+    if !status.success() {
+        anyhow::bail!("{display} failed");
+    }
+    println!("ran: {display}");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn configure_ufw(dry_run: bool) -> Result<()> {
+    // Check if ufw is available
+    if Command::new("ufw").arg("status").output().is_err() {
+        println!("ufw: not found, skipping firewall configuration");
+        return Ok(());
+    }
+
+    // Allow SSH before enabling — critical to avoid lockout
+    run_ufw(
+        &["allow", "22/tcp", "comment", "mac-mgmt: SSH"],
+        dry_run,
+    )?;
+
+    // Enable UFW (--force skips the interactive confirmation)
+    run_ufw(&["--force", "enable"], dry_run)?;
+
+    // Open P2P ports
+    run_ufw(
+        &["allow", "1122/udp", "comment", "mac-mgmt: P2P QUIC"],
+        dry_run,
+    )?;
+    run_ufw(
+        &["allow", "1122/tcp", "comment", "mac-mgmt: P2P WebSocket"],
+        dry_run,
+    )?;
+
+    Ok(())
 }

@@ -76,6 +76,8 @@ pub struct P2pConfig {
     pub ai_proxy_distribution: bool,
     /// Handler state for processing incoming control requests.
     pub handler_state: Option<Arc<handler::HandlerState>>,
+    /// Cluster ID from the server token (for relay registration).
+    pub cluster_id: Option<String>,
 }
 
 /// Manages the libp2p swarm for cluster p2p networking.
@@ -432,6 +434,7 @@ async fn swarm_loop(
                         let reg = serde_json::json!({
                             "type": "register",
                             "instance_id": config.instance_id,
+                            "cluster_id": config.cluster_id,
                             "hostname": hostname::get().ok().map(|h| h.to_string_lossy().to_string()),
                         });
                         if let Err(e) = rpc.send(reg).await {
