@@ -15,14 +15,20 @@
 // migrate the remaining pages and the dead-code warnings will resolve.
 #![allow(dead_code, unused_imports)]
 
+pub mod alert;
 pub mod badge;
 pub mod button;
 pub mod card;
+pub mod data_table;
 pub mod form;
 pub mod text;
 
+pub use alert::{Alert, AlertVariant};
 pub use badge::{Badge, BadgeVariant};
 pub use button::{Button, ButtonKind, ButtonSize, ButtonVariant};
 pub use card::Card;
+pub use data_table::{
+    Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th,
+};
 pub use form::FormField;
-pub use text::{ErrorText, HelpText, PageHeader, SectionHeading};
+pub use text::{ErrorText, HelpText, PageHeader, SectionHeading, SuccessText};

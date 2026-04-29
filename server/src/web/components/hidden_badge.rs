@@ -5,6 +5,7 @@ use dioxus_tabular::*;
 use crate::models::{Bundle, McpServer, McpServerBundle, Skill};
 use crate::web::components::table_utils::CatalogEntry;
 use crate::web::components::table_utils::{sort_indicator, toggle_sort};
+use crate::web::components::ui::{Badge, BadgeVariant};
 
 /// Small "Hidden" pill rendered when an entity has `hide_from_public_catalog = true`.
 /// Renders nothing when `hidden` is false so callers can drop it in unconditionally.
@@ -14,9 +15,7 @@ pub fn HiddenBadge(hidden: bool) -> Element {
         return rsx! {};
     }
     rsx! {
-        span {
-            class: "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-500",
-            title: "Hidden from public catalog",
+        Badge { variant: BadgeVariant::Neutral, title: "Hidden from public catalog",
             {t!("hidden-badge")}
         }
     }
@@ -38,8 +37,7 @@ impl<R: Row + GetRowData<HiddenData>> TableColumn<R> for HiddenColumn {
     fn render_header(&self, context: ColumnContext, _attributes: Vec<Attribute>) -> Element {
         let indicator = sort_indicator(context);
         rsx! {
-            th {
-                class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200",
+            th { class: "th-sortable",
                 onclick: move |_| toggle_sort(context),
                 "Visibility {indicator}"
             }
@@ -54,7 +52,7 @@ impl<R: Row + GetRowData<HiddenData>> TableColumn<R> for HiddenColumn {
     ) -> Element {
         let data: HiddenData = row.get();
         rsx! {
-            td { class: "px-6 py-4",
+            td { class: "td",
                 HiddenBadge { hidden: data.0 }
             }
         }

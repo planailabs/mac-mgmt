@@ -6,6 +6,9 @@ use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+use crate::web::components::ui::{
+    Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SuccessText,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -36,7 +39,6 @@ async fn list_skills() -> Result<Vec<CatalogEntry>, ServerFnError> {
         })
         .collect();
 
-    // Add remote items from cache
     if let Some(cache) = crate::skill_center_cache::SkillCenterCache::global() {
         let all = cache.get_all().await;
         let sc_names: std::collections::HashMap<uuid::Uuid, String> =
@@ -110,7 +112,7 @@ pub fn SkillList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", {t!("skill-list-title")} }
+            PageHeader { class: "mb-0", {t!("skill-list-title")} }
             div { class: "flex items-center gap-2",
                 {match &*skills.read() {
                     Some(Ok(list)) => {
@@ -132,8 +134,8 @@ pub fn SkillList() -> Element {
                     },
                     _ => rsx! {},
                 }}
-                button {
-                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                Button {
+                    variant: ButtonVariant::Primary,
                     disabled: *syncing.read(),
                     onclick: move |_| {
                         syncing.set(true);
@@ -161,54 +163,53 @@ pub fn SkillList() -> Element {
             }
         }
         if let Some(msg) = &*sync_msg.read() {
-            p { class: "text-green-600 dark:text-green-400 text-sm mb-4", "{msg}" }
+            SuccessText { class: "mb-4", "{msg}" }
         }
         if let Some(err) = &*sync_err.read() {
-            p { class: "text-red-600 dark:text-red-400 text-sm mb-4", "{err}" }
+            ErrorText { class: "mb-4", "{err}" }
         }
         {match &*skills.read() {
-            Some(Ok(list)) => {
-                let search = use_signal(String::new);
-                let limit = use_signal(|| 20usize);
+            Some(Ok(list)) => rsx! { CatalogTable { list: list.clone() } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
+        }}
+    }
+}
 
-                let list_clone = list.clone();
-                let filtered = use_memo(move || {
-                    let q = search.read().to_lowercase();
-                    if q.is_empty() {
-                        list_clone.clone()
-                    } else {
-                        list_clone.iter().filter(|s| s.matches_search(&q)).cloned().collect()
-                    }
-                });
+#[component]
+fn CatalogTable(list: Vec<CatalogEntry>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
 
-                let total = list.len();
-                let data = use_tabular(
-                    (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, HiddenColumn, CreatedAtColumn),
-                    filtered.into(),
-                );
-                let all_rows: Vec<_> = data.rows().collect();
-                let filtered_count = all_rows.len();
-                let limit_val = *limit.read();
-                let shown = filtered_count.min(limit_val);
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone.iter().filter(|s| s.matches_search(&q)).cloned().collect()
+        }
+    });
 
-                rsx! {
-                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                            thead { class: "bg-gray-50 dark:bg-gray-700",
-                                tr { TableHeaders { data } }
-                            }
-                            tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                for row in all_rows.into_iter().take(limit_val) {
-                                    tr { key: "{row.key()}", TableCells { row } }
-                                }
-                            }
-                        }
-                    }
+    let total = list.len();
+    let data = use_tabular(
+        (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, HiddenColumn, CreatedAtColumn),
+        filtered.into(),
+    );
+    let all_rows: Vec<_> = data.rows().collect();
+    let filtered_count = all_rows.len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! { TableHeaders { data } },
+            body: rsx! {
+                for row in all_rows.into_iter().take(limit_val) {
+                    tr { key: "{row.key()}", TableCells { row } }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { {t!("loading")} } },
-        }}
+        }
     }
 }

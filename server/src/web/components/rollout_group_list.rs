@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+use crate::web::components::table_utils::Searchable;
+use crate::web::components::ui::{
+    Button, ButtonVariant, Card, DataTable, ErrorText, HelpText, PageHeader, SectionHeading,
+    SortState, SortableTh, Td, TdMuted,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct GroupEntry {
     id: Uuid,
     name: String,
@@ -73,120 +77,121 @@ async fn create_group(name: String, description: String) -> Result<(), ServerFnE
 
 #[component]
 pub fn RolloutGroupList() -> Element {
-    let mut groups = use_server_future(move || async move { get_rollout_groups().await })?;
+    let groups = use_server_future(move || async move { get_rollout_groups().await })?;
+
+    rsx! {
+        PageHeader { {t!("rollout-group-list-title")} }
+        CreateGroupForm { on_created: move |_| { let mut g = groups; g.restart(); } }
+        {match &*groups.read() {
+            Some(Ok(list)) => rsx! { GroupTable { list: list.clone() } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
+        }}
+    }
+}
+
+#[component]
+fn CreateGroupForm(on_created: EventHandler<()>) -> Element {
     let mut name = use_signal(String::new);
     let mut desc = use_signal(String::new);
 
-    match &*groups.read() {
-        Some(Ok(list)) => {
-            rsx! {
-                h2 { class: "text-2xl font-bold mb-4", {t!("rollout-group-list-title")} }
-
-                div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                    h3 { class: "text-lg font-semibold mb-2", {t!("rollout-group-list-create")} }
-                    div { class: "flex gap-2",
-                        input {
-                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
-                            placeholder: t!("rollout-group-list-name-placeholder"),
-                            value: "{name}",
-                            oninput: move |e| name.set(e.value()),
-                        }
-                        input {
-                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
-                            placeholder: t!("rollout-group-list-desc-placeholder"),
-                            value: "{desc}",
-                            oninput: move |e| desc.set(e.value()),
-                        }
-                        button {
-                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                            onclick: move |_| {
-                                let n = name.read().clone();
-                                let d = desc.read().clone();
-                                async move {
-                                    if !n.trim().is_empty() {
-                                        let _ = create_group(n, d).await;
-                                        name.set(String::new());
-                                        desc.set(String::new());
-                                        groups.restart();
-                                    }
-                                }
-                            },
-                            {t!("create")}
-                        }
-                    }
+    rsx! {
+        Card { class: "mb-6 p-4",
+            SectionHeading { class: "mb-2", {t!("rollout-group-list-create")} }
+            div { class: "flex gap-2",
+                input {
+                    class: "input input-sm flex-1 w-auto",
+                    placeholder: t!("rollout-group-list-name-placeholder"),
+                    value: "{name}",
+                    oninput: move |e| name.set(e.value()),
                 }
-
-                {
-                    let search = use_signal(String::new);
-                    let limit = use_signal(|| 20usize);
-                    let sort = use_signal(|| ("name".to_string(), true));
-
-                    let list_clone = list.clone();
-                    let mut filtered: Vec<GroupEntry> = {
-                        let q = search.read().to_lowercase();
-                        if q.is_empty() {
-                            list_clone.clone()
-                        } else {
-                            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
-                        }
-                    };
-
-                    {
-                        let (key, asc) = sort.read().clone();
-                        filtered.sort_by(|a, b| {
-                            let ord = match key.as_str() {
-                                "description" => a.description.to_lowercase().cmp(&b.description.to_lowercase()),
-                                "members" => a.member_count.cmp(&b.member_count),
-                                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                            };
-                            if asc { ord } else { ord.reverse() }
-                        });
-                    }
-
-                    let total = list.len();
-                    let filtered_count = filtered.len();
-                    let limit_val = *limit.read();
-                    let shown = filtered_count.min(limit_val);
-
-                    rsx! {
-                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                                thead { class: "bg-gray-50 dark:bg-gray-700",
-                                    tr {
-                                        SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
-                                        SortableTh { label: t!("description"), sort_key: "description".to_string(), sort }
-                                        SortableTh { label: t!("rollout-group-list-col-members"), sort_key: "members".to_string(), sort }
-                                    }
-                                }
-                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                    for g in filtered.into_iter().take(limit_val) {
-                                        {
-                                            let gid = g.id.to_string();
-                                            rsx! {
-                                                tr {
-                                                    td { class: "px-6 py-4 text-sm font-medium",
-                                                        Link { to: Route::RolloutGroupDetail { id: gid },
-                                                            class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                                            "{g.name}"
-                                                        }
-                                                    }
-                                                    td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400", "{g.description}" }
-                                                    td { class: "px-6 py-4 text-sm", "{g.member_count}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                input {
+                    class: "input input-sm flex-1 w-auto",
+                    placeholder: t!("rollout-group-list-desc-placeholder"),
+                    value: "{desc}",
+                    oninput: move |e| desc.set(e.value()),
+                }
+                Button {
+                    variant: ButtonVariant::Primary,
+                    onclick: move |_| {
+                        let n = name.read().clone();
+                        let d = desc.read().clone();
+                        async move {
+                            if !n.trim().is_empty() {
+                                let _ = create_group(n, d).await;
+                                name.set(String::new());
+                                desc.set(String::new());
+                                on_created.call(());
                             }
                         }
-                    }
+                    },
+                    {t!("create")}
                 }
             }
         }
-        Some(Err(e)) => {
-            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } }
+    }
+}
+
+#[component]
+fn GroupTable(list: Vec<GroupEntry>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("name".to_string(), true));
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<GroupEntry> = if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+        };
+        let (key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = match key.as_str() {
+                "description" => a.description.to_lowercase().cmp(&b.description.to_lowercase()),
+                "members" => a.member_count.cmp(&b.member_count),
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
+                SortableTh { label: t!("description"), sort_key: "description".to_string(), sort }
+                SortableTh { label: t!("rollout-group-list-col-members"), sort_key: "members".to_string(), sort }
+            },
+            body: rsx! {
+                for g in filtered.read().iter().take(limit_val) {
+                    GroupRowView { key: "{g.id}", group: g.clone() }
+                }
+            },
         }
-        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
+    }
+}
+
+#[component]
+fn GroupRowView(group: GroupEntry) -> Element {
+    let gid = group.id.to_string();
+    rsx! {
+        tr {
+            Td { class: "text-sm font-medium",
+                Link { to: Route::RolloutGroupDetail { id: gid }, class: "link",
+                    "{group.name}"
+                }
+            }
+            TdMuted { class: "text-sm", "{group.description}" }
+            Td { class: "text-sm", "{group.member_count}" }
+        }
     }
 }

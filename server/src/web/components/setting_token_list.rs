@@ -2,6 +2,9 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::models::Token;
+use crate::web::components::ui::{
+    Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -82,7 +85,6 @@ async fn revoke_setting_token(token_id: String) -> Result<(), ServerFnError> {
     let uuid: uuid::Uuid = token_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Check access before revoking
     let owner_cid =
         sqlx::query_scalar::<_, uuid::Uuid>("SELECT cluster_id FROM tokens WHERE id = $1")
             .bind(uuid)
@@ -139,24 +141,22 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         if !read_only {
             if let Some(raw) = &*new_token.read() {
-                div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
-                    p { class: "text-sm font-medium text-green-800 dark:text-green-300", {t!("setting-token-new")} }
-                    code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
+                Alert { variant: AlertVariant::Success, class: "mb-4",
+                    p { class: "text-sm font-medium", {t!("setting-token-new")} }
+                    code { class: "block mt-1 text-xs break-all bg-success-soft p-2 rounded", "{raw}" }
                 }
             }
 
             form { onsubmit: on_create, class: "flex gap-2 mb-4",
                 input {
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                    class: "input flex-1 w-auto py-1 text-sm",
                     r#type: "text",
                     required: true,
                     placeholder: t!("setting-token-label"),
                     value: "{label}",
                     oninput: move |evt| label.set(evt.value()),
                 }
-                button {
-                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                    r#type: "submit",
+                Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                     {t!("setting-token-create")}
                 }
             }
@@ -164,64 +164,94 @@ pub fn SettingTokenList(cluster_id: String, read_only: bool) -> Element {
 
         {match &*tokens.read() {
             Some(Ok(list)) => rsx! {
-                ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                ul { class: "divide-y divide-line-soft",
                     for token in list {
-                        {
-                            let display_label = if token.label.is_empty() {
-                                t!("no-label")
-                            } else {
-                                token.label.clone()
-                            };
-                            let created = token.created_at.format("%Y-%m-%d %H:%M").to_string();
-                            let revoked = token.revoked;
-                            let expired = token.expires_at.is_some_and(|e| e < chrono::Utc::now());
-                            let expires_label = token.expires_at.map(|e| {
-                                let date = e.format("%Y-%m-%d %H:%M").to_string();
-                                if expired {
-                                    t!("setting-token-expired", date: date)
-                                } else {
-                                    t!("setting-token-expires", date: date)
+                        ExpiringTokenRow {
+                            key: "{token.id}",
+                            token: token.clone(),
+                            read_only,
+                            expires_kind: "setting",
+                            on_revoke: {
+                                let tid = token.id.to_string();
+                                move |_| {
+                                    let tid = tid.clone();
+                                    spawn(async move {
+                                        if revoke_setting_token(tid).await.is_ok() {
+                                            tokens.restart();
+                                        }
+                                    });
                                 }
-                            });
-                            let tid = token.id.to_string();
-                            rsx! {
-                                li { class: "py-2 flex justify-between items-center",
-                                    div {
-                                        span { class: "text-sm font-medium", "{display_label}" }
-                                        span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{created}" }
-                                        if let Some(exp) = &expires_label {
-                                            if expired {
-                                                span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", "{exp}" }
-                                            } else {
-                                                span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{exp}" }
-                                            }
-                                        }
-                                        if revoked {
-                                            span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", {t!("revoked")} }
-                                        }
-                                    }
-                                    if !revoked && !expired && !read_only {
-                                        button {
-                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
-                                            onclick: move |_| {
-                                                let tid = tid.clone();
-                                                spawn(async move {
-                                                    if revoke_setting_token(tid).await.is_ok() {
-                                                        tokens.restart();
-                                                    }
-                                                });
-                                            },
-                                            {t!("setting-token-revoke")}
-                                        }
-                                    }
-                                }
-                            }
+                            },
                         }
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
+    }
+}
+
+/// Shared between setting + sync token lists. `expires_kind` selects the
+/// `t!` keys for the two slightly different label sets — passing the
+/// scoped identifier keeps i18n strings exact-match-grep-able.
+#[component]
+pub fn ExpiringTokenRow(
+    token: Token,
+    read_only: bool,
+    expires_kind: &'static str,
+    on_revoke: EventHandler<()>,
+) -> Element {
+    let display_label = if token.label.is_empty() {
+        t!("no-label")
+    } else {
+        token.label.clone()
+    };
+    let created = token.created_at.format("%Y-%m-%d %H:%M").to_string();
+    let revoked = token.revoked;
+    let expired = token.expires_at.is_some_and(|e| e < chrono::Utc::now());
+    let expires_label = token.expires_at.map(|e| {
+        let date = e.format("%Y-%m-%d %H:%M").to_string();
+        match (expires_kind, expired) {
+            ("setting", true)  => t!("setting-token-expired", date: date),
+            ("setting", false) => t!("setting-token-expires", date: date),
+            ("sync", true)     => t!("sync-token-expired", date: date),
+            ("sync", false)    => t!("sync-token-expires", date: date),
+            _ => date,
+        }
+    });
+    let revoke_label = if expires_kind == "setting" {
+        t!("setting-token-revoke")
+    } else {
+        t!("sync-token-revoke")
+    };
+
+    rsx! {
+        li { class: "py-2 flex justify-between items-center",
+            div {
+                span { class: "text-sm font-medium", "{display_label}" }
+                span { class: "text-xs text-fg-muted ml-2", "{created}" }
+                if let Some(exp) = &expires_label {
+                    if expired {
+                        span { class: "ml-2",
+                            Badge { variant: BadgeVariant::Danger, "{exp}" }
+                        }
+                    } else {
+                        span { class: "text-xs text-fg-muted ml-2", "{exp}" }
+                    }
+                }
+                if revoked {
+                    span { class: "ml-2",
+                        Badge { variant: BadgeVariant::Danger, {t!("revoked")} }
+                    }
+                }
+            }
+            if !revoked && !expired && !read_only {
+                button { class: "link-danger text-sm",
+                    onclick: move |_| on_revoke.call(()),
+                    {revoke_label}
+                }
+            }
+        }
     }
 }

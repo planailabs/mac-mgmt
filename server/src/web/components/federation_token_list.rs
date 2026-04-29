@@ -2,6 +2,9 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::models::Token;
+use crate::web::components::ui::{
+    Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -88,24 +91,22 @@ pub fn FederationTokenList() -> Element {
 
     rsx! {
         if let Some(raw) = &*new_token.read() {
-            div { class: "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded p-3 mb-4",
-                p { class: "text-sm font-medium text-green-800 dark:text-green-300", {t!("federation-token-new")} }
-                code { class: "block mt-1 text-xs break-all bg-green-100 dark:bg-green-900/50 p-2 rounded", "{raw}" }
+            Alert { variant: AlertVariant::Success, class: "mb-4",
+                p { class: "text-sm font-medium", {t!("federation-token-new")} }
+                code { class: "block mt-1 text-xs break-all bg-success-soft p-2 rounded", "{raw}" }
             }
         }
 
         form { onsubmit: on_create, class: "flex gap-2 mb-4",
             input {
-                class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                class: "input flex-1 w-auto py-1 text-sm",
                 r#type: "text",
                 required: true,
                 placeholder: t!("federation-token-label"),
                 value: "{label}",
                 oninput: move |evt| label.set(evt.value()),
             }
-            button {
-                class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                r#type: "submit",
+            Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                 {t!("federation-token-create")}
             }
         }
@@ -113,51 +114,61 @@ pub fn FederationTokenList() -> Element {
         {match &*tokens.read() {
             Some(Ok(list)) => rsx! {
                 if list.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("federation-token-none")} }
+                    HelpText { {t!("federation-token-none")} }
                 } else {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for token in list {
-                            {
-                                let display_label = if token.label.is_empty() {
-                                    t!("no-label")
-                                } else {
-                                    token.label.clone()
-                                };
-                                let created = token.created_at.format("%Y-%m-%d").to_string();
-                                let revoked = token.revoked;
-                                let tid = token.id.to_string();
-                                rsx! {
-                                    li { class: "py-2 flex justify-between items-center",
-                                        div {
-                                            span { class: "text-sm font-medium", "{display_label}" }
-                                            span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{created}" }
-                                            if revoked {
-                                                span { class: "px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 ml-2", {t!("revoked")} }
+                            TokenRow {
+                                key: "{token.id}",
+                                token: token.clone(),
+                                on_revoke: {
+                                    let tid = token.id.to_string();
+                                    move |_| {
+                                        let tid = tid.clone();
+                                        spawn(async move {
+                                            if revoke_federation_token(tid).await.is_ok() {
+                                                tokens.restart();
                                             }
-                                        }
-                                        if !revoked {
-                                            button {
-                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
-                                                onclick: move |_| {
-                                                    let tid = tid.clone();
-                                                    spawn(async move {
-                                                        if revoke_federation_token(tid).await.is_ok() {
-                                                            tokens.restart();
-                                                        }
-                                                    });
-                                                },
-                                                {t!("federation-token-revoke")}
-                                            }
-                                        }
+                                        });
                                     }
-                                }
+                                },
                             }
                         }
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
+    }
+}
+
+#[component]
+fn TokenRow(token: Token, on_revoke: EventHandler<()>) -> Element {
+    let display_label = if token.label.is_empty() {
+        t!("no-label")
+    } else {
+        token.label.clone()
+    };
+    let created = token.created_at.format("%Y-%m-%d").to_string();
+    let revoked = token.revoked;
+    rsx! {
+        li { class: "py-2 flex justify-between items-center",
+            div {
+                span { class: "text-sm font-medium", "{display_label}" }
+                span { class: "text-xs text-fg-muted ml-2", "{created}" }
+                if revoked {
+                    span { class: "ml-2",
+                        Badge { variant: BadgeVariant::Danger, {t!("revoked")} }
+                    }
+                }
+            }
+            if !revoked {
+                button { class: "link-danger text-sm",
+                    onclick: move |_| on_revoke.call(()),
+                    {t!("federation-token-revoke")}
+                }
+            }
+        }
     }
 }

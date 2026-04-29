@@ -4,7 +4,8 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, TableToolbar};
+use crate::web::components::table_utils::Searchable;
+use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct OrgRow {
@@ -66,69 +67,71 @@ pub fn OrganizationList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", {t!("org-list-title")} }
-            Link {
-                to: Route::OrganizationForm {},
-                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+            PageHeader { class: "mb-0", {t!("org-list-title")} }
+            Link { to: Route::OrganizationForm {}, class: "btn btn-md btn-primary",
                 {t!("org-list-new")}
             }
         }
         {match &*orgs.read() {
-            Some(Ok(list)) => {
-                let search = use_signal(String::new);
-                let limit = use_signal(|| 20usize);
-
-                let list_clone = list.clone();
-                let filtered = use_memo(move || {
-                    let q = search.read().to_lowercase();
-                    if q.is_empty() {
-                        list_clone.clone()
-                    } else {
-                        list_clone.iter().filter(|o| o.matches_search(&q)).cloned().collect()
-                    }
-                });
-
-                let total = list.len();
-                let filtered_count = filtered.read().len();
-                let limit_val = *limit.read();
-                let shown = filtered_count.min(limit_val);
-
-                rsx! {
-                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                            thead { class: "bg-gray-50 dark:bg-gray-700",
-                                tr {
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("name")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("org-list-col-members")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("org-list-col-clusters")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider", {t!("created")} }
-                                }
-                            }
-                            tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
-                                for org in filtered.read().iter().take(limit_val) {
-                                    tr { key: "{org.id}",
-                                        td { class: "px-6 py-4 text-sm",
-                                            Link {
-                                                to: Route::OrganizationDetail { id: org.id.clone() },
-                                                class: "text-blue-600 dark:text-blue-400 hover:underline font-medium",
-                                                "{org.name}"
-                                            }
-                                        }
-                                        td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300", "{org.member_count}" }
-                                        td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300", "{org.cluster_count}" }
-                                        td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400",
-                                            {org.created_at.format("%Y-%m-%d %H:%M").to_string()}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Some(Err(e)) => rsx! { p { class: "text-red-600", {t!("error-message", message: e.to_string())} } },
+            Some(Ok(list)) => rsx! { OrgTable { list: list.clone() } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
             None => rsx! { p { {t!("loading")} } },
         }}
+    }
+}
+
+#[component]
+fn OrgTable(list: Vec<OrgRow>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone.iter().filter(|o| o.matches_search(&q)).cloned().collect()
+        }
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                Th { {t!("name")} }
+                Th { {t!("org-list-col-members")} }
+                Th { {t!("org-list-col-clusters")} }
+                Th { {t!("created")} }
+            },
+            body: rsx! {
+                for org in filtered.read().iter().take(limit_val) {
+                    OrgRowView { key: "{org.id}", org: org.clone() }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn OrgRowView(org: OrgRow) -> Element {
+    let created = org.created_at.format("%Y-%m-%d %H:%M").to_string();
+    rsx! {
+        tr {
+            Td { class: "text-sm",
+                Link { to: Route::OrganizationDetail { id: org.id.clone() },
+                    class: "link font-medium",
+                    "{org.name}"
+                }
+            }
+            Td { class: "text-sm", "{org.member_count}" }
+            Td { class: "text-sm", "{org.cluster_count}" }
+            TdMuted { class: "text-sm", {created} }
+        }
     }
 }

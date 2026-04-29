@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::ui::{
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
+    SectionHeading,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -194,7 +198,6 @@ async fn toggle_user_admin(user_id: String, is_admin: bool) -> Result<(), Server
     let user = current_user().await?;
     user.require_admin()?;
 
-    // Prevent de-admining yourself
     let uid: uuid::Uuid = user_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
@@ -221,7 +224,6 @@ async fn delete_user(id: String) -> Result<(), ServerFnError> {
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    // Prevent deleting yourself
     if uid == user.id {
         return Err(ServerFnError::new("cannot delete yourself"));
     }
@@ -232,6 +234,14 @@ async fn delete_user(id: String) -> Result<(), ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
+}
+
+fn role_variant(role: &str) -> BadgeVariant {
+    match role {
+        "admin" => BadgeVariant::Accent,
+        "write" => BadgeVariant::Info,
+        _ => BadgeVariant::Neutral,
+    }
 }
 
 #[component]
@@ -272,16 +282,17 @@ pub fn UserDetail(id: String) -> Element {
 
             let is_admin = info.is_admin;
             let user_id = info.id.clone();
+            let created = info.created_at.format("%Y-%m-%d %H:%M").to_string();
 
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
                     div {
-                        h2 { class: "text-2xl font-bold", "{info.email}" }
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
+                        h2 { class: "h-page mb-0", "{info.email}" }
+                        p { class: "help",
                             if !info.name.is_empty() {
                                 span { "{info.name} · " }
                             }
-                            {t!("user-detail-created", date: info.created_at.format("%Y-%m-%d %H:%M").to_string())}
+                            {t!("user-detail-created", date: created)}
                         }
                     }
                     div { class: "flex gap-2 items-center",
@@ -290,7 +301,7 @@ pub fn UserDetail(id: String) -> Element {
                             input {
                                 r#type: "checkbox",
                                 checked: is_admin,
-                                class: "h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500",
+                                class: "h-4 w-4 rounded border-line text-brand focus:ring-brand",
                                 onchange: {
                                     let uid = user_id.clone();
                                     move |e: Event<FormData>| {
@@ -303,11 +314,10 @@ pub fn UserDetail(id: String) -> Element {
                                     }
                                 },
                             }
-                            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", {t!("admin")} }
+                            label { class: "text-sm font-medium text-fg-strong", {t!("admin")} }
                         }
                         // Impersonate
-                        button {
-                            class: "bg-yellow-500 text-yellow-900 px-3 py-1 rounded text-sm hover:bg-yellow-600",
+                        Button { variant: ButtonVariant::Warn, size: ButtonSize::Sm,
                             onclick: {
                                 let uid = user_id.clone();
                                 move |_| {
@@ -319,16 +329,14 @@ pub fn UserDetail(id: String) -> Element {
                             },
                             {t!("user-detail-impersonate")}
                         }
-                        // Delete
+                        // Delete (with confirm flow)
                         if *confirm_delete.read() {
-                            span { class: "text-sm text-red-600 dark:text-red-400 mr-2", {t!("user-detail-confirm")} }
-                            button {
-                                class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                            span { class: "text-sm text-danger mr-2", {t!("user-detail-confirm")} }
+                            Button { variant: ButtonVariant::Danger, size: ButtonSize::Sm,
                                 onclick: {
                                     let uid = id.clone();
                                     move |_| {
                                         let uid = uid.clone();
-                                        let nav = nav.clone();
                                         async move {
                                             let _ = delete_user(uid).await;
                                             nav.push(Route::UserList {});
@@ -337,14 +345,12 @@ pub fn UserDetail(id: String) -> Element {
                                 },
                                 {t!("user-detail-yes-delete")}
                             }
-                            button {
-                                class: "bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 px-3 py-1 rounded text-sm",
+                            Button { variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
                                 onclick: move |_| confirm_delete.set(false),
                                 {t!("cancel")}
                             }
                         } else {
-                            button {
-                                class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                            Button { variant: ButtonVariant::Danger, size: ButtonSize::Sm,
                                 onclick: move |_| confirm_delete.set(true),
                                 {t!("user-detail-delete")}
                             }
@@ -353,12 +359,12 @@ pub fn UserDetail(id: String) -> Element {
                 }
 
                 // Organizations section
-                div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                    h3 { class: "text-lg font-semibold mb-3", {t!("user-detail-orgs")} }
+                Card { class: "p-4",
+                    SectionHeading { {t!("user-detail-orgs")} }
 
                     div { class: "flex gap-2 mb-4",
                         select {
-                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
+                            class: "input flex-1 w-auto py-1 text-sm",
                             onchange: move |e| {
                                 let val = e.value();
                                 if val.is_empty() {
@@ -377,15 +383,14 @@ pub fn UserDetail(id: String) -> Element {
                             }
                         }
                         select {
-                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-24 dark:bg-gray-700 dark:text-white",
+                            class: "input w-24 py-1 text-sm",
                             value: "{selected_org_role}",
                             onchange: move |e| selected_org_role.set(e.value()),
                             option { value: "read", {t!("org-detail-role-read")} }
                             option { value: "write", {t!("org-detail-role-write")} }
                             option { value: "admin", {t!("org-detail-role-admin")} }
                         }
-                        button {
-                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                        Button { size: ButtonSize::Sm,
                             disabled: selected_org.read().is_none(),
                             onclick: {
                                 let uid = id.clone();
@@ -408,32 +413,26 @@ pub fn UserDetail(id: String) -> Element {
                     }
 
                     if orgs.is_empty() {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("user-detail-no-orgs")} }
+                        HelpText { {t!("user-detail-no-orgs")} }
                     } else {
-                        div { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        div { class: "divide-y divide-line-soft",
                             for o in &orgs {
                                 {
                                     let oid = o.organization_id.clone();
                                     let uid = id.clone();
                                     let oname = o.name.clone();
                                     let role = o.role.clone();
-                                    let badge_class = match o.role.as_str() {
-                                        "admin" => "bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300",
-                                        "write" => "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-                                        _ => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-                                    };
+                                    let variant = role_variant(&o.role);
                                     rsx! {
                                         div { class: "flex justify-between items-center py-2",
                                             div { class: "flex items-center gap-2",
-                                                Link {
-                                                    to: Route::OrganizationDetail { id: oid.clone() },
-                                                    class: "text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium",
+                                                Link { to: Route::OrganizationDetail { id: oid.clone() },
+                                                    class: "link text-sm font-medium",
                                                     "{oname}"
                                                 }
-                                                span { class: "text-xs px-1.5 py-0.5 rounded {badge_class}", "{role}" }
+                                                Badge { variant, "{role}" }
                                             }
-                                            button {
-                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                            button { class: "link-danger text-sm",
                                                 onclick: {
                                                     let oid = oid.clone();
                                                     let uid = uid.clone();
@@ -458,7 +457,7 @@ pub fn UserDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { {t!("loading")} } },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }

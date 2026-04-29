@@ -5,11 +5,15 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+use crate::web::components::table_utils::Searchable;
+use crate::web::components::ui::{
+    Badge, BadgeVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh, Td,
+    TdMuted, Th,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RolloutEntry {
     id: Uuid,
     #[serde(default)]
@@ -28,7 +32,7 @@ struct RolloutEntry {
 /// tooltip. Rendered in the list view's Health column. Reads the most
 /// recent `rollout_stage_health_evaluations` row per rolling stage rather
 /// than re-evaluating live (the auto-pause loop ticks every 60s).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RolloutHealthSummary {
     /// "pass" | "grace" | "fail" | "no_data"
     state: String,
@@ -65,9 +69,6 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Pull the latest evaluation per rolling stage in one query, then
-    // collapse to one summary per rollout. Cheaper than per-rollout
-    // queries when the list has many entries.
     #[derive(sqlx::FromRow)]
     struct EvalRow {
         rollout_id: Uuid,
@@ -109,9 +110,6 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
                     summary: String::new(),
                 });
         entry.evaluated_stages += 1;
-        // State precedence: fail > grace (only when grace is actually
-        // shielding a real reason) > pass. A clean pass during grace is
-        // just a pass.
         if !ev.passed {
             entry.failing_stages += 1;
             entry.state = "fail".into();
@@ -130,11 +128,6 @@ async fn get_rollouts() -> Result<Vec<RolloutEntry>, ServerFnError> {
     Ok(rows
         .into_iter()
         .map(|r| {
-            // Match the detail-page rule: only show health when the
-            // rollout is rolling AND has at least one gated stage that's
-            // been evaluated. The query above already filters by
-            // health_gate IS NOT NULL, so any entry in health_by_rollout
-            // is already "has gate, has at least one eval".
             let health = if r.status == "rolling" {
                 health_by_rollout.remove(&r.id)
             } else {
@@ -187,232 +180,189 @@ impl Searchable for RolloutEntry {
     }
 }
 
-/// Render the Health column cell for one rollout. Non-rolling rollouts
-/// get an em dash; rolling rollouts get a coloured pill plus an
-/// `evaluated/total` count and a tooltip carrying the top failure reason.
-fn render_health_cell(health: Option<&RolloutHealthSummary>) -> Element {
-    let Some(h) = health else {
-        return rsx! { span { class: "text-gray-400 dark:text-gray-500", {t!("em-dash")} } };
-    };
-    let (cls, label) = match h.state.as_str() {
-        "pass" => (
-            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-            t!("rollout-health-pass"),
-        ),
-        "fail" => (
-            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-            t!("rollout-health-fail"),
-        ),
-        "grace" => (
-            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-            t!("rollout-health-grace"),
-        ),
-        _ => (
-            "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-            t!("rollout-health-no-data"),
-        ),
-    };
-    let title = if h.summary.is_empty() {
-        t!("rollout-health-tooltip", evaluated: h.evaluated_stages, failing: h.failing_stages)
-    } else {
-        t!("rollout-health-tooltip-summary", evaluated: h.evaluated_stages, failing: h.failing_stages, summary: h.summary.clone())
-    };
-    rsx! {
-        span { class: "inline-flex items-center gap-2",
-            span {
-                class: "px-2 py-0.5 rounded text-xs font-medium {cls}",
-                title: "{title}",
-                "{label}"
-            }
-            if h.failing_stages > 0 {
-                span { class: "text-xs font-mono text-red-700 dark:text-red-300",
-                    "{h.failing_stages}/{h.evaluated_stages}"
-                }
-            } else if h.evaluated_stages > 0 {
-                span { class: "text-xs font-mono text-gray-500 dark:text-gray-400",
-                    "{h.evaluated_stages}/{h.evaluated_stages}"
-                }
-            }
-        }
+fn status_variant(status: &str) -> (BadgeVariant, String) {
+    match status {
+        "rolling"   => (BadgeVariant::Info,    t!("rollout-status-rolling")),
+        "completed" => (BadgeVariant::Success, t!("rollout-status-completed")),
+        "paused"    => (BadgeVariant::Warn,    t!("rollout-status-paused")),
+        "failed"    => (BadgeVariant::Danger,  t!("rollout-status-failed")),
+        _           => (BadgeVariant::Neutral, t!("rollout-status-pending")),
     }
 }
 
-fn status_badge(status: &str) -> (&'static str, String) {
-    match status {
-        "rolling" => (
-            "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
-            t!("rollout-status-rolling"),
-        ),
-        "completed" => (
-            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-            t!("rollout-status-completed"),
-        ),
-        "paused" => (
-            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-            t!("rollout-status-paused"),
-        ),
-        "failed" => (
-            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-            t!("rollout-status-failed"),
-        ),
-        _ => (
-            "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
-            t!("rollout-status-pending"),
-        ),
+fn health_variant(state: &str) -> (BadgeVariant, String) {
+    match state {
+        "pass"  => (BadgeVariant::Success, t!("rollout-health-pass")),
+        "fail"  => (BadgeVariant::Danger,  t!("rollout-health-fail")),
+        "grace" => (BadgeVariant::Warn,    t!("rollout-health-grace")),
+        _       => (BadgeVariant::Neutral, t!("rollout-health-no-data")),
     }
 }
 
 #[component]
 pub fn RolloutList() -> Element {
-    let mut rollouts = use_server_future(move || async move { get_rollouts().await })?;
+    let rollouts = use_server_future(move || async move { get_rollouts().await })?;
 
-    match &*rollouts.read() {
-        Some(Ok(list)) => {
-            rsx! {
-                div { class: "flex justify-between items-center mb-4",
-                    h2 { class: "text-2xl font-bold", {t!("rollout-list-title")} }
-                    div { class: "flex gap-2",
-                        Link {
-                            to: Route::RolloutGroupList {},
-                            class: "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-500",
-                            {t!("rollout-list-manage-groups")}
-                        }
-                        Link {
-                            to: Route::RolloutForm {},
-                            class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                            {t!("rollout-list-new")}
-                        }
+    rsx! {
+        div { class: "flex justify-between items-center mb-4",
+            PageHeader { class: "mb-0", {t!("rollout-list-title")} }
+            div { class: "flex gap-2",
+                Link { to: Route::RolloutGroupList {}, class: "btn btn-lg btn-secondary",
+                    {t!("rollout-list-manage-groups")}
+                }
+                Link { to: Route::RolloutForm {}, class: "btn btn-lg btn-primary",
+                    {t!("rollout-list-new")}
+                }
+            }
+        }
+        {match &*rollouts.read() {
+            Some(Ok(list)) => {
+                if list.is_empty() {
+                    rsx! { HelpText { {t!("rollout-list-no-rollouts")} } }
+                } else {
+                    rsx! { RolloutsTable { list: list.clone(), rollouts } }
+                }
+            }
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
+        }}
+    }
+}
+
+#[component]
+fn RolloutsTable(
+    list: Vec<RolloutEntry>,
+    rollouts: Resource<Result<Vec<RolloutEntry>, ServerFnError>>,
+) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("created".to_string(), false));
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<RolloutEntry> = if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+        };
+        let (key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = match key.as_str() {
+                "name" => a.name.as_deref().unwrap_or("").cmp(b.name.as_deref().unwrap_or("")),
+                "status" => a.status.cmp(&b.status),
+                "stages" => a.stage_count.cmp(&b.stage_count),
+                _ => a.created_at.cmp(&b.created_at),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
+                SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
+                SortableTh { label: t!("rollout-list-col-stages"), sort_key: "stages".to_string(), sort }
+                Th { {t!("rollout-list-col-health")} }
+                SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
+                Th { "" }
+            },
+            body: rsx! {
+                for r in filtered.read().iter().take(limit_val) {
+                    RolloutRow { key: "{r.id}", entry: r.clone(), rollouts }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn RolloutRow(
+    entry: RolloutEntry,
+    rollouts: Resource<Result<Vec<RolloutEntry>, ServerFnError>>,
+) -> Element {
+    let mut rollouts = rollouts;
+    let rid = entry.id.to_string();
+    let created = entry.created_at.format("%Y-%m-%d %H:%M").to_string();
+    let (status_var, status_text) = status_variant(&entry.status);
+    let can_delete =
+        entry.status == "pending" || entry.status == "completed" || entry.status == "failed";
+
+    rsx! {
+        tr {
+            Td { class: "text-sm",
+                Link { to: Route::RolloutDetail { id: rid.clone() }, class: "link",
+                    if let Some(ref name) = entry.name {
+                        span { "{name}" }
+                    } else {
+                        span { class: "font-mono text-xs", "{rid}" }
                     }
                 }
-                if list.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("rollout-list-no-rollouts")} }
-                } else {
-                    {
-                        let search = use_signal(String::new);
-                        let limit = use_signal(|| 20usize);
-                        let sort = use_signal(|| ("created".to_string(), false));
-
-                        let list_clone = list.clone();
-                        let mut filtered: Vec<RolloutEntry> = {
-                            let q = search.read().to_lowercase();
-                            if q.is_empty() {
-                                list_clone.clone()
-                            } else {
-                                list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
-                            }
-                        };
-
-                        {
-                            let (key, asc) = sort.read().clone();
-                            filtered.sort_by(|a, b| {
-                                let ord = match key.as_str() {
-                                    "name" => a.name.as_deref().unwrap_or("").cmp(b.name.as_deref().unwrap_or("")),
-                                    "status" => a.status.cmp(&b.status),
-                                    "stages" => a.stage_count.cmp(&b.stage_count),
-                                    _ => a.created_at.cmp(&b.created_at),
-                                };
-                                if asc { ord } else { ord.reverse() }
-                            });
-                        }
-
-                        let total = list.len();
-                        let filtered_count = filtered.len();
-                        let limit_val = *limit.read();
-                        let shown = filtered_count.min(limit_val);
-
-                        rsx! {
-                            TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                                    thead { class: "bg-gray-50 dark:bg-gray-700",
-                                        tr {
-                                            SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
-                                            SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
-                                            SortableTh { label: t!("rollout-list-col-stages"), sort_key: "stages".to_string(), sort }
-                                            th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("rollout-list-col-health")} }
-                                            SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
-                                            th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase",
-                                                ""
-                                            }
-                                        }
-                                    }
-                                    tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                        for r in filtered.into_iter().take(limit_val) {
-                                            {
-                                                let rid = r.id.to_string();
-                                                let created =
-                                                    r.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                                let (badge_class, badge_text) =
-                                                    status_badge(&r.status);
-                                                let can_delete = r.status == "pending"
-                                                    || r.status == "completed"
-                                                    || r.status == "failed";
-                                                rsx! {
-                                                    tr {
-                                                        td { class: "px-6 py-4 text-sm",
-                                                            Link {
-                                                                to: Route::RolloutDetail {
-                                                                    id: rid.clone(),
-                                                                },
-                                                                class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                                                if let Some(ref name) = r.name {
-                                                                    span { "{name}" }
-                                                                } else {
-                                                                    span { class: "font-mono text-xs", "{rid}" }
-                                                                }
-                                                            }
-                                                        }
-                                                        td { class: "px-6 py-4 text-sm",
-                                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_class}",
-                                                                "{badge_text}"
-                                                            }
-                                                        }
-                                                        td { class: "px-6 py-4 text-sm",
-                                                            "{r.stage_count}"
-                                                        }
-                                                        td { class: "px-6 py-4 text-sm",
-                                                            {render_health_cell(r.health.as_ref())}
-                                                        }
-                                                        td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400",
-                                                            "{created}"
-                                                        }
-                                                        td { class: "px-6 py-4 text-right",
-                                                            if can_delete {
-                                                                button {
-                                                                    class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
-                                                                    onclick: {
-                                                                        let rid = rid.clone();
-                                                                        move |_| {
-                                                                            let rid = rid.clone();
-                                                                            async move {
-                                                                                let _ =
-                                                                                    delete_rollout(rid)
-                                                                                        .await;
-                                                                                rollouts.restart();
-                                                                            }
-                                                                        }
-                                                                    },
-                                                                    {t!("delete")}
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+            }
+            Td { class: "text-sm",
+                Badge { variant: status_var, "{status_text}" }
+            }
+            Td { class: "text-sm", "{entry.stage_count}" }
+            Td { class: "text-sm", HealthCell { health: entry.health.clone() } }
+            TdMuted { class: "text-sm", {created} }
+            td { class: "td text-right",
+                if can_delete {
+                    button {
+                        class: "link-danger text-sm",
+                        onclick: {
+                            let rid = rid.clone();
+                            move |_| {
+                                let rid = rid.clone();
+                                async move {
+                                    let _ = delete_rollout(rid).await;
+                                    rollouts.restart();
                                 }
                             }
-                        }
+                        },
+                        {t!("delete")}
                     }
                 }
             }
         }
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+    }
+}
+
+#[component]
+fn HealthCell(health: Option<RolloutHealthSummary>) -> Element {
+    let Some(h) = health else {
+        return rsx! { span { class: "text-fg-faint", {t!("em-dash")} } };
+    };
+    let (variant, label) = health_variant(&h.state);
+    let title = if h.summary.is_empty() {
+        t!("rollout-health-tooltip", evaluated: h.evaluated_stages, failing: h.failing_stages)
+    } else {
+        t!(
+            "rollout-health-tooltip-summary",
+            evaluated: h.evaluated_stages,
+            failing: h.failing_stages,
+            summary: h.summary.clone()
+        )
+    };
+    rsx! {
+        span { class: "inline-flex items-center gap-2",
+            Badge { variant, title, "{label}" }
+            if h.failing_stages > 0 {
+                span { class: "text-xs font-mono text-danger-strong",
+                    "{h.failing_stages}/{h.evaluated_stages}"
+                }
+            } else if h.evaluated_stages > 0 {
+                span { class: "text-xs font-mono text-fg-muted",
+                    "{h.evaluated_stages}/{h.evaluated_stages}"
+                }
+            }
+        }
     }
 }

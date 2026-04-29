@@ -7,6 +7,7 @@ use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+use crate::web::components::ui::{DataTable, ErrorText, HelpText, PageHeader};
 
 #[server]
 async fn list_mcp_bundles() -> Result<Vec<CatalogEntry>, ServerFnError> {
@@ -78,7 +79,7 @@ pub fn McpBundleList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", {t!("mcp-bundle-list-title")} }
+            PageHeader { class: "mb-0", {t!("mcp-bundle-list-title")} }
             div { class: "flex items-center gap-2",
                 {match &*bundles.read() {
                     Some(Ok(list)) => {
@@ -100,56 +101,53 @@ pub fn McpBundleList() -> Element {
                     },
                     _ => rsx! {},
                 }}
-                Link {
-                    to: Route::McpBundleForm {},
-                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                Link { to: Route::McpBundleForm {}, class: "btn btn-md btn-primary",
                     {t!("mcp-bundle-list-new")}
                 }
             }
         }
         {match &*bundles.read() {
-            Some(Ok(list)) => {
-                let search = use_signal(String::new);
-                let limit = use_signal(|| 20usize);
+            Some(Ok(list)) => rsx! { CatalogTable { list: list.clone() } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
+        }}
+    }
+}
 
-                let list_clone = list.clone();
-                let filtered = use_memo(move || {
-                    let q = search.read().to_lowercase();
-                    if q.is_empty() {
-                        list_clone.clone()
-                    } else {
-                        list_clone.iter().filter(|b| b.matches_search(&q)).cloned().collect()
-                    }
-                });
+#[component]
+fn CatalogTable(list: Vec<CatalogEntry>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
 
-                let total = list.len();
-                let data = use_tabular(
-                    (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, HiddenColumn, CreatedAtColumn),
-                    filtered.into(),
-                );
-                let all_rows: Vec<_> = data.rows().collect();
-                let filtered_count = all_rows.len();
-                let limit_val = *limit.read();
-                let shown = filtered_count.min(limit_val);
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone.iter().filter(|b| b.matches_search(&q)).cloned().collect()
+        }
+    });
 
-                rsx! {
-                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                            thead { class: "bg-gray-50 dark:bg-gray-700",
-                                tr { TableHeaders { data } }
-                            }
-                            tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                for row in all_rows.into_iter().take(limit_val) {
-                                    tr { key: "{row.key()}", TableCells { row } }
-                                }
-                            }
-                        }
-                    }
+    let total = list.len();
+    let data = use_tabular(
+        (LinkColumn { header: "Slug" }, TextColumn { header: "Name" }, HiddenColumn, CreatedAtColumn),
+        filtered.into(),
+    );
+    let all_rows: Vec<_> = data.rows().collect();
+    let filtered_count = all_rows.len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! { TableHeaders { data } },
+            body: rsx! {
+                for row in all_rows.into_iter().take(limit_val) {
+                    tr { key: "{row.key()}", TableCells { row } }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { {t!("loading")} } },
-        }}
+        }
     }
 }

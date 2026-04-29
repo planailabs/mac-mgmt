@@ -12,6 +12,10 @@ const tokenColor = (v) => `rgb(var(--${v}) / <alpha-value>)`;
 module.exports = {
   darkMode: 'selector',
   content: ["./src/**/*.rs"],
+  // `td` and `th` collide with HTML element names; Tailwind's content
+  // extractor heuristically drops them. Safelist so the @layer rules
+  // for our `<Td>` / `<TdMono>` / `<TdMuted>` cells survive purge.
+  safelist: ['td', 'th'],
   theme: {
     extend: {
       colors: {
@@ -24,6 +28,7 @@ module.exports = {
           DEFAULT: tokenColor('c-surface'),
           '2':     tokenColor('c-surface-2'),
           '3':     tokenColor('c-surface-3'),
+          strong:  tokenColor('c-surface-strong'),
         },
         fg: {
           DEFAULT: tokenColor('c-fg'),

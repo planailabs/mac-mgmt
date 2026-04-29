@@ -37,3 +37,12 @@ pub fn ErrorText(
 ) -> Element {
     rsx! { p { class: "err {class}", {children} } }
 }
+
+/// Inline success message in success color.
+#[component]
+pub fn SuccessText(
+    #[props(default, into)] class: String,
+    children: Element,
+) -> Element {
+    rsx! { p { class: "ok {class}", {children} } }
+}

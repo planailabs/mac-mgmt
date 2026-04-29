@@ -20,9 +20,10 @@
   :root {
     /* RGB triplets so Tailwind's `<alpha-value>` interpolation works */
     --c-bg:           249 250 251;  /* gray-50  — page background */
-    --c-surface:      255 255 255;  /* white    — cards, table body */
-    --c-surface-2:    249 250 251;  /* gray-50  — table head, hover */
-    --c-surface-3:    229 231 235;  /* gray-200 — pressed states */
+    --c-surface:        255 255 255;  /* white    — cards, table body */
+    --c-surface-2:      249 250 251;  /* gray-50  — table head, hover */
+    --c-surface-3:      229 231 235;  /* gray-200 — secondary button bg */
+    --c-surface-strong: 209 213 219;  /* gray-300 — secondary button hover */
 
     --c-fg:           17 24 39;     /* gray-900 — body text */
     --c-fg-strong:    17 24 39;     /* gray-900 — headings, labels */
@@ -60,9 +61,10 @@
 
   .dark {
     --c-bg:           17 24 39;     /* gray-900 */
-    --c-surface:      31 41 55;     /* gray-800 */
-    --c-surface-2:    55 65 81;     /* gray-700 */
-    --c-surface-3:    75 85 99;     /* gray-600 */
+    --c-surface:        31 41 55;     /* gray-800 */
+    --c-surface-2:      55 65 81;     /* gray-700 */
+    --c-surface-3:      75 85 99;     /* gray-600 */
+    --c-surface-strong: 107 114 128;  /* gray-500 */
 
     --c-fg:           249 250 251;  /* gray-50  */
     --c-fg-strong:    255 255 255;  /* white    */
@@ -160,7 +162,8 @@
 
   .btn-primary   { @apply bg-brand text-fg-invert hover:bg-brand-strong focus:ring-brand; }
   .btn-danger    { @apply bg-danger text-fg-invert hover:bg-danger-strong focus:ring-danger; }
-  .btn-secondary { @apply bg-surface-2 text-fg hover:bg-surface-3; }
+  .btn-warn      { @apply bg-warn text-warn-strong hover:bg-warn-strong hover:text-fg-invert; }
+  .btn-secondary { @apply bg-surface-3 text-fg hover:bg-surface-strong; }
   .btn-ghost     { @apply text-fg-muted hover:text-fg-strong hover:bg-surface-2; }
   .btn-accent    { @apply bg-accent-soft text-accent hover:opacity-80; }
 
@@ -178,12 +181,14 @@
   .help    { @apply text-sm text-fg-muted; }
   .help-xs { @apply text-xs text-fg-muted; }
   .err     { @apply text-sm text-danger; }
+  .ok      { @apply text-sm text-success; }
 
   /* ── Typography ──────────────────────────────────────────────── */
   .h-page    { @apply text-2xl font-bold mb-4; }
   .h-section { @apply text-lg font-semibold mb-3; }
-  .link      { @apply text-brand hover:underline; }
-  .link-mono { @apply text-brand hover:underline font-mono text-sm; }
+  .link        { @apply text-brand hover:underline; }
+  .link-mono   { @apply text-brand hover:underline font-mono text-sm; }
+  .link-danger { @apply text-danger hover:text-danger-strong; }
 
   /* ── Surfaces ────────────────────────────────────────────────── */
   .card { @apply bg-surface rounded shadow-card overflow-hidden; }
@@ -202,10 +207,17 @@
   .banner-warn   { @apply bg-warn text-warn-strong; }
   .banner-danger { @apply bg-danger text-fg-invert; }
 
+  /* ── Alerts (boxed status messages with a body) ──────────────── */
+  .alert         { @apply rounded border p-3; }
+  .alert-success { @apply bg-success-soft text-success border-success; }
+  .alert-danger  { @apply bg-danger-soft  text-danger  border-danger; }
+  .alert-warn    { @apply bg-warn-soft    text-warn-strong border-warn; }
+  .alert-info    { @apply bg-info-soft    text-info    border-info; }
+
   /* ── Tables ──────────────────────────────────────────────────── */
   .table       { @apply min-w-full divide-y divide-line-soft; }
   .thead       { @apply bg-surface-2; }
-  .th          { @apply px-6 py-3 text-left text-xs font-medium text-fg-muted uppercase; }
+  .th          { @apply px-6 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider; }
   .th-sortable { @apply th cursor-pointer select-none hover:text-fg-strong; }
   .tbody       { @apply bg-surface divide-y divide-line-soft; }
   .td          { @apply px-6 py-4 text-fg; }

@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
 
 #[server]
 async fn create_organization(name: String) -> Result<String, ServerFnError> {
@@ -62,28 +63,22 @@ pub fn OrganizationForm() -> Element {
     };
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("org-form-title")} }
-        form { onsubmit: submit,
-            class: "max-w-md space-y-4",
+        PageHeader { {t!("org-form-title")} }
+        form { onsubmit: submit, class: "max-w-md",
             if let Some(err) = &*error.read() {
-                p { class: "text-red-600 text-sm", "{err}" }
+                ErrorText { class: "mb-4", "{err}" }
             }
-            div {
-                label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("name")} }
+            FormField { label: t!("name"),
                 input {
+                    class: "input",
                     r#type: "text",
                     value: "{name}",
                     oninput: move |e| name.set(e.value()),
-                    class: "w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
                     placeholder: t!("org-form-name-placeholder"),
                     autofocus: true,
                 }
             }
-            button {
-                r#type: "submit",
-                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
-                {t!("create")}
-            }
+            Button { kind: ButtonKind::Submit, {t!("create")} }
         }
     }
 }
