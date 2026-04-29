@@ -310,8 +310,9 @@ async fn swarm_loop(
                     &mut authorized_peers,
                 ).await;
 
-                // After identifying the relay, register immediately.
+                // After identifying the relay, register and send tunnels immediately.
                 if relay_peer_id.is_some() && !registered_with_relay {
+                    let relay = relay_peer_id.as_ref().unwrap();
                     let req = control::ControlRequest::Register {
                         instance_id: config.instance_id.clone(),
                         cluster_id: None,
@@ -320,10 +321,8 @@ async fn swarm_loop(
                             .map(|h| h.to_string_lossy().to_string()),
                         agent_name: None,
                     };
-                    let _ = swarm.behaviour_mut().control.send_request(
-                        relay_peer_id.as_ref().unwrap(),
-                        req,
-                    );
+                    let _ = swarm.behaviour_mut().control.send_request(relay, req);
+                    send_tunnel_advertisement(&mut swarm, relay, &config.handler_state).await;
                     registered_with_relay = true;
                     tracing::info!("registered with relay after Identify");
                 }
@@ -359,6 +358,7 @@ async fn swarm_loop(
                             agent_name: None,
                         };
                         let _ = swarm.behaviour_mut().control.send_request(&relay, req);
+                        send_tunnel_advertisement(&mut swarm, &relay, &config.handler_state).await;
                         tracing::debug!("re-registered with relay (periodic)");
                     } else {
                         // Relay peer known but disconnected — clear and re-dial.
@@ -592,6 +592,36 @@ fn parse_relay_proxy_url(agent_version: &str) -> Option<String> {
         .decode(b64)
         .ok()?;
     String::from_utf8(bytes).ok()
+}
+
+/// Send tunnel definitions to the relay.
+async fn send_tunnel_advertisement(
+    swarm: &mut Swarm<ClusterBehaviour>,
+    relay: &PeerId,
+    handler_state: &Option<Arc<handler::HandlerState>>,
+) {
+    let Some(hs) = handler_state else { return };
+
+    let tunnel_defs = hs.tunnel_defs.read().await;
+    let tunnels: Vec<serde_json::Value> = tunnel_defs
+        .iter()
+        .map(|(name, target)| {
+            serde_json::json!({ "name": name, "port": target.port })
+        })
+        .collect();
+    drop(tunnel_defs);
+
+    // TODO: expose file/shell tunnel lists from registries
+    let file_tunnels = serde_json::Value::Array(vec![]);
+    let shell_tunnels = serde_json::Value::Array(vec![]);
+
+    let req = control::ControlRequest::TunnelAdvertisement {
+        tunnels: serde_json::Value::Array(tunnels),
+        file_tunnels,
+        shell_tunnels,
+    };
+    let _ = swarm.behaviour_mut().control.send_request(relay, req);
+    tracing::debug!("sent tunnel advertisement to relay");
 }
 
 /// Verify the PSK auth token in a peer's agent version string.
