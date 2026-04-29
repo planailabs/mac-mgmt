@@ -18,11 +18,13 @@
 pub mod badge;
 pub mod button;
 pub mod card;
+pub mod data_table;
 pub mod form;
 pub mod text;
 
 pub use badge::{Badge, BadgeVariant};
 pub use button::{Button, ButtonKind, ButtonSize, ButtonVariant};
 pub use card::Card;
+pub use data_table::{Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted};
 pub use form::FormField;
 pub use text::{ErrorText, HelpText, PageHeader, SectionHeading};

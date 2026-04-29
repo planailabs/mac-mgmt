@@ -4,7 +4,10 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, SortState, SortableTh, TableToolbar};
+use crate::web::components::table_utils::Searchable;
+use crate::web::components::ui::{
+    Dash, DataTable, ErrorText, PageHeader, SortState, SortableTh, Td, TdMuted,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -102,7 +105,7 @@ async fn list_clusters() -> Result<Vec<ClusterRow>, ServerFnError> {
 async fn is_current_user_admin() -> Result<bool, ServerFnError> {
     match current_user().await {
         Ok(user) => Ok(user.is_admin),
-        Err(_) => Ok(true), // If no OIDC, treat as admin
+        Err(_) => Ok(true),
     }
 }
 
@@ -114,138 +117,133 @@ pub fn ClusterList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", {t!("cluster-list-title")} }
+            PageHeader { class: "mb-0", {t!("cluster-list-title")} }
             if is_admin {
-                Link {
-                    to: Route::ClusterForm {},
-                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                Link { to: Route::ClusterForm {}, class: "btn btn-md btn-primary",
                     {t!("cluster-list-new")}
                 }
             }
         }
         {match &*clusters.read() {
-            Some(Ok(list)) => {
-                let search = use_signal(String::new);
-                let limit = use_signal(|| 20usize);
-                let sort = use_signal::<SortState>(|| ("name".to_string(), true));
-
-                let list_for_counts = list.clone();
-                let nix_counts = use_resource(move || {
-                    let list = list_for_counts.clone();
-                    async move {
-                        let shas: Vec<String> = list
-                            .iter()
-                            .filter_map(|c| c.nixpkgs_commit.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        if shas.is_empty() {
-                            return std::collections::HashMap::new();
-                        }
-                        get_cluster_nixpkgs_counts(shas).await.unwrap_or_default()
-                    }
-                });
-                let counts = nix_counts.read();
-
-                let list_clone = list.clone();
-                let filtered = use_memo(move || {
-                    let q = search.read().to_lowercase();
-                    let mut items: Vec<ClusterRow> = if q.is_empty() {
-                        list_clone.clone()
-                    } else {
-                        list_clone.iter().filter(|c| c.matches_search(&q)).cloned().collect()
-                    };
-                    let (key, asc) = sort.read().clone();
-                    items.sort_by(|a, b| {
-                        let ord = match key.as_str() {
-                            "organization" => a.org_names.join(", ").to_lowercase().cmp(&b.org_names.join(", ").to_lowercase()),
-                            "version" => a.pinned_version.cmp(&b.pinned_version),
-                            "nixpkgs" => a.nixpkgs_commit.cmp(&b.nixpkgs_commit),
-                            "created" => a.created_at.cmp(&b.created_at),
-                            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                        };
-                        if asc { ord } else { ord.reverse() }
-                    });
-                    items
-                });
-
-                let total = list.len();
-                let filtered_count = filtered.read().len();
-                let limit_val = *limit.read();
-                let shown = filtered_count.min(limit_val);
-
-                rsx! {
-                    TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                            thead { class: "bg-gray-50 dark:bg-gray-700",
-                                tr {
-                                    SortableTh { label: t!("cluster-list-col-org"), sort_key: "organization".to_string(), sort }
-                                    SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
-                                    SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
-                                    SortableTh { label: t!("cluster-list-col-nixpkgs"), sort_key: "nixpkgs".to_string(), sort }
-                                    SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
-                                }
-                            }
-                            tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                for cluster in filtered.read().iter().take(limit_val) {
-                                    tr { key: "{cluster.id}",
-                                        td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300",
-                                            if cluster.org_names.is_empty() {
-                                                span { class: "text-gray-400 dark:text-gray-500 italic", {t!("dash")} }
-                                            } else {
-                                                {cluster.org_names.join(", ")}
-                                            }
-                                        }
-                                        td { class: "px-6 py-4 dark:text-gray-200",
-                                            Link {
-                                                to: Route::ClusterDetail { id: cluster.id.clone() },
-                                                class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                                "{cluster.name}"
-                                            }
-                                        }
-                                        td { class: "px-6 py-4",
-                                            if let Some(ver) = &cluster.pinned_version {
-                                                span { class: "font-mono text-sm text-gray-700 dark:text-gray-200", "v{ver}" }
-                                            } else {
-                                                span { class: "text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
-                                            }
-                                        }
-                                        td { class: "px-6 py-4",
-                                            if let Some(commit) = &cluster.nixpkgs_commit {
-                                                {
-                                                    let short: String = commit.chars().take(12).collect();
-                                                    let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{commit}");
-                                                    let count_label = counts.as_ref()
-                                                        .and_then(|m| m.get(commit))
-                                                        .map(|n| format!(" #{n}"))
-                                                        .unwrap_or_default();
-                                                    rsx! {
-                                                        a {
-                                                            class: "text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400",
-                                                            href: "{url}",
-                                                            target: "_blank",
-                                                            title: "{commit}",
-                                                            "{short}{count_label}"
-                                                        }
-                                                    }
-                                                }
-                                            } else {
-                                                span { class: "text-gray-400 dark:text-gray-500 text-sm", {t!("dash")} }
-                                            }
-                                        }
-                                        td { class: "px-6 py-4 text-gray-500 dark:text-gray-400",
-                                            {cluster.created_at.format("%Y-%m-%d %H:%M").to_string()}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+            Some(Ok(list)) => rsx! { ClusterTable { list: list.clone() } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
             None => rsx! { p { {t!("loading")} } },
         }}
+    }
+}
+
+#[component]
+fn ClusterTable(list: Vec<ClusterRow>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("name".to_string(), true));
+
+    let list_for_counts = list.clone();
+    let nix_counts = use_resource(move || {
+        let list = list_for_counts.clone();
+        async move {
+            let shas: Vec<String> = list
+                .iter()
+                .filter_map(|c| c.nixpkgs_commit.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            if shas.is_empty() {
+                return std::collections::HashMap::new();
+            }
+            get_cluster_nixpkgs_counts(shas).await.unwrap_or_default()
+        }
+    });
+    let counts = nix_counts.read();
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<ClusterRow> = if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone.iter().filter(|c| c.matches_search(&q)).cloned().collect()
+        };
+        let (key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = match key.as_str() {
+                "organization" => a.org_names.join(", ").to_lowercase().cmp(&b.org_names.join(", ").to_lowercase()),
+                "version" => a.pinned_version.cmp(&b.pinned_version),
+                "nixpkgs" => a.nixpkgs_commit.cmp(&b.nixpkgs_commit),
+                "created" => a.created_at.cmp(&b.created_at),
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("cluster-list-col-org"), sort_key: "organization".to_string(), sort }
+                SortableTh { label: t!("name"), sort_key: "name".to_string(), sort }
+                SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
+                SortableTh { label: t!("cluster-list-col-nixpkgs"), sort_key: "nixpkgs".to_string(), sort }
+                SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
+            },
+            body: rsx! {
+                for cluster in filtered.read().iter().take(limit_val) {
+                    ClusterRowView {
+                        key: "{cluster.id}",
+                        cluster: cluster.clone(),
+                        nix_count: cluster.nixpkgs_commit.as_ref().and_then(|c| counts.as_ref().and_then(|m| m.get(c).copied())),
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn ClusterRowView(cluster: ClusterRow, nix_count: Option<u64>) -> Element {
+    let orgs = cluster.org_names.join(", ");
+    let created = cluster.created_at.format("%Y-%m-%d %H:%M").to_string();
+    rsx! {
+        tr {
+            Td { class: "text-sm",
+                if cluster.org_names.is_empty() { Dash {} } else { {orgs} }
+            }
+            Td {
+                Link { to: Route::ClusterDetail { id: cluster.id.clone() }, class: "link",
+                    "{cluster.name}"
+                }
+            }
+            Td {
+                if let Some(ver) = &cluster.pinned_version {
+                    span { class: "font-mono text-sm", "v{ver}" }
+                } else { Dash {} }
+            }
+            Td {
+                if let Some(commit) = &cluster.nixpkgs_commit {
+                    {
+                        let short: String = commit.chars().take(12).collect();
+                        let url = format!("https://git.plan.ai/plan-ai/nixpkgs/-/commit/{commit}");
+                        let count_label = nix_count.map(|n| format!(" #{n}")).unwrap_or_default();
+                        rsx! {
+                            a {
+                                class: "text-xs font-mono text-fg-muted hover:text-brand",
+                                href: "{url}",
+                                target: "_blank",
+                                title: "{commit}",
+                                "{short}{count_label}"
+                            }
+                        }
+                    }
+                } else { Dash {} }
+            }
+            TdMuted { {created} }
+        }
     }
 }
