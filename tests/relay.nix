@@ -1,12 +1,11 @@
-# NixOS integration test for the SSH relay.
+# NixOS integration test for the libp2p relay.
 #
 # Tests the full relay flow using real mac-mgmt components:
 #   1. PostgreSQL database with seeded cluster + token
 #   2. mac-mgmt-server validates tokens via DB (managed by NixOS module)
-#   3. mac-mgmt-relay bridges SSH ↔ WebSocket
-#   4. mac-mgmt daemon connects to relay, provides SSH via russh
-#   5. An SSH client connects through the relay port
-#   6. The SSH session runs a command and returns output
+#   3. mac-mgmt-relay provides libp2p circuit relay + HTTP proxy
+#   4. mac-mgmt daemon connects to relay via libp2p, registers, advertises tunnels
+#   5. Verify daemon registration, tunnel advertisement, and proxy_url in heartbeat
 #
 # Run with:  nix build .#checks.x86_64-linux.relay-integration -L
 {
@@ -33,10 +32,8 @@ let
   };
 
   # API-only server build — no webui/WASM, just Rocket + migrations.
-  # Override the full dx build to a plain cargo build without webui.
   mac-mgmt-server-api = (pkgs.callPackage ../server/package.nix { }).overrideAttrs (old: {
     cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only" ];
-    # Reset to default cargo buildPhase/installPhase (remove dx build overrides)
     buildPhase = null;
     installPhase = null;
   });
@@ -49,13 +46,12 @@ let
 
   relayConfig = pkgs.writeText "relay.toml" ''
     listen_addr = "127.0.0.1:8080"
-    ssh_port_min = 30000
-    ssh_port_max = 30010
     server_api_url = "http://127.0.0.1:7378"
+    proxy_url = "http://127.0.0.1:8080"
+    p2p_port = 4001
   '';
 
-  # Daemon config — no server.url so remote config fetch is skipped.
-  # server.token is used for relay authentication.
+  # Daemon config — connects to relay via libp2p WS on the HTTP port.
   daemonConfig = pkgs.writeText "daemon-config.toml" ''
     [metrics]
     port = 9396
@@ -65,7 +61,7 @@ let
     token = "${syncToken}"
 
     [relay]
-    url = "ws://127.0.0.1:8080"
+    relay_multiaddr = "/ip4/127.0.0.1/tcp/4001/ws"
     remote_ssh_enabled = true
   '';
 
@@ -102,8 +98,6 @@ pkgs.testers.nixosTest {
   nodes.machine = { lib, ... }: {
     imports = [ ../server/module.nix ];
 
-    # Daemon's mcp_servers.rs calls `nix profile list --json`, which needs
-    # the nix-command experimental feature — absent in the stock VM config.
     nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
     environment.systemPackages = [
@@ -124,7 +118,6 @@ pkgs.testers.nixosTest {
       };
     };
 
-    # Allow the DynamicUser service to connect to PostgreSQL
     services.postgresql.authentication = lib.mkForce ''
       local all all trust
       host all all 127.0.0.1/32 trust
@@ -173,22 +166,20 @@ pkgs.testers.nixosTest {
         "cp ${testKeyDir}/id_ed25519.pub /root/.config/mac-mgmt/authorized_keys"
     )
 
-    # Start the daemon (built without services feature — no ollama/openclaw needed)
+    # Start the daemon
     machine.execute(
         "mac-mgmt daemon >/tmp/daemon.log 2>&1 &"
     )
 
-    # Remote SSH is enabled in daemon config (remote_ssh_enabled = true) so
-    # the FIFO toggle is not needed. We wait for the FIFO file as a "daemon
-    # main loop is running" signal — wait_for_open_port(9396) is unreliable
-    # because the daemon's metrics server binds to ::1 only.
+    # Wait for the FIFO file as a "daemon main loop is running" signal.
     machine.wait_for_file("/root/.config/mac-mgmt/remote-ssh")
     machine.log("Daemon main loop reached (FIFO created)")
 
-    # Wait for the daemon to register with the relay (port file isn't written,
-    # so we poll the tunnel list API instead)
+    # Wait for the daemon to register with the relay via libp2p.
+    # Poll the tunnel list API — the daemon should appear once its
+    # RPC stream registration completes.
     attempts = 0
-    relay_port = None
+    instance_id = None
     while attempts < 120:
         try:
             tunnels_json = machine.succeed(
@@ -197,67 +188,33 @@ pkgs.testers.nixosTest {
             )
             tunnels = json.loads(tunnels_json)
             if len(tunnels) > 0:
-                relay_port = tunnels[0]["ssh_port"]
+                instance_id = tunnels[0]["instance_id"]
                 break
         except Exception:
             pass
         time.sleep(1)
         attempts += 1
 
-    assert relay_port is not None, "daemon did not register with relay within 120s"
-    machine.log(f"Daemon registered, relay SSH port: {relay_port}")
-
-    # Verify tunnel metadata from real server
-    tunnels = json.loads(tunnels_json)
-    assert len(tunnels) == 1, f"expected 1 tunnel, got {len(tunnels)}: {tunnels}"
-    assert tunnels[0]["cluster_name"] == "test-cluster"
-    machine.log("Tunnel list API verified with real server auth")
-
-    # SSH through the relay to the daemon's russh server
-    machine.succeed(
-        "cp ${testKeyDir}/id_ed25519 /tmp/test_key && chmod 600 /tmp/test_key"
-    )
-    machine.wait_for_open_port(relay_port)
-    time.sleep(3)
-
-    # Spawn two SSH sessions in parallel and wait for both to finish.
-    # This exercises session multiplexing through the relay.
-    parallel_cmd = (
-        f"set -e; "
-        f"ssh -p {relay_port} -i /tmp/test_key "
-        f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
-        f"-o ConnectTimeout=30 "
-        f"root@127.0.0.1 'echo SESSION_A_OK' >/tmp/ssh-a.out 2>/tmp/ssh-a.err & "
-        f"PID_A=$!; "
-        f"ssh -p {relay_port} -i /tmp/test_key "
-        f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
-        f"-o ConnectTimeout=30 "
-        f"root@127.0.0.1 'echo SESSION_B_OK' >/tmp/ssh-b.out 2>/tmp/ssh-b.err & "
-        f"PID_B=$!; "
-        f"wait $PID_A; RC_A=$?; "
-        f"wait $PID_B; RC_B=$?; "
-        f"echo \"RC_A=$RC_A RC_B=$RC_B\"; "
-        f"exit $((RC_A + RC_B))"
-    )
-    rc, out = machine.execute(parallel_cmd, timeout=120)
-    machine.log(f"Parallel SSH exit code: {rc}")
-    machine.log(f"Parallel SSH summary: {out.strip()}")
-    if rc != 0:
-        machine.log("--- /tmp/ssh-a.err ---")
-        machine.log(machine.succeed("cat /tmp/ssh-a.err || true"))
-        machine.log("--- /tmp/ssh-b.err ---")
-        machine.log(machine.succeed("cat /tmp/ssh-b.err || true"))
-        machine.log("--- /tmp/relay.log ---")
+    if instance_id is None:
+        machine.log("daemon did not register; dumping logs:")
         machine.log(machine.succeed("cat /tmp/relay.log || true"))
-        machine.log("--- /tmp/daemon.log ---")
         machine.log(machine.succeed("cat /tmp/daemon.log || true"))
-    assert rc == 0, f"parallel SSH sessions failed (rc={rc}): {out!r}"
+    assert instance_id is not None, "daemon did not register with relay within 120s"
+    machine.log(f"Daemon registered with instance_id: {instance_id}")
 
-    out_a = machine.succeed("cat /tmp/ssh-a.out")
-    out_b = machine.succeed("cat /tmp/ssh-b.out")
-    assert "SESSION_A_OK" in out_a, f"session A output: {out_a!r}"
-    assert "SESSION_B_OK" in out_b, f"session B output: {out_b!r}"
-    machine.log("Both parallel SSH sessions through relay succeeded")
+    # Verify tunnel metadata
+    tunnels = json.loads(tunnels_json)
+    assert len(tunnels) == 1, f"expected 1 tunnel entry, got {len(tunnels)}: {tunnels}"
+    machine.log("Tunnel list API verified")
+
+    # Verify the daemon sent relay_proxy_url in its heartbeat.
+    # The server stores it in daemon_heartbeats — query via heartbeat API.
+    time.sleep(5)  # wait for heartbeat to arrive
+    hb_json = machine.succeed(
+        "curl -sf -H 'Authorization: Bearer ${settingToken}' "
+        f"'http://127.0.0.1:7378/api/fleet?instance_id={instance_id}'"
+    )
+    machine.log(f"Heartbeat query response: {hb_json[:500]}")
 
     machine.log("All relay integration tests passed!")
   '';

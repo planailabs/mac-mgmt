@@ -25,9 +25,6 @@ let
   settingToken = "test-setting-token-abc123";
   clusterId = "550e8400-e29b-41d4-a716-446655440000";
 
-  # Daemon without the services feature — it skips ollama/openclaw/mcporter
-  # but keeps the `relay` feature so the relay client (always-on, metrics
-  # requests pass through regardless of the SSH allow flag) is compiled in.
   mac-mgmt-daemon = pkgs.rustPlatform.buildRustPackage {
     pname = "mac-mgmt-daemon";
     version = "0.1.0";
@@ -38,7 +35,6 @@ let
     doCheck = false;
   };
 
-  # API-only server build — same override as the relay test.
   mac-mgmt-server-api = (pkgs.callPackage ../server/package.nix { }).overrideAttrs (old: {
     cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only" ];
     buildPhase = null;
@@ -47,14 +43,11 @@ let
 
   relayConfig = pkgs.writeText "relay.toml" ''
     listen_addr = "127.0.0.1:8080"
-    ssh_port_min = 30000
-    ssh_port_max = 30010
     server_api_url = "http://127.0.0.1:7378"
+    proxy_url = "http://127.0.0.1:8080"
+    p2p_port = 4001
   '';
 
-  # Pre-generate an SSH keypair so the daemon's authorized_keys file exists.
-  # The test never actually opens an SSH session — it only needs the daemon
-  # to register with the relay so the relay can fan out a metrics scrape.
   testKeyDir = pkgs.runCommand "test-ssh-keys" {} ''
     mkdir -p $out
     ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -f $out/id_ed25519 -N "" -q
@@ -69,7 +62,7 @@ let
     token = "${syncToken}"
 
     [relay]
-    url = "ws://127.0.0.1:8080"
+    relay_multiaddr = "/ip4/127.0.0.1/tcp/4001/ws"
   '';
 
   seedScript = pkgs.writeScript "seed-db.py" ''
@@ -104,8 +97,6 @@ pkgs.testers.nixosTest {
   nodes.machine = { lib, ... }: {
     imports = [ ../server/module.nix ];
 
-    # Daemon's mcp_servers.rs calls `nix profile list --json`, which needs
-    # the nix-command experimental feature — absent in the stock VM config.
     nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
     environment.systemPackages = [
@@ -142,9 +133,6 @@ pkgs.testers.nixosTest {
         job_name = "mac-mgmt-relay";
         metrics_path = "/metrics";
         scheme = "http";
-        # Inline bearer token (test-only secret) — using bearer_token_file
-        # would fail prometheus' build-time config check because the file
-        # does not yet exist on the build host.
         bearer_token = settingToken;
         scrape_interval = "3s";
         scrape_timeout = "2s";
@@ -204,10 +192,7 @@ pkgs.testers.nixosTest {
     machine.wait_for_open_port(9090)
     machine.log("Prometheus running on port 9090")
 
-    # Start the daemon (no services feature, relay feature on).
-    # Note: we deliberately do NOT enable remote SSH via the FIFO. The relay
-    # client connects unconditionally when [relay].url is configured, and
-    # metrics requests flow through regardless of the SSH allow flag.
+    # Start the daemon
     machine.succeed(
         "mkdir -p /root/.config/mac-mgmt/ssh && "
         "cp ${daemonConfig} /root/.config/mac-mgmt/config.toml && "
@@ -216,11 +201,7 @@ pkgs.testers.nixosTest {
     machine.execute("mac-mgmt daemon >/tmp/daemon.log 2>&1 &")
     machine.log("Daemon kicked off")
 
-    # Wait for the daemon to register with the relay (we go straight here
-    # rather than wait_for_open_port on the daemon's local metrics server,
-    # because that server binds to ::1 only and the registration is what
-    # we actually care about for federation).
-    relay_port = None
+    # Wait for the daemon to register with the relay via libp2p RPC stream.
     instance_id = None
     for _ in range(120):
         try:
@@ -230,16 +211,16 @@ pkgs.testers.nixosTest {
             )
             tunnels = json.loads(tunnels_json)
             if len(tunnels) > 0:
-                relay_port = tunnels[0]["ssh_port"]
                 instance_id = tunnels[0]["instance_id"]
                 break
         except Exception:
             pass
         time.sleep(1)
-    if relay_port is None:
+    if instance_id is None:
         machine.log("daemon did not register; dumping /tmp/daemon.log:")
         machine.log(machine.succeed("cat /tmp/daemon.log || true"))
-    assert relay_port is not None, "daemon did not register with relay within 120s"
+        machine.log(machine.succeed("cat /tmp/relay.log || true"))
+    assert instance_id is not None, "daemon did not register with relay within 120s"
     machine.log(f"Daemon registered: instance_id={instance_id}")
 
     # Hit the federated /metrics directly to confirm the daemon scrape now
@@ -276,10 +257,7 @@ pkgs.testers.nixosTest {
     assert target_up, f"prometheus never scraped the relay successfully:\n{targets_json}"
     machine.log("Prometheus reports the relay scrape target as up")
 
-    # Now query Prometheus for the synthetic metrics. Allow a couple of
-    # additional scrape intervals so the value reflects the daemon being
-    # registered (the very first scrape may have happened before the daemon
-    # connected).
+    # Query Prometheus for the synthetic metrics.
     targets_value = 0.0
     for _ in range(60):
         result = prom_query("mac_mgmt_relay_scrape_targets")
@@ -321,7 +299,7 @@ pkgs.testers.nixosTest {
         "mac_mgmt_relay_scrape_up=1 with federation labels: " + json.dumps(series_labels)
     )
 
-    # And finally check the duration metric is being recorded.
+    # Check the duration metric is being recorded.
     dur = prom_query(
         f'mac_mgmt_relay_scrape_duration_seconds{{instance_id="{instance_id}"}}'
     )
