@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use libp2p::identity::Keypair;
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{Multiaddr, PeerId, Swarm, Transport, identify};
+use libp2p::{Multiaddr, PeerId, Swarm, Transport, gossipsub, identify};
 use tokio::sync::RwLock;
 
 use crate::daemon_registry::DaemonRegistry;
@@ -24,7 +24,14 @@ struct RelayBehaviour {
     ping: libp2p::ping::Behaviour,
     identify: identify::Behaviour,
     relay_server: libp2p::relay::Behaviour,
+    gossipsub: gossipsub::Behaviour,
     streams: libp2p_stream::Behaviour,
+}
+
+/// Commands for the event loop to manage gossipsub subscriptions.
+enum GossipCmd {
+    Subscribe(uuid::Uuid),
+    Unsubscribe(uuid::Uuid),
 }
 
 // ── Key management ───────────────────────────────────────────────────
@@ -186,6 +193,17 @@ impl RelaySwarm {
                     libp2p::relay::Config::default(),
                 );
 
+                let gossipsub_config = gossipsub::ConfigBuilder::default()
+                    .heartbeat_interval(Duration::from_secs(10))
+                    .validation_mode(gossipsub::ValidationMode::Strict)
+                    .build()
+                    .expect("gossipsub config");
+                let gossipsub_behaviour = gossipsub::Behaviour::new(
+                    gossipsub::MessageAuthenticity::Signed(key.clone()),
+                    gossipsub_config,
+                )
+                .expect("gossipsub behaviour");
+
                 Ok(RelayBehaviour {
                     ping: libp2p::ping::Behaviour::new(
                         libp2p::ping::Config::new()
@@ -193,6 +211,7 @@ impl RelaySwarm {
                     ),
                     identify: identify::Behaviour::new(identify_cfg),
                     relay_server,
+                    gossipsub: gossipsub_behaviour,
                     streams: libp2p_stream::Behaviour::new(),
                 })
             })?
@@ -227,25 +246,30 @@ impl RelaySwarm {
         // Extract the stream control handle before moving the swarm.
         let stream_control = swarm.behaviour().streams.new_control();
 
+        // Channel for RPC handlers to request gossipsub subscribe/unsubscribe.
+        let (gossip_tx, gossip_rx) = tokio::sync::mpsc::channel::<GossipCmd>(64);
+
         // Accept incoming RPC streams from daemons.
         let rpc_protocol = libp2p::StreamProtocol::new("/mac-mgmt/rpc/1.0.0");
         let mut incoming_streams = stream_control.clone().accept(rpc_protocol).unwrap();
         let registry_for_rpc = Arc::clone(&registry);
         let rpc_map_for_accept = Arc::clone(&daemon_rpc_map);
         let server_api_url_for_rpc = server_api_url.to_string();
+        let gossip_tx_for_rpc = gossip_tx.clone();
         tokio::spawn(async move {
             while let Some((peer_id, stream)) = incoming_streams.next().await {
                 tracing::info!(%peer_id, "daemon opened RPC stream");
                 let registry = Arc::clone(&registry_for_rpc);
                 let rpc_map = Arc::clone(&rpc_map_for_accept);
                 let server_url = server_api_url_for_rpc.clone();
+                let gtx = gossip_tx_for_rpc.clone();
 
                 let (req_tx, req_rx) = tokio::sync::mpsc::channel(64);
                 rpc_map.write().await.insert(peer_id, req_tx);
 
                 let rpc_map_cleanup = Arc::clone(&rpc_map);
                 tokio::spawn(async move {
-                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url).await;
+                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url, gtx).await;
                     rpc_map_cleanup.write().await.remove(&peer_id);
                 });
             }
@@ -255,7 +279,7 @@ impl RelaySwarm {
         let pm_clone = Arc::clone(&peer_metadata);
         let registry_for_self = Arc::clone(&registry);
         tokio::spawn(async move {
-            relay_event_loop(swarm, registry, pm_clone).await;
+            relay_event_loop(swarm, registry, pm_clone, gossip_rx).await;
         });
 
         Ok(Self {
@@ -271,47 +295,93 @@ impl RelaySwarm {
 
 use futures_util::StreamExt;
 
+/// Build the gossipsub topic for a cluster.
+fn cluster_topic(cluster_id: &uuid::Uuid) -> gossipsub::IdentTopic {
+    gossipsub::IdentTopic::new(format!("mac-mgmt/cluster/{cluster_id}"))
+}
+
 async fn relay_event_loop(
     mut swarm: Swarm<RelayBehaviour>,
     _registry: Arc<DaemonRegistry>,
     peer_metadata: Arc<RwLock<HashMap<PeerId, PeerMetadata>>>,
+    mut gossip_rx: tokio::sync::mpsc::Receiver<GossipCmd>,
 ) {
-    // Registration/tunnel management is now handled by the persistent
-    // RPC stream handlers (handle_daemon_rpc). This event loop only
-    // handles Identify and connection lifecycle.
+    // Track how many daemons per cluster are connected.
+    // Subscribe when count goes from 0→1, unsubscribe when 1→0.
+    let mut cluster_peer_count: HashMap<uuid::Uuid, usize> = HashMap::new();
+
     loop {
-        match swarm.select_next_some().await {
-            SwarmEvent::Behaviour(RelayBehaviourEvent::Identify(
-                identify::Event::Received { peer_id, info, .. },
-            )) => {
-                tracing::info!(%peer_id, agent = %info.agent_version, "peer identified");
-                for addr in &info.listen_addrs {
-                    swarm.add_peer_address(peer_id, addr.clone());
+        tokio::select! {
+            event = swarm.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(RelayBehaviourEvent::Identify(
+                        identify::Event::Received { peer_id, info, .. },
+                    )) => {
+                        tracing::info!(%peer_id, agent = %info.agent_version, "peer identified");
+                        for addr in &info.listen_addrs {
+                            swarm.add_peer_address(peer_id, addr.clone());
+                        }
+                        peer_metadata.write().await.insert(
+                            peer_id,
+                            PeerMetadata {
+                                agent_version: info.agent_version,
+                                listen_addrs: info.listen_addrs,
+                            },
+                        );
+                    }
+                    SwarmEvent::Behaviour(RelayBehaviourEvent::Gossipsub(
+                        gossipsub::Event::Message { message, .. },
+                    )) => {
+                        // The relay doesn't process gossipsub messages itself —
+                        // it participates in the mesh to bridge daemons.
+                        tracing::trace!(
+                            topic = %message.topic,
+                            "gossipsub message relayed ({} bytes)", message.data.len(),
+                        );
+                    }
+                    SwarmEvent::Behaviour(RelayBehaviourEvent::RelayServer(event)) => {
+                        tracing::debug!(?event, "relay server event");
+                    }
+                    SwarmEvent::NewListenAddr { address, .. } => {
+                        tracing::info!(%address, "relay listening on");
+                    }
+                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                        tracing::info!(%peer_id, "peer connected to relay");
+                    }
+                    SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                        tracing::info!(%peer_id, "peer disconnected from relay");
+                        peer_metadata.write().await.remove(&peer_id);
+                    }
+                    _ => {}
                 }
-                peer_metadata.write().await.insert(
-                    peer_id,
-                    PeerMetadata {
-                        agent_version: info.agent_version,
-                        listen_addrs: info.listen_addrs,
-                    },
-                );
             }
-            SwarmEvent::Behaviour(RelayBehaviourEvent::RelayServer(event)) => {
-                tracing::debug!(?event, "relay server event");
+            Some(cmd) = gossip_rx.recv() => {
+                match cmd {
+                    GossipCmd::Subscribe(cid) => {
+                        let count = cluster_peer_count.entry(cid).or_insert(0);
+                        *count += 1;
+                        if *count == 1 {
+                            let topic = cluster_topic(&cid);
+                            match swarm.behaviour_mut().gossipsub.subscribe(&topic) {
+                                Ok(_) => tracing::info!(%cid, "subscribed to cluster gossipsub topic"),
+                                Err(e) => tracing::warn!(%cid, "failed to subscribe to cluster topic: {e}"),
+                            }
+                        }
+                    }
+                    GossipCmd::Unsubscribe(cid) => {
+                        if let Some(count) = cluster_peer_count.get_mut(&cid) {
+                            *count = count.saturating_sub(1);
+                            if *count == 0 {
+                                cluster_peer_count.remove(&cid);
+                                let topic = cluster_topic(&cid);
+                                if swarm.behaviour_mut().gossipsub.unsubscribe(&topic) {
+                                    tracing::info!(%cid, "unsubscribed from cluster gossipsub topic");
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            SwarmEvent::NewListenAddr { address, .. } => {
-                tracing::info!(%address, "relay listening on");
-            }
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                tracing::info!(%peer_id, "peer connected to relay");
-            }
-            SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                tracing::info!(%peer_id, "peer disconnected from relay");
-                peer_metadata.write().await.remove(&peer_id);
-                // Note: daemon unregistration is handled by the RPC stream
-                // handler (handle_daemon_rpc) when the stream closes.
-            }
-            _ => {}
         }
     }
 }
@@ -325,11 +395,13 @@ async fn handle_daemon_rpc(
     registry: Arc<DaemonRegistry>,
     mut req_rx: tokio::sync::mpsc::Receiver<DaemonRpcRequest>,
     server_api_url: String,
+    gossip_tx: tokio::sync::mpsc::Sender<GossipCmd>,
 ) {
     use futures_util::{AsyncReadExt, AsyncWriteExt};
     let (mut reader, mut writer) = stream.split();
     let mut instance_id: Option<String> = None;
     let mut connected_at: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut registered_cluster_id: Option<uuid::Uuid> = None;
     let mut next_outbound_id: u64 = 1;
     let mut pending_outbound: HashMap<u64, tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>> = HashMap::new();
 
@@ -395,10 +467,12 @@ async fn handle_daemon_rpc(
                     match crate::auth::validate_token(&server_api_url, token).await {
                         Ok(info) if !iid.is_empty() => {
                             tracing::info!(%peer_id, %iid, cluster_id = ?info.cluster_id, "daemon registered via RPC stream");
+                            let cid = info.cluster_id;
+                            let cname = info.cluster_name;
                             registry.register(crate::daemon_registry::DaemonConn {
                                 instance_id: iid.clone(),
-                                cluster_id: info.cluster_id,
-                                cluster_name: info.cluster_name,
+                                cluster_id: cid,
+                                cluster_name: cname.clone(),
                                 agent_name,
                                 hostname,
                                 connected_at: now,
@@ -409,7 +483,16 @@ async fn handle_daemon_rpc(
                             });
                             instance_id = Some(iid);
                             connected_at = Some(now);
-                            serde_json::json!({ "type": "ok", "id": req_id })
+                            // Subscribe to cluster gossipsub topic.
+                            if let Some(cid) = cid {
+                                registered_cluster_id = Some(cid);
+                                let _ = gossip_tx.send(GossipCmd::Subscribe(cid)).await;
+                            }
+                            serde_json::json!({
+                                "type": "ok",
+                                "id": req_id,
+                                "cluster_id": cid.map(|c| c.to_string()),
+                            })
                         }
                         Ok(_) => {
                             serde_json::json!({ "type": "error", "error": "empty instance_id", "id": req_id })
@@ -457,8 +540,11 @@ async fn handle_daemon_rpc(
     }
 
     tracing::info!(%peer_id, "RPC stream closed");
-    // Clean up registration.
+    // Clean up registration and gossipsub subscription.
     if let (Some(iid), Some(cat)) = (instance_id, connected_at) {
         registry.unregister(&iid, cat);
+    }
+    if let Some(cid) = registered_cluster_id {
+        let _ = gossip_tx.send(GossipCmd::Unsubscribe(cid)).await;
     }
 }

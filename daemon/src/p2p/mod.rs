@@ -301,12 +301,8 @@ async fn swarm_loop(
     // Initialize relay state machine.
     let mut relay = RelayState::new(config.relay_multiaddr.clone());
 
-    let cluster_topic = gossipsub::IdentTopic::new(format!(
-        "mac-mgmt/cluster/{}", config.instance_id
-    ));
-    if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&cluster_topic) {
-        tracing::warn!("failed to subscribe to cluster topic: {e}");
-    }
+    // Gossipsub topic is set after registration when we learn the cluster_id.
+    let mut cluster_topic: Option<gossipsub::IdentTopic> = None;
 
     loop {
         // If the relay has an RPC stream, poll it for incoming messages.
@@ -396,11 +392,15 @@ async fn swarm_loop(
             }
 
             Some(cmd) = cmd_rx.recv() => {
-                handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs).await;
+                if let Some(ref topic) = cluster_topic {
+                    handle_command(cmd, &mut swarm, topic, &active_jobs).await;
+                }
             }
 
             _ = ad_interval.tick() => {
-                publish_advertisement(&mut swarm, &cluster_topic, &active_jobs).await;
+                if let Some(ref topic) = cluster_topic {
+                    publish_advertisement(&mut swarm, topic, &active_jobs).await;
+                }
             }
             _ = evict_interval.tick() => {
                 peer_registry.write().await.evict_stale();
@@ -441,11 +441,36 @@ async fn swarm_loop(
                             "hostname": hostname::get().ok().map(|h| h.to_string_lossy().to_string()),
                             "token": config.server_token,
                         });
-                        if let Err(e) = rpc.send(reg).await {
-                            tracing::warn!("re-register RPC failed: {e}");
-                        } else {
-                            send_tunnel_advertisement_rpc(rpc, &config.handler_state).await;
-                            relay.mark_registered();
+                        match rpc.call(reg).await {
+                            Ok(resp) => {
+                                if resp["type"].as_str() == Some("error") {
+                                    tracing::warn!("relay rejected registration: {}", resp["error"]);
+                                } else {
+                                    // Subscribe to cluster gossipsub topic if we learned the cluster_id.
+                                    if let Some(cid) = resp["cluster_id"].as_str() {
+                                        let new_topic = gossipsub::IdentTopic::new(
+                                            format!("mac-mgmt/cluster/{cid}"),
+                                        );
+                                        if cluster_topic.as_ref().map(|t| t.hash()) != Some(new_topic.hash()) {
+                                            // Unsubscribe from old topic if different.
+                                            if let Some(old) = cluster_topic.take() {
+                                                let _ = swarm.behaviour_mut().gossipsub.unsubscribe(&old);
+                                            }
+                                            if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&new_topic) {
+                                                tracing::warn!("failed to subscribe to cluster topic: {e}");
+                                            } else {
+                                                tracing::info!(%cid, "subscribed to cluster gossipsub topic");
+                                            }
+                                            cluster_topic = Some(new_topic);
+                                        }
+                                    }
+                                    send_tunnel_advertisement_rpc(rpc, &config.handler_state).await;
+                                    relay.mark_registered();
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("register RPC failed: {e}");
+                            }
                         }
                     }
                 }
