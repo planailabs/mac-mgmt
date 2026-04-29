@@ -81,6 +81,11 @@ async fn refresh_one(
     pool: &PgPool,
     push_channels: &PushChannels,
 ) {
+    // Built-in skill center catalog is managed in-process, not fetched via HTTP.
+    if sc.url.starts_with(crate::builtin_skill_center::BUILTIN_URL) {
+        return;
+    }
+
     let client = SkillCenterClient::new(sc.url.clone(), sc.federation_token.clone());
 
     let new_catalog = match client.fetch_catalog().await {
@@ -276,7 +281,9 @@ async fn refresh_all(cache: &SkillCenterCache, pool: &PgPool, push_channels: &Pu
     let active_ids: HashSet<Uuid> = skill_centers.iter().map(|s| s.id).collect();
     let cached = cache.get_all().await;
     for id in cached.keys() {
-        if !active_ids.contains(id) {
+        if !active_ids.contains(id)
+            && !crate::builtin_skill_center::is_builtin(id)
+        {
             cache.remove(id).await;
         }
     }
@@ -303,6 +310,10 @@ async fn spawn_sse_listeners(
 
     for sc in skill_centers {
         if listeners.contains(&sc.id) {
+            continue;
+        }
+        // Built-in skill center doesn't have a remote SSE stream.
+        if sc.url.starts_with(crate::builtin_skill_center::BUILTIN_URL) {
             continue;
         }
         listeners.insert(sc.id);

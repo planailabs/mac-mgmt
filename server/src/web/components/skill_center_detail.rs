@@ -71,15 +71,18 @@ async fn sync_skill_center_now(id: String) -> Result<CatalogSummary, ServerFnErr
     .map_err(|e| ServerFnError::new(format!("query failed: {e}")))?
     .ok_or_else(|| ServerFnError::new("skill center not found"))?;
 
-    let client = crate::skill_center_client::SkillCenterClient::new(
-        sc.url.clone(),
-        sc.federation_token.clone(),
-    );
-
-    let catalog = client
-        .fetch_catalog()
-        .await
-        .map_err(|e| ServerFnError::new(format!("sync failed: {e}")))?;
+    let catalog = if sc.url.starts_with(crate::builtin_skill_center::BUILTIN_URL) {
+        crate::builtin_skill_center::builtin_catalog()
+    } else {
+        let client = crate::skill_center_client::SkillCenterClient::new(
+            sc.url.clone(),
+            sc.federation_token.clone(),
+        );
+        client
+            .fetch_catalog()
+            .await
+            .map_err(|e| ServerFnError::new(format!("sync failed: {e}")))?
+    };
 
     let summary = CatalogSummary {
         skill_channels: catalog.skill_channels.len(),
@@ -133,6 +136,10 @@ async fn update_skill_center(
         .parse()
         .map_err(|_| ServerFnError::new("invalid UUID"))?;
 
+    if crate::builtin_skill_center::is_builtin(&uuid) {
+        return Err(ServerFnError::new("cannot edit the built-in skill center"));
+    }
+
     // Only update federation_token if non-empty (allows keeping existing token)
     let row = if federation_token.trim().is_empty() {
         sqlx::query_as::<_, SkillCenterRow>(
@@ -177,6 +184,10 @@ async fn delete_skill_center(id: String) -> Result<(), ServerFnError> {
     let uuid: uuid::Uuid = id
         .parse()
         .map_err(|_| ServerFnError::new("invalid UUID"))?;
+
+    if crate::builtin_skill_center::is_builtin(&uuid) {
+        return Err(ServerFnError::new("cannot delete the built-in skill center"));
+    }
 
     sqlx::query("DELETE FROM skill_centers WHERE id = $1")
         .bind(uuid)
@@ -228,7 +239,7 @@ pub fn SkillCenterDetail(id: String) -> Element {
                         div { class: "flex items-center justify-between mb-6",
                             h1 { class: "text-2xl font-bold dark:text-white", "{center_name}" }
                             div { class: "flex gap-2",
-                                if !*editing.read() {
+                                if !*editing.read() && !center_url_display.starts_with("builtin://") {
                                     button {
                                         onclick: move |_| {
                                             draft_name.set(center_name.clone());

@@ -19,6 +19,8 @@ mod rollout_health;
 #[cfg(feature = "webui")]
 mod web;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
+mod builtin_skill_center;
+#[cfg(any(feature = "server", feature = "server-api-only"))]
 mod skill_center_cache;
 #[cfg(any(feature = "server", feature = "server-api-only"))]
 mod skill_center_client;
@@ -303,6 +305,12 @@ async fn init_server() -> (
 
     // Initialize skill center cache and start background refresh loop
     let sc_cache = skill_center_cache::SkillCenterCache::new();
+    sc_cache
+        .update(
+            builtin_skill_center::BUILTIN_SKILL_CENTER_ID,
+            builtin_skill_center::builtin_catalog(),
+        )
+        .await;
     skill_center_cache::SkillCenterCache::set_global(sc_cache.clone());
     {
         let cache = sc_cache.clone();

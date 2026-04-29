@@ -291,6 +291,13 @@ async fn aggregate_remote_mcp_servers(
     let mut result: HashMap<String, McpServerEntry> = HashMap::new();
 
     for (sc_id, slugs) in ordered {
+        if crate::builtin_skill_center::is_builtin(sc_id) {
+            let resolved = crate::builtin_skill_center::resolve_builtin_mcp_servers(slugs);
+            for (slug, entry) in resolved {
+                result.insert(slug, entry);
+            }
+            continue;
+        }
         if let Some(sc) = sc_map.get(sc_id) {
             let client = crate::skill_center_client::SkillCenterClient::new(
                 sc.url.clone(),
