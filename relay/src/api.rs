@@ -95,66 +95,6 @@ async fn batch_instances(
     Json(instances).into_response()
 }
 
-/// Open a tunnel substream, send handshake, read a stream_framing response
-/// (JSON header + binary body chunks + end marker).
-/// Returns (status, content_type, body_string).
-async fn open_tunnel_and_read_response(
-    swarm: &Arc<RelaySwarm>,
-    peer_id: libp2p::PeerId,
-    handshake: serde_json::Value,
-    timeout: Duration,
-) -> Result<(u16, String, String), StatusCode> {
-    use futures_util::{AsyncReadExt, AsyncWriteExt};
-
-    let mut tunnel = tokio::time::timeout(timeout, swarm.open_tunnel_stream(peer_id))
-        .await
-        .map_err(|_| StatusCode::GATEWAY_TIMEOUT)?
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
-
-    let data = serde_json::to_vec(&handshake).unwrap_or_default();
-    tunnel.write_all(&(data.len() as u32).to_be_bytes()).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    tunnel.write_all(&data).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    tunnel.flush().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-
-    // Read JSON header frame (tag 0x01).
-    let mut tag = [0u8; 1];
-    tunnel.read_exact(&mut tag).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    if tag[0] != 0x01 { return Err(StatusCode::BAD_GATEWAY); }
-    let mut len_buf = [0u8; 4];
-    tunnel.read_exact(&mut len_buf).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 16 * 1024 * 1024 { return Err(StatusCode::BAD_GATEWAY); }
-    let mut buf = vec![0u8; len];
-    tunnel.read_exact(&mut buf).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    let hdr: serde_json::Value = serde_json::from_slice(&buf).map_err(|_| StatusCode::BAD_GATEWAY)?;
-
-    let status = hdr["status"].as_u64().unwrap_or(502) as u16;
-    let content_type = hdr["content_type"].as_str().unwrap_or("text/plain").to_string();
-
-    // Read binary body chunks.
-    let mut body_data = Vec::new();
-    loop {
-        let mut tag = [0u8; 1];
-        if tunnel.read_exact(&mut tag).await.is_err() { break; }
-        match tag[0] {
-            0x02 => {
-                let mut len_buf = [0u8; 4];
-                if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
-                let chunk_len = u32::from_be_bytes(len_buf) as usize;
-                if chunk_len > 16 * 1024 * 1024 { break; }
-                let mut chunk = vec![0u8; chunk_len];
-                if tunnel.read_exact(&mut chunk).await.is_err() { break; }
-                body_data.extend_from_slice(&chunk);
-            }
-            0x03 => break,
-            _ => break,
-        }
-    }
-
-    let body = String::from_utf8_lossy(&body_data).to_string();
-    Ok((status, content_type, body))
-}
-
 fn extract_bearer(headers: &HeaderMap) -> Option<String> {
     headers
         .get("authorization")
@@ -220,7 +160,7 @@ async fn proxy_metrics(
         "path": full_path,
     });
 
-    match open_tunnel_and_read_response(&state.relay_swarm, peer_id, handshake, Duration::from_secs(10)).await {
+    match crate::tunnel_io::open_and_read_response(&state.relay_swarm, peer_id, handshake, Duration::from_secs(10)).await {
         Ok((status, content_type, body)) => {
             axum::response::Response::builder()
                 .status(status)
@@ -373,7 +313,7 @@ async fn scrape_one(
 
     match tokio::time::timeout(
         FEDERATION_SCRAPE_TIMEOUT,
-        open_tunnel_and_read_response(swarm, peer_id, handshake, FEDERATION_SCRAPE_TIMEOUT),
+        crate::tunnel_io::open_and_read_response(swarm, peer_id, handshake, FEDERATION_SCRAPE_TIMEOUT),
     ).await {
         Ok(Ok((status, _content_type, body))) => {
             if status == 200 {

@@ -316,50 +316,6 @@ async fn authenticate_proxy_scoped(
     Ok(())
 }
 
-/// Open a tunnel substream, send handshake, and return the stream.
-async fn open_tunnel(
-    swarm: &Arc<crate::p2p::RelaySwarm>,
-    peer_id: libp2p::PeerId,
-    handshake: &serde_json::Value,
-    timeout: Duration,
-) -> Result<libp2p::Stream, StatusCode> {
-    let mut tunnel = tokio::time::timeout(timeout, swarm.open_tunnel_stream(peer_id))
-        .await
-        .map_err(|_| StatusCode::GATEWAY_TIMEOUT)?
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
-
-    use futures_util::AsyncWriteExt;
-    let data = serde_json::to_vec(handshake).unwrap_or_default();
-    tunnel.write_all(&(data.len() as u32).to_be_bytes()).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    tunnel.write_all(&data).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    tunnel.flush().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-
-    Ok(tunnel)
-}
-
-/// Open a tunnel substream, send handshake, read a single JSON response
-/// (stream_framing: JSON frame + end marker).
-async fn open_tunnel_and_read_json(
-    swarm: &Arc<crate::p2p::RelaySwarm>,
-    peer_id: libp2p::PeerId,
-    handshake: serde_json::Value,
-    timeout: Duration,
-) -> Result<serde_json::Value, StatusCode> {
-    let mut tunnel = open_tunnel(swarm, peer_id, &handshake, timeout).await?;
-
-    use futures_util::AsyncReadExt;
-    // Read JSON frame (tag 0x01).
-    let mut tag = [0u8; 1];
-    tunnel.read_exact(&mut tag).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    if tag[0] != 0x01 { return Err(StatusCode::BAD_GATEWAY); }
-    let mut len_buf = [0u8; 4];
-    tunnel.read_exact(&mut len_buf).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 16 * 1024 * 1024 { return Err(StatusCode::BAD_GATEWAY); }
-    let mut buf = vec![0u8; len];
-    tunnel.read_exact(&mut buf).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    serde_json::from_slice(&buf).map_err(|_| StatusCode::BAD_GATEWAY)
-}
 
 /// Resolve the relay swarm and peer ID for an instance, or return an error response.
 fn resolve_swarm_and_peer(
@@ -582,36 +538,14 @@ async fn proxy_catchall(
         let _ = tunnel.flush().await;
     }
 
-    // Read streamed response using stream_framing protocol:
-    // 1. JSON frame with { status, headers }
-    // 2. Binary chunks (response body)
-    // 3. End marker
-    use futures_util::AsyncReadExt;
-
-    // Read header frame (tag 0x01 = JSON).
-    let mut tag = [0u8; 1];
-    if tunnel.read_exact(&mut tag).await.is_err() || tag[0] != 0x01 {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-    let mut len_buf = [0u8; 4];
-    if tunnel.read_exact(&mut len_buf).await.is_err() {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 1024 * 1024 {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-    let mut hdr_buf = vec![0u8; len];
-    if tunnel.read_exact(&mut hdr_buf).await.is_err() {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-    let Ok(hdr) = serde_json::from_slice::<serde_json::Value>(&hdr_buf) else {
-        return StatusCode::BAD_GATEWAY.into_response();
+    // Read streamed response: JSON header + binary body chunks.
+    let hdr = match crate::tunnel_io::read_json_frame(&mut tunnel).await {
+        Ok(h) => h,
+        Err(s) => return s.into_response(),
     };
 
     let status = hdr["status"].as_u64().unwrap_or(502) as u16;
 
-    // Check for error response
     if let Some(error) = hdr["error"].as_str() {
         return (StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), error.to_string()).into_response();
     }
@@ -631,28 +565,7 @@ async fn proxy_catchall(
         })
         .unwrap_or_default();
 
-    // Read body chunks until end marker.
-    let mut body_data = Vec::new();
-    loop {
-        let mut tag = [0u8; 1];
-        if tunnel.read_exact(&mut tag).await.is_err() {
-            break;
-        }
-        match tag[0] {
-            0x02 => {
-                // Binary chunk
-                let mut len_buf = [0u8; 4];
-                if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
-                let chunk_len = u32::from_be_bytes(len_buf) as usize;
-                if chunk_len > 16 * 1024 * 1024 { break; }
-                let mut chunk = vec![0u8; chunk_len];
-                if tunnel.read_exact(&mut chunk).await.is_err() { break; }
-                body_data.extend_from_slice(&chunk);
-            }
-            0x03 => break, // End marker
-            _ => break,
-        }
-    }
+    let body_data = crate::tunnel_io::read_binary_body(&mut tunnel).await;
 
     let mut builder = axum::response::Response::builder().status(status);
     for (k, v) in &resp_headers {
@@ -774,7 +687,7 @@ async fn file_list(
         "tunnel_name": tunnel_name,
         "path": query.path,
     });
-    match open_tunnel_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(30)).await {
+    match crate::tunnel_io::open_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(30)).await {
         Ok(resp) => Json(resp).into_response(),
         Err(status) => status.into_response(),
     }
@@ -810,25 +723,14 @@ async fn file_read(
     });
 
     // Open tunnel, read stream_framing response (JSON header + binary chunks).
-    let mut tunnel = match open_tunnel(&swarm, peer_id, &handshake, Duration::from_secs(10)).await {
+    let mut tunnel = match crate::tunnel_io::open(&swarm, peer_id, &handshake, Duration::from_secs(10)).await {
         Ok(t) => t,
         Err(status) => return status.into_response(),
     };
 
-    use futures_util::AsyncReadExt;
-    // Read JSON header frame.
-    let mut tag = [0u8; 1];
-    if tunnel.read_exact(&mut tag).await.is_err() || tag[0] != 0x01 {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-    let mut len_buf = [0u8; 4];
-    if tunnel.read_exact(&mut len_buf).await.is_err() { return StatusCode::BAD_GATEWAY.into_response(); }
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 16 * 1024 * 1024 { return StatusCode::BAD_GATEWAY.into_response(); }
-    let mut hdr_buf = vec![0u8; len];
-    if tunnel.read_exact(&mut hdr_buf).await.is_err() { return StatusCode::BAD_GATEWAY.into_response(); }
-    let Ok(hdr) = serde_json::from_slice::<serde_json::Value>(&hdr_buf) else {
-        return StatusCode::BAD_GATEWAY.into_response();
+    let hdr = match crate::tunnel_io::read_json_frame(&mut tunnel).await {
+        Ok(h) => h,
+        Err(s) => return s.into_response(),
     };
 
     let status = hdr["status"].as_u64().unwrap_or(502) as u16;
@@ -845,25 +747,7 @@ async fn file_read(
     let size = hdr["size"].as_u64().unwrap_or(0);
     let mtime = hdr["mtime"].as_i64().unwrap_or(0);
 
-    // Read binary body chunks.
-    let mut body_data = Vec::new();
-    loop {
-        let mut tag = [0u8; 1];
-        if tunnel.read_exact(&mut tag).await.is_err() { break; }
-        match tag[0] {
-            0x02 => {
-                let mut len_buf = [0u8; 4];
-                if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
-                let chunk_len = u32::from_be_bytes(len_buf) as usize;
-                if chunk_len > 16 * 1024 * 1024 { break; }
-                let mut chunk = vec![0u8; chunk_len];
-                if tunnel.read_exact(&mut chunk).await.is_err() { break; }
-                body_data.extend_from_slice(&chunk);
-            }
-            0x03 => break,
-            _ => break,
-        }
-    }
+    let body_data = crate::tunnel_io::read_binary_body(&mut tunnel).await;
 
     axum::response::Response::builder()
         .status(200)
@@ -929,7 +813,7 @@ async fn file_write(
         "data": body_b64,
     });
 
-    match open_tunnel_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(60)).await {
+    match crate::tunnel_io::open_and_read_json(&swarm, peer_id, handshake, Duration::from_secs(60)).await {
         Ok(resp) => {
             let status = resp["status"].as_u64().unwrap_or(500) as u16;
             axum::response::Response::builder()
@@ -1007,32 +891,20 @@ async fn shell_exec(
 
     // Stream output as SSE events in real-time.
     use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt;
 
-    let stream = async_stream::stream! {
-        use futures_util::AsyncReadExt;
-        loop {
-            let mut tag = [0u8; 1];
-            if tunnel.read_exact(&mut tag).await.is_err() { break; }
-            match tag[0] {
-                0x01 => {
-                    let mut len_buf = [0u8; 4];
-                    if tunnel.read_exact(&mut len_buf).await.is_err() { break; }
-                    let len = u32::from_be_bytes(len_buf) as usize;
-                    if len > 1024 * 1024 { break; }
-                    let mut buf = vec![0u8; len];
-                    if tunnel.read_exact(&mut buf).await.is_err() { break; }
-                    if let Ok(frame) = serde_json::from_slice::<serde_json::Value>(&buf) {
-                        let data = serde_json::to_string(&frame).unwrap_or_default();
-                        yield Ok::<_, std::convert::Infallible>(Event::default().data(data));
-                    }
-                }
-                0x03 => break,
-                _ => break,
+    let json_stream = crate::tunnel_io::read_json_frames_stream(tunnel);
+    let sse_stream = json_stream.map(|result| {
+        match result {
+            Ok(frame) => {
+                let data = serde_json::to_string(&frame).unwrap_or_default();
+                Ok::<_, std::convert::Infallible>(Event::default().data(data))
             }
+            Err(_) => Ok(Event::default().data("{\"error\":\"stream error\"}")),
         }
-    };
+    });
 
-    Sse::new(stream)
+    Sse::new(sse_stream)
         .keep_alive(KeepAlive::default())
         .into_response()
 }

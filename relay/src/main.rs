@@ -17,6 +17,7 @@ mod daemon_registry;
 mod metrics_federation;
 mod p2p;
 mod proxy_handler;
+mod tunnel_io;
 mod ws_bridge;
 
 #[derive(Parser)]
