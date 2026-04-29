@@ -652,6 +652,10 @@ async fn handle_tunnel_stream(
         "metrics" => {
             handle_streamed_metrics(handshake, &mut stream, handler_state).await;
         }
+        "ssh" => {
+            handle_ssh_session(stream, handler_state).await;
+            return; // stream consumed by SSH, don't close
+        }
         _ => {
             tracing::warn!(%peer_id, %msg_type, "unknown tunnel handshake type");
         }
@@ -911,6 +915,50 @@ async fn handle_streamed_metrics(
             let err = serde_json::json!({ "status": 502, "error": format!("metrics error: {e}") });
             let _ = stream_framing::write_json(stream, &err).await;
             let _ = stream_framing::write_end(stream).await;
+        }
+    }
+}
+
+/// Handle an SSH session over a tunnel substream.
+/// The substream acts as the transport for the russh SSH server.
+async fn handle_ssh_session(
+    stream: libp2p::Stream,
+    handler_state: &Arc<handler::HandlerState>,
+) {
+    use tokio_util::compat::FuturesAsyncReadCompatExt;
+
+    // Load authorized SSH keys.
+    let authorized_keys = {
+        let keys = handler_state.ssh_allowed.load(Ordering::Relaxed);
+        if !keys {
+            tracing::warn!("SSH session rejected: SSH access disabled");
+            return;
+        }
+        crate::remote_ssh::ssh_server::load_authorized_keys()
+    };
+
+    let config = std::sync::Arc::new(russh::server::Config {
+        keys: vec![
+            crate::host_keys::load_or_generate()
+                .expect("failed to load host key for SSH"),
+        ],
+        ..Default::default()
+    });
+
+    let session = crate::remote_ssh::ssh_server::SshSession::new(authorized_keys);
+
+    // Wrap the libp2p stream (futures AsyncRead/Write) into tokio AsyncRead/Write.
+    let compat_stream = stream.compat();
+
+    tracing::info!("SSH session started via libp2p tunnel");
+    match russh::server::run_stream(config, compat_stream, session).await {
+        Ok(running) => {
+            // Wait for the session to finish.
+            let _ = running.await;
+            tracing::info!("SSH session ended");
+        }
+        Err(e) => {
+            tracing::warn!("SSH session failed: {e}");
         }
     }
 }

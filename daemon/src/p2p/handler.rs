@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use tokio::sync::RwLock;
@@ -55,13 +55,11 @@ pub async fn handle_control_request(
             .await
         }
         ControlRequest::SessionRequest { .. } => {
-            if !state.ssh_allowed.load(Ordering::Relaxed) {
-                return ControlResponse::Error {
-                    message: "SSH access denied".into(),
-                };
+            // SSH sessions are handled via tunnel substreams (type: "ssh"),
+            // not via RPC. This request type is kept for protocol compat.
+            ControlResponse::Error {
+                message: "use tunnel substream for SSH sessions".into(),
             }
-            // TODO: set up SSH session via libp2p substream
-            ControlResponse::Ok
         }
         ControlRequest::FileListRequest {
             request_id,
