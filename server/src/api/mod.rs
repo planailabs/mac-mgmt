@@ -283,7 +283,10 @@ pub fn build_rocket(
         // Admin — skill nix packages
         routes::admin_get_skill_nix_packages,
         routes::admin_set_skill_nix_packages,
-        // Federation API
+    ]);
+    // Federation API (requires the full server feature for the federation module)
+    #[cfg(feature = "server")]
+    api_routes.append(&mut rocket::routes![
         federation::federation_catalog,
         federation::federation_resolve_skills,
         federation::federation_resolve_mcp_servers,
@@ -292,6 +295,7 @@ pub fn build_rocket(
     }
 
     // Skill importer routes — import from git repos and ClawHub
+    #[cfg(feature = "server")]
     if matches!(mode, ServerMode::Monolith | ServerMode::SkillImporter) {
     api_routes.append(&mut rocket::routes![
         importer::create_source,
@@ -363,7 +367,13 @@ pub fn build_rocket(
         routes::admin_delete_skill_center,
         // Admin — federation tokens
         routes::admin_create_federation_token,
-        // Secrets vault
+    ]);
+    }
+
+    // Secrets vault (requires the full server feature for the secrets module)
+    #[cfg(feature = "server")]
+    if matches!(mode, ServerMode::Monolith | ServerMode::Mgmt) {
+    api_routes.append(&mut rocket::routes![
         secrets::get_secrets,
         secrets::create_secret,
         secrets::update_secret,

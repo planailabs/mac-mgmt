@@ -323,6 +323,7 @@ async fn init_server() -> (
     }
 
     // Skill importer: spawn periodic sync loop for auto-sync sources
+    #[cfg(feature = "server")]
     if cfg.importer.is_some() {
         let importer_pool = pool.clone();
         tokio::spawn(api::importer::sync_loop(importer_pool));

@@ -183,6 +183,7 @@ pub async fn sync_skills_from_pins(
     .await
     .map_err(|e| e.to_string())?;
 
+    #[cfg(feature = "webui")]
     if !to_remove_channel_ids.is_empty() {
         crate::api::push::notify_federation_global();
         crate::api::push::notify_skill_channels_global(&to_remove_channel_ids).await;

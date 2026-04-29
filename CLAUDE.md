@@ -28,11 +28,10 @@ Run `cargo check -p mac-mgmt` with each combination to catch gating issues early
 
 ## Server: verify builds across feature combinations
 
-The server has `skill-center` and `mgmt` features (both on by default). When changing code gated on these features, ensure it compiles in all three modes:
+The server features are `server`, `webui`, `web`, and `server-api-only`. When changing server code, ensure it compiles in these modes:
 
-- `cargo check -p mac-mgmt-server` (default — monolith, both features on)
-- `cargo check -p mac-mgmt-server --no-default-features --features "server,webui,web,skill-center"` (skill center only)
-- `cargo check -p mac-mgmt-server --no-default-features --features "server,webui,web,mgmt"` (management server only)
+- `cargo check -p mac-mgmt-server` (default — `server`, `webui`, `web` all on)
+- `cargo check -p mac-mgmt-server --no-default-features --features "server-api-only"` (API-only, no web UI)
 
 When adding catalog mutation paths (skills, bundles, MCP servers, MCP bundles), call `crate::api::push::notify_federation_global()` so federation SSE subscribers are notified of catalog changes.
 
