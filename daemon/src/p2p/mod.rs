@@ -670,7 +670,21 @@ async fn handle_streamed_proxy(
         let ws_url = format!("ws://{}:{}{path}", target.host, target.port);
         tracing::debug!("WS proxy: connecting to {ws_url}");
 
-        let connect_result = tokio_tungstenite::connect_async(&ws_url).await;
+        // Build a custom request with Host header rewrite for fake_origin_local.
+        let connect_result = {
+            use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+            let mut request = ws_url.into_client_request().unwrap();
+            if handler_state.fake_origin_local {
+                let host_val = format!("{}:{}", target.host, target.port);
+                request.headers_mut().insert(
+                    "Host",
+                    host_val.parse().unwrap(),
+                );
+                // Remove origin header if present.
+                request.headers_mut().remove("Origin");
+            }
+            tokio_tungstenite::connect_async(request).await
+        };
         let (local_ws, _) = match connect_result {
             Ok(pair) => pair,
             Err(e) => {
