@@ -333,8 +333,6 @@ fn render_detail(d: &FleetDetailData) -> Element {
         .unwrap_or_default();
     service_badges.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Tunnel entries. Present only when the daemon has a relay_proxy_url —
-    // a daemon behind a relay it can't reach won't have one.
     let tunnels: Vec<(String, String)> = d
         .tunnels
         .as_ref()
@@ -345,6 +343,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                     let name = t.get("name").and_then(|v| v.as_str())?.to_string();
                     let port = t
                         .get("tcp_port")
+                        .or_else(|| t.get("port"))
                         .and_then(|v| v.as_u64())
                         .map(|p| p.to_string())
                         .unwrap_or_else(|| t!("em-dash"));
@@ -506,18 +505,18 @@ fn render_detail(d: &FleetDetailData) -> Element {
             }
         }
 
-        // ── Remote tools (require relay connection) ──
+        // ── Remote tools ──
         {
             let has_relay = d.relay_proxy_url.is_some();
-            let has_files = has_relay && d.file_tunnels
+            let has_files = d.file_tunnels
                 .as_ref()
                 .and_then(|v| v.as_array())
                 .is_some_and(|a| !a.is_empty());
-            let has_shell = has_relay && d.shell_tunnels
+            let has_shell = d.shell_tunnels
                 .as_ref()
                 .and_then(|v| v.as_array())
                 .is_some_and(|a| !a.is_empty());
-            if has_relay {
+            if has_files || has_shell || has_relay {
                 let files_url = format!("/fleet/{}/files", d.instance_id);
                 let shell_url = format!("/fleet/{}/shell", d.instance_id);
                 let logs_url = format!("/fleet/{}/logs", d.instance_id);

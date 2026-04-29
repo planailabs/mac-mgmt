@@ -882,6 +882,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                                 rsx! {
                                                                                     button {
                                                                                         class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
+                                                                                        title: "Open tunnel in new tab",
                                                                                         onclick: move |_| {
                                                                                             let iid = iid.clone();
                                                                                             let tn = tn.clone();
@@ -906,6 +907,15 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                                         "{tn}"
                                                                                     }
                                                                                 }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                } else if !tunnel_names.is_empty() {
+                                                                    div { class: "flex gap-1 flex-wrap",
+                                                                        for tname in &tunnel_names {
+                                                                            span {
+                                                                                class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300",
+                                                                                "{tname}"
                                                                             }
                                                                         }
                                                                     }

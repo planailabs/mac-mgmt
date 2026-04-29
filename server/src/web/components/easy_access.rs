@@ -17,7 +17,7 @@ struct EasyAccessNode {
     cluster_name: String,
     /// TCP tunnel names reported via heartbeat.
     tunnel_names: Vec<String>,
-    relay_proxy_url: String,
+    relay_proxy_url: Option<String>,
     /// Whether the node also exposes file tunnels.
     has_files: bool,
     /// Whether the node also exposes shell tunnels.
@@ -88,10 +88,7 @@ async fn get_easy_access_nodes() -> Result<Vec<EasyAccessNode>, ServerFnError> {
             continue;
         }
 
-        // Must have a relay proxy configured.
-        let Some(relay_url) = r.relay_proxy_url else {
-            continue;
-        };
+        let relay_url = r.relay_proxy_url;
 
         let tunnel_names: Vec<String> = r
             .tunnels
@@ -198,7 +195,7 @@ pub fn EasyAccess() -> Element {
                                     {
                                         let iid = node.instance_id.chars().take(12).collect::<String>();
                                         let tn = tname.clone();
-                                        let pu = node.relay_proxy_url.clone();
+                                        let pu = node.relay_proxy_url.clone().unwrap_or_default();
                                         let icon_path = service_icon(&tn);
                                         let display_name = tn.clone();
                                         rsx! {
