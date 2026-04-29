@@ -27,6 +27,7 @@ use tokio::sync::{RwLock, mpsc};
 use behaviour::{ClusterBehaviour, ClusterBehaviourEvent};
 use discovery::{BackendAdvertisement, PeerRegistry};
 use protocols::{ai_proxy, control};
+use relay_state::{RelayState, RelayEvent, RelayAction};
 
 /// Commands the daemon event loop can send to the P2pManager.
 #[derive(Debug)]
@@ -109,16 +110,13 @@ impl P2pManager {
         tracing::info!(%local_peer_id, instance_id = %config.instance_id, "p2p identity ready");
 
         // Build agent version with PSK auth token if cluster PSK is configured.
-        // Format: "mac-mgmt/{version}/{instance_id}/{psk_auth}" where psk_auth is
-        // HMAC-SHA256(psk, peer_id) truncated to 16 hex chars. Peers verify this
-        // on Identify to reject connections from unauthorized clusters.
         let psk_auth = config.cluster_psk.as_ref().map(|psk| {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(psk);
             hasher.update(local_peer_id.to_bytes());
             let hash = hasher.finalize();
-            hex::encode(&hash[..8]) // 16 hex chars
+            hex::encode(&hash[..8])
         });
         let agent_version = if let Some(ref auth) = psk_auth {
             format!(
@@ -231,7 +229,9 @@ impl P2pManager {
         let active_jobs = Arc::new(AtomicU32::new(0));
         let relay_proxy_url = Arc::new(RwLock::new(None));
 
-        // Spawn the swarm event loop
+        // Extract stream control for opening RPC streams.
+        let stream_control = swarm.behaviour().streams.new_control();
+
         let peer_registry_clone = Arc::clone(&peer_registry);
         let active_jobs_clone = Arc::clone(&active_jobs);
         let relay_proxy_url_clone = Arc::clone(&relay_proxy_url);
@@ -242,6 +242,7 @@ impl P2pManager {
             peer_registry_clone,
             active_jobs_clone,
             relay_proxy_url_clone,
+            stream_control,
             config,
         ));
 
@@ -279,17 +280,17 @@ async fn swarm_loop(
     peer_registry: Arc<RwLock<PeerRegistry>>,
     active_jobs: Arc<AtomicU32>,
     relay_proxy_url: Arc<RwLock<Option<String>>>,
+    stream_control: libp2p_stream::Control,
     config: P2pConfig,
 ) {
     let mut ad_interval = tokio::time::interval(Duration::from_secs(30));
     let mut evict_interval = tokio::time::interval(Duration::from_secs(15));
-    let mut relay_reconnect_interval = tokio::time::interval(Duration::from_secs(60));
-    let mut relay_peer_id: Option<PeerId> = None;
-    let mut registered_with_relay = false;
-    // Peers that passed PSK or Identify auth — only these may send control/ai-proxy requests.
+    let mut relay_tick = tokio::time::interval(Duration::from_secs(10));
     let mut authorized_peers: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
 
-    // Subscribe to cluster gossipsub topic
+    // Initialize relay state machine.
+    let mut relay = RelayState::new(config.relay_multiaddr.clone());
+
     let cluster_topic = gossipsub::IdentTopic::new(format!(
         "mac-mgmt/cluster/{}", config.instance_id
     ));
@@ -298,80 +299,138 @@ async fn swarm_loop(
     }
 
     loop {
+        // If the relay has an RPC stream, poll it for incoming messages.
+        let rpc_recv = async {
+            if let Some(rpc) = relay.rpc() {
+                rpc.recv().await
+            } else {
+                // No RPC stream — sleep forever (this arm won't fire).
+                std::future::pending().await
+            }
+        };
+
         tokio::select! {
             event = swarm.select_next_some() => {
-                handle_swarm_event(
-                    event,
-                    &event_tx,
-                    &peer_registry,
-                    &mut swarm,
-                    &config.handler_state,
-                    &config.cluster_psk,
-                    &relay_proxy_url,
-                    &mut relay_peer_id,
-                    &mut authorized_peers,
-                ).await;
+                // Convert swarm events to relay state events + handle general events.
+                let relay_event = match &event {
+                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                        Some(RelayEvent::ConnectionEstablished { peer_id: *peer_id })
+                    }
+                    SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                        authorized_peers.remove(peer_id);
+                        Some(RelayEvent::ConnectionClosed { peer_id: *peer_id })
+                    }
+                    SwarmEvent::Behaviour(ClusterBehaviourEvent::Identify(
+                        identify::Event::Received { peer_id, info, .. }
+                    )) => {
+                        // PSK auth check.
+                        if let Some(psk) = &config.cluster_psk {
+                            if !verify_psk_auth(&info.agent_version, *peer_id, psk) {
+                                tracing::warn!(%peer_id, "PSK auth failed, disconnecting");
+                                let _ = swarm.disconnect_peer_id(*peer_id);
+                                continue;
+                            }
+                        }
+                        authorized_peers.insert(*peer_id);
 
-                // After identifying the relay, register and send tunnels immediately.
-                if relay_peer_id.is_some() && !registered_with_relay {
-                    let relay = relay_peer_id.as_ref().unwrap();
-                    let req = control::ControlRequest::Register {
-                        instance_id: config.instance_id.clone(),
-                        cluster_id: None,
-                        hostname: hostname::get()
-                            .ok()
-                            .map(|h| h.to_string_lossy().to_string()),
-                        agent_name: None,
-                    };
-                    let _ = swarm.behaviour_mut().control.send_request(relay, req);
-                    send_tunnel_advertisement(&mut swarm, relay, &config.handler_state).await;
-                    registered_with_relay = true;
-                    tracing::info!("registered with relay after Identify");
+                        for addr in &info.listen_addrs {
+                            swarm.add_peer_address(*peer_id, addr.clone());
+                        }
+
+                        Some(RelayEvent::Identified {
+                            peer_id: *peer_id,
+                            agent_version: info.agent_version.clone(),
+                        })
+                    }
+                    _ => None,
+                };
+
+                // Feed relay state machine.
+                if let Some(re) = relay_event {
+                    let actions = relay.handle_event(re);
+                    execute_relay_actions(
+                        actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                    ).await;
+                }
+
+                // Handle non-relay swarm events.
+                handle_general_event(
+                    event, &event_tx, &peer_registry, &mut swarm,
+                    &config.handler_state, &authorized_peers,
+                ).await;
+            }
+
+            rpc_msg = rpc_recv => {
+                match rpc_msg {
+                    Ok(rpc::RpcMessage::Request { payload }) => {
+                        // Relay-initiated request (proxy, metrics, etc.)
+                        if let Some(hs) = &config.handler_state {
+                            handle_rpc_request(payload, hs, &mut relay).await;
+                        }
+                    }
+                    Ok(rpc::RpcMessage::Response { .. }) => {
+                        // Response to one of our requests — already dispatched by RpcStream.
+                    }
+                    Err(e) => {
+                        tracing::warn!("RPC stream error: {e}, relay will reconnect");
+                        let actions = relay.handle_event(RelayEvent::ConnectionClosed {
+                            peer_id: relay.peer_id().unwrap_or(PeerId::random()),
+                        });
+                        execute_relay_actions(
+                            actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                        ).await;
+                    }
                 }
             }
+
             Some(cmd) = cmd_rx.recv() => {
-                handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs, &relay_peer_id).await;
+                handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs, &relay).await;
             }
+
             _ = ad_interval.tick() => {
                 publish_advertisement(&mut swarm, &cluster_topic, &active_jobs).await;
             }
             _ = evict_interval.tick() => {
                 peer_registry.write().await.evict_stale();
             }
-            _ = relay_reconnect_interval.tick() => {
-                // Re-dial relay if disconnected.
-                if let Some(ref relay_addr) = config.relay_multiaddr {
-                    if relay_peer_id.is_none() {
-                        tracing::info!("relay not connected, re-dialing {relay_addr}");
-                        if let Err(e) = swarm.dial(relay_addr.clone()) {
-                            tracing::warn!("failed to re-dial relay: {e}");
+            _ = relay_tick.tick() => {
+                // Drive relay state machine tick (reconnect, re-register).
+                let actions = relay.handle_event(RelayEvent::Tick);
+                execute_relay_actions(
+                    actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                ).await;
+
+                // If Identified but no RPC stream yet, try opening one.
+                if matches!(relay, RelayState::Identified { .. }) {
+                    if let Some(peer_id) = relay.peer_id() {
+                        let mut ctrl = stream_control.clone();
+                        match ctrl.open_stream(peer_id, rpc::RPC_PROTOCOL).await {
+                            Ok(stream) => {
+                                let actions = relay.handle_event(RelayEvent::RpcStreamOpened { stream });
+                                execute_relay_actions(
+                                    actions, &mut swarm, &relay_proxy_url, &mut authorized_peers,
+                                ).await;
+                            }
+                            Err(e) => {
+                                tracing::warn!("failed to open RPC stream: {e}");
+                            }
                         }
                     }
                 }
-                // Re-register if connected (handles relay restarts).
-                if let Some(relay) = relay_peer_id {
-                    if swarm.is_connected(&relay) {
-                        let req = control::ControlRequest::Register {
-                            instance_id: config.instance_id.clone(),
-                            cluster_id: None,
-                            hostname: hostname::get()
-                                .ok()
-                                .map(|h| h.to_string_lossy().to_string()),
-                            agent_name: None,
-                        };
-                        let _ = swarm.behaviour_mut().control.send_request(&relay, req);
-                        send_tunnel_advertisement(&mut swarm, &relay, &config.handler_state).await;
-                        tracing::debug!("re-registered with relay (periodic)");
-                    } else {
-                        // Relay peer known but disconnected — clear and re-dial.
-                        tracing::info!("relay peer {relay} disconnected, clearing");
-                        relay_peer_id = None;
-                        registered_with_relay = false;
-                        *relay_proxy_url.write().await = None;
-                        if let Some(ref relay_addr) = config.relay_multiaddr {
-                            if let Err(e) = swarm.dial(relay_addr.clone()) {
-                                tracing::warn!("failed to re-dial relay: {e}");
-                            }
+
+                // Re-register via RPC if needed.
+                if relay.needs_reregister() {
+                    if let Some(rpc) = relay.rpc() {
+                        let reg = serde_json::json!({
+                            "type": "register",
+                            "instance_id": config.instance_id,
+                            "hostname": hostname::get().ok().map(|h| h.to_string_lossy().to_string()),
+                        });
+                        if let Err(e) = rpc.send(reg).await {
+                            tracing::warn!("re-register RPC failed: {e}");
+                        } else {
+                            send_tunnel_advertisement_rpc(rpc, &config.handler_state).await;
+                            relay.mark_registered();
                         }
                     }
                 }
@@ -382,132 +441,100 @@ async fn swarm_loop(
 
 use futures_util::StreamExt;
 
-async fn handle_swarm_event(
+/// Execute actions returned by the relay state machine.
+async fn execute_relay_actions(
+    actions: Vec<RelayAction>,
+    swarm: &mut Swarm<ClusterBehaviour>,
+    relay_proxy_url: &Arc<RwLock<Option<String>>>,
+    authorized_peers: &mut std::collections::HashSet<PeerId>,
+) {
+    for action in actions {
+        match action {
+            RelayAction::Dial(addr) => {
+                tracing::info!(%addr, "dialing relay");
+                if let Err(e) = swarm.dial(addr) {
+                    tracing::warn!("failed to dial relay: {e}");
+                }
+            }
+            RelayAction::OpenRpcStream(_) => {
+                // Handled in the relay_tick branch where we have &mut relay.
+            }
+            RelayAction::SetProxyUrl(url) => {
+                *relay_proxy_url.write().await = url;
+            }
+            RelayAction::AuthorizePeer(peer_id) => {
+                authorized_peers.insert(peer_id);
+            }
+            RelayAction::DeauthorizePeer(peer_id) => {
+                authorized_peers.remove(&peer_id);
+            }
+            RelayAction::Log(level, msg) => {
+                match level {
+                    tracing::Level::INFO => tracing::info!("{msg}"),
+                    tracing::Level::WARN => tracing::warn!("{msg}"),
+                    tracing::Level::DEBUG => tracing::debug!("{msg}"),
+                    _ => tracing::trace!("{msg}"),
+                }
+            }
+        }
+    }
+}
+
+/// Handle non-relay swarm events (mDNS, control requests, AI proxy, gossipsub).
+async fn handle_general_event(
     event: SwarmEvent<ClusterBehaviourEvent>,
     event_tx: &mpsc::Sender<P2pEvent>,
     peer_registry: &Arc<RwLock<PeerRegistry>>,
     swarm: &mut Swarm<ClusterBehaviour>,
     handler_state: &Option<Arc<handler::HandlerState>>,
-    cluster_psk: &Option<Vec<u8>>,
-    relay_proxy_url: &Arc<RwLock<Option<String>>>,
-    relay_peer_id: &mut Option<PeerId>,
-    authorized_peers: &mut std::collections::HashSet<PeerId>,
+    authorized_peers: &std::collections::HashSet<PeerId>,
 ) {
     match event {
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
             for (peer_id, addr) in peers {
                 tracing::info!(%peer_id, %addr, "mDNS discovered peer");
                 swarm.add_peer_address(peer_id, addr);
-                let _ = event_tx
-                    .send(P2pEvent::PeerUpdate {
-                        peer: peer_id,
-                        connected: true,
-                    })
-                    .await;
+                let _ = event_tx.send(P2pEvent::PeerUpdate { peer: peer_id, connected: true }).await;
             }
         }
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Expired(peers))) => {
             for (peer_id, _addr) in peers {
-                tracing::info!(%peer_id, "mDNS peer expired");
                 peer_registry.write().await.remove(&peer_id);
-                let _ = event_tx
-                    .send(P2pEvent::PeerUpdate {
-                        peer: peer_id,
-                        connected: false,
-                    })
-                    .await;
-            }
-        }
-        SwarmEvent::Behaviour(ClusterBehaviourEvent::Identify(identify::Event::Received {
-            peer_id,
-            info,
-            ..
-        })) => {
-            tracing::debug!(%peer_id, agent = %info.agent_version, "identify received");
-
-            // Verify PSK auth token if we have a cluster PSK configured.
-            if let Some(psk) = cluster_psk {
-                if !verify_psk_auth(&info.agent_version, peer_id, psk) {
-                    tracing::warn!(%peer_id, "PSK auth failed, disconnecting peer");
-                    let _ = swarm.disconnect_peer_id(peer_id);
-                    return;
-                }
-            }
-
-            // Peer passed auth (PSK check above didn't disconnect) — authorize it.
-            authorized_peers.insert(peer_id);
-
-            // If this is a relay (agent starts with "mac-mgmt-relay/"), parse proxy_url
-            // and track the relay PeerId.
-            if info.agent_version.starts_with("mac-mgmt-relay/") {
-                *relay_peer_id = Some(peer_id);
-                if let Some(url) = parse_relay_proxy_url(&info.agent_version) {
-                    tracing::info!(%peer_id, %url, "relay proxy URL learned from Identify");
-                    *relay_proxy_url.write().await = Some(url);
-                }
-            }
-
-            for addr in info.listen_addrs {
-                swarm.add_peer_address(peer_id, addr);
+                let _ = event_tx.send(P2pEvent::PeerUpdate { peer: peer_id, connected: false }).await;
             }
         }
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Control(
             request_response::Event::Message {
                 peer,
-                message:
-                    request_response::Message::Request {
-                        channel, request, ..
-                    },
+                message: request_response::Message::Request { channel, request, .. },
                 ..
             },
         )) => {
-            // Reject control requests from unauthorized peers.
             if !authorized_peers.contains(&peer) {
                 tracing::warn!(%peer, "rejecting control request from unauthorized peer");
-                let resp = control::ControlResponse::Error {
-                    message: "unauthorized".into(),
-                };
+                let resp = control::ControlResponse::Error { message: "unauthorized".into() };
                 let _ = swarm.behaviour_mut().control.send_response(channel, resp);
                 return;
             }
-
             if let Some(hs) = handler_state {
-                let hs = Arc::clone(hs);
-                let response = handler::handle_control_request(&hs, request).await;
+                let response = handler::handle_control_request(hs, request).await;
                 let _ = swarm.behaviour_mut().control.send_response(channel, response);
             } else {
-                let _ = event_tx
-                    .send(P2pEvent::ControlRequest {
-                        peer,
-                        channel,
-                        request,
-                    })
-                    .await;
+                let _ = event_tx.send(P2pEvent::ControlRequest { peer, channel, request }).await;
             }
         }
         SwarmEvent::Behaviour(ClusterBehaviourEvent::AiProxy(
             request_response::Event::Message {
                 peer,
-                message:
-                    request_response::Message::Request {
-                        channel, request, ..
-                    },
+                message: request_response::Message::Request { channel, request, .. },
                 ..
             },
         )) => {
-            // Reject AI proxy requests from unauthorized peers.
             if !authorized_peers.contains(&peer) {
                 tracing::warn!(%peer, "rejecting AI proxy request from unauthorized peer");
                 return;
             }
-
-            let _ = event_tx
-                .send(P2pEvent::AiProxyRequest {
-                    peer,
-                    channel,
-                    request,
-                })
-                .await;
+            let _ = event_tx.send(P2pEvent::AiProxyRequest { peer, channel, request }).await;
         }
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Gossipsub(
             gossipsub::Event::Message { message, .. },
@@ -521,14 +548,36 @@ async fn handle_swarm_event(
         SwarmEvent::NewListenAddr { address, .. } => {
             tracing::info!(%address, "listening on");
         }
-        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-            tracing::info!(%peer_id, "connection established");
-        }
-        SwarmEvent::ConnectionClosed { peer_id, .. } => {
-            tracing::debug!(%peer_id, "connection closed");
-            authorized_peers.remove(&peer_id);
-        }
         _ => {}
+    }
+}
+
+/// Handle an incoming RPC request from the relay.
+async fn handle_rpc_request(
+    payload: serde_json::Value,
+    handler_state: &Arc<handler::HandlerState>,
+    relay: &mut RelayState,
+) {
+    let msg_type = payload["type"].as_str().unwrap_or("");
+    let _request_id = payload["request_id"].as_str().unwrap_or("");
+
+    // Parse into ControlRequest and handle.
+    let request: Result<control::ControlRequest, _> = serde_json::from_value(payload.clone());
+    match request {
+        Ok(req) => {
+            let response = handler::handle_control_request(handler_state, req).await;
+            // Send response back on the RPC stream.
+            if let Some(rpc) = relay.rpc() {
+                let mut resp_json = serde_json::to_value(&response).unwrap_or_default();
+                resp_json["id"] = payload["id"].clone(); // echo the request id
+                if let Err(e) = rpc.send(resp_json).await {
+                    tracing::warn!("failed to send RPC response: {e}");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("failed to parse relay RPC request ({msg_type}): {e}");
+        }
     }
 }
 
@@ -537,7 +586,7 @@ async fn handle_command(
     swarm: &mut Swarm<ClusterBehaviour>,
     cluster_topic: &gossipsub::IdentTopic,
     active_jobs: &Arc<AtomicU32>,
-    relay_peer_id: &Option<PeerId>,
+    _relay: &RelayState,
 ) {
     match cmd {
         P2pCommand::AdvertiseTunnels => {
@@ -546,43 +595,39 @@ async fn handle_command(
         P2pCommand::UpdateActiveJobs(count) => {
             active_jobs.store(count, Ordering::Relaxed);
         }
-        P2pCommand::RegisterWithRelay {
-            instance_id,
-            cluster_id,
-            hostname,
-        } => {
-            if let Some(relay) = relay_peer_id {
-                let req = control::ControlRequest::Register {
-                    instance_id,
-                    cluster_id,
-                    hostname,
-                    agent_name: None,
-                };
-                let _req_id = swarm.behaviour_mut().control.send_request(relay, req);
-                tracing::info!(%relay, "sent registration to relay");
-            }
-        }
-        P2pCommand::SendTunnelAdvertisement {
-            tunnels,
-            file_tunnels,
-            shell_tunnels,
-        } => {
-            if let Some(relay) = relay_peer_id {
-                let req = control::ControlRequest::TunnelAdvertisement {
-                    tunnels,
-                    file_tunnels,
-                    shell_tunnels,
-                };
-                let _req_id = swarm.behaviour_mut().control.send_request(relay, req);
-                tracing::debug!(%relay, "sent tunnel advertisement to relay");
-            }
+        P2pCommand::RegisterWithRelay { .. } | P2pCommand::SendTunnelAdvertisement { .. } => {
+            // These are now handled via the RPC stream in the relay state machine.
+            // Kept for backwards compat but no-op.
         }
     }
 }
 
+/// Send tunnel advertisement via the RPC stream.
+async fn send_tunnel_advertisement_rpc(
+    rpc: &mut rpc::RpcStream,
+    handler_state: &Option<Arc<handler::HandlerState>>,
+) {
+    let Some(hs) = handler_state else { return };
+
+    let tunnel_defs = hs.tunnel_defs.read().await;
+    let tunnels: Vec<serde_json::Value> = tunnel_defs
+        .iter()
+        .map(|(name, target)| serde_json::json!({ "name": name, "port": target.port }))
+        .collect();
+    drop(tunnel_defs);
+
+    let req = serde_json::json!({
+        "type": "tunnel_advertisement",
+        "tunnels": tunnels,
+        "file_tunnels": [],
+        "shell_tunnels": [],
+    });
+    if let Err(e) = rpc.send(req).await {
+        tracing::warn!("failed to send tunnel advertisement via RPC: {e}");
+    }
+}
+
 /// Parse the relay's proxy_url from its Identify agent version string.
-///
-/// Agent version format: `mac-mgmt-relay/{version}/{proxy_url_base64}`
 fn parse_relay_proxy_url(agent_version: &str) -> Option<String> {
     let parts: Vec<&str> = agent_version.splitn(3, '/').collect();
     let b64 = match parts.as_slice() {
@@ -596,54 +641,19 @@ fn parse_relay_proxy_url(agent_version: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Send tunnel definitions to the relay.
-async fn send_tunnel_advertisement(
-    swarm: &mut Swarm<ClusterBehaviour>,
-    relay: &PeerId,
-    handler_state: &Option<Arc<handler::HandlerState>>,
-) {
-    let Some(hs) = handler_state else { return };
-
-    let tunnel_defs = hs.tunnel_defs.read().await;
-    let tunnels: Vec<serde_json::Value> = tunnel_defs
-        .iter()
-        .map(|(name, target)| {
-            serde_json::json!({ "name": name, "port": target.port })
-        })
-        .collect();
-    drop(tunnel_defs);
-
-    // TODO: expose file/shell tunnel lists from registries
-    let file_tunnels = serde_json::Value::Array(vec![]);
-    let shell_tunnels = serde_json::Value::Array(vec![]);
-
-    let req = control::ControlRequest::TunnelAdvertisement {
-        tunnels: serde_json::Value::Array(tunnels),
-        file_tunnels,
-        shell_tunnels,
-    };
-    let _ = swarm.behaviour_mut().control.send_request(relay, req);
-    tracing::debug!("sent tunnel advertisement to relay");
-}
-
 /// Verify the PSK auth token in a peer's agent version string.
-///
-/// Agent version format: `mac-mgmt/{version}/{instance_id}/{auth_hex}`
-/// where auth_hex = hex(SHA256(psk || peer_id_bytes))[..16].
 fn verify_psk_auth(agent_version: &str, peer_id: PeerId, psk: &[u8]) -> bool {
     let parts: Vec<&str> = agent_version.splitn(4, '/').collect();
     let auth_token = match parts.as_slice() {
         [_, _, _, auth] => *auth,
-        _ => return false, // no auth token in agent string
+        _ => return false,
     };
-
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(psk);
     hasher.update(peer_id.to_bytes());
     let hash = hasher.finalize();
     let expected = hex::encode(&hash[..8]);
-
     auth_token == expected
 }
 
@@ -655,18 +665,12 @@ async fn publish_advertisement(
     let local_peer = *swarm.local_peer_id();
     let ad = BackendAdvertisement {
         peer_id: local_peer.to_string(),
-        backends: vec![], // TODO: populated from service manager
+        backends: vec![],
         active_jobs: active_jobs.load(Ordering::Relaxed),
-        models: vec![], // TODO: populated from service manager
+        models: vec![],
     };
-
     if let Ok(data) = serde_json::to_vec(&ad) {
-        if let Err(e) = swarm
-            .behaviour_mut()
-            .gossipsub
-            .publish(topic.clone(), data)
-        {
-            // This is expected when there are no subscribers
+        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), data) {
             tracing::trace!("gossipsub publish failed (likely no subscribers): {e}");
         }
     }
