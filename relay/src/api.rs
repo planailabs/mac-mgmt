@@ -56,7 +56,7 @@ pub fn router(
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
         // libp2p-over-WS: daemons can connect via the main HTTP port
-        .route("/p2p", any(p2p_ws_bridge))
+        .route("/", any(p2p_ws_bridge))
         .layer(middleware::from_fn(security_headers))
         .layer(tower::limit::ConcurrencyLimitLayer::new(4096))
         .with_state(state)
