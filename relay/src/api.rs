@@ -299,6 +299,7 @@ async fn scrape_one(
     let cluster_name = tunnel.cluster_name.clone().unwrap_or_default();
 
     let Some(peer_id) = registry.resolve_peer_id(&instance_id) else {
+        tracing::debug!(%instance_id, "metrics scrape: no peer_id for instance");
         return ScrapeOutcome {
             instance_id, hostname, cluster_id, cluster_name,
             families: Vec::new(), up: false,
@@ -316,6 +317,10 @@ async fn scrape_one(
         crate::tunnel_io::open_and_read_response(swarm, peer_id, handshake, FEDERATION_SCRAPE_TIMEOUT),
     ).await {
         Ok(Ok((status, _content_type, body))) => {
+            tracing::debug!(
+                %instance_id, status, body_len = body.len(),
+                "metrics scrape response received"
+            );
             if status == 200 {
                 match parse_and_relabel(&body, &instance_id, &hostname, &cluster_id, &cluster_name) {
                     Ok(families) => ScrapeOutcome {
@@ -340,11 +345,22 @@ async fn scrape_one(
                 }
             }
         }
-        _ => ScrapeOutcome {
-            instance_id, hostname, cluster_id, cluster_name,
-            families: Vec::new(), up: false,
-            duration_secs: started.elapsed().as_secs_f64(),
-        },
+        Ok(Err(e)) => {
+            tracing::debug!(%instance_id, ?e, "metrics scrape: tunnel error");
+            ScrapeOutcome {
+                instance_id, hostname, cluster_id, cluster_name,
+                families: Vec::new(), up: false,
+                duration_secs: started.elapsed().as_secs_f64(),
+            }
+        }
+        Err(_) => {
+            tracing::debug!(%instance_id, "metrics scrape: outer timeout");
+            ScrapeOutcome {
+                instance_id, hostname, cluster_id, cluster_name,
+                families: Vec::new(), up: false,
+                duration_secs: started.elapsed().as_secs_f64(),
+            }
+        }
     }
 }
 

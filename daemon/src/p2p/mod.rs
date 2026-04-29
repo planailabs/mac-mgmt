@@ -871,7 +871,7 @@ async fn handle_streamed_metrics(
     use mac_mgmt_common::framing as stream_framing;
 
     let path = handshake["path"].as_str().unwrap_or("/metrics");
-    let url = format!("http://127.0.0.1:{}{path}", handler_state.metrics_port);
+    let url = format!("http://[::1]:{}{path}", handler_state.metrics_port);
 
     match handler_state
         .client
