@@ -153,8 +153,12 @@ impl DaemonRegistry {
     ) {
         let mut daemons = self.daemons.write().unwrap();
         if let Some(d) = daemons.get_mut(instance_id) {
-            let count = tunnels.len();
-            tracing::info!("daemon {instance_id} advertised {count} TCP tunnel(s)");
+            let tcp_count = tunnels.len();
+            let file_count = file_tunnels.as_array().map(|a| a.len()).unwrap_or(0);
+            let shell_count = shell_tunnels.as_array().map(|a| a.len()).unwrap_or(0);
+            tracing::info!(
+                "daemon {instance_id} advertised {tcp_count} TCP, {file_count} file, {shell_count} shell tunnel(s)"
+            );
             d.tunnels = tunnels.into_iter().take(100).collect();
             d.file_tunnels = file_tunnels;
             d.shell_tunnels = shell_tunnels;
