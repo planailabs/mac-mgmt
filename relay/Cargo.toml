@@ -29,7 +29,7 @@ prometheus-parse = "0.2"
 protobuf = "3.7"
 libp2p ={ version = "0.56", default-features = false, features = [
     "tokio", "noise", "yamux", "quic", "tcp", "websocket", "dns",
-    "relay", "identify", "request-response", "macros", "serde",
+    "relay", "identify", "request-response", "ping", "macros", "serde",
 ] }
 libp2p-stream = "0.4.0-alpha"
 tokio-tungstenite = "0.26"

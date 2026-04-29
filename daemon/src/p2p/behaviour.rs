@@ -1,13 +1,15 @@
 //! Composite `NetworkBehaviour` for the daemon's libp2p swarm.
 
 use libp2p::swarm::NetworkBehaviour;
-use libp2p::{gossipsub, identify, mdns, relay, request_response};
+use libp2p::{gossipsub, identify, mdns, ping, relay, request_response};
 
 use super::protocols::ai_proxy;
 
 /// Combined behaviour for the cluster p2p network.
 #[derive(NetworkBehaviour)]
 pub struct ClusterBehaviour {
+    /// Keep-alive pings to prevent idle connection closure.
+    pub ping: ping::Behaviour,
     /// Peer identification — exchanges PeerId, listen addresses, agent version.
     pub identify: identify::Behaviour,
     /// mDNS local peer discovery for same-LAN peers.

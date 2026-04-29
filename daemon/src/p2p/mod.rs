@@ -183,6 +183,10 @@ impl P2pManager {
                 );
 
                 Ok(ClusterBehaviour {
+                    ping: libp2p::ping::Behaviour::new(
+                        libp2p::ping::Config::new()
+                            .with_interval(Duration::from_secs(15)),
+                    ),
                     identify: identify::Behaviour::new(identify_config),
                     mdns: mdns_behaviour,
                     relay_client,
@@ -191,7 +195,7 @@ impl P2pManager {
                     streams: libp2p_stream::Behaviour::new(),
                 })
             })?
-            .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
+            .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(3600)))
             .build();
 
         // Listen on QUIC (both IPv4 and IPv6)

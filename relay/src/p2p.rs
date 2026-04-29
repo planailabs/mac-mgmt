@@ -21,6 +21,7 @@ use crate::daemon_registry::DaemonRegistry;
 
 #[derive(NetworkBehaviour)]
 struct RelayBehaviour {
+    ping: libp2p::ping::Behaviour,
     identify: identify::Behaviour,
     relay_server: libp2p::relay::Behaviour,
     streams: libp2p_stream::Behaviour,
@@ -176,12 +177,16 @@ impl RelaySwarm {
                 );
 
                 Ok(RelayBehaviour {
+                    ping: libp2p::ping::Behaviour::new(
+                        libp2p::ping::Config::new()
+                            .with_interval(std::time::Duration::from_secs(15)),
+                    ),
                     identify: identify::Behaviour::new(identify_cfg),
                     relay_server,
                     streams: libp2p_stream::Behaviour::new(),
                 })
             })?
-            .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
+            .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(3600)))
             .build();
 
         // Listen on QUIC (IPv6 dual-stack covers IPv4 too)
