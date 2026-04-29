@@ -75,6 +75,8 @@ pub struct RelaySwarm {
     daemon_rpc_map: DaemonRpcMap,
     /// Shared daemon registry for lookups.
     registry: Arc<DaemonRegistry>,
+    /// Server API URL for token validation during daemon registration.
+    server_api_url: String,
 }
 
 /// Protocol for tunnel data substreams.
@@ -139,6 +141,7 @@ impl RelaySwarm {
         key_path: &Path,
         registry: Arc<DaemonRegistry>,
         proxy_url: Option<&str>,
+        server_api_url: &str,
     ) -> Result<Self> {
         let keypair = load_or_generate_key(key_path)?;
         let local_peer_id = keypair.public().to_peer_id();
@@ -229,19 +232,20 @@ impl RelaySwarm {
         let mut incoming_streams = stream_control.clone().accept(rpc_protocol).unwrap();
         let registry_for_rpc = Arc::clone(&registry);
         let rpc_map_for_accept = Arc::clone(&daemon_rpc_map);
+        let server_api_url_for_rpc = server_api_url.to_string();
         tokio::spawn(async move {
             while let Some((peer_id, stream)) = incoming_streams.next().await {
                 tracing::info!(%peer_id, "daemon opened RPC stream");
                 let registry = Arc::clone(&registry_for_rpc);
                 let rpc_map = Arc::clone(&rpc_map_for_accept);
+                let server_url = server_api_url_for_rpc.clone();
 
-                // Create a channel for the relay to send outbound requests to this daemon.
                 let (req_tx, req_rx) = tokio::sync::mpsc::channel(64);
                 rpc_map.write().await.insert(peer_id, req_tx);
 
                 let rpc_map_cleanup = Arc::clone(&rpc_map);
                 tokio::spawn(async move {
-                    handle_daemon_rpc(peer_id, stream, registry, req_rx).await;
+                    handle_daemon_rpc(peer_id, stream, registry, req_rx, server_url).await;
                     rpc_map_cleanup.write().await.remove(&peer_id);
                 });
             }
@@ -260,6 +264,7 @@ impl RelaySwarm {
             stream_control,
             local_peer_id,
             peer_metadata,
+            server_api_url: server_api_url.to_string(),
         })
     }
 }
@@ -319,6 +324,7 @@ async fn handle_daemon_rpc(
     stream: libp2p::Stream,
     registry: Arc<DaemonRegistry>,
     mut req_rx: tokio::sync::mpsc::Receiver<DaemonRpcRequest>,
+    server_api_url: String,
 ) {
     use futures_util::{AsyncReadExt, AsyncWriteExt};
     let (mut reader, mut writer) = stream.split();
@@ -376,31 +382,44 @@ async fn handle_daemon_rpc(
         let resp = match msg_type {
             "register" => {
                 let iid = frame["instance_id"].as_str().unwrap_or("").to_string();
-                let cluster_id = frame["cluster_id"]
-                    .as_str()
-                    .and_then(|s| s.parse().ok());
                 let hostname = frame["hostname"].as_str().map(String::from);
                 let agent_name = frame["agent_name"].as_str().map(String::from);
                 let now = chrono::Utc::now();
 
-                if !iid.is_empty() {
-                    tracing::info!(%peer_id, %iid, "daemon registered via RPC stream");
-                    registry.register(crate::daemon_registry::DaemonConn {
-                        instance_id: iid.clone(),
-                        cluster_id,
-                        cluster_name: None,
-                        agent_name,
-                        hostname,
-                        connected_at: now,
-                        tunnels: Vec::new(),
-                        file_tunnels: serde_json::Value::Array(vec![]),
-                        shell_tunnels: serde_json::Value::Array(vec![]),
-                        peer_id: Some(peer_id),
-                    });
-                    instance_id = Some(iid);
-                    connected_at = Some(now);
+                // Validate token against server — registration without a valid token is rejected.
+                let token = frame["token"].as_str().unwrap_or("");
+                if token.is_empty() {
+                    tracing::warn!(%peer_id, %iid, "daemon registration rejected: no token");
+                    serde_json::json!({ "type": "error", "error": "token required", "id": req_id })
+                } else {
+                    match crate::auth::validate_token(&server_api_url, token).await {
+                        Ok(info) if !iid.is_empty() => {
+                            tracing::info!(%peer_id, %iid, cluster_id = ?info.cluster_id, "daemon registered via RPC stream");
+                            registry.register(crate::daemon_registry::DaemonConn {
+                                instance_id: iid.clone(),
+                                cluster_id: info.cluster_id,
+                                cluster_name: info.cluster_name,
+                                agent_name,
+                                hostname,
+                                connected_at: now,
+                                tunnels: Vec::new(),
+                                file_tunnels: serde_json::Value::Array(vec![]),
+                                shell_tunnels: serde_json::Value::Array(vec![]),
+                                peer_id: Some(peer_id),
+                            });
+                            instance_id = Some(iid);
+                            connected_at = Some(now);
+                            serde_json::json!({ "type": "ok", "id": req_id })
+                        }
+                        Ok(_) => {
+                            serde_json::json!({ "type": "error", "error": "empty instance_id", "id": req_id })
+                        }
+                        Err(status) => {
+                            tracing::warn!(%peer_id, %iid, ?status, "daemon registration rejected: token validation failed");
+                            serde_json::json!({ "type": "error", "error": "token validation failed", "id": req_id })
+                        }
+                    }
                 }
-                serde_json::json!({ "type": "ok", "id": req_id })
             }
             "tunnel_advertisement" => {
                 if let Some(iid) = &instance_id {

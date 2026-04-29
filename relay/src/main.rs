@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
             &key_path,
             Arc::clone(&registry),
             cfg.proxy_url.as_deref(),
+            &cfg.server_api_url,
         )
         .await?,
     );

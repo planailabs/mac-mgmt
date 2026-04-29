@@ -1114,6 +1114,7 @@ pub async fn run(
             mdns_enabled: cfg.relay.mdns_enabled,
             p2p_port: cfg.relay.p2p_port,
             ai_proxy_distribution: cfg.relay.ai_proxy_distribution,
+            server_token: server_token.clone(),
             handler_state: Some(handler_state),
         };
         match crate::p2p::P2pManager::new(&host_key, p2p_config).await {

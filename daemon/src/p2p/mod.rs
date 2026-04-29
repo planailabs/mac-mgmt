@@ -62,6 +62,8 @@ pub struct P2pConfig {
     pub mdns_enabled: bool,
     pub p2p_port: u16,
     pub ai_proxy_distribution: bool,
+    /// Server sync token for relay registration (relay validates to get cluster_id).
+    pub server_token: Option<String>,
     /// Handler state for processing incoming control requests.
     pub handler_state: Option<Arc<handler::HandlerState>>,
 }
@@ -424,6 +426,7 @@ async fn swarm_loop(
                             "type": "register",
                             "instance_id": config.instance_id,
                             "hostname": hostname::get().ok().map(|h| h.to_string_lossy().to_string()),
+                            "token": config.server_token,
                         });
                         if let Err(e) = rpc.send(reg).await {
                             tracing::warn!("re-register RPC failed: {e}");
