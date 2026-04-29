@@ -10,12 +10,12 @@ let
     prev.runCommand "mac-mgmt-server${pnameSuffix}" {} ''
       mkdir -p $out/bin $out/share
       ln -s ${final.mac-mgmt-server}/share/mac-mgmt-server $out/share/mac-mgmt-server
-      cat > $out/bin/mac-mgmt-server <<'WRAPPER'
+      cat > $out/bin/mac-mgmt-server${pnameSuffix} <<'WRAPPER'
       #!/bin/sh
       export MAC_MGMT_SERVER_MODE="${mode}"
       exec "${final.mac-mgmt-server}/bin/mac-mgmt-server" "$@"
       WRAPPER
-      chmod +x $out/bin/mac-mgmt-server
+      chmod +x $out/bin/mac-mgmt-server${pnameSuffix}
     '';
 in
 {
