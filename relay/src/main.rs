@@ -12,7 +12,6 @@ use tracing_subscriber::EnvFilter;
 
 mod api;
 mod auth;
-mod bridge;
 mod config;
 mod daemon_registry;
 mod metrics_federation;
@@ -112,21 +111,51 @@ async fn main() -> Result<()> {
         (proxy_hostname.clone(), proxy_handler::router(proxy_state))
     });
 
-    // Virtual-host dispatcher: route by hostname
-    let app = Router::new().fallback(any(move |Host(hostname): Host, req: Request<Body>| {
+    let p2p_port = cfg.p2p_port;
+
+    // Virtual-host dispatcher with WS-aware routing.
+    // WS upgrades on the main host → libp2p bridge (daemon p2p).
+    // WS upgrades on proxy subdomains → axum proxy handler via oneshot.
+    // Non-WS requests → axum via oneshot (API or proxy).
+    let app = Router::new().fallback(any(move |
+        Host(hostname): Host,
+        req: Request<Body>,
+    | {
         let api = api_router.clone();
         let proxy = proxy_router.clone();
         async move {
             let host_no_port = hostname.split(':').next().unwrap_or(&hostname);
 
-            // Check if this is a tunnel subdomain request
+            // Proxy subdomain → proxy router.
             if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
                 if host_no_port.ends_with(&format!(".{proxy_hostname}")) {
                     return proxy_router.clone().oneshot(req).await.into_response();
                 }
             }
 
-            // Default: relay API
+            // Main host: check if this is a WS upgrade → bridge to libp2p.
+            let is_ws = req.headers().get("upgrade")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+
+            if is_ws {
+                use axum::extract::FromRequestParts;
+                let (mut parts, _body) = req.into_parts();
+                match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+                    Ok(ws) => {
+                        return ws.on_upgrade(move |socket| async move {
+                            tracing::debug!("p2p WS bridge via axum");
+                            crate::ws_bridge::bridge_ws_to_libp2p_listener(socket, p2p_port).await;
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!("WS upgrade extraction failed: {e}");
+                        return axum::http::StatusCode::BAD_REQUEST.into_response();
+                    }
+                }
+            }
+
+            // Main host non-WS → API router.
             api.clone().oneshot(req).await.into_response()
         }
     }));
@@ -134,78 +163,10 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await?;
     tracing::info!("relay listening on {}", cfg.listen_addr);
 
-    let p2p_port = cfg.p2p_port;
-    let proxy_hostname = cfg.proxy_hostname.clone();
-
-    // Spawn axum on a random internal port.
-    let axum_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let axum_port = axum_listener.local_addr()?.port();
-
-    tokio::spawn(async move {
-        axum::serve(
-            axum_listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .expect("axum serve failed");
-    });
-
-    // Accept TCP connections and route:
-    //  - WS upgrade to a proxy subdomain → axum (browser tunnel proxy)
-    //  - WS upgrade to anything else → libp2p (daemon p2p connection)
-    //  - Non-WS → axum
-    loop {
-        let (tcp_stream, remote_addr) = listener.accept().await?;
-        let proxy_hostname = proxy_hostname.clone();
-        tokio::spawn(async move {
-            let mut peek_buf = [0u8; 1024];
-            let n = match tcp_stream.peek(&mut peek_buf).await {
-                Ok(n) if n > 0 => n,
-                _ => return,
-            };
-
-            let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
-            let peek_lower = peek_str.to_lowercase();
-            let is_ws = peek_lower.contains("upgrade: websocket");
-
-            if is_ws {
-                // Check if the Host header targets a proxy subdomain.
-                let is_proxy_subdomain = proxy_hostname.as_ref().is_some_and(|ph| {
-                    let host_needle = format!("host: ");
-                    peek_lower
-                        .lines()
-                        .find(|l| l.starts_with(&host_needle))
-                        .and_then(|l| l.strip_prefix(&host_needle))
-                        .map(|h| h.split(':').next().unwrap_or(h))
-                        .is_some_and(|h| {
-                            h.ends_with(&format!(".{}", ph.to_lowercase()))
-                        })
-                });
-
-                if is_proxy_subdomain {
-                    // Browser WS to a proxy subdomain → axum handles it.
-                    tracing::debug!(%remote_addr, "proxy subdomain WS → axum");
-                    forward_to(tcp_stream, axum_port).await;
-                } else {
-                    // Main host / no host / unknown host WS → libp2p.
-                    tracing::debug!(%remote_addr, "WS upgrade → libp2p bridge");
-                    forward_to(tcp_stream, p2p_port).await;
-                }
-            } else {
-                // Regular HTTP → axum.
-                forward_to(tcp_stream, axum_port).await;
-            }
-        });
-    }
-}
-
-async fn forward_to(client: tokio::net::TcpStream, port: u16) {
-    let upstream = match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!("failed to connect to 127.0.0.1:{port}: {e}");
-            return;
-        }
-    };
-    bridge::bridge_bidir(client, upstream).await;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
+    Ok(())
 }
