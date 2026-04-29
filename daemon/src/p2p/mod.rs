@@ -282,6 +282,8 @@ async fn swarm_loop(
     let mut relay_reconnect_interval = tokio::time::interval(Duration::from_secs(60));
     let mut relay_peer_id: Option<PeerId> = None;
     let mut registered_with_relay = false;
+    // Peers that passed PSK or Identify auth — only these may send control/ai-proxy requests.
+    let mut authorized_peers: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
 
     // Subscribe to cluster gossipsub topic
     let cluster_topic = gossipsub::IdentTopic::new(format!(
@@ -303,6 +305,7 @@ async fn swarm_loop(
                     &config.cluster_psk,
                     &relay_proxy_url,
                     &mut relay_peer_id,
+                    &mut authorized_peers,
                 ).await;
 
                 // After identifying the relay, register immediately.
@@ -384,6 +387,7 @@ async fn handle_swarm_event(
     cluster_psk: &Option<Vec<u8>>,
     relay_proxy_url: &Arc<RwLock<Option<String>>>,
     relay_peer_id: &mut Option<PeerId>,
+    authorized_peers: &mut std::collections::HashSet<PeerId>,
 ) {
     match event {
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
@@ -426,6 +430,9 @@ async fn handle_swarm_event(
                 }
             }
 
+            // Peer passed auth (PSK check above didn't disconnect) — authorize it.
+            authorized_peers.insert(peer_id);
+
             // If this is a relay (agent starts with "mac-mgmt-relay/"), parse proxy_url
             // and track the relay PeerId.
             if info.agent_version.starts_with("mac-mgmt-relay/") {
@@ -450,7 +457,16 @@ async fn handle_swarm_event(
                 ..
             },
         )) => {
-            // Handle control requests directly if handler state is available.
+            // Reject control requests from unauthorized peers.
+            if !authorized_peers.contains(&peer) {
+                tracing::warn!(%peer, "rejecting control request from unauthorized peer");
+                let resp = control::ControlResponse::Error {
+                    message: "unauthorized".into(),
+                };
+                let _ = swarm.behaviour_mut().control.send_response(channel, resp);
+                return;
+            }
+
             if let Some(hs) = handler_state {
                 let hs = Arc::clone(hs);
                 let response = handler::handle_control_request(&hs, request).await;
@@ -475,6 +491,12 @@ async fn handle_swarm_event(
                 ..
             },
         )) => {
+            // Reject AI proxy requests from unauthorized peers.
+            if !authorized_peers.contains(&peer) {
+                tracing::warn!(%peer, "rejecting AI proxy request from unauthorized peer");
+                return;
+            }
+
             let _ = event_tx
                 .send(P2pEvent::AiProxyRequest {
                     peer,
@@ -500,6 +522,7 @@ async fn handle_swarm_event(
         }
         SwarmEvent::ConnectionClosed { peer_id, .. } => {
             tracing::debug!(%peer_id, "connection closed");
+            authorized_peers.remove(&peer_id);
         }
         _ => {}
     }
