@@ -10,6 +10,8 @@ pub mod handler;
 pub mod identity;
 pub mod protocols;
 pub mod proxy_helpers;
+pub mod relay_state;
+pub mod rpc;
 pub mod stream_framing;
 pub mod transport;
 
