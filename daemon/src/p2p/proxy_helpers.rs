@@ -132,14 +132,18 @@ pub fn apply_fake_origin_ws(
     headers: &mut reqwest::header::HeaderMap,
     target: &TunnelTarget,
 ) {
-    // Set Host to local target.
     let host_val = format!("{}:{}", target.host, target.port);
     if let Ok(v) = host_val.parse() {
         headers.insert("Host", v);
     }
-    // Strip origin-revealing headers.
+    // Rewrite Referer to point at the local target.
+    let local_origin = format!("http://{}:{}/", target.host, target.port);
+    if let Ok(v) = local_origin.parse() {
+        headers.insert("Referer", v);
+    }
+    // Strip origin-revealing headers (except Host and Referer which we just set).
     for &name in FAKE_ORIGIN_DROP_HEADERS {
-        if name != "host" {
+        if name != "host" && name != "referer" {
             headers.remove(name);
         }
     }
