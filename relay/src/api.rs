@@ -27,6 +27,8 @@ pub struct AppState {
     pub server_api_url: String,
     pub relay_swarm: Arc<RelaySwarm>,
     pub p2p_port: u16,
+    /// In-memory token for the batch instances endpoint.
+    pub batch_token: String,
 }
 
 pub fn router(
@@ -34,12 +36,14 @@ pub fn router(
     server_api_url: String,
     relay_swarm: Arc<RelaySwarm>,
     p2p_port: u16,
+    batch_token: String,
 ) -> Router {
     let state = AppState {
         registry,
         server_api_url,
         relay_swarm,
         p2p_port,
+        batch_token,
     };
 
     Router::new()
@@ -48,6 +52,7 @@ pub fn router(
             get(proxy_metrics),
         )
         .route("/api/tunnels", get(list_tunnels))
+        .route("/api/batch/instances", get(batch_instances))
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
         // libp2p-over-WS: daemons can connect via the main HTTP port
@@ -92,6 +97,24 @@ async fn security_headers(request: axum::extract::Request, next: Next) -> axum::
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Batch endpoint: returns all connected daemons with tunnel definitions.
+/// Authenticated with the relay's in-memory batch token.
+async fn batch_instances(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    match token {
+        Some(t) if t == state.batch_token => {}
+        _ => return StatusCode::UNAUTHORIZED.into_response(),
+    }
+    let instances = state.registry.list_instances();
+    Json(instances).into_response()
 }
 
 fn extract_bearer(headers: &HeaderMap) -> Option<String> {

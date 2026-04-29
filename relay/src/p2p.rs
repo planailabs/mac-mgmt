@@ -193,6 +193,7 @@ impl RelaySwarm {
         p2p_port: u16,
         key_path: &Path,
         registry: Arc<DaemonRegistry>,
+        proxy_url: Option<&str>,
     ) -> Result<Self> {
         let keypair = load_or_generate_key(key_path)?;
         let local_peer_id = keypair.public().to_peer_id();
@@ -222,7 +223,13 @@ impl RelaySwarm {
                     "/mac-mgmt-relay/1.0.0".to_string(),
                     key.public(),
                 )
-                .with_agent_version(format!("mac-mgmt-relay/{}", env!("CARGO_PKG_VERSION")));
+                .with_agent_version({
+                    use base64::Engine;
+                    let proxy_b64 = proxy_url
+                        .map(|u| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(u))
+                        .unwrap_or_default();
+                    format!("mac-mgmt-relay/{}/{proxy_b64}", env!("CARGO_PKG_VERSION"))
+                });
 
                 let relay_server = libp2p::relay::Behaviour::new(
                     key.public().to_peer_id(),
@@ -282,10 +289,13 @@ use futures_util::StreamExt;
 
 async fn relay_event_loop(
     mut swarm: Swarm<RelayBehaviour>,
-    _registry: Arc<DaemonRegistry>,
+    registry: Arc<DaemonRegistry>,
     peer_metadata: Arc<RwLock<HashMap<PeerId, PeerMetadata>>>,
     mut outbound_rx: tokio::sync::mpsc::Receiver<OutboundRequest>,
 ) {
+    // Map PeerId → instance_id for cleanup on disconnect.
+    let mut peer_instance_map: HashMap<PeerId, (String, chrono::DateTime<chrono::Utc>)> =
+        HashMap::new();
     // Track pending outbound request responses by request_id.
     let mut pending_responses: HashMap<
         request_response::OutboundRequestId,
@@ -300,6 +310,8 @@ async fn relay_event_loop(
                     &peer_metadata,
                     &mut swarm,
                     &mut pending_responses,
+                    &registry,
+                    &mut peer_instance_map,
                 ).await;
             }
             Some(req) = outbound_rx.recv() => {
@@ -321,6 +333,8 @@ async fn handle_relay_event(
         request_response::OutboundRequestId,
         tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
     >,
+    registry: &Arc<DaemonRegistry>,
+    peer_instance_map: &mut HashMap<PeerId, (String, chrono::DateTime<chrono::Utc>)>,
 ) {
     match event {
         SwarmEvent::Behaviour(RelayBehaviourEvent::Identify(
@@ -344,13 +358,70 @@ async fn handle_relay_event(
         SwarmEvent::Behaviour(RelayBehaviourEvent::Control(
             request_response::Event::Message {
                 peer,
-                message: request_response::Message::Request { channel, request: _, .. },
+                message: request_response::Message::Request { channel, request, .. },
                 ..
             },
         )) => {
-            tracing::debug!(%peer, "control request from peer (relay does not handle)");
-            let resp = serde_json::json!({ "type": "error", "message": "relay does not handle control requests" });
-            let _ = swarm.behaviour_mut().control.send_response(channel, resp);
+            let msg_type = request["type"].as_str().unwrap_or("");
+            match msg_type {
+                "register" => {
+                    let instance_id = request["instance_id"].as_str().unwrap_or("").to_string();
+                    let cluster_id = request["cluster_id"]
+                        .as_str()
+                        .and_then(|s| s.parse().ok());
+                    let hostname = request["hostname"].as_str().map(String::from);
+                    let agent_name = request["agent_name"].as_str().map(String::from);
+                    let now = chrono::Utc::now();
+
+                    if !instance_id.is_empty() {
+                        tracing::info!(%peer, %instance_id, "daemon registered via p2p");
+                        registry.register(crate::daemon_registry::DaemonConn {
+                            instance_id: instance_id.clone(),
+                            cluster_id,
+                            cluster_name: None,
+                            agent_name,
+                            hostname,
+                            connected_at: now,
+                            tunnels: Vec::new(),
+                            file_tunnels: serde_json::Value::Array(vec![]),
+                            shell_tunnels: serde_json::Value::Array(vec![]),
+                            peer_id: Some(peer),
+                        });
+                        peer_instance_map.insert(peer, (instance_id, now));
+                    }
+
+                    let resp = serde_json::json!({ "type": "ok" });
+                    let _ = swarm.behaviour_mut().control.send_response(channel, resp);
+                }
+                "tunnel_advertisement" => {
+                    if let Some((instance_id, _)) = peer_instance_map.get(&peer) {
+                        let tunnels: Vec<crate::daemon_registry::ServiceTunnel> = request["tunnels"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|t| {
+                                        Some(crate::daemon_registry::ServiceTunnel {
+                                            name: t["name"].as_str()?.to_string(),
+                                            tcp_port: t["port"].as_u64()? as u16,
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let file_tunnels = request["file_tunnels"].clone();
+                        let shell_tunnels = request["shell_tunnels"].clone();
+                        registry.update_all_tunnels(instance_id, tunnels, file_tunnels, shell_tunnels);
+                        tracing::debug!(%peer, %instance_id, "tunnel advertisement received");
+                    }
+                    let resp = serde_json::json!({ "type": "ok" });
+                    let _ = swarm.behaviour_mut().control.send_response(channel, resp);
+                }
+                _ => {
+                    tracing::debug!(%peer, %msg_type, "unknown control request");
+                    let resp = serde_json::json!({ "type": "error", "message": "unknown request type" });
+                    let _ = swarm.behaviour_mut().control.send_response(channel, resp);
+                }
+            }
         }
         SwarmEvent::Behaviour(RelayBehaviourEvent::Control(
             request_response::Event::Message {
@@ -378,6 +449,9 @@ async fn handle_relay_event(
         SwarmEvent::ConnectionClosed { peer_id, .. } => {
             tracing::info!(%peer_id, "peer disconnected from relay");
             peer_metadata.write().await.remove(&peer_id);
+            if let Some((instance_id, connected_at)) = peer_instance_map.remove(&peer_id) {
+                registry.unregister(&instance_id, connected_at);
+            }
         }
         _ => {}
     }

@@ -1258,11 +1258,11 @@ pub async fn run(
     }
     macro_rules! relay_proxy_url {
         () => {{
-            #[cfg(feature = "relay")]
+            #[cfg(all(feature = "relay", not(feature = "sim")))]
             {
-                None::<String>
+                _p2p_mgr.as_ref().and_then(|m| m.relay_proxy_url())
             }
-            #[cfg(not(feature = "relay"))]
+            #[cfg(any(not(feature = "relay"), feature = "sim"))]
             {
                 None::<String>
             }
@@ -1761,11 +1761,11 @@ pub async fn run_sim(
     }
     macro_rules! relay_proxy_url {
         () => {{
-            #[cfg(feature = "relay")]
+            #[cfg(all(feature = "relay", not(feature = "sim")))]
             {
-                None::<String>
+                _p2p_mgr.as_ref().and_then(|m| m.relay_proxy_url())
             }
-            #[cfg(not(feature = "relay"))]
+            #[cfg(any(not(feature = "relay"), feature = "sim"))]
             {
                 None::<String>
             }
@@ -1969,11 +1969,11 @@ pub async fn run_sim_with_services(
     }
     macro_rules! relay_proxy_url {
         () => {{
-            #[cfg(feature = "relay")]
+            #[cfg(all(feature = "relay", not(feature = "sim")))]
             {
-                None::<String>
+                _p2p_mgr.as_ref().and_then(|m| m.relay_proxy_url())
             }
-            #[cfg(not(feature = "relay"))]
+            #[cfg(any(not(feature = "relay"), feature = "sim"))]
             {
                 None::<String>
             }

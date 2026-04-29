@@ -65,6 +65,19 @@ pub enum ControlRequest {
         command_name: String,
         user_arg: Option<String>,
     },
+    /// Register with the relay node.
+    Register {
+        instance_id: String,
+        cluster_id: Option<String>,
+        hostname: Option<String>,
+        agent_name: Option<String>,
+    },
+    /// Advertise tunnel definitions to the relay.
+    TunnelAdvertisement {
+        tunnels: serde_json::Value,
+        file_tunnels: serde_json::Value,
+        shell_tunnels: serde_json::Value,
+    },
 }
 
 // ── Response types ───────────────────────────────────────────────────

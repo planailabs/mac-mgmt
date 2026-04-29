@@ -33,6 +33,18 @@ pub enum P2pCommand {
     AdvertiseTunnels,
     /// Notify that the set of active AI proxy jobs changed.
     UpdateActiveJobs(u32),
+    /// Register with the relay (sent after connecting).
+    RegisterWithRelay {
+        instance_id: String,
+        cluster_id: Option<String>,
+        hostname: Option<String>,
+    },
+    /// Send tunnel definitions to the relay.
+    SendTunnelAdvertisement {
+        tunnels: serde_json::Value,
+        file_tunnels: serde_json::Value,
+        shell_tunnels: serde_json::Value,
+    },
 }
 
 /// Events the P2pManager emits to the daemon event loop.
@@ -79,6 +91,8 @@ pub struct P2pManager {
     pub active_jobs: Arc<AtomicU32>,
     /// Our PeerId.
     pub local_peer_id: PeerId,
+    /// Relay's proxy URL (learned from Identify).
+    relay_proxy_url: Arc<RwLock<Option<String>>>,
 }
 
 impl P2pManager {
@@ -195,16 +209,19 @@ impl P2pManager {
         let (event_tx, event_rx) = mpsc::channel(256);
         let peer_registry = Arc::new(RwLock::new(PeerRegistry::default()));
         let active_jobs = Arc::new(AtomicU32::new(0));
+        let relay_proxy_url = Arc::new(RwLock::new(None));
 
         // Spawn the swarm event loop
         let peer_registry_clone = Arc::clone(&peer_registry);
         let active_jobs_clone = Arc::clone(&active_jobs);
+        let relay_proxy_url_clone = Arc::clone(&relay_proxy_url);
         tokio::spawn(swarm_loop(
             swarm,
             cmd_rx,
             event_tx,
             peer_registry_clone,
             active_jobs_clone,
+            relay_proxy_url_clone,
             config,
         ));
 
@@ -214,12 +231,18 @@ impl P2pManager {
             peer_registry,
             active_jobs,
             local_peer_id,
+            relay_proxy_url,
         })
     }
 
     /// Receive the next event from the p2p swarm.
     pub async fn recv_event(&mut self) -> Option<P2pEvent> {
         self.event_rx.recv().await
+    }
+
+    /// Get the relay's proxy URL (learned from Identify).
+    pub fn relay_proxy_url(&self) -> Option<String> {
+        self.relay_proxy_url.try_read().ok()?.clone()
     }
 
     /// Send a command to the swarm.
@@ -235,10 +258,12 @@ async fn swarm_loop(
     event_tx: mpsc::Sender<P2pEvent>,
     peer_registry: Arc<RwLock<PeerRegistry>>,
     active_jobs: Arc<AtomicU32>,
+    relay_proxy_url: Arc<RwLock<Option<String>>>,
     config: P2pConfig,
 ) {
     let mut ad_interval = tokio::time::interval(Duration::from_secs(30));
     let mut evict_interval = tokio::time::interval(Duration::from_secs(15));
+    let mut relay_peer_id: Option<PeerId> = None;
 
     // Subscribe to cluster gossipsub topic
     let cluster_topic = gossipsub::IdentTopic::new(format!(
@@ -258,10 +283,12 @@ async fn swarm_loop(
                     &mut swarm,
                     &config.handler_state,
                     &config.cluster_psk,
+                    &relay_proxy_url,
+                    &mut relay_peer_id,
                 ).await;
             }
             Some(cmd) = cmd_rx.recv() => {
-                handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs).await;
+                handle_command(cmd, &mut swarm, &cluster_topic, &active_jobs, &relay_peer_id).await;
             }
             _ = ad_interval.tick() => {
                 // Periodically publish our backend advertisement
@@ -283,6 +310,8 @@ async fn handle_swarm_event(
     swarm: &mut Swarm<ClusterBehaviour>,
     handler_state: &Option<Arc<handler::HandlerState>>,
     cluster_psk: &Option<Vec<u8>>,
+    relay_proxy_url: &Arc<RwLock<Option<String>>>,
+    relay_peer_id: &mut Option<PeerId>,
 ) {
     match event {
         SwarmEvent::Behaviour(ClusterBehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
@@ -322,6 +351,16 @@ async fn handle_swarm_event(
                     tracing::warn!(%peer_id, "PSK auth failed, disconnecting peer");
                     let _ = swarm.disconnect_peer_id(peer_id);
                     return;
+                }
+            }
+
+            // If this is a relay (agent starts with "mac-mgmt-relay/"), parse proxy_url
+            // and track the relay PeerId.
+            if info.agent_version.starts_with("mac-mgmt-relay/") {
+                *relay_peer_id = Some(peer_id);
+                if let Some(url) = parse_relay_proxy_url(&info.agent_version) {
+                    tracing::info!(%peer_id, %url, "relay proxy URL learned from Identify");
+                    *relay_proxy_url.write().await = Some(url);
                 }
             }
 
@@ -399,6 +438,7 @@ async fn handle_command(
     swarm: &mut Swarm<ClusterBehaviour>,
     cluster_topic: &gossipsub::IdentTopic,
     active_jobs: &Arc<AtomicU32>,
+    relay_peer_id: &Option<PeerId>,
 ) {
     match cmd {
         P2pCommand::AdvertiseTunnels => {
@@ -407,7 +447,54 @@ async fn handle_command(
         P2pCommand::UpdateActiveJobs(count) => {
             active_jobs.store(count, Ordering::Relaxed);
         }
+        P2pCommand::RegisterWithRelay {
+            instance_id,
+            cluster_id,
+            hostname,
+        } => {
+            if let Some(relay) = relay_peer_id {
+                let req = control::ControlRequest::Register {
+                    instance_id,
+                    cluster_id,
+                    hostname,
+                    agent_name: None,
+                };
+                let _req_id = swarm.behaviour_mut().control.send_request(relay, req);
+                tracing::info!(%relay, "sent registration to relay");
+            }
+        }
+        P2pCommand::SendTunnelAdvertisement {
+            tunnels,
+            file_tunnels,
+            shell_tunnels,
+        } => {
+            if let Some(relay) = relay_peer_id {
+                let req = control::ControlRequest::TunnelAdvertisement {
+                    tunnels,
+                    file_tunnels,
+                    shell_tunnels,
+                };
+                let _req_id = swarm.behaviour_mut().control.send_request(relay, req);
+                tracing::debug!(%relay, "sent tunnel advertisement to relay");
+            }
+        }
     }
+}
+
+/// Parse the relay's proxy_url from its Identify agent version string.
+///
+/// Agent version format: `mac-mgmt-relay/{version}/{proxy_url_base64}`
+fn parse_relay_proxy_url(agent_version: &str) -> Option<String> {
+    let parts: Vec<&str> = agent_version.splitn(3, '/').collect();
+    let b64 = match parts.as_slice() {
+        [_, _, b64] if !b64.is_empty() => *b64,
+        _ => return None,
+    };
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(b64)
+        .ok()?;
+    String::from_utf8(bytes).ok()
 }
 
 /// Verify the PSK auth token in a peer's agent version string.

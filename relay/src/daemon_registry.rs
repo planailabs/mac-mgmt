@@ -21,8 +21,25 @@ pub struct DaemonConn {
     pub connected_at: DateTime<Utc>,
     /// TCP tunnels advertised by the daemon's managed services.
     pub tunnels: Vec<ServiceTunnel>,
+    /// File tunnels (config editing).
+    pub file_tunnels: serde_json::Value,
+    /// Shell command tunnels.
+    pub shell_tunnels: serde_json::Value,
     /// libp2p PeerId if the daemon is connected via p2p.
     pub peer_id: Option<libp2p::PeerId>,
+}
+
+/// Full instance info returned by the batch endpoint.
+#[derive(Debug, Serialize)]
+pub struct InstanceInfo {
+    pub instance_id: String,
+    pub cluster_id: Option<Uuid>,
+    pub cluster_name: Option<String>,
+    pub hostname: Option<String>,
+    pub connected_at: DateTime<Utc>,
+    pub tunnels: Vec<ServiceTunnel>,
+    pub file_tunnels: serde_json::Value,
+    pub shell_tunnels: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,6 +123,42 @@ impl DaemonRegistry {
                 tunnels: d.tunnels.clone(),
             })
             .collect()
+    }
+
+    /// List all connected daemons with full tunnel info (for batch endpoint).
+    pub fn list_instances(&self) -> Vec<InstanceInfo> {
+        let daemons = self.daemons.read().unwrap();
+        daemons
+            .values()
+            .map(|d| InstanceInfo {
+                instance_id: d.instance_id.clone(),
+                cluster_id: d.cluster_id,
+                cluster_name: d.cluster_name.clone(),
+                hostname: d.hostname.clone(),
+                connected_at: d.connected_at,
+                tunnels: d.tunnels.clone(),
+                file_tunnels: d.file_tunnels.clone(),
+                shell_tunnels: d.shell_tunnels.clone(),
+            })
+            .collect()
+    }
+
+    /// Update all tunnel definitions for a daemon at once.
+    pub fn update_all_tunnels(
+        &self,
+        instance_id: &str,
+        tunnels: Vec<ServiceTunnel>,
+        file_tunnels: serde_json::Value,
+        shell_tunnels: serde_json::Value,
+    ) {
+        let mut daemons = self.daemons.write().unwrap();
+        if let Some(d) = daemons.get_mut(instance_id) {
+            let count = tunnels.len();
+            tracing::info!("daemon {instance_id} advertised {count} TCP tunnel(s)");
+            d.tunnels = tunnels.into_iter().take(100).collect();
+            d.file_tunnels = file_tunnels;
+            d.shell_tunnels = shell_tunnels;
+        }
     }
 
     /// Update the advertised tunnels for a connected daemon. Capped at 100 per daemon.

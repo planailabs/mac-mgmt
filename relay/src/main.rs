@@ -73,16 +73,31 @@ async fn main() -> Result<()> {
         data_dir.join(key_path)
     };
     let relay_swarm = Arc::new(
-        p2p::RelaySwarm::start(cfg.p2p_port, &key_path, Arc::clone(&registry)).await?,
+        p2p::RelaySwarm::start(
+            cfg.p2p_port,
+            &key_path,
+            Arc::clone(&registry),
+            cfg.proxy_url.as_deref(),
+        )
+        .await?,
     );
     tracing::info!(peer_id = %relay_swarm.local_peer_id, "p2p relay swarm started");
 
     // API router: health, metrics, tunnel listing
+    // Generate an in-memory token for the batch instances endpoint.
+    let batch_token: String = {
+        use rand::Rng;
+        let bytes: [u8; 32] = rand::rng().random();
+        hex::encode(bytes)
+    };
+    tracing::info!("batch endpoint token: {batch_token}");
+
     let api_router = api::router(
         Arc::clone(&registry),
         cfg.server_api_url.clone(),
         Arc::clone(&relay_swarm),
         cfg.p2p_port,
+        batch_token,
     );
 
     // Proxy router (if proxy_hostname is configured)
