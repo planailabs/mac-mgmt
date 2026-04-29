@@ -5,11 +5,9 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-axum = { version = "0.8", features = ["ws"] }
+axum = "0.8"
 axum-extra = { version = "0.10", features = ["typed-header"] }
-mac-mgmt-ws = { path = "../mac-mgmt-ws", default-features = false, features = ["axum"] }
 futures-util = "0.3"
-http-body-util = "0.1"
 reqwest = { workspace = true }
 rustls = { workspace = true }
 tracing = "0.1"

@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 /// Information about the authenticated token holder, from the server's /api/self endpoint.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct SelfInfo {
     pub cluster_id: Option<Uuid>,
     pub cluster_name: Option<String>,

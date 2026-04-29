@@ -161,6 +161,7 @@ pub struct OutboundRequest {
 }
 
 /// Handle for the relay's libp2p swarm.
+#[allow(dead_code)]
 pub struct RelaySwarm {
     pub local_peer_id: PeerId,
     /// Map PeerId → instance metadata (cluster_id, tunnels, etc.)
@@ -190,6 +191,7 @@ impl RelaySwarm {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PeerMetadata {
     pub agent_version: String,
     pub listen_addrs: Vec<Multiaddr>,

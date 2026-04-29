@@ -7,12 +7,15 @@ pub struct RelayConfig {
     #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
 
-    /// Start of SSH port range for dynamic allocation
+    /// Start of SSH port range (legacy, unused since libp2p migration).
+    /// Kept so existing config files parse without errors.
     #[serde(default = "default_ssh_port_min")]
+    #[allow(dead_code)]
     pub ssh_port_min: u16,
 
-    /// End of SSH port range for dynamic allocation
+    /// End of SSH port range (legacy, unused since libp2p migration).
     #[serde(default = "default_ssh_port_max")]
+    #[allow(dead_code)]
     pub ssh_port_max: u16,
 
     /// Server API URL for token validation (e.g., "http://localhost:7378")

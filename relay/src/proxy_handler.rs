@@ -1,7 +1,6 @@
 use axum::Router;
 use axum::body::Body;
-use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{FromRequest, Json, Query, Request, State};
+use axum::extract::{Json, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
@@ -9,15 +8,13 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 use axum::extract::Path;
-use futures_util::{SinkExt, StreamExt};
-use std::time::Duration;
 
-use crate::bridge;
-use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse, ProxyStreamEvent};
 use crate::auth::{SelfInfo, validate_token};
+use crate::daemon_registry::DaemonRegistry;
 
 /// Cache validated proxy tokens for 5 minutes to avoid hitting the server API
 /// on every single proxied request.
@@ -85,7 +82,7 @@ pub fn router(state: ProxyState) -> Router {
         .route("/api/logs", get(log_proxy))
         // Daemon presence check (no forwarding, just registry lookup)
         .route("/api/ping", get(daemon_ping))
-        // Catch-all: reverse proxy for HTTP and WS upgrades
+        // Catch-all: reverse proxy for HTTP
         .fallback(proxy_catchall)
         .layer(middleware::from_fn(proxy_security_headers))
         .layer(axum::Extension(cors))
@@ -320,6 +317,23 @@ async fn authenticate_proxy_scoped(
     Ok(())
 }
 
+/// Resolve the relay swarm and peer ID for an instance, or return an error response.
+fn resolve_swarm_and_peer(
+    state: &ProxyState,
+    instance_id: &str,
+) -> Result<(Arc<crate::p2p::RelaySwarm>, libp2p::PeerId), axum::response::Response> {
+    let swarm = state
+        .relay_swarm
+        .as_ref()
+        .ok_or_else(|| (StatusCode::SERVICE_UNAVAILABLE, "p2p not available").into_response())?
+        .clone();
+    let peer_id = state
+        .registry
+        .resolve_peer_id(instance_id)
+        .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
+    Ok((swarm, peer_id))
+}
+
 // ── GET /proxy?proxy_token=... — bootstrap ─────────────────────────────
 
 #[derive(Deserialize)]
@@ -339,11 +353,7 @@ async fn proxy_bootstrap(
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
 
-    if state
-        .registry
-        .find_tunnel(&instance_id, &tunnel_name)
-        .is_none()
-    {
+    if !state.registry.has_tunnel(&instance_id, &tunnel_name) {
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     }
 
@@ -403,9 +413,8 @@ const PROXY_BOOTSTRAP_HTML: &str = r#"<!DOCTYPE html>
 
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
 
-/// Handles all non-special requests by proxying them to the daemon's tunnel.
-/// Detects WebSocket upgrades and routes them through proxy sessions.
-/// Regular HTTP (including SSE) is streamed via a proxy session.
+/// Handles all non-special requests by proxying them to the daemon's tunnel
+/// via libp2p.
 async fn proxy_catchall(
     State(state): State<ProxyState>,
     connect_info: axum::extract::ConnectInfo<std::net::SocketAddr>,
@@ -432,51 +441,13 @@ async fn proxy_catchall(
         return (StatusCode::FORBIDDEN, "insufficient scope").into_response();
     }
 
-    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
-        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
+    let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
-    // WebSocket upgrade: route through proxy session bridge
-    let is_ws_upgrade = headers
-        .get("upgrade")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
-
-    if is_ws_upgrade {
-        let ws = match WebSocketUpgrade::from_request(req, &state).await {
-            Ok(ws) => ws,
-            Err(e) => return e.into_response(),
-        };
-
-        let session_id = Uuid::new_v4().to_string();
-        let session_secret = Uuid::new_v4().to_string();
-
-        return ws
-            .on_upgrade(move |socket| async move {
-                tracing::info!("WS upgrade for tunnel {tunnel_name} path {path}");
-
-                bridge::register_pending_proxy_session(
-                    session_id.clone(),
-                    session_secret.clone(),
-                    socket,
-                );
-
-                if control_tx
-                    .send(ControlMsg::ProxySessionRequest {
-                        session_id: session_id.clone(),
-                        session_secret: session_secret.clone(),
-                        tunnel_name,
-                        mode: "websocket".to_string(),
-                        path,
-                    })
-                    .await
-                    .is_err()
-                {
-                    tracing::warn!("proxy catchall WS: daemon control channel closed");
-                    bridge::remove_pending_proxy_session(&session_id);
-                }
-            })
-            .into_response();
+    if !state.registry.has_tunnel(&instance_id, &tunnel_name) {
+        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     }
 
     // Collect request headers to forward.
@@ -530,64 +501,73 @@ async fn proxy_catchall(
         Some(base64::engine::general_purpose::STANDARD.encode(&body_bytes))
     };
 
-    // Send a streaming proxy request over the existing control channel.
-    // No new WS connection needed — responses stream back as tagged messages.
-    tracing::debug!("proxy {method} {path} -> {instance_id}/{tunnel_name}");
     let request_id = Uuid::new_v4().to_string();
-    let (stream_tx, mut stream_rx) = tokio::sync::mpsc::channel::<ProxyStreamEvent>(64);
+    tracing::debug!("proxy {method} {path} -> {instance_id}/{tunnel_name} via p2p");
 
-    if control_tx
-        .send(ControlMsg::ProxyStream {
-            request_id,
-            tunnel_name,
-            method: method.to_string(),
-            path,
-            headers: fwd_headers,
-            body: body_b64,
-            response_tx: stream_tx,
-        })
-        .await
-        .is_err()
-    {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
-    // Wait for response headers from daemon (first event).
-    let headers_event =
-        match tokio::time::timeout(std::time::Duration::from_secs(60), stream_rx.recv()).await {
-            Ok(Some(ProxyStreamEvent::Headers { status, headers })) => (status, headers),
-            _ => return StatusCode::GATEWAY_TIMEOUT.into_response(),
-        };
-
-    let (status, resp_headers) = headers_event;
-
-    // Stream body chunks as they arrive from daemon via the control channel.
-    let body_stream = futures_util::stream::unfold(stream_rx, |mut rx| async move {
-        match rx.recv().await {
-            Some(ProxyStreamEvent::BodyChunk(data)) => Some((
-                Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data)),
-                rx,
-            )),
-            Some(ProxyStreamEvent::End) | None => None,
-            Some(ProxyStreamEvent::Headers { .. }) => None, // unexpected
-        }
+    let req_json = serde_json::json!({
+        "type": "proxy_request",
+        "request_id": request_id,
+        "tunnel_name": tunnel_name,
+        "method": method.to_string(),
+        "path": path,
+        "headers": fwd_headers,
+        "body": body_b64,
     });
 
-    let mut builder = axum::response::Response::builder().status(status);
-    for (k, v) in &resp_headers {
-        let lk = k.to_lowercase();
-        if lk == "transfer-encoding" || lk == "content-length" || lk == "content-encoding" {
-            continue;
-        }
-        if let Ok(val) = HeaderValue::from_str(v) {
-            builder = builder.header(k.as_str(), val);
-        }
-    }
+    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req_json))
+        .await
+    {
+        Ok(Ok(resp)) => {
+            let status = resp["status"].as_u64().unwrap_or(502) as u16;
+            let resp_headers: Vec<(String, String)> = resp["headers"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            let pair = v.as_array()?;
+                            Some((
+                                pair.first()?.as_str()?.to_string(),
+                                pair.get(1)?.as_str()?.to_string(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let body_str = resp["body"].as_str().unwrap_or("");
 
-    builder
-        .body(Body::from_stream(body_stream))
-        .unwrap()
-        .into_response()
+            let mut builder = axum::response::Response::builder().status(status);
+            for (k, v) in &resp_headers {
+                let lk = k.to_lowercase();
+                if lk == "transfer-encoding" || lk == "content-length" || lk == "content-encoding"
+                {
+                    continue;
+                }
+                if let Ok(val) = HeaderValue::from_str(v) {
+                    builder = builder.header(k.as_str(), val);
+                }
+            }
+
+            // Decode base64 body if present
+            let body_data = if body_str.is_empty() {
+                Vec::new()
+            } else {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(body_str)
+                    .unwrap_or_else(|_| body_str.as_bytes().to_vec())
+            };
+
+            builder
+                .body(Body::from(body_data))
+                .unwrap()
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(%peer_id, "p2p proxy catchall failed: {e}");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
 }
 
 // ── POST /proxy_request — JSON request/response API ────────────────────
@@ -631,72 +611,28 @@ async fn proxy_request(
         return (StatusCode::FORBIDDEN, "insufficient scope").into_response();
     }
 
-    // Try libp2p first if the daemon has a PeerId and relay_swarm is available.
-    if let Some(ref swarm) = state.relay_swarm {
-        if let Some(peer_id) = state.registry.resolve_peer_id(&instance_id) {
-            let request_id = Uuid::new_v4().to_string();
-            let headers: Vec<(String, String)> = body.headers.into_iter().collect();
-            let req = serde_json::json!({
-                "type": "proxy_request",
-                "request_id": request_id,
-                "tunnel_name": tunnel_name,
-                "method": body.method,
-                "path": body.path,
-                "headers": headers,
-                "body": body.body,
-            });
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                swarm.send_request(peer_id, req),
-            )
-            .await
-            {
-                Ok(Ok(resp)) => return Json(resp).into_response(),
-                Ok(Err(e)) => {
-                    tracing::warn!(%peer_id, "p2p proxy request failed: {e}");
-                    return StatusCode::BAD_GATEWAY.into_response();
-                }
-                Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
-            }
-        }
-    }
-
-    // Fallback to WS control channel
-    let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
-        return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
+    let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
-    let headers: Vec<(String, String)> = body.headers.into_iter().collect();
-
     let request_id = Uuid::new_v4().to_string();
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel::<ProxyResponse>();
-
-    if control_tx
-        .send(ControlMsg::ProxyRequest {
-            request_id,
-            tunnel_name,
-            method: body.method,
-            path: body.path,
-            headers,
-            body: body.body,
-            response_tx,
-        })
-        .await
-        .is_err()
-    {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
-    match tokio::time::timeout(std::time::Duration::from_secs(60), response_rx).await {
-        Ok(Ok(resp)) => {
-            let response = serde_json::json!({
-                "status": resp.status,
-                "headers": resp.headers,
-                "body": if resp.body.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(resp.body) },
-            });
-            Json(response).into_response()
+    let headers: Vec<(String, String)> = body.headers.into_iter().collect();
+    let req = serde_json::json!({
+        "type": "proxy_request",
+        "request_id": request_id,
+        "tunnel_name": tunnel_name,
+        "method": body.method,
+        "path": body.path,
+        "headers": headers,
+        "body": body.body,
+    });
+    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req)).await {
+        Ok(Ok(resp)) => Json(resp).into_response(),
+        Ok(Err(e)) => {
+            tracing::warn!(%peer_id, "p2p proxy request failed: {e}");
+            StatusCode::BAD_GATEWAY.into_response()
         }
-        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }
@@ -722,44 +658,40 @@ async fn file_list(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await {
+    if let Err(resp) =
+        authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await
+    {
         return resp;
     }
-    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
-        tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, "file_list: daemon not found");
-        return StatusCode::NOT_FOUND.into_response();
+    let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
     let path_str = query.path.as_deref().unwrap_or("/");
     tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_list");
 
     let request_id = Uuid::new_v4().to_string();
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-    if control_tx
-        .send(ControlMsg::FileListRequest {
-            request_id,
-            tunnel_name: tunnel_name.clone(),
-            path: query.path,
-            response_tx,
-        })
-        .await
-        .is_err()
-    {
-        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list: control channel closed");
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-    match tokio::time::timeout(Duration::from_secs(30), response_rx).await {
+    let req = serde_json::json!({
+        "type": "file_list_request",
+        "request_id": request_id,
+        "tunnel_name": tunnel_name,
+        "path": query.path,
+    });
+
+    match tokio::time::timeout(Duration::from_secs(30), swarm.send_request(peer_id, req)).await {
         Ok(Ok(resp)) => {
-            tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, status = resp.status, "file_list completed");
+            let status = resp["status"].as_u64().unwrap_or(500) as u16;
+            let body = resp.get("body").cloned().unwrap_or(serde_json::Value::Null);
             axum::response::Response::builder()
-                .status(resp.status)
+                .status(status)
                 .header("content-type", "application/json")
-                .body(Body::from(resp.body.to_string()))
+                .body(Body::from(body.to_string()))
                 .unwrap()
                 .into_response()
         }
-        Ok(Err(_)) => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list: daemon dropped response");
+        Ok(Err(e)) => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_list p2p failed: {e}");
             StatusCode::BAD_GATEWAY.into_response()
         }
         Err(_) => {
@@ -769,130 +701,87 @@ async fn file_list(
     }
 }
 
-/// Read a file via a dedicated data WebSocket session.
+/// Read a file via libp2p request.
 async fn file_read(
     headers: HeaderMap,
     Path(tunnel_name): Path<String>,
     Query(query): Query<FileQuery>,
     State(state): State<ProxyState>,
 ) -> axum::response::Response {
-    use futures_util::StreamExt;
-
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await {
+    if let Err(resp) =
+        authenticate_proxy_scoped(&headers, &state, &instance_id, "files:read").await
+    {
         return resp;
     }
-    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
-        tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, "file_read: daemon not found");
-        return StatusCode::NOT_FOUND.into_response();
+    let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
     let path_str = query.path.as_deref().unwrap_or("?");
     tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_read");
 
-    let session_id = Uuid::new_v4().to_string();
-    let session_secret = Uuid::new_v4().to_string();
-
-    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel();
-    if !bridge::register_pending_proxy_session_with_callback(
-        session_id.clone(),
-        session_secret.clone(),
-        ws_tx,
-    ) {
-        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: too many pending sessions");
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-
-    if control_tx
-        .send(ControlMsg::FileSessionRequest {
-            session_id: session_id.clone(),
-            session_secret,
-            tunnel_name: tunnel_name.clone(),
-            mode: "read".to_string(),
-            path: query.path.clone(),
-            expected_mtime: None,
-        })
-        .await
-        .is_err()
-    {
-        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: control channel closed");
-        bridge::remove_pending_proxy_session(&session_id);
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
-    let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
-        Ok(Ok(ws)) => ws,
-        _ => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: daemon session timeout (60s)");
-            bridge::remove_pending_proxy_session(&session_id);
-            return StatusCode::GATEWAY_TIMEOUT.into_response();
-        }
-    };
-
-    let (mut daemon_sink, mut daemon_stream) = daemon_ws.split();
-    let header_msg = match tokio::time::timeout(Duration::from_secs(30), daemon_stream.next()).await
-    {
-        Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
-        _ => {
-            let _ = daemon_sink
-                .send(axum::extract::ws::Message::Close(None))
-                .await;
-            return StatusCode::BAD_GATEWAY.into_response();
-        }
-    };
-
-    let header: serde_json::Value = match serde_json::from_str(&header_msg) {
-        Ok(v) => v,
-        Err(_) => {
-            let _ = daemon_sink
-                .send(axum::extract::ws::Message::Close(None))
-                .await;
-            return StatusCode::BAD_GATEWAY.into_response();
-        }
-    };
-
-    let status = header["status"].as_u64().unwrap_or(500) as u16;
-    if status != 200 {
-        let error = header["error"].as_str().unwrap_or("unknown error");
-        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, status, error, "file_read: daemon error");
-        let _ = daemon_sink
-            .send(axum::extract::ws::Message::Close(None))
-            .await;
-        return axum::response::Response::builder()
-            .status(status)
-            .header("content-type", "application/json")
-            .body(Body::from(
-                serde_json::json!({ "error": error }).to_string(),
-            ))
-            .unwrap()
-            .into_response();
-    }
-
-    let size = header["size"].as_u64().unwrap_or(0);
-    let mtime = header["mtime"].as_i64().unwrap_or(0);
-    tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, size, mtime, "file_read: streaming");
-
-    let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
-        match stream.next().await {
-            Some(Ok(axum::extract::ws::Message::Binary(data))) => Some((
-                Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data.to_vec())),
-                stream,
-            )),
-            _ => None,
-        }
+    let request_id = Uuid::new_v4().to_string();
+    let req = serde_json::json!({
+        "type": "file_read_request",
+        "request_id": request_id,
+        "tunnel_name": tunnel_name,
+        "path": query.path,
     });
 
-    axum::response::Response::builder()
-        .status(200)
-        .header("content-type", "application/octet-stream")
-        .header("x-file-mtime", mtime.to_string())
-        .header("x-file-size", size.to_string())
-        .header("access-control-expose-headers", "x-file-mtime, x-file-size")
-        .body(Body::from_stream(body_stream))
-        .unwrap()
-        .into_response()
+    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req)).await {
+        Ok(Ok(resp)) => {
+            let status = resp["status"].as_u64().unwrap_or(500) as u16;
+            if status != 200 {
+                let error = resp["error"].as_str().unwrap_or("unknown error");
+                tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, status, error, "file_read: daemon error");
+                return axum::response::Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "error": error }).to_string(),
+                    ))
+                    .unwrap()
+                    .into_response();
+            }
+
+            let size = resp["size"].as_u64().unwrap_or(0);
+            let mtime = resp["mtime"].as_i64().unwrap_or(0);
+            tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, size, mtime, "file_read: completed");
+
+            // Decode base64 body
+            let body_data = resp["data"]
+                .as_str()
+                .map(|d| {
+                    use base64::Engine;
+                    base64::engine::general_purpose::STANDARD
+                        .decode(d)
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+
+            axum::response::Response::builder()
+                .status(200)
+                .header("content-type", "application/octet-stream")
+                .header("x-file-mtime", mtime.to_string())
+                .header("x-file-size", size.to_string())
+                .header("access-control-expose-headers", "x-file-mtime, x-file-size")
+                .body(Body::from(body_data))
+                .unwrap()
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read p2p failed: {e}");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
+        Err(_) => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_read: timeout (60s)");
+            StatusCode::GATEWAY_TIMEOUT.into_response()
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -901,7 +790,7 @@ struct FileWriteQuery {
     expected_mtime: Option<i64>,
 }
 
-/// Write a file via a dedicated data WebSocket session.
+/// Write a file via libp2p request.
 async fn file_write(
     headers: HeaderMap,
     Path(tunnel_name): Path<String>,
@@ -909,141 +798,67 @@ async fn file_write(
     State(state): State<ProxyState>,
     body: Body,
 ) -> axum::response::Response {
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::StreamExt;
 
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "files:write").await {
+    if let Err(resp) =
+        authenticate_proxy_scoped(&headers, &state, &instance_id, "files:write").await
+    {
         return resp;
     }
-    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
-        tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, "file_write: daemon not found");
-        return StatusCode::NOT_FOUND.into_response();
+    let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
     let path_str = query.path.as_deref().unwrap_or("?");
     tracing::info!(instance = %instance_id, tunnel = %tunnel_name, path = %path_str, "file_write");
 
-    let session_id = Uuid::new_v4().to_string();
-    let session_secret = Uuid::new_v4().to_string();
-
-    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel();
-    if !bridge::register_pending_proxy_session_with_callback(
-        session_id.clone(),
-        session_secret.clone(),
-        ws_tx,
-    ) {
-        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: too many pending sessions");
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-
-    if control_tx
-        .send(ControlMsg::FileSessionRequest {
-            session_id: session_id.clone(),
-            session_secret,
-            tunnel_name: tunnel_name.clone(),
-            mode: "write".to_string(),
-            path: query.path.clone(),
-            expected_mtime: query.expected_mtime,
-        })
-        .await
-        .is_err()
-    {
-        tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: control channel closed");
-        bridge::remove_pending_proxy_session(&session_id);
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
-    let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
-        Ok(Ok(ws)) => ws,
-        _ => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: daemon session timeout (60s)");
-            bridge::remove_pending_proxy_session(&session_id);
-            return StatusCode::GATEWAY_TIMEOUT.into_response();
-        }
-    };
-
-    let (mut daemon_sink, mut daemon_stream) = daemon_ws.split();
-
-    // Wait for "ready" or error from daemon
-    let ready_msg = match tokio::time::timeout(Duration::from_secs(30), daemon_stream.next()).await
-    {
-        Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
-        _ => {
-            let _ = daemon_sink
-                .send(axum::extract::ws::Message::Close(None))
-                .await;
-            return StatusCode::BAD_GATEWAY.into_response();
-        }
-    };
-
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ready_msg) {
-        if v.get("status").is_some() && v.get("ready").is_none() {
-            let _ = daemon_sink
-                .send(axum::extract::ws::Message::Close(None))
-                .await;
-            let status = v["status"].as_u64().unwrap_or(500) as u16;
-            return axum::response::Response::builder()
-                .status(status)
-                .header("content-type", "application/json")
-                .body(Body::from(v.to_string()))
-                .unwrap()
-                .into_response();
-        }
-    }
-
-    // Stream request body to daemon
-    use http_body_util::BodyExt;
+    // Collect request body
     let mut body_stream = body.into_data_stream();
+    let mut body_bytes = Vec::new();
     while let Some(chunk) = body_stream.next().await {
         match chunk {
-            Ok(bytes) => {
-                if daemon_sink
-                    .send(axum::extract::ws::Message::Binary(bytes.to_vec().into()))
-                    .await
-                    .is_err()
-                {
-                    return StatusCode::BAD_GATEWAY.into_response();
-                }
-            }
+            Ok(bytes) => body_bytes.extend_from_slice(&bytes),
             Err(_) => break,
         }
     }
 
-    if daemon_sink
-        .send(axum::extract::ws::Message::Text("end_request".into()))
-        .await
-        .is_err()
-    {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
+    use base64::Engine;
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(&body_bytes);
 
-    // Read result
-    let result_msg = match tokio::time::timeout(Duration::from_secs(60), daemon_stream.next()).await
-    {
-        Ok(Some(Ok(axum::extract::ws::Message::Text(text)))) => text,
-        _ => {
-            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: result timeout (60s)");
-            return StatusCode::GATEWAY_TIMEOUT.into_response();
+    let request_id = Uuid::new_v4().to_string();
+    let req = serde_json::json!({
+        "type": "file_write_request",
+        "request_id": request_id,
+        "tunnel_name": tunnel_name,
+        "path": query.path,
+        "expected_mtime": query.expected_mtime,
+        "data": body_b64,
+    });
+
+    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req)).await {
+        Ok(Ok(resp)) => {
+            let status = resp["status"].as_u64().unwrap_or(500) as u16;
+            tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, status, "file_write: completed");
+            axum::response::Response::builder()
+                .status(status)
+                .header("content-type", "application/json")
+                .body(Body::from(resp.to_string()))
+                .unwrap()
+                .into_response()
         }
-    };
-
-    tracing::debug!(instance = %instance_id, tunnel = %tunnel_name, result = %result_msg, "file_write: completed");
-
-    let _ = daemon_sink
-        .send(axum::extract::ws::Message::Close(None))
-        .await;
-
-    let result: serde_json::Value = serde_json::from_str(&result_msg).unwrap_or_default();
-    let status = result["status"].as_u64().unwrap_or(500) as u16;
-
-    axum::response::Response::builder()
-        .status(status)
-        .header("content-type", "application/json")
-        .body(Body::from(result.to_string()))
-        .unwrap()
-        .into_response()
+        Ok(Err(e)) => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write p2p failed: {e}");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
+        Err(_) => {
+            tracing::warn!(instance = %instance_id, tunnel = %tunnel_name, "file_write: timeout (60s)");
+            StatusCode::GATEWAY_TIMEOUT.into_response()
+        }
+    }
 }
 
 // ── Shell tunnel endpoint ─────────────────────────────────────────────
@@ -1054,8 +869,7 @@ struct ShellExecBody {
     user_arg: Option<String>,
 }
 
-/// Execute a predefined shell command via a data WebSocket session.
-/// Streams output back as SSE (text/event-stream).
+/// Execute a predefined shell command via libp2p request.
 async fn shell_exec(
     headers: HeaderMap,
     Path(command_name): Path<String>,
@@ -1065,80 +879,46 @@ async fn shell_exec(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "shell:exec").await {
+    if let Err(resp) =
+        authenticate_proxy_scoped(&headers, &state, &instance_id, "shell:exec").await
+    {
         return resp;
     }
-    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
-        tracing::debug!(instance = %instance_id, command = %command_name, "shell_exec: daemon not found");
-        return StatusCode::NOT_FOUND.into_response();
+    let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
     let arg_str = body.user_arg.as_deref().unwrap_or("");
     tracing::info!(instance = %instance_id, command = %command_name, arg = %arg_str, "shell_exec");
 
-    let session_id = Uuid::new_v4().to_string();
-    let session_secret = Uuid::new_v4().to_string();
-
-    let (ws_tx, ws_rx) = tokio::sync::oneshot::channel();
-    if !bridge::register_pending_proxy_session_with_callback(
-        session_id.clone(),
-        session_secret.clone(),
-        ws_tx,
-    ) {
-        tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: too many pending sessions");
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-
-    if control_tx
-        .send(ControlMsg::ShellSessionRequest {
-            session_id: session_id.clone(),
-            session_secret,
-            command_name: command_name.clone(),
-            user_arg: body.user_arg,
-        })
-        .await
-        .is_err()
-    {
-        tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: control channel closed");
-        bridge::remove_pending_proxy_session(&session_id);
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
-    let daemon_ws = match tokio::time::timeout(Duration::from_secs(60), ws_rx).await {
-        Ok(Ok(ws)) => ws,
-        _ => {
-            tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: daemon session timeout (60s)");
-            bridge::remove_pending_proxy_session(&session_id);
-            return StatusCode::GATEWAY_TIMEOUT.into_response();
-        }
-    };
-
-    let (_daemon_sink, daemon_stream) = daemon_ws.split();
-
-    // Stream daemon WS text messages as SSE events
-    let body_stream = futures_util::stream::unfold(daemon_stream, |mut stream| async move {
-        loop {
-            match stream.next().await {
-                Some(Ok(axum::extract::ws::Message::Text(text))) => {
-                    let data = format!("data: {text}\n\n");
-                    return Some((
-                        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(data)),
-                        stream,
-                    ));
-                }
-                Some(Ok(axum::extract::ws::Message::Close(_))) | None => return None,
-                _ => continue,
-            }
-        }
+    let request_id = Uuid::new_v4().to_string();
+    let req = serde_json::json!({
+        "type": "shell_exec_request",
+        "request_id": request_id,
+        "command_name": command_name,
+        "user_arg": body.user_arg,
     });
 
-    axum::response::Response::builder()
-        .status(200)
-        .header("content-type", "text/event-stream")
-        .header("cache-control", "no-cache")
-        .body(Body::from_stream(body_stream))
-        .unwrap()
-        .into_response()
+    match tokio::time::timeout(Duration::from_secs(60), swarm.send_request(peer_id, req)).await {
+        Ok(Ok(resp)) => {
+            let status = resp["status"].as_u64().unwrap_or(500) as u16;
+            axum::response::Response::builder()
+                .status(status)
+                .header("content-type", "application/json")
+                .body(Body::from(resp.to_string()))
+                .unwrap()
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec p2p failed: {e}");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
+        Err(_) => {
+            tracing::warn!(instance = %instance_id, command = %command_name, "shell_exec: timeout (60s)");
+            StatusCode::GATEWAY_TIMEOUT.into_response()
+        }
+    }
 }
 
 // ── Log tunnel endpoint ───────────────────────────────────────────────
@@ -1159,10 +939,13 @@ async fn daemon_ping(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if authenticate_proxy(&headers, &state, &instance_id).await.is_err() {
+    if authenticate_proxy(&headers, &state, &instance_id)
+        .await
+        .is_err()
+    {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let online = state.registry.resolve_control_tx(&instance_id).is_some();
+    let online = state.registry.is_connected(&instance_id);
     tracing::debug!(instance = %instance_id, online, "daemon_ping");
     if online {
         (StatusCode::OK, "ok").into_response()
@@ -1171,7 +954,7 @@ async fn daemon_ping(
     }
 }
 
-/// Proxy the daemon's /logs endpoint via MetricsRequest.
+/// Proxy the daemon's /logs endpoint via libp2p.
 async fn log_proxy(
     headers: HeaderMap,
     Query(query): Query<LogQuery>,
@@ -1180,11 +963,14 @@ async fn log_proxy(
     let Some(instance_id) = parse_instance_prefix(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
-    if let Err(resp) = authenticate_proxy_scoped(&headers, &state, &instance_id, "logs:read").await {
+    if let Err(resp) =
+        authenticate_proxy_scoped(&headers, &state, &instance_id, "logs:read").await
+    {
         return resp;
     }
-    let Some(control_tx) = state.registry.resolve_control_tx(&instance_id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let (swarm, peer_id) = match resolve_swarm_and_peer(&state, &instance_id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
     // Build the daemon-local /logs query string
@@ -1205,28 +991,30 @@ async fn log_proxy(
     };
 
     let request_id = Uuid::new_v4().to_string();
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let req = serde_json::json!({
+        "type": "metrics_request",
+        "request_id": request_id,
+        "path": path,
+    });
 
-    if control_tx
-        .send(ControlMsg::MetricsRequest {
-            request_id,
-            path,
-            response_tx,
-        })
-        .await
-        .is_err()
-    {
-        return StatusCode::BAD_GATEWAY.into_response();
-    }
-
-    match tokio::time::timeout(Duration::from_secs(30), response_rx).await {
-        Ok(Ok(resp)) => axum::response::Response::builder()
-            .status(resp.status)
-            .header("content-type", resp.content_type)
-            .body(Body::from(resp.body))
-            .unwrap()
-            .into_response(),
-        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+    match tokio::time::timeout(Duration::from_secs(30), swarm.send_request(peer_id, req)).await {
+        Ok(Ok(resp)) => {
+            let status = resp["status"].as_u64().unwrap_or(502) as u16;
+            let content_type = resp["content_type"]
+                .as_str()
+                .unwrap_or("application/json");
+            let body = resp["body"].as_str().unwrap_or("");
+            axum::response::Response::builder()
+                .status(status)
+                .header("content-type", content_type)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(instance = %instance_id, "log_proxy p2p failed: {e}");
+            StatusCode::BAD_GATEWAY.into_response()
+        }
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }

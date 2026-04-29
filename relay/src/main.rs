@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
+mod api;
 mod auth;
 mod bridge;
 mod config;
@@ -17,8 +18,6 @@ mod daemon_registry;
 mod metrics_federation;
 mod p2p;
 mod proxy_handler;
-mod ssh_listener;
-mod ws_handler;
 
 #[derive(Parser)]
 #[command(
@@ -58,23 +57,14 @@ async fn main() -> Result<()> {
         cfg.proxy_url = Some(url);
     }
     tracing::info!(
-        "relay starting, WS listen: {}, SSH port range: {}-{}",
+        "relay starting, listen: {}",
         cfg.listen_addr,
-        cfg.ssh_port_min,
-        cfg.ssh_port_max
     );
 
-    let data_dir = std::path::Path::new(&cfg.data_dir);
-    let registry = Arc::new(daemon_registry::DaemonRegistry::new(
-        cfg.ssh_port_min,
-        cfg.ssh_port_max,
-        cfg.max_daemons,
-        data_dir,
-    ));
-
-    bridge::spawn_cleanup_task();
+    let registry = Arc::new(daemon_registry::DaemonRegistry::new(cfg.max_daemons));
 
     // Start the libp2p swarm (circuit relay server + control protocol)
+    let data_dir = std::path::Path::new(&cfg.data_dir);
     let key_path = cfg.p2p_key_file.as_deref().unwrap_or("relay_ed25519_key");
     let key_path = if std::path::Path::new(key_path).is_absolute() {
         std::path::PathBuf::from(key_path)
@@ -86,21 +76,11 @@ async fn main() -> Result<()> {
     );
     tracing::info!(peer_id = %relay_swarm.local_peer_id, "p2p relay swarm started");
 
-    let registry_cleanup = Arc::clone(&registry);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-        loop {
-            interval.tick().await;
-            registry_cleanup.expire_reservations();
-        }
-    });
-
-    // API router: daemon WS, metrics, tunnels, health
-    let api_router = ws_handler::router(
+    // API router: health, metrics, tunnel listing
+    let api_router = api::router(
         Arc::clone(&registry),
         cfg.server_api_url.clone(),
-        cfg.proxy_hostname.clone(),
-        cfg.proxy_url.clone(),
+        Arc::clone(&relay_swarm),
     );
 
     // Proxy router (if proxy_hostname is configured)

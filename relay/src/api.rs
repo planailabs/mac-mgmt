@@ -1,0 +1,358 @@
+//! Non-WebSocket API endpoints: health, tunnel listing, metrics proxy,
+//! federated metrics.
+
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::{Json, Router};
+use futures_util::StreamExt;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use uuid::Uuid;
+
+use crate::auth::{SelfInfo, validate_token};
+use crate::daemon_registry::DaemonRegistry;
+use crate::metrics_federation::{
+    PROMETHEUS_CONTENT_TYPE, encode_families, parse_and_relabel, push_gauge_strs,
+};
+use crate::p2p::RelaySwarm;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub registry: Arc<DaemonRegistry>,
+    pub server_api_url: String,
+    pub relay_swarm: Arc<RelaySwarm>,
+}
+
+pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, relay_swarm: Arc<RelaySwarm>) -> Router {
+    let state = AppState {
+        registry,
+        server_api_url,
+        relay_swarm,
+    };
+
+    Router::new()
+        .route(
+            "/api/daemon/{instance_id}/metrics/{*path}",
+            get(proxy_metrics),
+        )
+        .route("/api/tunnels", get(list_tunnels))
+        .route("/metrics", get(federated_metrics))
+        .route("/health", get(health))
+        .layer(middleware::from_fn(security_headers))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(4096))
+        .with_state(state)
+}
+
+async fn security_headers(request: axum::extract::Request, next: Next) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        axum::http::header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("DENY"),
+    );
+    response
+}
+
+async fn health() -> &'static str {
+    "ok"
+}
+
+fn extract_bearer(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(String::from)
+}
+
+async fn require_auth(
+    headers: &HeaderMap,
+    server_api_url: &str,
+    allowed_kinds: &[&str],
+) -> Result<SelfInfo, axum::response::Response> {
+    let Some(token) = extract_bearer(headers) else {
+        return Err(StatusCode::UNAUTHORIZED.into_response());
+    };
+    let self_info = validate_token(server_api_url, &token)
+        .await
+        .map_err(|s| s.into_response())?;
+    if !allowed_kinds.contains(&self_info.token_kind.as_str()) {
+        return Err(StatusCode::FORBIDDEN.into_response());
+    }
+    Ok(self_info)
+}
+
+fn is_safe_path(path: &str) -> bool {
+    !path.contains("..") && !path.contains("//")
+}
+
+// ── Metrics proxy ────────────────────────────────────────────────────
+
+async fn proxy_metrics(
+    headers: HeaderMap,
+    Path((instance_id, path)): Path<(String, String)>,
+    Query(query): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    if let Err(resp) = require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await {
+        return resp;
+    }
+
+    if !is_safe_path(&path) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    let full_path = if query.is_empty() {
+        format!("/{path}")
+    } else {
+        let qs: String = query
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("/{path}?{qs}")
+    };
+
+    let Some(peer_id) = state.registry.resolve_peer_id(&instance_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let request_id = Uuid::new_v4().to_string();
+    let req = serde_json::json!({
+        "type": "metrics_request",
+        "request_id": request_id,
+        "path": full_path,
+    });
+
+    match tokio::time::timeout(Duration::from_secs(10), state.relay_swarm.send_request(peer_id, req))
+        .await
+    {
+        Ok(Ok(resp)) => {
+            let status = resp["status"].as_u64().unwrap_or(502) as u16;
+            let content_type = resp["content_type"]
+                .as_str()
+                .unwrap_or("text/plain");
+            let body = resp["body"].as_str().unwrap_or("");
+            axum::response::Response::builder()
+                .status(status)
+                .header("content-type", content_type)
+                .body(axum::body::Body::from(body.to_string()))
+                .expect("response builder")
+                .into_response()
+        }
+        Ok(Err(_)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
+}
+
+// ── Tunnel listing ───────────────────────────────────────────────────
+
+async fn list_tunnels(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    {
+        Ok(info) => info,
+        Err(resp) => return resp,
+    };
+
+    let mut tunnels = state.registry.list_tunnels();
+    if self_info.token_kind != "admin" {
+        let allowed = &self_info.cluster_ids;
+        tunnels.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
+    }
+    Json(tunnels).into_response()
+}
+
+// ── Federated metrics ────────────────────────────────────────────────
+
+const FEDERATION_SCRAPE_TIMEOUT: Duration = Duration::from_secs(5);
+const FEDERATION_CONCURRENCY: usize = 32;
+
+#[allow(dead_code)]
+struct ScrapeOutcome {
+    instance_id: String,
+    hostname: String,
+    cluster_id: String,
+    cluster_name: String,
+    families: Vec<prometheus::proto::MetricFamily>,
+    up: bool,
+    duration_secs: f64,
+}
+
+async fn federated_metrics(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let self_info = match require_auth(&headers, &state.server_api_url, &["admin", "setting"]).await
+    {
+        Ok(info) => info,
+        Err(resp) => return resp,
+    };
+
+    let mut tunnels = state.registry.list_tunnels();
+    if self_info.token_kind != "admin" {
+        let allowed = &self_info.cluster_ids;
+        tunnels.retain(|t| t.cluster_id.is_some_and(|c| allowed.contains(&c)));
+    }
+
+    let registry = state.registry.clone();
+    let swarm = state.relay_swarm.clone();
+    let outcomes: Vec<ScrapeOutcome> =
+        futures_util::stream::iter(tunnels.into_iter().map(move |tunnel| {
+            let registry = registry.clone();
+            let swarm = swarm.clone();
+            async move { scrape_one(&registry, &swarm, tunnel).await }
+        }))
+        .buffer_unordered(FEDERATION_CONCURRENCY)
+        .collect()
+        .await;
+
+    let target_count = outcomes.len();
+
+    let mut families: std::collections::BTreeMap<String, prometheus::proto::MetricFamily> =
+        std::collections::BTreeMap::new();
+
+    for outcome in outcomes {
+        let labels: [(&str, &str); 3] = [
+            ("instance_id", outcome.instance_id.as_str()),
+            ("hostname", outcome.hostname.as_str()),
+            ("cluster_id", outcome.cluster_id.as_str()),
+        ];
+        push_gauge_strs(
+            &mut families,
+            "mac_mgmt_relay_scrape_up",
+            &labels,
+            if outcome.up { 1.0 } else { 0.0 },
+        );
+        push_gauge_strs(
+            &mut families,
+            "mac_mgmt_relay_scrape_duration_seconds",
+            &labels,
+            outcome.duration_secs,
+        );
+        for fam in outcome.families {
+            merge_family(&mut families, fam);
+        }
+    }
+
+    push_gauge_strs(
+        &mut families,
+        "mac_mgmt_relay_scrape_targets",
+        &[],
+        target_count as f64,
+    );
+
+    let families_vec: Vec<_> = families.into_values().collect();
+    match encode_families(&families_vec) {
+        Ok(buf) => axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", PROMETHEUS_CONTENT_TYPE)
+            .body(axum::body::Body::from(buf))
+            .expect("response builder")
+            .into_response(),
+        Err(e) => {
+            tracing::error!("federated metrics encode failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn scrape_one(
+    registry: &Arc<DaemonRegistry>,
+    swarm: &Arc<RelaySwarm>,
+    tunnel: crate::daemon_registry::TunnelInfo,
+) -> ScrapeOutcome {
+    let started = std::time::Instant::now();
+    let instance_id = tunnel.instance_id.clone();
+    let hostname = tunnel.hostname.clone().unwrap_or_default();
+    let cluster_id = tunnel.cluster_id.map(|c| c.to_string()).unwrap_or_default();
+    let cluster_name = tunnel.cluster_name.clone().unwrap_or_default();
+
+    let Some(peer_id) = registry.resolve_peer_id(&instance_id) else {
+        return ScrapeOutcome {
+            instance_id, hostname, cluster_id, cluster_name,
+            families: Vec::new(), up: false,
+            duration_secs: started.elapsed().as_secs_f64(),
+        };
+    };
+
+    let request_id = Uuid::new_v4().to_string();
+    let req = serde_json::json!({
+        "type": "metrics_request",
+        "request_id": request_id,
+        "path": "/metrics",
+    });
+
+    match tokio::time::timeout(FEDERATION_SCRAPE_TIMEOUT, swarm.send_request(peer_id, req)).await {
+        Ok(Ok(resp)) => {
+            let status = resp["status"].as_u64().unwrap_or(502) as u16;
+            if status == 200 {
+                let body = resp["body"].as_str().unwrap_or("");
+                match parse_and_relabel(body, &instance_id, &hostname, &cluster_id, &cluster_name) {
+                    Ok(families) => ScrapeOutcome {
+                        instance_id, hostname, cluster_id, cluster_name,
+                        families, up: true,
+                        duration_secs: started.elapsed().as_secs_f64(),
+                    },
+                    Err(e) => {
+                        tracing::warn!("federated metrics parse error from {instance_id}: {e}");
+                        ScrapeOutcome {
+                            instance_id, hostname, cluster_id, cluster_name,
+                            families: Vec::new(), up: false,
+                            duration_secs: started.elapsed().as_secs_f64(),
+                        }
+                    }
+                }
+            } else {
+                ScrapeOutcome {
+                    instance_id, hostname, cluster_id, cluster_name,
+                    families: Vec::new(), up: false,
+                    duration_secs: started.elapsed().as_secs_f64(),
+                }
+            }
+        }
+        _ => ScrapeOutcome {
+            instance_id, hostname, cluster_id, cluster_name,
+            families: Vec::new(), up: false,
+            duration_secs: started.elapsed().as_secs_f64(),
+        },
+    }
+}
+
+fn merge_family(
+    families: &mut std::collections::BTreeMap<String, prometheus::proto::MetricFamily>,
+    incoming: prometheus::proto::MetricFamily,
+) {
+    use prometheus::proto::MetricFamily;
+    let name = incoming.name().to_string();
+    match families.get_mut(&name) {
+        Some(existing) => {
+            for m in incoming.metric {
+                existing.mut_metric().push(m);
+            }
+        }
+        None => {
+            let mut fam = MetricFamily::default();
+            fam.set_name(name.clone());
+            fam.set_field_type(incoming.type_());
+            for m in incoming.metric {
+                fam.mut_metric().push(m);
+            }
+            families.insert(name, fam);
+        }
+    }
+}

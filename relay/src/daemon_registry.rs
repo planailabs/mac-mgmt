@@ -1,112 +1,8 @@
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
-use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
-
-const RESERVATION_TTL_DAYS: i64 = 30;
-
-/// Message sent from relay to daemon over the control WebSocket.
-#[derive(Debug)]
-pub enum ControlMsg {
-    SessionRequest {
-        session_id: String,
-        session_secret: String,
-    },
-    MetricsRequest {
-        request_id: String,
-        path: String,
-        response_tx: oneshot::Sender<MetricsResponse>,
-    },
-    ProxyRequest {
-        request_id: String,
-        tunnel_name: String,
-        method: String,
-        path: String,
-        headers: Vec<(String, String)>,
-        body: Option<String>,
-        response_tx: oneshot::Sender<ProxyResponse>,
-    },
-    /// Request a proxy data session (WS-to-WS bridge).
-    ProxySessionRequest {
-        session_id: String,
-        session_secret: String,
-        tunnel_name: String,
-        mode: String,
-        path: String,
-    },
-    /// Streaming proxy request multiplexed over the control channel.
-    ProxyStream {
-        request_id: String,
-        tunnel_name: String,
-        method: String,
-        path: String,
-        headers: Vec<(String, String)>,
-        body: Option<String>,
-        response_tx: mpsc::Sender<ProxyStreamEvent>,
-    },
-    /// List files in a file tunnel (response on control channel).
-    FileListRequest {
-        request_id: String,
-        tunnel_name: String,
-        path: Option<String>,
-        response_tx: oneshot::Sender<FileResponse>,
-    },
-    /// Start a data session for file read or write.
-    FileSessionRequest {
-        session_id: String,
-        session_secret: String,
-        tunnel_name: String,
-        mode: String,
-        path: Option<String>,
-        expected_mtime: Option<i64>,
-    },
-    /// Start a data session for shell command execution.
-    ShellSessionRequest {
-        session_id: String,
-        session_secret: String,
-        command_name: String,
-        user_arg: Option<String>,
-    },
-}
-
-/// Events streamed back from daemon for a proxy stream request.
-#[derive(Debug)]
-pub enum ProxyStreamEvent {
-    /// Response headers (first event).
-    Headers {
-        status: u16,
-        headers: Vec<(String, String)>,
-    },
-    /// Body chunk (base64-decoded by the relay).
-    BodyChunk(Vec<u8>),
-    /// Response complete.
-    End,
-}
-
-/// Response from daemon for a file tunnel operation.
-#[derive(Debug)]
-pub struct FileResponse {
-    pub status: u16,
-    pub body: serde_json::Value,
-}
-
-/// Response from daemon for a proxied metrics request.
-#[derive(Debug)]
-pub struct MetricsResponse {
-    pub status: u16,
-    pub content_type: String,
-    pub body: String,
-}
-
-/// Response from daemon for a proxied TCP tunnel request (non-streaming).
-#[derive(Debug)]
-pub struct ProxyResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: String,
-}
 
 /// A TCP tunnel exposed by a managed service on a daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,11 +18,7 @@ pub struct DaemonConn {
     pub cluster_name: Option<String>,
     pub agent_name: Option<String>,
     pub hostname: Option<String>,
-    pub ssh_port: u16,
     pub connected_at: DateTime<Utc>,
-    pub control_tx: mpsc::Sender<ControlMsg>,
-    /// Handle to the TCP listener task so we can abort it on disconnect
-    pub listener_handle: tokio::task::JoinHandle<()>,
     /// TCP tunnels advertised by the daemon's managed services.
     pub tunnels: Vec<ServiceTunnel>,
     /// libp2p PeerId if the daemon is connected via p2p.
@@ -140,215 +32,22 @@ pub struct TunnelInfo {
     pub cluster_name: Option<String>,
     pub agent_name: Option<String>,
     pub hostname: Option<String>,
-    pub ssh_port: u16,
     pub connected_at: DateTime<Utc>,
     pub tunnels: Vec<ServiceTunnel>,
 }
 
-/// A port reserved for a disconnected machine so it gets the same port back.
-#[derive(Serialize, Deserialize)]
-struct PortReservation {
-    port: u16,
-    reserved_at: DateTime<Utc>,
-}
-
-/// On-disk format for port reservations.
-#[derive(Serialize, Deserialize, Default)]
-struct ReservationsFile {
-    reservations: HashMap<String, PortReservation>,
-}
-
+#[allow(dead_code)]
 pub struct DaemonRegistry {
     daemons: RwLock<HashMap<String, DaemonConn>>,
-    port_min: u16,
-    port_max: u16,
     max_daemons: usize,
-    used_ports: RwLock<std::collections::HashSet<u16>>,
-    /// instance_id → reserved port (kept for up to 30 days after disconnect).
-    reservations: RwLock<HashMap<String, PortReservation>>,
-    /// Path to the reservations file on disk.
-    reservations_path: std::path::PathBuf,
 }
 
+#[allow(dead_code)]
 impl DaemonRegistry {
-    pub fn new(
-        port_min: u16,
-        port_max: u16,
-        max_daemons: usize,
-        data_dir: &std::path::Path,
-    ) -> Self {
-        let reservations_path = data_dir.join("port_reservations.json");
-
-        // Load existing reservations from disk.
-        let (reservations, used_ports) = match std::fs::read_to_string(&reservations_path) {
-            Ok(contents) => {
-                let file: ReservationsFile = serde_json::from_str(&contents).unwrap_or_default();
-                let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
-                let valid: HashMap<String, PortReservation> = file
-                    .reservations
-                    .into_iter()
-                    .filter(|(_, r)| r.reserved_at >= cutoff)
-                    .collect();
-                let ports: std::collections::HashSet<u16> =
-                    valid.values().map(|r| r.port).collect();
-                tracing::info!(
-                    "loaded {} port reservation(s) from {}",
-                    valid.len(),
-                    reservations_path.display()
-                );
-                (valid, ports)
-            }
-            Err(_) => (HashMap::new(), std::collections::HashSet::new()),
-        };
-
+    pub fn new(max_daemons: usize) -> Self {
         Self {
             daemons: RwLock::new(HashMap::new()),
-            port_min,
-            port_max,
             max_daemons,
-            used_ports: RwLock::new(used_ports),
-            reservations: RwLock::new(reservations),
-            reservations_path,
-        }
-    }
-
-    /// Allocate a port for `instance_id`. Reuses a reserved port if one
-    /// exists, otherwise finds the next free port in the range.
-    pub fn allocate_port(&self, instance_id: &str) -> Option<u16> {
-        // Check for an existing reservation first.
-        if let Some(reserved) = self.claim_reservation(instance_id) {
-            tracing::info!("reusing reserved port {reserved} for {instance_id}");
-            return Some(reserved);
-        }
-
-        let port = {
-            let used = self.used_ports.read().unwrap();
-            (self.port_min..=self.port_max).find(|p| !used.contains(p))
-        };
-        match port {
-            Some(p) => {
-                self.used_ports.write().unwrap().insert(p);
-                tracing::debug!("allocated port {p} for {instance_id}");
-                Some(p)
-            }
-            None => {
-                // Try reclaiming an expired reservation.
-                self.expire_reservations();
-                let port = {
-                    let used = self.used_ports.read().unwrap();
-                    (self.port_min..=self.port_max).find(|p| !used.contains(p))
-                };
-                match port {
-                    Some(p) => {
-                        self.used_ports.write().unwrap().insert(p);
-                        tracing::info!("allocated port {p} after expiring reservations");
-                        Some(p)
-                    }
-                    None => {
-                        tracing::error!(
-                            "no free ports in range {}-{}",
-                            self.port_min,
-                            self.port_max
-                        );
-                        None
-                    }
-                }
-            }
-        }
-    }
-
-    fn release_port(&self, port: u16) {
-        self.used_ports.write().unwrap().remove(&port);
-        tracing::debug!("released port {port}");
-    }
-
-    /// Claim a reserved port: refresh its timestamp and return it.
-    /// The port stays in `used_ports` and the reservation is kept (with
-    /// updated timestamp) so it survives the next disconnect too.
-    fn claim_reservation(&self, instance_id: &str) -> Option<u16> {
-        let mut reservations = self.reservations.write().unwrap();
-        let res = reservations.get_mut(instance_id)?;
-        let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
-        if res.reserved_at < cutoff {
-            let port = res.port;
-            reservations.remove(instance_id);
-            self.used_ports.write().unwrap().remove(&port);
-            tracing::debug!("reservation for {instance_id} port {port} expired");
-            None
-        } else {
-            res.reserved_at = Utc::now();
-            let port = res.port;
-            tracing::debug!("claimed reservation for {instance_id} port {port}");
-            Some(port)
-        }
-    }
-
-    /// Reserve a port for a disconnecting daemon so it gets the same port
-    /// back when it reconnects. The port stays in `used_ports`.
-    fn reserve_port(&self, instance_id: &str, port: u16) {
-        self.reservations.write().unwrap().insert(
-            instance_id.to_string(),
-            PortReservation {
-                port,
-                reserved_at: Utc::now(),
-            },
-        );
-        tracing::info!(
-            "reserved port {port} for {instance_id} (up to {RESERVATION_TTL_DAYS} days)"
-        );
-        self.save_reservations();
-    }
-
-    /// Persist reservations to disk (best-effort).
-    fn save_reservations(&self) {
-        let path = &self.reservations_path;
-        let reservations = self.reservations.read().unwrap();
-        let file = ReservationsFile {
-            reservations: reservations
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        k.clone(),
-                        PortReservation {
-                            port: v.port,
-                            reserved_at: v.reserved_at,
-                        },
-                    )
-                })
-                .collect(),
-        };
-        match serde_json::to_string_pretty(&file) {
-            Ok(json) => {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if let Err(e) = std::fs::write(path, json) {
-                    tracing::warn!("failed to save reservations to {}: {e}", path.display());
-                }
-            }
-            Err(e) => tracing::warn!("failed to serialize reservations: {e}"),
-        }
-    }
-
-    /// Remove expired reservations and free their ports.
-    pub fn expire_reservations(&self) {
-        let cutoff = Utc::now() - ChronoDuration::days(RESERVATION_TTL_DAYS);
-        let mut reservations = self.reservations.write().unwrap();
-        let mut used = self.used_ports.write().unwrap();
-        let before = reservations.len();
-        reservations.retain(|id, res| {
-            if res.reserved_at < cutoff {
-                used.remove(&res.port);
-                tracing::info!("reservation expired for {id} port {}", res.port);
-                false
-            } else {
-                true
-            }
-        });
-        drop(used);
-        drop(reservations);
-        if before != self.reservations.read().unwrap().len() {
-            self.save_reservations();
         }
     }
 
@@ -358,29 +57,19 @@ impl DaemonRegistry {
 
     pub fn register(&self, conn: DaemonConn) {
         let id = conn.instance_id.clone();
-        let port = conn.ssh_port;
         let mut daemons = self.daemons.write().unwrap();
-        if let Some(old) = daemons.remove(&id) {
-            tracing::info!(
-                "replacing existing registration for {id} (old port {})",
-                old.ssh_port
-            );
-            old.listener_handle.abort();
-            if old.ssh_port != port {
-                self.release_port(old.ssh_port);
-            }
+        if daemons.contains_key(&id) {
+            tracing::info!("replacing existing registration for {id}");
         }
-        // Save/refresh the reservation so the port survives future disconnects.
-        self.reserve_port(&id, port);
         daemons.insert(id.clone(), conn);
         tracing::info!(
-            "registered daemon {id} on port {port} (total: {})",
+            "registered daemon {id} (total: {})",
             daemons.len()
         );
     }
 
     /// Unregister a daemon, but only if its `connected_at` matches.
-    /// This prevents a stale WS handler's cleanup from deleting a newer
+    /// This prevents a stale cleanup from deleting a newer
     /// registration that replaced it during a rapid reconnect.
     pub fn unregister(&self, instance_id: &str, connected_at: DateTime<Utc>) {
         let mut daemons = self.daemons.write().unwrap();
@@ -393,10 +82,7 @@ impl DaemonRegistry {
             );
             return;
         }
-        if let Some(conn) = daemons.remove(instance_id) {
-            conn.listener_handle.abort();
-            // Reserve the port instead of releasing it.
-            self.reserve_port(instance_id, conn.ssh_port);
+        if let Some(_conn) = daemons.remove(instance_id) {
             tracing::info!(
                 "unregistered daemon {instance_id} (remaining: {})",
                 daemons.len()
@@ -416,22 +102,10 @@ impl DaemonRegistry {
                 cluster_name: d.cluster_name.clone(),
                 agent_name: d.agent_name.clone(),
                 hostname: d.hostname.clone(),
-                ssh_port: d.ssh_port,
                 connected_at: d.connected_at,
                 tunnels: d.tunnels.clone(),
             })
             .collect()
-    }
-
-    pub fn get_control_tx(&self, instance_id: &str) -> Option<mpsc::Sender<ControlMsg>> {
-        let daemons = self.daemons.read().unwrap();
-        daemons.get(instance_id).map(|d| d.control_tx.clone())
-    }
-
-    /// Resolve a prefix to a full instance ID, then return its control channel.
-    pub fn resolve_control_tx(&self, prefix: &str) -> Option<mpsc::Sender<ControlMsg>> {
-        let full_id = self.resolve_prefix(prefix)?;
-        self.get_control_tx(&full_id)
     }
 
     /// Update the advertised tunnels for a connected daemon. Capped at 100 per daemon.
@@ -467,18 +141,18 @@ impl DaemonRegistry {
         Some(first)
     }
 
-    /// Find a specific tunnel on a daemon. Returns (control_tx, tcp_port) if found.
+    /// Check if a specific tunnel exists on a daemon.
     /// `instance_id` may be a short prefix.
-    pub fn find_tunnel(
-        &self,
-        instance_id: &str,
-        tunnel_name: &str,
-    ) -> Option<(mpsc::Sender<ControlMsg>, u16)> {
-        let full_id = self.resolve_prefix(instance_id)?;
+    /// Returns true if the tunnel is found.
+    pub fn has_tunnel(&self, instance_id: &str, tunnel_name: &str) -> bool {
+        let Some(full_id) = self.resolve_prefix(instance_id) else {
+            return false;
+        };
         let daemons = self.daemons.read().unwrap();
-        let d = daemons.get(&full_id)?;
-        let tunnel = d.tunnels.iter().find(|t| t.name == tunnel_name)?;
-        Some((d.control_tx.clone(), tunnel.tcp_port))
+        let Some(d) = daemons.get(&full_id) else {
+            return false;
+        };
+        d.tunnels.iter().any(|t| t.name == tunnel_name)
     }
 
     /// Return the cluster_id of a connected daemon.
@@ -508,5 +182,10 @@ impl DaemonRegistry {
             conn.peer_id = Some(peer_id);
             tracing::info!(%instance_id, %peer_id, "p2p peer ID set for daemon");
         }
+    }
+
+    /// Check if a daemon is connected (by prefix).
+    pub fn is_connected(&self, prefix: &str) -> bool {
+        self.resolve_prefix(prefix).is_some()
     }
 }
