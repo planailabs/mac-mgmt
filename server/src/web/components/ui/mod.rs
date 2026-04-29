@@ -29,4 +29,4 @@ pub use data_table::{
     Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th,
 };
 pub use form::FormField;
-pub use text::{ErrorText, HelpText, PageHeader, SectionHeading};
+pub use text::{ErrorText, HelpText, PageHeader, SectionHeading, SuccessText};

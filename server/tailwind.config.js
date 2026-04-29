@@ -28,6 +28,7 @@ module.exports = {
           DEFAULT: tokenColor('c-surface'),
           '2':     tokenColor('c-surface-2'),
           '3':     tokenColor('c-surface-3'),
+          strong:  tokenColor('c-surface-strong'),
         },
         fg: {
           DEFAULT: tokenColor('c-fg'),

@@ -4,11 +4,15 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+use crate::web::components::table_utils::Searchable;
+use crate::web::components::ui::{
+    Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh,
+    TdMono, TdMuted,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaemonVersionRow {
     pub version: String,
     pub created_at: DateTime<Utc>,
@@ -131,9 +135,9 @@ pub fn DaemonVersionList() -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
-            h2 { class: "text-2xl font-bold", {t!("daemon-version-list-title")} }
-            button {
-                class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+            PageHeader { class: "mb-0", {t!("daemon-version-list-title")} }
+            Button {
+                variant: ButtonVariant::Primary,
                 disabled: *syncing.read(),
                 onclick: move |_| {
                     syncing.set(true);
@@ -159,84 +163,82 @@ pub fn DaemonVersionList() -> Element {
             }
         }
         if let Some(msg) = &*sync_msg.read() {
-            p { class: "text-green-600 dark:text-green-400 text-sm mb-4", "{msg}" }
+            crate::web::components::ui::SuccessText { class: "mb-4", "{msg}" }
         }
         if let Some(err) = &*sync_err.read() {
-            p { class: "text-red-600 dark:text-red-400 text-sm mb-4", "{err}" }
+            ErrorText { class: "mb-4", "{err}" }
         }
         {match &*versions.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
-                    rsx! {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            {t!("daemon-version-list-none")}
-                        }
-                    }
+                    rsx! { HelpText { {t!("daemon-version-list-none")} } }
                 } else {
-                    let search = use_signal(String::new);
-                    let limit = use_signal(|| 20usize);
-                    let sort = use_signal(|| ("version".to_string(), false));
-
-                    let list_clone = list.clone();
-                    let mut filtered: Vec<DaemonVersionRow> = {
-                        let q = search.read().to_lowercase();
-                        if q.is_empty() {
-                            list_clone.clone()
-                        } else {
-                            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
-                        }
-                    };
-                    {
-                        let (key, asc) = sort.read().clone();
-                        filtered.sort_by(|a, b| {
-                            let ord = match key.as_str() {
-                                "added" => a.created_at.cmp(&b.created_at),
-                                _ => a.version.cmp(&b.version),
-                            };
-                            if asc { ord } else { ord.reverse() }
-                        });
-                    }
-                    let total = list.len();
-                    let filtered_count = filtered.len();
-                    let limit_val = *limit.read();
-                    let shown = filtered_count.min(limit_val);
-
-                    rsx! {
-                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                                thead { class: "bg-gray-50 dark:bg-gray-700",
-                                    tr {
-                                        SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
-                                        SortableTh { label: t!("daemon-version-list-col-added"), sort_key: "added".to_string(), sort }
-                                    }
-                                }
-                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                    for v in filtered.into_iter().take(limit_val) {
-                                        {
-                                            let ts = v.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                            rsx! {
-                                                tr { key: "{v.version}",
-                                                    td { class: "px-6 py-4 font-mono text-sm",
-                                                        Link {
-                                                            to: Route::DaemonVersionDetail { version: v.version.clone() },
-                                                            class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                                            "{v.version}"
-                                                        }
-                                                    }
-                                                    td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400", "{ts}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    rsx! { VersionsTable { list: list.clone() } }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
+    }
+}
+
+#[component]
+fn VersionsTable(list: Vec<DaemonVersionRow>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("version".to_string(), false));
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<DaemonVersionRow> = if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone.iter().filter(|e| e.matches_search(&q)).cloned().collect()
+        };
+        let (key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = match key.as_str() {
+                "added" => a.created_at.cmp(&b.created_at),
+                _ => a.version.cmp(&b.version),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
+                SortableTh { label: t!("daemon-version-list-col-added"), sort_key: "added".to_string(), sort }
+            },
+            body: rsx! {
+                for v in filtered.read().iter().take(limit_val) {
+                    VersionRow { key: "{v.version}", row: v.clone() }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn VersionRow(row: DaemonVersionRow) -> Element {
+    let ts = row.created_at.format("%Y-%m-%d %H:%M").to_string();
+    rsx! {
+        tr {
+            TdMono {
+                Link { to: Route::DaemonVersionDetail { version: row.version.clone() }, class: "link",
+                    "{row.version}"
+                }
+            }
+            TdMuted { class: "text-sm", {ts} }
+        }
     }
 }
