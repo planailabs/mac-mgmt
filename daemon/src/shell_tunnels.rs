@@ -125,35 +125,33 @@ pub(crate) fn build_command(
     cmd
 }
 
-// ── WS-based execution ────────────────────────────────────────────────
+// ── Stream-based execution ───────────────────────────────────────────
 
-/// Handle a shell command execution via a dedicated data WebSocket session.
+/// Handle a shell command execution via a data stream session.
 ///
-/// Protocol:
-/// 1. Relay opens data WS to daemon.
-/// 2. Daemon validates the command and spawns it.
-/// 3. Daemon streams text messages `{ "stream": "stdout"|"stderr", "data": "..." }`
+/// Protocol (length-prefixed framing):
+/// 1. Daemon validates the command and spawns it.
+/// 2. Daemon streams JSON messages `{ "stream": "stdout"|"stderr", "data": "..." }`
 ///    as output lines arrive.
-/// 4. On process exit: daemon sends `{ "exit_code": N }` and closes WS.
-/// 5. On timeout (5 min): daemon kills the process and sends `{ "exit_code": -1, "error": "timeout" }`.
+/// 3. On process exit: daemon sends `{ "exit_code": N }` and end-of-stream.
+/// 4. On timeout (5 min): daemon kills the process and sends `{ "exit_code": -1, "error": "timeout" }`.
 #[cfg(feature = "services")]
-pub async fn handle_exec_session(
+pub async fn handle_exec_session<S>(
     tunnel: &ShellTunnel,
     user_arg: Option<&str>,
-    ws: mac_mgmt_ws::ClientWs,
+    stream: &mut S,
     virtual_handler: Option<&VirtualHandler>,
-) {
-    use futures_util::{SinkExt, StreamExt};
-    use mac_mgmt_ws::tungstenite;
+) where
+    S: futures_util::AsyncRead + futures_util::AsyncWrite + Unpin + Send,
+{
+    use crate::p2p::stream_framing;
     use tokio::io::AsyncBufReadExt;
-
-    let (mut sink, _stream) = ws.split();
 
     macro_rules! send_error {
         ($error:expr) => {{
             let msg = serde_json::json!({ "exit_code": -1, "error": $error });
-            let _ = sink.send(tungstenite::Message::Text(msg.to_string().into())).await;
-            let _ = sink.send(tungstenite::Message::Close(None)).await;
+            let _ = stream_framing::write_json(stream, &msg).await;
+            let _ = stream_framing::write_end(stream).await;
             return;
         }};
     }
@@ -166,21 +164,15 @@ pub async fn handle_exec_session(
     // Virtual handler — run callback instead of spawning a process
     if let Some(handler) = virtual_handler {
         let output = handler(user_arg);
-        for (stream, data) in &output.lines {
-            let msg = serde_json::json!({ "stream": stream, "data": data });
-            if sink
-                .send(tungstenite::Message::Text(msg.to_string().into()))
-                .await
-                .is_err()
-            {
+        for (strm, data) in &output.lines {
+            let msg = serde_json::json!({ "stream": strm, "data": data });
+            if stream_framing::write_json(stream, &msg).await.is_err() {
                 return;
             }
         }
         let msg = serde_json::json!({ "exit_code": output.exit_code });
-        let _ = sink
-            .send(tungstenite::Message::Text(msg.to_string().into()))
-            .await;
-        let _ = sink.send(tungstenite::Message::Close(None)).await;
+        let _ = stream_framing::write_json(stream, &msg).await;
+        let _ = stream_framing::write_end(stream).await;
         tracing::info!(
             "virtual shell exec completed: {} (exit={})",
             tunnel.def.name,
@@ -223,16 +215,15 @@ pub async fn handle_exec_session(
                 match line {
                     Ok(Some(data)) => {
                         let msg = serde_json::json!({ "stream": "stdout", "data": data });
-                        if sink.send(tungstenite::Message::Text(msg.to_string().into())).await.is_err() {
+                        if stream_framing::write_json(stream, &msg).await.is_err() {
                             let _ = child.kill().await;
                             return;
                         }
                     }
                     Ok(None) => {
-                        // stdout closed — drain stderr then wait for exit
                         while let Ok(Some(data)) = stderr_reader.next_line().await {
                             let msg = serde_json::json!({ "stream": "stderr", "data": data });
-                            if sink.send(tungstenite::Message::Text(msg.to_string().into())).await.is_err() {
+                            if stream_framing::write_json(stream, &msg).await.is_err() {
                                 let _ = child.kill().await;
                                 return;
                             }
@@ -249,16 +240,15 @@ pub async fn handle_exec_session(
                 match line {
                     Ok(Some(data)) => {
                         let msg = serde_json::json!({ "stream": "stderr", "data": data });
-                        if sink.send(tungstenite::Message::Text(msg.to_string().into())).await.is_err() {
+                        if stream_framing::write_json(stream, &msg).await.is_err() {
                             let _ = child.kill().await;
                             return;
                         }
                     }
                     Ok(None) => {
-                        // stderr closed — drain stdout then wait for exit
                         while let Ok(Some(data)) = stdout_reader.next_line().await {
                             let msg = serde_json::json!({ "stream": "stdout", "data": data });
-                            if sink.send(tungstenite::Message::Text(msg.to_string().into())).await.is_err() {
+                            if stream_framing::write_json(stream, &msg).await.is_err() {
                                 let _ = child.kill().await;
                                 return;
                             }
@@ -275,8 +265,8 @@ pub async fn handle_exec_session(
                 tracing::warn!("shell exec timeout for {} ({}s)", tunnel.def.name, exec_timeout);
                 let _ = child.kill().await;
                 let msg = serde_json::json!({ "exit_code": -1, "error": format!("command timed out after {exec_timeout}s") });
-                let _ = sink.send(tungstenite::Message::Text(msg.to_string().into())).await;
-                let _ = sink.send(tungstenite::Message::Close(None)).await;
+                let _ = stream_framing::write_json(stream, &msg).await;
+                let _ = stream_framing::write_end(stream).await;
                 return;
             }
         }
@@ -292,10 +282,8 @@ pub async fn handle_exec_session(
     };
 
     let msg = serde_json::json!({ "exit_code": exit_code });
-    let _ = sink
-        .send(tungstenite::Message::Text(msg.to_string().into()))
-        .await;
-    let _ = sink.send(tungstenite::Message::Close(None)).await;
+    let _ = stream_framing::write_json(stream, &msg).await;
+    let _ = stream_framing::write_end(stream).await;
     tracing::info!(
         "shell exec completed: {} (exit={})",
         tunnel.def.name,

@@ -767,7 +767,7 @@ impl Daemon {
     }
 
     #[cfg(all(feature = "services", feature = "relay"))]
-    fn update_relay_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+    fn update_relay_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::RemoteSshState) {
         if !self.current_cfg.relay.tunnels_enabled {
             relay_mgr.update_tunnel_defs(vec![]);
             return;
@@ -785,7 +785,7 @@ impl Daemon {
     }
 
     #[cfg(all(feature = "services", feature = "relay"))]
-    fn update_relay_file_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+    fn update_relay_file_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::RemoteSshState) {
         if !self.current_cfg.relay.tunnels_enabled {
             relay_mgr.update_file_tunnel_defs(vec![]);
             return;
@@ -795,7 +795,7 @@ impl Daemon {
     }
 
     #[cfg(all(feature = "services", feature = "relay"))]
-    fn update_relay_shell_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::Manager) {
+    fn update_relay_shell_tunnel_defs(&self, relay_mgr: &crate::remote_ssh::RemoteSshState) {
         if !self.current_cfg.relay.tunnels_enabled {
             relay_mgr.update_shell_tunnel_defs(vec![]);
             return;
@@ -1080,16 +1080,55 @@ pub async fn run(
     tracing::info!("instance ID (host key fingerprint): {instance_id}");
 
     #[cfg(feature = "relay")]
-    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::Manager::new(
-        cfg.relay.url.clone(),
+    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::RemoteSshState::new(
         server_url.clone(),
         server_token.clone(),
-        instance_id.clone(),
-        Arc::clone(&host_key),
-        metrics_port,
         cfg.relay.remote_ssh_enabled,
-        cfg.relay.fake_origin_local,
     );
+
+    // Start the libp2p P2P manager if relay_multiaddr is configured.
+    #[cfg(feature = "relay")]
+    let mut _p2p_mgr = if cfg.relay.relay_multiaddr.is_some() || cfg.relay.mdns_enabled {
+        let relay_multiaddr = cfg
+            .relay
+            .relay_multiaddr
+            .as_deref()
+            .and_then(|s| s.parse::<libp2p::Multiaddr>().ok());
+        let handler_state = std::sync::Arc::new(crate::p2p::handler::HandlerState {
+            ssh_allowed: relay_mgr.ssh_allowed.clone(),
+            tunnel_defs: relay_mgr.tunnel_defs.clone(),
+            file_tunnel_registry: relay_mgr.file_tunnel_registry(),
+            shell_tunnel_registry: relay_mgr.shell_tunnel_registry(),
+            metrics_port,
+            fake_origin_local: cfg.relay.fake_origin_local,
+            client: reqwest::Client::new(),
+        });
+        let p2p_config = crate::p2p::P2pConfig {
+            instance_id: instance_id.clone(),
+            cluster_psk: cfg
+                .relay
+                .cluster_psk
+                .as_ref()
+                .and_then(|s| hex::decode(s.expose()).ok()),
+            relay_multiaddr,
+            mdns_enabled: cfg.relay.mdns_enabled,
+            p2p_port: cfg.relay.p2p_port,
+            ai_proxy_distribution: cfg.relay.ai_proxy_distribution,
+            handler_state: Some(handler_state),
+        };
+        match crate::p2p::P2pManager::new(&host_key, p2p_config).await {
+            Ok(mgr) => {
+                tracing::info!(peer_id = %mgr.local_peer_id, "p2p swarm started");
+                Some(mgr)
+            }
+            Err(e) => {
+                tracing::error!("failed to start p2p swarm: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Start server push WebSocket if server is configured.
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -1209,7 +1248,7 @@ pub async fn run(
         () => {{
             #[cfg(feature = "relay")]
             {
-                relay_mgr.relay_proxy_hostname()
+                None::<String>
             }
             #[cfg(not(feature = "relay"))]
             {
@@ -1221,7 +1260,7 @@ pub async fn run(
         () => {{
             #[cfg(feature = "relay")]
             {
-                relay_mgr.relay_proxy_url()
+                None::<String>
             }
             #[cfg(not(feature = "relay"))]
             {
@@ -1644,17 +1683,11 @@ pub async fn run_sim(
     let instance_id = crate::host_keys::fingerprint_hex(&host_key);
     tracing::info!("sim daemon started, instance ID: {instance_id}");
 
-    // Relay: spawn relay manager if relay URL is configured.
     #[cfg(feature = "relay")]
-    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::Manager::new(
-        cfg.relay.url.clone(),
+    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::RemoteSshState::new(
         server_url.clone(),
         server_token.clone(),
-        instance_id.clone(),
-        Arc::clone(&host_key),
-        metrics_port,
         cfg.relay.remote_ssh_enabled,
-        cfg.relay.fake_origin_local,
     );
 
     // Start server push SSE if server is configured.
@@ -1718,7 +1751,7 @@ pub async fn run_sim(
         () => {{
             #[cfg(feature = "relay")]
             {
-                relay_mgr.relay_proxy_hostname()
+                None::<String>
             }
             #[cfg(not(feature = "relay"))]
             {
@@ -1730,7 +1763,7 @@ pub async fn run_sim(
         () => {{
             #[cfg(feature = "relay")]
             {
-                relay_mgr.relay_proxy_url()
+                None::<String>
             }
             #[cfg(not(feature = "relay"))]
             {
@@ -1902,15 +1935,10 @@ pub async fn run_sim_with_services(
     tracing::info!("sim daemon (with supervisor) started, instance ID: {instance_id}");
 
     #[cfg(feature = "relay")]
-    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::Manager::new(
-        cfg.relay.url.clone(),
+    let (mut relay_mgr, mut relay_heartbeat_rx) = crate::remote_ssh::RemoteSshState::new(
         server_url.clone(),
         server_token.clone(),
-        instance_id.clone(),
-        Arc::clone(&host_key),
-        metrics_port,
         cfg.relay.remote_ssh_enabled,
-        cfg.relay.fake_origin_local,
     );
 
     let mut push_rx = if let (Some(url), Some(token)) = (&server_url, &server_token) {
@@ -1931,7 +1959,7 @@ pub async fn run_sim_with_services(
         () => {{
             #[cfg(feature = "relay")]
             {
-                relay_mgr.relay_proxy_hostname()
+                None::<String>
             }
             #[cfg(not(feature = "relay"))]
             {
@@ -1943,7 +1971,7 @@ pub async fn run_sim_with_services(
         () => {{
             #[cfg(feature = "relay")]
             {
-                relay_mgr.relay_proxy_url()
+                None::<String>
             }
             #[cfg(not(feature = "relay"))]
             {

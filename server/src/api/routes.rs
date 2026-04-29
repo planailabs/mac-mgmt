@@ -681,10 +681,61 @@ pub async fn get_config(
     match config {
         Some(mut json) => {
             mac_mgmt_common::config_migrate::migrate(&mut json);
+
+            // Inject the cluster's p2p PSK into relay.cluster_psk.
+            // Generate one if it doesn't exist yet.
+            if let Ok(psk_hex) =
+                ensure_cluster_psk(pool.inner(), auth.cluster_id).await
+            {
+                let relay = json
+                    .as_object_mut()
+                    .and_then(|o| {
+                        o.entry("relay")
+                            .or_insert_with(|| serde_json::json!({}))
+                            .as_object_mut()
+                    });
+                if let Some(relay) = relay {
+                    relay.insert(
+                        "cluster_psk".to_string(),
+                        serde_json::Value::String(psk_hex),
+                    );
+                }
+            }
+
             Ok(Json(json))
         }
         None => Err(Status::NotFound),
     }
+}
+
+/// Fetch or generate the cluster's p2p pre-shared key (32 bytes, hex-encoded).
+async fn ensure_cluster_psk(
+    pool: &PgPool,
+    cluster_id: uuid::Uuid,
+) -> Result<String, sqlx::Error> {
+    // Try to read existing PSK.
+    let existing: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT p2p_psk FROM clusters WHERE id = $1",
+    )
+    .bind(cluster_id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(Some(psk)) = existing.map(Some) {
+        if !psk.is_empty() {
+            return Ok(hex::encode(&psk));
+        }
+    }
+
+    // Generate and store a new 32-byte PSK.
+    let psk: [u8; 32] = rand::random();
+    sqlx::query("UPDATE clusters SET p2p_psk = $1 WHERE id = $2")
+        .bind(&psk[..])
+        .bind(cluster_id)
+        .execute(pool)
+        .await?;
+
+    Ok(hex::encode(psk))
 }
 
 // ── Update target (for daemon self-update) ──────────────────────────

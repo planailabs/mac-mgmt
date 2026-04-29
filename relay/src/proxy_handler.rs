@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::bridge;
 use crate::daemon_registry::{ControlMsg, DaemonRegistry, ProxyResponse, ProxyStreamEvent};
-use crate::ws_handler::{SelfInfo, validate_token};
+use crate::auth::{SelfInfo, validate_token};
 
 /// Cache validated proxy tokens for 5 minutes to avoid hitting the server API
 /// on every single proxied request.
@@ -59,6 +59,8 @@ pub struct ProxyState {
     pub proxy_hostname: String,
     /// Origin suffixes allowed for CORS on the file API (e.g. `["localhost"]`).
     pub cors_origins: Vec<String>,
+    /// libp2p relay swarm for sending control requests to daemons via p2p.
+    pub relay_swarm: Option<Arc<crate::p2p::RelaySwarm>>,
 }
 
 /// Shared CORS config passed via axum Extension.
@@ -629,6 +631,37 @@ async fn proxy_request(
         return (StatusCode::FORBIDDEN, "insufficient scope").into_response();
     }
 
+    // Try libp2p first if the daemon has a PeerId and relay_swarm is available.
+    if let Some(ref swarm) = state.relay_swarm {
+        if let Some(peer_id) = state.registry.resolve_peer_id(&instance_id) {
+            let request_id = Uuid::new_v4().to_string();
+            let headers: Vec<(String, String)> = body.headers.into_iter().collect();
+            let req = serde_json::json!({
+                "type": "proxy_request",
+                "request_id": request_id,
+                "tunnel_name": tunnel_name,
+                "method": body.method,
+                "path": body.path,
+                "headers": headers,
+                "body": body.body,
+            });
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                swarm.send_request(peer_id, req),
+            )
+            .await
+            {
+                Ok(Ok(resp)) => return Json(resp).into_response(),
+                Ok(Err(e)) => {
+                    tracing::warn!(%peer_id, "p2p proxy request failed: {e}");
+                    return StatusCode::BAD_GATEWAY.into_response();
+                }
+                Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+            }
+        }
+    }
+
+    // Fallback to WS control channel
     let Some((control_tx, _)) = state.registry.find_tunnel(&instance_id, &tunnel_name) else {
         return (StatusCode::NOT_FOUND, "Tunnel not found").into_response();
     };

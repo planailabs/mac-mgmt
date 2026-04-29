@@ -6,10 +6,19 @@ pub mod usage;
 
 use mac_mgmt_common::{AiProxyConfig, OllamaConfig, UnslothConfig};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::RwLock;
 
 /// SHA2-256 multihash code per the multiformats table.
 const SHA2_256: u64 = 0x12;
+
+/// A request to forward to a peer via libp2p.
+#[cfg(feature = "relay")]
+pub struct PeerProxyRequest {
+    pub peer_id: libp2p::PeerId,
+    pub body: serde_json::Value,
+    pub response_tx: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+}
 
 /// Shared state for the AI proxy, held behind Arc for sharing with Rocket.
 pub struct AiProxyState {
@@ -17,6 +26,25 @@ pub struct AiProxyState {
     pub backends: Arc<RwLock<BackendMap>>,
     pub usage_tracker: Arc<usage::UsageTracker>,
     pub client: reqwest::Client,
+    /// Number of currently active inference requests (for load balancing).
+    pub active_jobs: Arc<AtomicU32>,
+    /// Peer registry for load-aware routing (set when p2p is active).
+    #[cfg(feature = "relay")]
+    pub p2p_peer_registry: Option<Arc<RwLock<crate::p2p::discovery::PeerRegistry>>>,
+    /// Sender for AI proxy requests to peers via libp2p.
+    #[cfg(feature = "relay")]
+    pub p2p_request_tx: Option<tokio::sync::mpsc::Sender<PeerProxyRequest>>,
+}
+
+/// RAII guard that decrements the active job count on drop.
+pub struct ActiveJobGuard {
+    counter: Arc<AtomicU32>,
+}
+
+impl Drop for ActiveJobGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Pre-computed key entry for O(1) lookup by multihash.
@@ -62,6 +90,19 @@ impl AiProxyState {
             backends: Arc::new(RwLock::new(backends)),
             usage_tracker,
             client: reqwest::Client::new(),
+            active_jobs: Arc::new(AtomicU32::new(0)),
+            #[cfg(feature = "relay")]
+            p2p_peer_registry: None,
+            #[cfg(feature = "relay")]
+            p2p_request_tx: None,
+        }
+    }
+
+    /// Increment the active job counter. Returns a guard that decrements on drop.
+    pub fn track_job(&self) -> ActiveJobGuard {
+        self.active_jobs.fetch_add(1, Ordering::Relaxed);
+        ActiveJobGuard {
+            counter: Arc::clone(&self.active_jobs),
         }
     }
 

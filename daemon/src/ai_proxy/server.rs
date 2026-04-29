@@ -20,6 +20,7 @@ async fn chat_completions(
     (Status, Json<ErrorResponse>),
 > {
     let start = std::time::Instant::now();
+    let _job_guard = state.track_job();
     let request = body.into_inner();
     let model = request.model.clone();
     let is_stream = request.stream.unwrap_or(false);
@@ -37,7 +38,77 @@ async fn chat_completions(
             )
         })?;
 
-    let backend_name = resolved.backend_name.clone();
+    let backend_name = resolved.backend_name().to_string();
+
+    // Handle peer forwarding via libp2p
+    #[cfg(feature = "relay")]
+    if let backend::ResolvedBackend::Peer { peer_id, .. } = &resolved {
+        if let Some(ref tx) = state.p2p_request_tx {
+            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+            let body = serde_json::to_value(&request).map_err(|e| {
+                (
+                    Status::InternalServerError,
+                    Json(ErrorResponse::new(
+                        &format!("serialize error: {e}"),
+                        "server_error",
+                        None,
+                    )),
+                )
+            })?;
+            let _ = tx
+                .send(super::PeerProxyRequest {
+                    peer_id: *peer_id,
+                    body,
+                    response_tx: resp_tx,
+                })
+                .await;
+            let peer_resp = resp_rx.await.map_err(|_| {
+                (
+                    Status::BadGateway,
+                    Json(ErrorResponse::new(
+                        "peer request dropped",
+                        "server_error",
+                        Some("peer_error"),
+                    )),
+                )
+            })?;
+            let resp_json = peer_resp.map_err(|e| {
+                (
+                    Status::BadGateway,
+                    Json(ErrorResponse::new(&e, "server_error", Some("peer_error"))),
+                )
+            })?;
+            let response: ChatCompletionResponse =
+                serde_json::from_value(resp_json).map_err(|e| {
+                    (
+                        Status::BadGateway,
+                        Json(ErrorResponse::new(
+                            &format!("peer response parse error: {e}"),
+                            "server_error",
+                            None,
+                        )),
+                    )
+                })?;
+
+            let (input_tokens, output_tokens) = match &response.usage {
+                Some(u) => (u.prompt_tokens, u.completion_tokens),
+                None => (0, 0),
+            };
+            let elapsed = start.elapsed();
+            state.usage_tracker.record(UsageEvent {
+                ts: chrono::Utc::now(),
+                key_hash: auth.key_hash,
+                key_name: auth.key_name,
+                model,
+                input_tokens,
+                output_tokens,
+                latency_ms: elapsed.as_millis() as u64,
+                backend: backend_name,
+            });
+
+            return Ok(Either::Left(Json(response)));
+        }
+    }
 
     if is_stream {
         let resp = backend::proxy_chat_completion_stream(&state.client, &resolved, &request)

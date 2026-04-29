@@ -21,6 +21,7 @@ use serde_json::Value;
 /// is idempotent, calling this on an already-current config is a no-op.
 pub fn migrate(config: &mut Value) {
     migrate_001_provider_fields(config);
+    migrate_002_relay_libp2p(config);
 }
 
 // ── Migration 001 ─────────────────────────────────────────────────────
@@ -50,6 +51,72 @@ fn migrate_001_provider_fields(config: &mut Value) {
             *cloud = Value::Array(vec![obj]);
         }
     }
+}
+
+// ── Migration 002 ─────────────────────────────────────────────────────
+//
+// Context: relay switched from custom WebSocket to libp2p (p2p).
+//
+// 1. Convert `relay.url` (ws:// or wss:// URL) to `relay.relay_multiaddr`
+//    as a libp2p multiaddress.
+// 2. Remove the old `relay.url` key.
+
+fn migrate_002_relay_libp2p(config: &mut Value) {
+    let Some(relay) = config.get_mut("relay").and_then(|r| r.as_object_mut()) else {
+        return;
+    };
+
+    // Only migrate if `url` is present and `relay_multiaddr` is not already set.
+    let has_multiaddr = relay
+        .get("relay_multiaddr")
+        .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()));
+    if has_multiaddr {
+        // Already migrated — just clean up old key if still present.
+        relay.remove("url");
+        return;
+    }
+
+    if let Some(url_val) = relay.remove("url") {
+        if let Some(url) = url_val.as_str() {
+            if let Some(multiaddr) = ws_url_to_multiaddr(url) {
+                relay.insert(
+                    "relay_multiaddr".to_string(),
+                    Value::String(multiaddr),
+                );
+            }
+        }
+    }
+}
+
+/// Best-effort conversion of a WebSocket URL to a libp2p multiaddress.
+///
+/// Examples:
+/// - `wss://relay.example.com`       → `/dns4/relay.example.com/tcp/443/wss`
+/// - `wss://relay.example.com:4001`   → `/dns4/relay.example.com/tcp/4001/wss`
+/// - `ws://localhost:8080`            → `/dns4/localhost/tcp/8080/ws`
+fn ws_url_to_multiaddr(url: &str) -> Option<String> {
+    let (scheme, rest) = if let Some(r) = url.strip_prefix("wss://") {
+        ("wss", r)
+    } else if let Some(r) = url.strip_prefix("ws://") {
+        ("ws", r)
+    } else {
+        return None;
+    };
+
+    // Strip path (we only care about host:port)
+    let host_port = rest.split('/').next().unwrap_or(rest);
+    let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
+        // Check if p is a valid port number (not part of an IPv6 address)
+        if let Ok(port_num) = p.parse::<u16>() {
+            (h, port_num)
+        } else {
+            (host_port, if scheme == "wss" { 443 } else { 80 })
+        }
+    } else {
+        (host_port, if scheme == "wss" { 443 } else { 80 })
+    };
+
+    Some(format!("/dns4/{host}/tcp/{port}/{scheme}"))
 }
 
 #[cfg(test)]
@@ -162,5 +229,104 @@ mod tests {
         migrate(&mut cfg);
         let _: crate::ClusterConfig =
             serde_json::from_value(cfg).expect("migrated config must parse as ClusterConfig");
+    }
+
+    // ── Migration 002 tests ──────────────────────────────────────────
+
+    #[test]
+    fn migrate_002_converts_wss_url_to_multiaddr() {
+        let mut cfg = json!({
+            "relay": {
+                "url": "wss://relay.example.com"
+            }
+        });
+        migrate(&mut cfg);
+        assert_eq!(
+            cfg["relay"]["relay_multiaddr"],
+            "/dns4/relay.example.com/tcp/443/wss"
+        );
+        assert!(cfg["relay"].get("url").is_none());
+    }
+
+    #[test]
+    fn migrate_002_converts_wss_url_with_port() {
+        let mut cfg = json!({
+            "relay": {
+                "url": "wss://relay.example.com:4001"
+            }
+        });
+        migrate(&mut cfg);
+        assert_eq!(
+            cfg["relay"]["relay_multiaddr"],
+            "/dns4/relay.example.com/tcp/4001/wss"
+        );
+    }
+
+    #[test]
+    fn migrate_002_converts_ws_url() {
+        let mut cfg = json!({
+            "relay": {
+                "url": "ws://localhost:8080"
+            }
+        });
+        migrate(&mut cfg);
+        assert_eq!(
+            cfg["relay"]["relay_multiaddr"],
+            "/dns4/localhost/tcp/8080/ws"
+        );
+    }
+
+    #[test]
+    fn migrate_002_does_not_overwrite_existing_multiaddr() {
+        let mut cfg = json!({
+            "relay": {
+                "url": "wss://old.example.com",
+                "relay_multiaddr": "/dns4/new.example.com/tcp/4001/wss"
+            }
+        });
+        migrate(&mut cfg);
+        assert_eq!(
+            cfg["relay"]["relay_multiaddr"],
+            "/dns4/new.example.com/tcp/4001/wss"
+        );
+        assert!(cfg["relay"].get("url").is_none());
+    }
+
+    #[test]
+    fn migrate_002_no_relay_section() {
+        let mut cfg = json!({
+            "ollama": { "enabled": true }
+        });
+        let before = cfg.clone();
+        migrate(&mut cfg);
+        assert_eq!(cfg, before);
+    }
+
+    #[test]
+    fn migrate_002_idempotent() {
+        let mut cfg = json!({
+            "relay": {
+                "url": "wss://relay.example.com:4001"
+            }
+        });
+        migrate(&mut cfg);
+        let after_first = cfg.clone();
+        migrate(&mut cfg);
+        assert_eq!(cfg, after_first, "second run must be a no-op");
+    }
+
+    #[test]
+    fn migrate_002_relay_config_parses() {
+        let mut cfg = json!({
+            "relay": {
+                "url": "wss://relay.example.com",
+                "remote_ssh_enabled": true,
+                "tunnels_enabled": true,
+                "fake_origin_local": true
+            }
+        });
+        migrate(&mut cfg);
+        let _: crate::ClusterConfig =
+            serde_json::from_value(cfg).expect("migrated relay config must parse");
     }
 }

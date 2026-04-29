@@ -129,6 +129,8 @@ pub struct DaemonConn {
     pub listener_handle: tokio::task::JoinHandle<()>,
     /// TCP tunnels advertised by the daemon's managed services.
     pub tunnels: Vec<ServiceTunnel>,
+    /// libp2p PeerId if the daemon is connected via p2p.
+    pub peer_id: Option<libp2p::PeerId>,
 }
 
 #[derive(Debug, Serialize)]
@@ -485,5 +487,26 @@ impl DaemonRegistry {
         let full_id = self.resolve_prefix(instance_id)?;
         let daemons = self.daemons.read().unwrap();
         daemons.get(&full_id).and_then(|d| d.cluster_id)
+    }
+
+    /// Get the PeerId for a daemon by full instance_id.
+    pub fn get_peer_id(&self, instance_id: &str) -> Option<libp2p::PeerId> {
+        let daemons = self.daemons.read().unwrap();
+        daemons.get(instance_id).and_then(|d| d.peer_id)
+    }
+
+    /// Get the PeerId for a daemon by prefix.
+    pub fn resolve_peer_id(&self, prefix: &str) -> Option<libp2p::PeerId> {
+        let full_id = self.resolve_prefix(prefix)?;
+        self.get_peer_id(&full_id)
+    }
+
+    /// Set the PeerId for a daemon (called when daemon connects via libp2p).
+    pub fn set_peer_id(&self, instance_id: &str, peer_id: libp2p::PeerId) {
+        let mut daemons = self.daemons.write().unwrap();
+        if let Some(conn) = daemons.get_mut(instance_id) {
+            conn.peer_id = Some(peer_id);
+            tracing::info!(%instance_id, %peer_id, "p2p peer ID set for daemon");
+        }
     }
 }

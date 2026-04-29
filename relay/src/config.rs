@@ -43,6 +43,14 @@ pub struct RelayConfig {
     /// Defaults to the current working directory.
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
+
+    /// QUIC listen port for libp2p p2p connections (default: 4001)
+    #[serde(default = "default_p2p_port")]
+    pub p2p_port: u16,
+
+    /// Path to Ed25519 private key file for libp2p identity (PEM format).
+    /// If not set, a new key is generated and stored at `{data_dir}/relay_ed25519_key`.
+    pub p2p_key_file: Option<String>,
 }
 
 fn default_cors_origins() -> Vec<String> {
@@ -67,6 +75,10 @@ fn default_ssh_port_max() -> u16 {
 
 fn default_max_daemons() -> usize {
     1000
+}
+
+fn default_p2p_port() -> u16 {
+    4001
 }
 
 pub fn load(path: &str) -> Result<RelayConfig> {

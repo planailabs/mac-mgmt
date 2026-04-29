@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use futures_util::{SinkExt, StreamExt};
-use mac_mgmt_ws::tungstenite;
+use futures_util::{AsyncRead, AsyncWrite};
 
 #[cfg(feature = "services")]
 use crate::managed_service::{FileTunnel, FileTunnelDef};
@@ -439,87 +438,79 @@ pub(crate) fn write_file(
 
 // ── File read (data session) ────────────────────────────────────────────
 
-/// Handle a file read via a dedicated data WebSocket session.
-/// Protocol:
-/// 1. Daemon sends text `{ status, size, mtime }` (file metadata)
+/// Handle a file read via a data stream session.
+///
+/// Protocol (length-prefixed framing):
+/// 1. Daemon sends JSON `{ status, size, mtime }` (file metadata)
 /// 2. Daemon sends binary chunks (raw file bytes, ≤ STREAM_CHUNK_SIZE)
-/// 3. Daemon closes WS
+/// 3. Daemon sends end-of-stream marker
 #[cfg(feature = "services")]
-pub async fn handle_read_session(
+pub async fn handle_read_session<S>(
     tunnel: &FileTunnel,
     rel_path: Option<&str>,
-    ws: mac_mgmt_ws::ClientWs,
-) {
-    let (mut sink, _stream) = ws.split();
+    stream: &mut S,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use crate::p2p::stream_framing;
 
     let (content, mtime) = match read_file(tunnel, rel_path) {
         Ok(result) => result,
         Err((status, error)) => {
             let msg = serde_json::json!({ "status": status, "error": error });
-            let _ = sink.send(tungstenite::Message::Text(msg.to_string().into())).await;
-            let _ = sink.send(tungstenite::Message::Close(None)).await;
+            let _ = stream_framing::write_json(stream, &msg).await;
+            let _ = stream_framing::write_end(stream).await;
             return;
         }
     };
 
     let size = content.len();
     let header = serde_json::json!({ "status": 200, "size": size, "mtime": mtime.unwrap_or(0) });
-    if sink
-        .send(tungstenite::Message::Text(header.to_string().into()))
-        .await
-        .is_err()
-    {
+    if stream_framing::write_json(stream, &header).await.is_err() {
         return;
     }
 
-    // Stream content in chunks
     for chunk in content.chunks(STREAM_CHUNK_SIZE) {
-        if sink
-            .send(tungstenite::Message::Binary(chunk.to_vec().into()))
-            .await
-            .is_err()
-        {
+        if stream_framing::write_binary(stream, chunk).await.is_err() {
             return;
         }
     }
 
-    let _ = sink.send(tungstenite::Message::Close(None)).await;
+    let _ = stream_framing::write_end(stream).await;
     tracing::debug!("file read session completed");
 }
 
 // ── File write (data session) ───────────────────────────────────────────
 
-/// Handle a file write via a dedicated data WebSocket session.
-/// Protocol:
-/// 1. Daemon sends text `{ "ready": true }` to signal readiness
+/// Handle a file write via a data stream session.
+///
+/// Protocol (length-prefixed framing):
+/// 1. Daemon sends JSON `{ "ready": true }` to signal readiness
 /// 2. Client sends binary chunks (file content)
-/// 3. Client sends text `"end_request"` to signal completion
-/// 4. Daemon validates + commits, sends text `{ status, mtime }` or `{ status, error }`
-/// 5. Daemon closes WS
+/// 3. Client sends end-of-stream marker
+/// 4. Daemon validates + commits, sends JSON `{ status, mtime }` or `{ status, error }`
+/// 5. Daemon sends end-of-stream marker
 #[cfg(feature = "services")]
-pub async fn handle_write_session(
+pub async fn handle_write_session<S>(
     tunnel: &FileTunnel,
     rel_path: Option<&str>,
     expected_mtime: Option<i64>,
-    ws: mac_mgmt_ws::ClientWs,
-) {
-    let (mut sink, mut stream) = ws.split();
+    stream: &mut S,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use crate::p2p::stream_framing::{self, FrameMsg};
 
     macro_rules! send_result {
         ($result:expr) => {{
-            let _ = sink
-                .send(tungstenite::Message::Text($result.to_string().into()))
-                .await;
-            let _ = sink.send(tungstenite::Message::Close(None)).await;
+            let _ = stream_framing::write_json(stream, &$result).await;
+            let _ = stream_framing::write_end(stream).await;
             return;
         }};
     }
 
     // Signal readiness
-    if sink
-        .send(tungstenite::Message::Text(
-            serde_json::json!({ "ready": true }).to_string().into(),
-        ))
+    if stream_framing::write_json(stream, &serde_json::json!({ "ready": true }))
         .await
         .is_err()
     {
@@ -528,33 +519,32 @@ pub async fn handle_write_session(
 
     // Receive file content into memory
     let mut content = Vec::new();
-    while let Some(msg) = stream.next().await {
-        match msg {
-            Ok(tungstenite::Message::Binary(data)) => {
+    loop {
+        match stream_framing::read_frame(stream).await {
+            Ok(Some(FrameMsg::Binary(data))) => {
                 content.extend_from_slice(&data);
                 if content.len() as u64 > MAX_FILE_SIZE {
-                    send_result!(
-                        serde_json::json!({ "status": 413, "error": "file too large" })
-                    );
+                    send_result!(serde_json::json!({ "status": 413, "error": "file too large" }));
                 }
             }
-            Ok(tungstenite::Message::Text(t)) if &*t == "end_request" => break,
-            Ok(tungstenite::Message::Close(_)) | Err(_) => return,
-            _ => {}
+            Ok(Some(FrameMsg::End)) | Ok(None) => break,
+            Ok(Some(FrameMsg::Json(_))) => {
+                // JSON during data phase = end signal (backwards compat)
+                break;
+            }
+            Err(_) => return,
         }
     }
 
     // Write using shared core
     match write_file(tunnel, rel_path, &content, expected_mtime) {
         Ok(mtime) => {
-            let _ = sink
-                .send(tungstenite::Message::Text(
-                    serde_json::json!({ "status": 200, "mtime": mtime })
-                        .to_string()
-                        .into(),
-                ))
-                .await;
-            let _ = sink.send(tungstenite::Message::Close(None)).await;
+            let _ = stream_framing::write_json(
+                stream,
+                &serde_json::json!({ "status": 200, "mtime": mtime }),
+            )
+            .await;
+            let _ = stream_framing::write_end(stream).await;
         }
         Err((status, error)) => {
             send_result!(serde_json::json!({ "status": status, "error": error }));

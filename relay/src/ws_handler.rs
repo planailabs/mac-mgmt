@@ -251,6 +251,7 @@ async fn handle_daemon_ws(
         control_tx,
         listener_handle,
         tunnels: Vec::new(),
+        peer_id: None,
     };
 
     state.registry.register(conn);

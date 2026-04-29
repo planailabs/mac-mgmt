@@ -1,34 +1,101 @@
 use super::types::*;
 use super::{AiProxyState, BackendEndpoint};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 /// Resolved backend for a model request.
-pub struct ResolvedBackend {
-    pub endpoint: BackendEndpoint,
-    pub backend_name: String,
+pub enum ResolvedBackend {
+    /// Local backend (Ollama, Unsloth, etc.)
+    Local {
+        endpoint: BackendEndpoint,
+        backend_name: String,
+    },
+    /// Remote peer in the cluster (forwarded via libp2p).
+    #[cfg(feature = "relay")]
+    Peer {
+        peer_id: libp2p::PeerId,
+        backend_name: String,
+    },
+}
+
+impl ResolvedBackend {
+    pub fn backend_name(&self) -> &str {
+        match self {
+            ResolvedBackend::Local { backend_name, .. } => backend_name,
+            #[cfg(feature = "relay")]
+            ResolvedBackend::Peer { backend_name, .. } => backend_name,
+        }
+    }
 }
 
 /// Resolve which backend to use for a given model name.
+///
+/// When `p2p_mgr` is provided and AI proxy distribution is enabled,
+/// compares local load against cluster peers and routes to the
+/// least-loaded node.
 pub async fn resolve_backend(
     state: &Arc<AiProxyState>,
     _model: &str,
 ) -> Option<ResolvedBackend> {
     let backends = state.backends.read().await;
 
-    // Check unsloth first (more specific — only handles its configured model)
+    // Try local backends first
+    let local = resolve_local(&backends);
+    let has_local = local.is_some();
+
+    #[cfg(feature = "relay")]
+    if let Some(ref p2p) = state.p2p_peer_registry {
+        let local_jobs = state.active_jobs.load(Ordering::Relaxed);
+        let registry = p2p.read().await;
+
+        if has_local {
+            // Local is available — but check if a peer has fewer jobs
+            if let Some((peer_id, _ad)) = registry.least_loaded_peer_below(local_jobs) {
+                tracing::debug!(
+                    %peer_id, local_jobs, peer_jobs = _ad.active_jobs,
+                    "routing to less-loaded peer"
+                );
+                return Some(ResolvedBackend::Peer {
+                    peer_id,
+                    backend_name: _ad.backends.first()
+                        .map(|b| b.name.clone())
+                        .unwrap_or_else(|| "unknown".into()),
+                });
+            }
+        } else {
+            // No local backend — try any peer
+            if let Some((peer_id, _ad)) = registry.least_loaded_peer() {
+                tracing::debug!(
+                    %peer_id,
+                    "no local backend, routing to peer"
+                );
+                return Some(ResolvedBackend::Peer {
+                    peer_id,
+                    backend_name: _ad.backends.first()
+                        .map(|b| b.name.clone())
+                        .unwrap_or_else(|| "unknown".into()),
+                });
+            }
+        }
+    }
+
+    local
+}
+
+fn resolve_local(backends: &super::BackendMap) -> Option<ResolvedBackend> {
+    // Unsloth if it's the only backend
     if let Some(ref unsloth) = backends.unsloth {
-        // Unsloth is used if model matches or if it's the only backend
         if backends.ollama.is_none() {
-            return Some(ResolvedBackend {
+            return Some(ResolvedBackend::Local {
                 endpoint: unsloth.clone(),
                 backend_name: "unsloth".to_string(),
             });
         }
     }
 
-    // Default to Ollama (handles arbitrary models, will pull if needed)
+    // Default to Ollama
     if let Some(ref ollama) = backends.ollama {
-        return Some(ResolvedBackend {
+        return Some(ResolvedBackend::Local {
             endpoint: ollama.clone(),
             backend_name: "ollama".to_string(),
         });
@@ -36,7 +103,7 @@ pub async fn resolve_backend(
 
     // Fall back to Unsloth
     if let Some(ref unsloth) = backends.unsloth {
-        return Some(ResolvedBackend {
+        return Some(ResolvedBackend::Local {
             endpoint: unsloth.clone(),
             backend_name: "unsloth".to_string(),
         });
@@ -45,13 +112,20 @@ pub async fn resolve_backend(
     None
 }
 
-/// Proxy a non-streaming chat completion request.
+/// Proxy a non-streaming chat completion request to a local backend.
 pub async fn proxy_chat_completion(
     client: &reqwest::Client,
     backend: &ResolvedBackend,
     request: &ChatCompletionRequest,
 ) -> Result<ChatCompletionResponse, ProxyError> {
-    let url = format!("{}/v1/chat/completions", backend.endpoint.base_url());
+    let endpoint = match backend {
+        ResolvedBackend::Local { endpoint, .. } => endpoint,
+        #[cfg(feature = "relay")]
+        ResolvedBackend::Peer { .. } => {
+            return Err(ProxyError::Backend("peer proxy not handled here".into()));
+        }
+    };
+    let url = format!("{}/v1/chat/completions", endpoint.base_url());
 
     let resp = client
         .post(&url)
@@ -78,7 +152,14 @@ pub async fn proxy_chat_completion_stream(
     backend: &ResolvedBackend,
     request: &ChatCompletionRequest,
 ) -> Result<reqwest::Response, ProxyError> {
-    let url = format!("{}/v1/chat/completions", backend.endpoint.base_url());
+    let endpoint = match backend {
+        ResolvedBackend::Local { endpoint, .. } => endpoint,
+        #[cfg(feature = "relay")]
+        ResolvedBackend::Peer { .. } => {
+            return Err(ProxyError::Backend("peer proxy not handled here".into()));
+        }
+    };
+    let url = format!("{}/v1/chat/completions", endpoint.base_url());
 
     let resp = client
         .post(&url)

@@ -10,10 +10,12 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
+mod auth;
 mod bridge;
 mod config;
 mod daemon_registry;
 mod metrics_federation;
+mod p2p;
 mod proxy_handler;
 mod ssh_listener;
 mod ws_handler;
@@ -72,6 +74,18 @@ async fn main() -> Result<()> {
 
     bridge::spawn_cleanup_task();
 
+    // Start the libp2p swarm (circuit relay server + control protocol)
+    let key_path = cfg.p2p_key_file.as_deref().unwrap_or("relay_ed25519_key");
+    let key_path = if std::path::Path::new(key_path).is_absolute() {
+        std::path::PathBuf::from(key_path)
+    } else {
+        data_dir.join(key_path)
+    };
+    let relay_swarm = Arc::new(
+        p2p::RelaySwarm::start(cfg.p2p_port, &key_path, Arc::clone(&registry)).await?,
+    );
+    tracing::info!(peer_id = %relay_swarm.local_peer_id, "p2p relay swarm started");
+
     let registry_cleanup = Arc::clone(&registry);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
@@ -97,6 +111,7 @@ async fn main() -> Result<()> {
             server_api_url: cfg.server_api_url.clone(),
             proxy_hostname: proxy_hostname.clone(),
             cors_origins: cfg.cors_origins.clone(),
+            relay_swarm: Some(relay_swarm.clone()),
         };
         (proxy_hostname.clone(), proxy_handler::router(proxy_state))
     });

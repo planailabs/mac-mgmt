@@ -31,6 +31,8 @@ pub mod nix;
 pub mod notify;
 pub mod os_mgmt;
 #[cfg(feature = "relay")]
+pub mod p2p;
+#[cfg(feature = "relay")]
 pub mod remote_ssh;
 pub mod scripts;
 #[cfg(feature = "self-update")]

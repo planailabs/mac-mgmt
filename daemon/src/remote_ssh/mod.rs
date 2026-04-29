@@ -1,10 +1,10 @@
 pub mod fifo_watcher;
 pub mod host_keys;
 pub mod pty;
-pub mod relay_client;
 pub mod ssh_keys;
 pub mod ssh_server;
-use russh::keys::{PrivateKey, PublicKey};
+
+use russh::keys::PublicKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +12,11 @@ use tokio::sync::RwLock;
 
 use crate::file_tunnels::FileTunnelRegistry;
 use crate::shell_tunnels::ShellTunnelRegistry;
-pub use relay_client::TunnelTarget;
+
+pub use crate::p2p::proxy_helpers::TunnelTarget;
+
+// Re-export for backwards compatibility with daemon.rs references.
+pub type TunnelTargetCompat = TunnelTarget;
 
 #[derive(Debug)]
 pub enum RemoteSshCommand {
@@ -20,50 +24,32 @@ pub enum RemoteSshCommand {
     Disable,
 }
 
-/// Manages relay connection state, FIFO watcher, and periodic SSH key sync.
+/// Shared state for remote SSH, tunnel management, and FIFO watcher.
 ///
-/// The relay WebSocket is always active when a relay URL is configured.
-/// The FIFO toggles an allow/deny flag that controls whether inbound SSH
-/// session requests are accepted. Metrics requests always flow through.
-pub struct Manager {
-    ssh_allowed: Arc<AtomicBool>,
+/// This replaces the old `Manager` struct which mixed shared state with
+/// the WS relay client. The libp2p P2pManager handles connectivity;
+/// this struct only holds the shared state.
+pub struct RemoteSshState {
+    pub ssh_allowed: Arc<AtomicBool>,
     ssh_cmd_rx: tokio::sync::mpsc::Receiver<RemoteSshCommand>,
-    server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
+    pub server_ssh_keys: Arc<RwLock<Vec<PublicKey>>>,
     server_url: Option<String>,
     server_token: Option<String>,
-    tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
-    relay_proxy_hostname: Arc<RwLock<Option<String>>>,
-    relay_proxy_url: Arc<RwLock<Option<String>>>,
-    /// Shared channel to send messages on the relay WS (for tunnel re-advertisements).
-    ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>>,
-    /// Signal the main loop to send a heartbeat (e.g. after tunnel changes).
+    pub tunnel_defs: Arc<RwLock<HashMap<String, TunnelTarget>>>,
+    pub file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
+    pub shell_tunnel_registry: Arc<RwLock<ShellTunnelRegistry>>,
     heartbeat_tx: tokio::sync::mpsc::Sender<()>,
-    /// File tunnel registry shared with the relay client.
-    file_tunnel_registry: Arc<RwLock<FileTunnelRegistry>>,
-    /// Shell tunnel registry shared with the relay client.
-    shell_tunnel_registry: Arc<RwLock<ShellTunnelRegistry>>,
 }
 
-impl Manager {
-    /// Create a new Manager. If relay URL + server token are configured,
-    /// immediately spawns the relay client (always-on).
+impl RemoteSshState {
     pub fn new(
-        relay_url: Option<String>,
         server_url: Option<String>,
         server_token: Option<String>,
-        instance_id: String,
-        host_key: Arc<PrivateKey>,
-        metrics_port: u16,
         remote_ssh_enabled: bool,
-        fake_origin_local: bool,
     ) -> (Self, tokio::sync::mpsc::Receiver<()>) {
         let ssh_allowed = Arc::new(AtomicBool::new(remote_ssh_enabled));
         let server_ssh_keys = Arc::new(RwLock::new(Vec::new()));
         let tunnel_defs = Arc::new(RwLock::new(HashMap::new()));
-        let relay_proxy_hostname = Arc::new(RwLock::new(None));
-        let relay_proxy_url: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
-        let ws_outgoing_tx: Arc<RwLock<Option<tokio::sync::mpsc::Sender<String>>>> =
-            Arc::new(RwLock::new(None));
         let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel(4);
         let file_tunnel_registry = Arc::new(RwLock::new(FileTunnelRegistry::new()));
         let shell_tunnel_registry = Arc::new(RwLock::new(ShellTunnelRegistry::new()));
@@ -78,52 +64,6 @@ impl Manager {
         #[cfg(feature = "sim")]
         drop(ssh_cmd_tx);
 
-        // Always spawn relay client if relay URL and token are configured
-        if let (Some(url), Some(token)) = (&relay_url, &server_token) {
-            tracing::info!(
-                "relay configured: url={url} instance={instance_id} ssh_initially_allowed={remote_ssh_enabled}"
-            );
-            let url = url.clone();
-            let token = token.clone();
-            let iid = instance_id.clone();
-            let keys = Arc::clone(&server_ssh_keys);
-            let allowed = Arc::clone(&ssh_allowed);
-            let tdefs = Arc::clone(&tunnel_defs);
-            let rph = Arc::clone(&relay_proxy_hostname);
-            let rpu = Arc::clone(&relay_proxy_url);
-            let wstx = Arc::clone(&ws_outgoing_tx);
-            let ftreg = Arc::clone(&file_tunnel_registry);
-            let streg = Arc::clone(&shell_tunnel_registry);
-            tokio::spawn(async move {
-                let hk = Arc::unwrap_or_clone(host_key);
-                if let Err(e) = relay_client::run(
-                    &url,
-                    &token,
-                    &iid,
-                    None,
-                    hk,
-                    keys,
-                    allowed,
-                    metrics_port,
-                    tdefs,
-                    rph,
-                    rpu,
-                    wstx,
-                    ftreg,
-                    streg,
-                    fake_origin_local,
-                )
-                .await
-                {
-                    tracing::error!("relay client exited: {e:#}");
-                }
-            });
-        } else {
-            tracing::debug!(
-                "relay not configured (url or token missing), relay client not spawned"
-            );
-        }
-
         (
             Self {
                 ssh_allowed,
@@ -132,12 +72,9 @@ impl Manager {
                 server_url,
                 server_token,
                 tunnel_defs,
-                relay_proxy_hostname,
-                relay_proxy_url,
-                ws_outgoing_tx,
-                heartbeat_tx,
                 file_tunnel_registry,
                 shell_tunnel_registry,
+                heartbeat_tx,
             },
             heartbeat_rx,
         )
@@ -166,36 +103,19 @@ impl Manager {
         self.ssh_cmd_rx.recv().await
     }
 
-    /// Return the relay's proxy hostname (set after registration).
-    /// Uses try_read to avoid blocking the main loop.
-    /// Shared file tunnel registry (for healer bridge).
+    /// Shared file tunnel registry.
     pub fn file_tunnel_registry(&self) -> Arc<RwLock<FileTunnelRegistry>> {
         self.file_tunnel_registry.clone()
     }
 
-    /// Shared shell tunnel registry (for healer bridge).
+    /// Shared shell tunnel registry.
     pub fn shell_tunnel_registry(&self) -> Arc<RwLock<ShellTunnelRegistry>> {
         self.shell_tunnel_registry.clone()
     }
 
-    pub fn relay_proxy_hostname(&self) -> Option<String> {
-        self.relay_proxy_hostname.try_read().ok()?.clone()
-    }
-
-    /// Return the relay's full proxy URL (set after registration).
-    pub fn relay_proxy_url(&self) -> Option<String> {
-        self.relay_proxy_url.try_read().ok()?.clone()
-    }
-
-    /// Update the tunnel definitions and re-advertise to the relay.
-    /// All operations are non-blocking to avoid stalling the main event loop.
+    /// Update the tunnel definitions. Non-blocking.
     #[cfg(feature = "services")]
     pub fn update_tunnel_defs(&self, defs: Vec<crate::managed_service::TunnelDef>) {
-        let tunnels_json: Vec<serde_json::Value> = defs
-            .iter()
-            .map(|t| serde_json::json!({ "name": t.name, "tcp_port": t.tcp_port }))
-            .collect();
-
         let Ok(mut map) = self.tunnel_defs.try_write() else {
             tracing::warn!("tunnel_defs lock contention, skipping update");
             return;
@@ -212,21 +132,6 @@ impl Manager {
         }
         drop(map);
 
-        // Re-advertise to the relay if connected (non-blocking to avoid stalling the main loop).
-        let Ok(ws_tx_guard) = self.ws_outgoing_tx.try_read() else {
-            return;
-        };
-        if let Some(tx) = ws_tx_guard.as_ref() {
-            let advert = serde_json::json!({
-                "type": "tunnel_advertisement",
-                "tunnels": tunnels_json,
-            });
-            if tx.try_send(advert.to_string()).is_err() {
-                tracing::warn!("relay WS outgoing channel full, tunnel advertisement dropped");
-            }
-        }
-
-        // Signal the main loop to send a heartbeat with the updated tunnels.
         if self.heartbeat_tx.try_send(()).is_err() {
             tracing::debug!("heartbeat signal channel full, heartbeat will fire on next tick");
         }
@@ -251,8 +156,6 @@ impl Manager {
         };
         reg.update(defs);
 
-        // service-restart: restart a managed service via the supervisor.
-        // Unregisters the service, then the daemon's health tick re-registers it.
         reg.register_virtual(
             "service-restart",
             std::sync::Arc::new(|user_arg: Option<&str>| {
@@ -294,9 +197,6 @@ impl Manager {
             }),
         );
 
-        // restart-daemon: gracefully stop the daemon (service manager restarts it).
-        // Sends SIGTERM to self so the normal shutdown path runs (flushes
-        // notifications, closes relay WS, drains supervisors).
         reg.register_virtual(
             "restart-daemon",
             std::sync::Arc::new(|_user_arg: Option<&str>| {
