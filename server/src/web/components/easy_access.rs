@@ -195,24 +195,35 @@ pub fn EasyAccess() -> Element {
                                     {
                                         let iid = node.instance_id.chars().take(12).collect::<String>();
                                         let tn = tname.clone();
-                                        let pu = node.relay_proxy_url.clone().unwrap_or_default();
+                                        let pu = node.relay_proxy_url.clone();
                                         let icon_path = service_icon(&tn);
                                         let display_name = tn.clone();
+                                        let has_proxy = pu.is_some();
                                         rsx! {
                                             button {
                                                 key: "{tn}",
-                                                class: "flex flex-col items-center justify-center w-28 h-28 rounded-xl \
+                                                class: if has_proxy {
+                                                    "flex flex-col items-center justify-center w-28 h-28 rounded-xl \
                                                         bg-white dark:bg-gray-800 \
                                                         border-2 border-gray-200 dark:border-gray-700 \
                                                         hover:border-blue-400 dark:hover:border-blue-500 \
                                                         hover:shadow-lg hover:scale-105 \
                                                         transition-all duration-150 cursor-pointer \
-                                                        group",
+                                                        group"
+                                                } else {
+                                                    "flex flex-col items-center justify-center w-28 h-28 rounded-xl \
+                                                        bg-gray-50 dark:bg-gray-900 \
+                                                        border-2 border-gray-200 dark:border-gray-700 \
+                                                        opacity-50 cursor-not-allowed \
+                                                        group"
+                                                },
+                                                disabled: !has_proxy,
                                                 onclick: move |_| {
                                                     let iid = iid.clone();
                                                     let tn = tn.clone();
                                                     let pu = pu.clone();
                                                     async move {
+                                                        let Some(pu) = pu else { return };
                                                         match create_proxy_token().await {
                                                             Ok(result) => {
                                                                 let prefix = format!("{iid}-{tn}");
