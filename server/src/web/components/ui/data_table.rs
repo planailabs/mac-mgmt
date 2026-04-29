@@ -56,7 +56,13 @@ pub fn DataTable(
     }
 }
 
-// ── Sortable header ────────────────────────────────────────────────
+// ── Header cells ───────────────────────────────────────────────────
+
+/// Plain (non-sortable) header cell.
+#[component]
+pub fn Th(children: Element) -> Element {
+    rsx! { th { class: "th", {children} } }
+}
 
 #[component]
 pub fn SortableTh(label: String, sort_key: String, sort: Signal<SortState>) -> Element {

@@ -25,6 +25,8 @@ pub mod text;
 pub use badge::{Badge, BadgeVariant};
 pub use button::{Button, ButtonKind, ButtonSize, ButtonVariant};
 pub use card::Card;
-pub use data_table::{Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted};
+pub use data_table::{
+    Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th,
+};
 pub use form::FormField;
 pub use text::{ErrorText, HelpText, PageHeader, SectionHeading};

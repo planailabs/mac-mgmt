@@ -205,7 +205,7 @@
   /* ── Tables ──────────────────────────────────────────────────── */
   .table       { @apply min-w-full divide-y divide-line-soft; }
   .thead       { @apply bg-surface-2; }
-  .th          { @apply px-6 py-3 text-left text-xs font-medium text-fg-muted uppercase; }
+  .th          { @apply px-6 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider; }
   .th-sortable { @apply th cursor-pointer select-none hover:text-fg-strong; }
   .tbody       { @apply bg-surface divide-y divide-line-soft; }
   .td          { @apply px-6 py-4 text-fg; }
