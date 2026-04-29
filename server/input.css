@@ -206,6 +206,13 @@
   .banner-warn   { @apply bg-warn text-warn-strong; }
   .banner-danger { @apply bg-danger text-fg-invert; }
 
+  /* ── Alerts (boxed status messages with a body) ──────────────── */
+  .alert         { @apply rounded border p-3; }
+  .alert-success { @apply bg-success-soft text-success border-success; }
+  .alert-danger  { @apply bg-danger-soft  text-danger  border-danger; }
+  .alert-warn    { @apply bg-warn-soft    text-warn-strong border-warn; }
+  .alert-info    { @apply bg-info-soft    text-info    border-info; }
+
   /* ── Tables ──────────────────────────────────────────────────── */
   .table       { @apply min-w-full divide-y divide-line-soft; }
   .thead       { @apply bg-surface-2; }
