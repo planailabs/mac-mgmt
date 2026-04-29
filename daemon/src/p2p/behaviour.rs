@@ -20,4 +20,6 @@ pub struct ClusterBehaviour {
     pub ai_proxy: request_response::Behaviour<ai_proxy::AiProxyCodec>,
     /// Pub/sub for tunnel advertisements and backend load announcements.
     pub gossipsub: gossipsub::Behaviour,
+    /// Raw bidirectional substreams for tunnel data (SSH, file, shell sessions).
+    pub streams: libp2p_stream::Behaviour,
 }

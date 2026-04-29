@@ -1,11 +1,12 @@
 //! Non-WebSocket API endpoints: health, tunnel listing, metrics proxy,
 //! federated metrics.
 
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{any, get};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -25,13 +26,20 @@ pub struct AppState {
     pub registry: Arc<DaemonRegistry>,
     pub server_api_url: String,
     pub relay_swarm: Arc<RelaySwarm>,
+    pub p2p_port: u16,
 }
 
-pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, relay_swarm: Arc<RelaySwarm>) -> Router {
+pub fn router(
+    registry: Arc<DaemonRegistry>,
+    server_api_url: String,
+    relay_swarm: Arc<RelaySwarm>,
+    p2p_port: u16,
+) -> Router {
     let state = AppState {
         registry,
         server_api_url,
         relay_swarm,
+        p2p_port,
     };
 
     Router::new()
@@ -42,9 +50,26 @@ pub fn router(registry: Arc<DaemonRegistry>, server_api_url: String, relay_swarm
         .route("/api/tunnels", get(list_tunnels))
         .route("/metrics", get(federated_metrics))
         .route("/health", get(health))
+        // libp2p-over-WS: daemons can connect via the main HTTP port
+        .route("/p2p", any(p2p_ws_bridge))
         .layer(middleware::from_fn(security_headers))
         .layer(tower::limit::ConcurrencyLimitLayer::new(4096))
         .with_state(state)
+}
+
+/// WebSocket upgrade endpoint that bridges to the local libp2p WS
+/// listener. Allows daemons to establish libp2p connections through
+/// the main HTTP port (useful behind restrictive firewalls).
+async fn p2p_ws_bridge(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let p2p_port = state.p2p_port;
+    ws.on_upgrade(move |socket| async move {
+        tracing::info!("p2p WS bridge connection established");
+        crate::ws_bridge::bridge_ws_to_libp2p_listener(socket, p2p_port).await;
+        tracing::debug!("p2p WS bridge connection closed");
+    })
 }
 
 async fn security_headers(request: axum::extract::Request, next: Next) -> axum::response::Response {

@@ -18,6 +18,7 @@ mod daemon_registry;
 mod metrics_federation;
 mod p2p;
 mod proxy_handler;
+mod ws_bridge;
 
 #[derive(Parser)]
 #[command(
@@ -81,6 +82,7 @@ async fn main() -> Result<()> {
         Arc::clone(&registry),
         cfg.server_api_url.clone(),
         Arc::clone(&relay_swarm),
+        cfg.p2p_port,
     );
 
     // Proxy router (if proxy_hostname is configured)

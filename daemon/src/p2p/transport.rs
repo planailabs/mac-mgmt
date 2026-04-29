@@ -21,7 +21,7 @@ pub fn build(keypair: &Keypair) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
         .context("failed to create DNS transport")?;
 
     // WSS over TCP+DNS — Noise + Yamux on top of WebSocket
-    let wss = libp2p::websocket::WsConfig::new(dns_tcp)
+    let wss = libp2p::websocket::Config::new(dns_tcp)
         .upgrade(Version::V1)
         .authenticate(noise::Config::new(keypair).context("noise config")?)
         .multiplex(yamux::Config::default())

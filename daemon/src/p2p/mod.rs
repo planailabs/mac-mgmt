@@ -169,6 +169,7 @@ impl P2pManager {
                     control: control_behaviour,
                     ai_proxy: ai_proxy_behaviour,
                     gossipsub: gossipsub_behaviour,
+                    streams: libp2p_stream::Behaviour::new(),
                 })
             })?
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))

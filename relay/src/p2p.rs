@@ -94,6 +94,7 @@ struct RelayBehaviour {
     identify: identify::Behaviour,
     relay_server: libp2p::relay::Behaviour,
     control: request_response::Behaviour<control_codec::ControlCodec>,
+    streams: libp2p_stream::Behaviour,
 }
 
 // ── Key management ───────────────────────────────────────────────────
@@ -140,7 +141,13 @@ pub struct RelaySwarm {
     pub peer_metadata: Arc<RwLock<HashMap<PeerId, PeerMetadata>>>,
     /// Channel to send control requests to the swarm event loop.
     outbound_tx: tokio::sync::mpsc::Sender<OutboundRequest>,
+    /// Control handle for opening raw substreams to peers.
+    pub stream_control: libp2p_stream::Control,
 }
+
+/// Protocol for tunnel data substreams.
+pub const TUNNEL_STREAM_PROTOCOL: libp2p::StreamProtocol =
+    libp2p::StreamProtocol::new("/mac-mgmt/tunnel/1.0.0");
 
 impl RelaySwarm {
     /// Send a control request to a peer and wait for the response.
@@ -159,6 +166,17 @@ impl RelaySwarm {
             .await
             .map_err(|_| "swarm channel closed".to_string())?;
         rx.await.map_err(|_| "response channel dropped".to_string())?
+    }
+
+    /// Open a raw bidirectional substream to a peer for tunnel data.
+    pub async fn open_tunnel_stream(
+        &self,
+        peer_id: PeerId,
+    ) -> Result<libp2p::Stream, libp2p_stream::OpenStreamError> {
+        self.stream_control
+            .clone()
+            .open_stream(peer_id, TUNNEL_STREAM_PROTOCOL)
+            .await
     }
 }
 
@@ -192,7 +210,7 @@ impl RelaySwarm {
                 let tcp = libp2p::tcp::tokio::Transport::new(
                     libp2p::tcp::Config::default().nodelay(true),
                 );
-                let ws = libp2p::websocket::WsConfig::new(tcp)
+                let ws = libp2p::websocket::Config::new(tcp)
                     .upgrade(libp2p::core::upgrade::Version::V1)
                     .authenticate(libp2p::noise::Config::new(key)?)
                     .multiplex(libp2p::yamux::Config::default())
@@ -221,6 +239,7 @@ impl RelaySwarm {
                     identify: identify::Behaviour::new(identify_cfg),
                     relay_server,
                     control,
+                    streams: libp2p_stream::Behaviour::new(),
                 })
             })?
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
@@ -241,6 +260,9 @@ impl RelaySwarm {
         let peer_metadata = Arc::new(RwLock::new(HashMap::new()));
         let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(256);
 
+        // Extract the stream control handle before moving the swarm.
+        let stream_control = swarm.behaviour().streams.new_control();
+
         // Spawn the event loop
         let pm_clone = Arc::clone(&peer_metadata);
         tokio::spawn(async move {
@@ -249,6 +271,7 @@ impl RelaySwarm {
 
         Ok(Self {
             outbound_tx,
+            stream_control,
             local_peer_id,
             peer_metadata,
         })

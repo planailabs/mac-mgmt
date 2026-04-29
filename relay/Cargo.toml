@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 futures-util = "0.3"
 reqwest = { workspace = true }
@@ -26,8 +26,10 @@ prometheus = "0.14"
 prometheus-parse = "0.2"
 protobuf = "3.7"
 async-trait = "0.1"
-libp2p = { version = "0.54", default-features = false, features = [
+libp2p = { version = "0.56", default-features = false, features = [
     "tokio", "noise", "yamux", "quic", "tcp", "websocket", "dns",
     "relay", "identify", "request-response", "macros", "serde",
 ] }
+libp2p-stream = "0.4.0-alpha"
+tokio-tungstenite = "0.26"
 mac-mgmt-common = { path = "../common" }
