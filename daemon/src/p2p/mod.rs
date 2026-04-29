@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use libp2p::swarm::SwarmEvent;
-use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, identify, mdns, request_response};
+use libp2p::{Multiaddr, PeerId, Swarm, Transport, gossipsub, identify, mdns, request_response};
 use tokio::sync::{RwLock, mpsc};
 
 use behaviour::{ClusterBehaviour, ClusterBehaviourEvent};
@@ -137,7 +137,23 @@ impl P2pManager {
 
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
+            .with_tcp(
+                libp2p::tcp::Config::default().nodelay(true),
+                libp2p::noise::Config::new,
+                || libp2p::yamux::Config::default(),
+            )?
             .with_quic()
+            .with_other_transport(|key| {
+                let tcp = libp2p::tcp::tokio::Transport::new(
+                    libp2p::tcp::Config::default().nodelay(true),
+                );
+                let ws = libp2p::websocket::Config::new(tcp)
+                    .upgrade(libp2p::core::upgrade::Version::V1)
+                    .authenticate(libp2p::noise::Config::new(key)?)
+                    .multiplex(libp2p::yamux::Config::default())
+                    .map(|(peer, muxer), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(muxer)));
+                Ok(ws.boxed())
+            })?
             .with_relay_client(
                 libp2p::noise::Config::new,
                 || libp2p::yamux::Config::default(),
