@@ -40,7 +40,7 @@ let
 
   # API-only server build — same override as the relay test.
   mac-mgmt-server-api = (pkgs.callPackage ../server/package.nix { }).overrideAttrs (old: {
-    cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only,mgmt,skill-center" ];
+    cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only" ];
     buildPhase = null;
     installPhase = null;
   });

@@ -35,7 +35,7 @@ let
   # API-only server build — no webui/WASM, just Rocket + migrations.
   # Override the full dx build to a plain cargo build without webui.
   mac-mgmt-server-api = (pkgs.callPackage ../server/package.nix { }).overrideAttrs (old: {
-    cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only,mgmt,skill-center" ];
+    cargoBuildFlags = [ "-p" "mac-mgmt-server" "--no-default-features" "--features" "server-api-only" ];
     # Reset to default cargo buildPhase/installPhase (remove dx build overrides)
     buildPhase = null;
     installPhase = null;
