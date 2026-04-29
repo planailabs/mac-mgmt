@@ -147,7 +147,9 @@ impl P2pManager {
                 let tcp = libp2p::tcp::tokio::Transport::new(
                     libp2p::tcp::Config::default().nodelay(true),
                 );
-                let ws = libp2p::websocket::Config::new(tcp)
+                let dns_tcp = libp2p::dns::tokio::Transport::system(tcp)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                let ws = libp2p::websocket::Config::new(dns_tcp)
                     .upgrade(libp2p::core::upgrade::Version::V1)
                     .authenticate(libp2p::noise::Config::new(key)?)
                     .multiplex(libp2p::yamux::Config::default())

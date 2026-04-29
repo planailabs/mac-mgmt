@@ -125,27 +125,41 @@ async fn main() -> Result<()> {
         let proxy = proxy_router.clone();
         async move {
             let host_no_port = hostname.split(':').next().unwrap_or(&hostname);
+            let method = req.method().clone();
+            let uri = req.uri().clone();
+            let upgrade_hdr = req.headers().get("upgrade")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from);
+
+            tracing::info!(
+                %hostname, %method, %uri, upgrade = ?upgrade_hdr,
+                "incoming request"
+            );
 
             // Proxy subdomain → proxy router.
             if let Some((ref proxy_hostname, ref proxy_router)) = proxy {
                 if host_no_port.ends_with(&format!(".{proxy_hostname}")) {
+                    tracing::info!(%host_no_port, "routing to proxy router (subdomain)");
                     return proxy_router.clone().oneshot(req).await.into_response();
                 }
             }
 
             // Main host: check if this is a WS upgrade → bridge to libp2p.
-            let is_ws = req.headers().get("upgrade")
-                .and_then(|v| v.to_str().ok())
+            let is_ws = upgrade_hdr
+                .as_deref()
                 .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
 
             if is_ws {
+                tracing::info!("WS upgrade on main host → bridging to libp2p port {p2p_port}");
                 use axum::extract::FromRequestParts;
                 let (mut parts, _body) = req.into_parts();
                 match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
                     Ok(ws) => {
+                        tracing::info!("WebSocketUpgrade extracted, upgrading connection");
                         return ws.on_upgrade(move |socket| async move {
-                            tracing::debug!("p2p WS bridge via axum");
+                            tracing::info!("WS upgraded, starting libp2p bridge");
                             crate::ws_bridge::bridge_ws_to_libp2p_listener(socket, p2p_port).await;
+                            tracing::info!("libp2p bridge closed");
                         });
                     }
                     Err(e) => {
@@ -156,6 +170,7 @@ async fn main() -> Result<()> {
             }
 
             // Main host non-WS → API router.
+            tracing::debug!(%uri, "routing to API router");
             api.clone().oneshot(req).await.into_response()
         }
     }));
