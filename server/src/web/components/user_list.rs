@@ -6,6 +6,7 @@ use dioxus_i18n::t;
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -104,6 +105,7 @@ async fn toggle_user_admin(user_id: String, is_admin: bool) -> Result<(), Server
 
 #[component]
 pub fn UserList() -> Element {
+    use_topbar(t!("user-list-title"), None);
     let users_future = use_server_future(list_users)?;
 
     rsx! {

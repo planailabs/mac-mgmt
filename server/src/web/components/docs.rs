@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -142,6 +143,7 @@ fn AudienceBadge(audience: String) -> Element {
 
 #[component]
 pub fn DocList() -> Element {
+    use_topbar(t!("docs-title"), None);
     let docs = use_server_future(list_docs)?;
 
     rsx! {

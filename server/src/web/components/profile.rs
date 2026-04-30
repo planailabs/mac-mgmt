@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -67,6 +68,7 @@ async fn get_profile_orgs() -> Result<Vec<ProfileOrg>, ServerFnError> {
 
 #[component]
 pub fn Profile() -> Element {
+    use_topbar(t!("nav-view-profile"), None);
     let profile_future = use_server_future(get_profile)?;
     let orgs_future = use_server_future(get_profile_orgs)?;
 

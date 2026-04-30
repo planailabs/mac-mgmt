@@ -6,6 +6,7 @@ use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SuccessText,
 };
@@ -105,6 +106,7 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
 
 #[component]
 pub fn SkillList() -> Element {
+    use_topbar(t!("skill-list-title"), None);
     let mut skills = use_server_future(list_skills)?;
     let mut syncing = use_signal(|| false);
     let mut sync_msg = use_signal(|| None::<String>);

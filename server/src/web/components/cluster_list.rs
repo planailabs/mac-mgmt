@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Dash, DataTable, ErrorText, PageHeader, SortState, SortableTh, Td, TdMuted,
 };
@@ -111,6 +112,7 @@ async fn is_current_user_admin() -> Result<bool, ServerFnError> {
 
 #[component]
 pub fn ClusterList() -> Element {
+    use_topbar(t!("cluster-list-title"), None);
     let clusters = use_server_future(list_clusters)?;
     let admin_check = use_server_future(is_current_user_admin)?;
     let is_admin = matches!(&*admin_check.read(), Some(Ok(true)));

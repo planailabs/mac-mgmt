@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -114,6 +115,7 @@ pub async fn resolve_ping(ping_id: String) -> Result<(), ServerFnError> {
 
 #[component]
 pub fn StaffPings() -> Element {
+    use_topbar(t!("staff-pings-title"), None);
     let mut pings = use_signal::<Vec<StaffPingRow>>(Vec::new);
     let mut loaded = use_signal(|| false);
     let mut error_msg = use_signal::<Option<String>>(|| None);

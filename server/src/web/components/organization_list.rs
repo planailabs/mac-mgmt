@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, PageHeader, Td, TdMuted, Th};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,6 +64,7 @@ async fn list_organizations() -> Result<Vec<OrgRow>, ServerFnError> {
 
 #[component]
 pub fn OrganizationList() -> Element {
+    use_topbar(t!("org-list-title"), None);
     let orgs = use_server_future(list_organizations)?;
 
     rsx! {
