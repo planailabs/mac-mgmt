@@ -13,9 +13,18 @@ pub fn config_path() -> Result<PathBuf> {
         .join(".config/opencode/config.json"))
 }
 
-/// Atomically merge a JSON patch into the opencode config with JSON validation.
+pub const SCHEMA_URL: &str = "https://opencode.ai/config.json";
+
+/// Atomically merge a JSON patch into the opencode config with JSON schema validation.
 pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
-    super::merge_json_config(config_path, patch, None)
+    super::merge_json_config(
+        config_path,
+        patch,
+        super::MergeValidateOpts {
+            schema_url: Some(SCHEMA_URL),
+            ..Default::default()
+        },
+    )
 }
 
 pub struct Opencode {

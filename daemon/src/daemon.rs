@@ -919,6 +919,13 @@ pub async fn run(
         fetch_nix_caches(url, token).await;
     }
 
+    // Pre-fetch JSON schemas used for config validation so they're
+    // available without network delay during service setup.
+    #[cfg(feature = "services")]
+    if cfg.opencode.enabled {
+        crate::services::prefetch_schema(crate::services::opencode::SCHEMA_URL).await;
+    }
+
     // When the unmanaged marker exists, services are run by
     // systemd/launchd (installed via `mac-mgmt install-services`).
     // Neuter the daemon's service manager by clearing the providers so

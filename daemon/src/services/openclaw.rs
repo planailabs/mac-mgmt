@@ -19,7 +19,14 @@ pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Resu
     if !config_path.exists() {
         anyhow::bail!("openclaw config not found at {}", config_path.display());
     }
-    super::merge_json_config(config_path, patch, Some(&["openclaw", "config", "validate"]))
+    super::merge_json_config(
+        config_path,
+        patch,
+        super::MergeValidateOpts {
+            validate_cmd: Some(&["openclaw", "config", "validate"]),
+            ..Default::default()
+        },
+    )
 }
 
 pub struct OpenClaw {
