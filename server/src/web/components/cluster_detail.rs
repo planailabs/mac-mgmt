@@ -3,9 +3,10 @@ use dioxus_i18n::t;
 
 use crate::models::Cluster;
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, ErrorText, HelpText,
-    SectionHeading,
+    Kicker, SectionHeading,
 };
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -368,6 +369,14 @@ pub fn ClusterDetail(id: String) -> Element {
         async move { get_cluster(id).await }
     })?;
 
+    // Topbar shows the cluster name once it loads. Kept empty during
+    // the loading flicker rather than showing a placeholder.
+    let topbar_title = match &*cluster.read() {
+        Some(Ok(c)) => c.name.clone(),
+        _ => String::new(),
+    };
+    use_topbar(topbar_title, Some(t!("nav-clusters").to_string()));
+
     let cid_for_write = id.clone();
     let write_check = use_server_future(move || {
         let cid = cid_for_write.clone();
@@ -401,6 +410,7 @@ pub fn ClusterDetail(id: String) -> Element {
             let name = c.name.clone();
             let name_for_modal = name.clone();
             rsx! {
+                Kicker { class: "mb-2", {t!("nav-clusters")} }
                 div { class: "flex items-center gap-3 mb-2",
                     if *editing.read() {
                         form { class: "flex items-center gap-2",
