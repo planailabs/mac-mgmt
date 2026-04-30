@@ -5,7 +5,7 @@ use crate::models::Cluster;
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, ErrorText, HelpText,
+    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
     Kicker, SectionHeading,
 };
 #[cfg(feature = "server")]
@@ -524,44 +524,72 @@ pub fn ClusterDetail(id: String) -> Element {
                     }
                 }
 
-                div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-sync-tokens")} }
-                        SyncTokenList { cluster_id: cid2.clone(), read_only }
-                    }
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-setting-tokens")} }
-                        SettingTokenList { cluster_id: cid2.clone(), read_only }
-                    }
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-config")} }
-                        Link { to: Route::ClusterConfigPage { id: cid2.clone() },
-                            class: "btn btn-lg btn-primary",
-                            {t!("cluster-detail-open-config")}
+                div { class: "flex flex-col gap-6",
+
+                    // ── Access tokens ────────────────────────────────
+                    Card { class: "p-5 sm:p-[22px]",
+                        Kicker { class: "mb-4", {t!("cluster-detail-group-access")} }
+                        div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-sync-tokens")} }
+                                SyncTokenList { cluster_id: cid2.clone(), read_only }
+                            }
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-setting-tokens")} }
+                                SettingTokenList { cluster_id: cid2.clone(), read_only }
+                            }
                         }
                     }
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-skills")} }
-                        ClusterSkills { cluster_id: cid2.clone(), read_only }
-                    }
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-mcp-servers")} }
-                        ClusterMcpServers { cluster_id: cid2.clone(), read_only }
-                    }
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-packages")} }
-                        Link { to: Route::ClusterPackagesPage { id: cid2.clone() },
-                            class: "btn btn-lg btn-primary",
-                            {t!("cluster-detail-open-packages")}
+
+                    // ── Configuration ────────────────────────────────
+                    Card { class: "p-5 sm:p-[22px]",
+                        Kicker { class: "mb-4", {t!("cluster-detail-group-config")} }
+                        div { class: "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-config")} }
+                                Link { to: Route::ClusterConfigPage { id: cid2.clone() },
+                                    class: "btn btn-md btn-primary",
+                                    {t!("cluster-detail-open-config")}
+                                }
+                            }
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-ssh-keys")} }
+                                ClusterSshKeys { cluster_id: cid2.clone(), read_only: !can_admin }
+                            }
                         }
                     }
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-ssh-keys")} }
-                        ClusterSshKeys { cluster_id: cid2.clone(), read_only: !can_admin }
+
+                    // ── Skills & MCP ─────────────────────────────────
+                    Card { class: "p-5 sm:p-[22px]",
+                        Kicker { class: "mb-4", {t!("cluster-detail-group-skills")} }
+                        div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-skills")} }
+                                ClusterSkills { cluster_id: cid2.clone(), read_only }
+                            }
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-mcp-servers")} }
+                                ClusterMcpServers { cluster_id: cid2.clone(), read_only }
+                            }
+                        }
                     }
-                    div {
-                        SectionHeading { {t!("cluster-detail-tab-healer")} }
-                        ClusterHealerSettings { cluster_id: cid2.clone(), read_only }
+
+                    // ── Packages & Operations ────────────────────────
+                    Card { class: "p-5 sm:p-[22px]",
+                        Kicker { class: "mb-4", {t!("cluster-detail-group-operations")} }
+                        div { class: "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-packages")} }
+                                Link { to: Route::ClusterPackagesPage { id: cid2.clone() },
+                                    class: "btn btn-md btn-primary",
+                                    {t!("cluster-detail-open-packages")}
+                                }
+                            }
+                            div {
+                                SectionHeading { {t!("cluster-detail-tab-healer")} }
+                                ClusterHealerSettings { cluster_id: cid2.clone(), read_only }
+                            }
+                        }
                     }
                 }
             }

@@ -130,7 +130,7 @@
 
     --c-brand:        249 115 22;     /* #f97316 orange-500 */
     --c-brand-strong: 234 88 12;      /* #ea580c — hover */
-    --c-brand-soft:   44 29 21;       /* tinted surface */
+    --c-brand-soft:   67 47 37;       /* orange at 20% α over chrome #161e29 */
 
     --c-danger:        248 113 113;   /* #f87171 */
     --c-danger-strong: 239 68 68;
@@ -380,7 +380,7 @@
                             uppercase tracking-wider; }
   .nav-link       { @apply relative flex items-center px-3 py-2 text-sm
                             font-medium rounded-md text-fg
-                            hover:bg-surface-2 hover:text-fg-strong
+                            hover:bg-surface-3 hover:text-fg-strong
                             transition-colors; }
   /* Active-state helper. Adds the design's 3px accent rule on the left
      edge plus the brand-soft background and orange text. Used in
