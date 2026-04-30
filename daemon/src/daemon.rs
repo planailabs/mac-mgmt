@@ -1103,6 +1103,11 @@ pub async fn run(
             fake_origin_local: cfg.relay.fake_origin_local,
             client: reqwest::Client::new(),
         });
+        // Fetch cluster_id from server before p2p init so gossipsub subscribes immediately.
+        let cluster_id = match (&server_url, &server_token) {
+            (Some(url), Some(token)) => crate::p2p::fetch_cluster_id(url, token).await,
+            _ => None,
+        };
         let p2p_config = crate::p2p::P2pConfig {
             instance_id: instance_id.clone(),
             cluster_psk: cfg
@@ -1115,7 +1120,7 @@ pub async fn run(
             p2p_port: cfg.relay.p2p_port,
             ai_proxy_distribution: cfg.relay.ai_proxy_distribution,
             server_token: server_token.clone(),
-            server_url: server_url.clone(),
+            cluster_id,
             handler_state: Some(handler_state),
         };
         match crate::p2p::P2pManager::new(&host_key, p2p_config).await {
