@@ -22,28 +22,38 @@
 @layer base {
   :root {
     /* ── Surfaces ───────────────────────────────────────────────────
-       Light theme is warm cream canvas with white panels — the
-       "paper" feel from the design language. */
-    --c-bg:             247 246 242;  /* #f7f6f2 — warm cream canvas */
+       Three visible tiers, ~10–15 RGB points apart so users can
+       distinguish chrome (sidebar/topbar) from main content from cards
+       at a glance. The previous spread (4 + 4 points) collapsed into
+       a single visual layer.
+
+         canvas (main content) → chrome (sidebar/topbar) → cards
+         #f0ede4              → #faf7f0              → #ffffff
+
+       The main content sits on a slightly more saturated cream so the
+       white sidebar+topbar+cards "panels" pop above it. */
+    --c-bg:             240 237 228;  /* #f0ede4 — tan cream canvas */
     --c-surface:        255 255 255;  /* white — cards, table body */
-    --c-surface-2:      251 250 246;  /* #fbfaf6 — sub-panel, chrome, table head */
-    --c-surface-3:      240 238 232;  /* secondary button bg */
-    --c-surface-strong: 226 224 215;  /* secondary button hover */
+    --c-surface-2:      250 247 240;  /* #faf7f0 — sub-panel, chrome */
+    --c-surface-3:      230 226 215;  /* secondary button bg */
+    --c-surface-strong: 215 209 195;  /* secondary button hover */
 
     /* ── Text ───────────────────────────────────────────────────────
-       Apparent colors approximate the design's rgba dim-on-canvas
-       so opaque tokens read like translucent ink. */
+       Apparent colors over the canvas — translucent ink at full opacity.
+       Bumped slightly to keep contrast on the new (darker) canvas. */
     --c-fg:           22 26 34;       /* #161a22 — primary text */
     --c-fg-strong:    11 15 21;       /* near-black headings */
-    --c-fg-muted:     112 114 117;    /* ≈ rgba(22,26,34,0.6) over canvas */
-    --c-fg-faint:     157 158 159;    /* ≈ rgba(22,26,34,0.4) over canvas */
+    --c-fg-muted:     104 106 110;    /* ≈ rgba(22,26,34,0.62) over canvas */
+    --c-fg-faint:     150 150 148;    /* ≈ rgba(22,26,34,0.42) over canvas */
     --c-fg-invert:    255 255 255;    /* text on solid color buttons */
 
     /* ── Lines ──────────────────────────────────────────────────────
-       Hairline-equivalent: `border-line` (1px opaque) renders the same
-       apparent color as `rgba(20,25,35,0.07)` over a white panel. */
-    --c-line:         235 233 227;
-    --c-line-soft:    227 225 219;
+       `border-line` (1px opaque) renders the apparent colour of a
+       hairline at the design's alpha. Re-derived for the new chrome
+       surface so card borders, dividers and form inputs remain
+       visible without reading as heavy. */
+    --c-line:         224 220 209;    /* hairline over chrome */
+    --c-line-soft:    214 209 196;    /* slightly stronger divider */
 
     /* ── Brand · accent orange (replaces previous blue) ────────────
        Reserved for: brand mark, primary CTA, active nav, healing
@@ -92,20 +102,31 @@
   }
 
   .dark {
+    /*
+       Three visible tiers in dark mode: canvas darkest, chrome
+       slightly raised, cards more raised. Pushed apart from the
+       original (3 + 3 RGB points) to give the sidebar/topbar a
+       clearly distinct surface without sacrificing the calm feel.
+
+         canvas (main content) → chrome (sidebar/topbar) → cards
+         #0b0f15              → #161e29              → #1c2735
+    */
     --c-bg:             11 15 21;     /* #0b0f15 — near-black canvas */
-    --c-surface:        17 23 31;     /* #11171f — cards, panels */
-    --c-surface-2:      14 19 26;     /* #0e131a — sub-panel, chrome */
-    --c-surface-3:      33 41 51;     /* secondary button bg */
-    --c-surface-strong: 51 60 72;     /* secondary button hover */
+    --c-surface:        28 39 53;     /* #1c2735 — cards, brightest */
+    --c-surface-2:      22 30 41;     /* #161e29 — chrome */
+    --c-surface-3:      45 60 80;     /* secondary button bg */
+    --c-surface-strong: 65 85 110;    /* secondary button hover */
 
     --c-fg:           232 237 245;    /* #e8edf5 */
     --c-fg-strong:    255 255 255;
-    --c-fg-muted:     133 137 144;    /* ≈ rgba(232,237,245,0.55) over canvas */
-    --c-fg-faint:     88 93 99;       /* ≈ rgba(232,237,245,0.35) over canvas */
+    --c-fg-muted:     147 152 161;    /* ≈ rgba(232,237,245,0.6) over canvas */
+    --c-fg-faint:     102 108 117;    /* ≈ rgba(232,237,245,0.4) over canvas */
     --c-fg-invert:    255 255 255;
 
-    --c-line:         31 37 44;       /* ≈ rgba(255,255,255,0.06) over panel */
-    --c-line-soft:    41 46 53;       /* ≈ rgba(255,255,255,0.10) over panel */
+    /* Lines re-derived over the new chrome surface. Slightly heavier
+       than before so the card borders read at 1px on standard DPI. */
+    --c-line:         52 64 80;       /* ≈ rgba(255,255,255,0.10) over chrome */
+    --c-line-soft:    65 78 96;       /* divider/track */
 
     --c-brand:        249 115 22;     /* #f97316 orange-500 */
     --c-brand-strong: 234 88 12;      /* #ea580c — hover */
@@ -184,6 +205,19 @@
 
   .dark input[type="checkbox"],
   .dark input[type="radio"] { background-color: transparent; }
+
+  /*
+   * Native form controls (checkbox, radio, range, progress) use the
+   * platform `accent-color` for their "checked" / fill state. Without
+   * this rule they render in browser blue, which clashes with the
+   * brand orange the rest of the app uses.
+   */
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"],
+  progress {
+    accent-color: rgb(var(--c-brand));
+  }
 }
 
 /*
