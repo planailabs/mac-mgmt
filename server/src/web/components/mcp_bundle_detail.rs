@@ -6,6 +6,9 @@ use crate::models::McpServerBundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+use crate::web::components::ui::{
+    Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -214,8 +217,7 @@ pub fn McpBundleDetail(id: String) -> Element {
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
                     if *editing.read() {
-                        form {
-                            class: "space-y-2",
+                        form { class: "space-y-2",
                             onsubmit: move |evt: FormEvent| {
                                 evt.prevent_default();
                                 let id = bid.clone();
@@ -231,31 +233,32 @@ pub fn McpBundleDetail(id: String) -> Element {
                                 });
                             },
                             input {
-                                class: "text-2xl font-bold border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-full dark:bg-gray-700 dark:text-white",
+                                class: "input text-2xl font-bold py-1",
                                 r#type: "text",
                                 value: "{draft_name}",
                                 oninput: move |e| draft_name.set(e.value()),
                                 autofocus: true,
                             }
                             textarea {
-                                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-white",
+                                class: "input py-1",
                                 rows: "2",
                                 value: "{draft_desc}",
                                 oninput: move |e| draft_desc.set(e.value()),
                             }
-                            label { class: "flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200",
+                            label { class: "flex items-center gap-2 text-sm text-fg-strong",
                                 input {
                                     r#type: "checkbox",
                                     checked: "{draft_hide}",
+                                    class: "rounded border-line",
                                     oninput: move |e| draft_hide.set(e.value() == "true"),
                                 }
                                 {t!("mcp-bundle-detail-hide")}
                             }
                             div { class: "flex gap-2",
-                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300", r#type: "submit", {t!("save")} }
-                                button {
-                                    class: "text-gray-500 hover:text-gray-700 dark:hover:text-gray-200",
-                                    r#type: "button",
+                                button { class: "text-success hover:opacity-80", r#type: "submit",
+                                    {t!("save")}
+                                }
+                                button { class: "text-fg-muted hover:text-fg-strong", r#type: "button",
                                     onclick: move |_| editing.set(false),
                                     {t!("cancel")}
                                 }
@@ -282,11 +285,10 @@ pub fn McpBundleDetail(id: String) -> Element {
                             }
                         }
                     } else {
-                        h2 { class: "text-2xl font-bold", "{name}" }
-                        span { class: "text-gray-400 dark:text-gray-500 font-mono text-sm", "({slug})" }
+                        h2 { class: "h-page mb-0", "{name}" }
+                        span { class: "text-fg-faint font-mono text-sm", "({slug})" }
                         HiddenBadge { hidden: hide_flag }
-                        button {
-                            class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
+                        button { class: "text-fg-faint hover:text-fg-muted",
                             onclick: move |_| {
                                 draft_name.set(name.clone());
                                 draft_desc.set(desc.clone());
@@ -295,11 +297,10 @@ pub fn McpBundleDetail(id: String) -> Element {
                             },
                             {t!("edit")}
                         }
-                        button {
-                            class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400",
+                        button { class: "link-danger",
                             onclick: move |_| {
                                 let id = bid_del.clone();
-                                let nav = navigator.clone();
+                                let nav = navigator;
                                 spawn(async move {
                                     if delete_mcp_bundle(id).await.is_ok() {
                                         nav.push(Route::McpBundleList {});
@@ -311,31 +312,29 @@ pub fn McpBundleDetail(id: String) -> Element {
                     }
                 }
                 if !*editing.read() && !b.description.is_empty() {
-                    p { class: "text-gray-600 dark:text-gray-300 mb-2", "{b.description}" }
+                    p { class: "text-fg mb-2", "{b.description}" }
                 }
-                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", {t!("cluster-detail-created", date: created)} }
+                p { class: "help mb-6", {t!("cluster-detail-created", date: created)} }
 
                 // Items section
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-bundle-detail-mcp-servers")} }
-                    form {
-                        class: "flex gap-2 mb-4",
+                    SectionHeading { {t!("mcp-bundle-detail-mcp-servers")} }
+                    form { class: "flex gap-2 mb-4",
                         onsubmit: move |evt: FormEvent| {
                             evt.prevent_default();
                             let bid = bid2.clone();
                             let msid = selected_server.read().clone();
                             spawn(async move {
-                                if !msid.is_empty() {
-                                    if add_mcp_bundle_item(bid, msid).await.is_ok() {
-                                        selected_server.set(String::new());
-                                        items.restart();
-                                        available.restart();
-                                    }
+                                if !msid.is_empty()
+                                    && add_mcp_bundle_item(bid, msid).await.is_ok()
+                                {
+                                    selected_server.set(String::new());
+                                    items.restart();
+                                    available.restart();
                                 }
                             });
                         },
-                        select {
-                            class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                        select { class: "input flex-1 w-auto py-1 text-sm",
                             value: "{selected_server}",
                             onchange: move |evt| selected_server.set(evt.value()),
                             option { value: "", {t!("mcp-bundle-detail-select-mcp")} }
@@ -352,15 +351,13 @@ pub fn McpBundleDetail(id: String) -> Element {
                                 _ => rsx! {},
                             }}
                         }
-                        button {
-                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                            r#type: "submit",
+                        Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                             {t!("add")}
                         }
                     }
                     {match &*items.read() {
                         Some(Ok(list)) => rsx! {
-                            ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                            ul { class: "divide-y divide-line-soft",
                                 for item in list {
                                     {
                                         let biid = item.bundle_item_id.to_string();
@@ -368,8 +365,7 @@ pub fn McpBundleDetail(id: String) -> Element {
                                         rsx! {
                                             li { class: "py-2 flex justify-between items-center",
                                                 span { class: "text-sm font-mono", "{label}" }
-                                                button {
-                                                    class: "text-xs text-red-600 dark:text-red-400 hover:underline",
+                                                button { class: "link-danger text-xs",
                                                     onclick: move |_| {
                                                         let biid = biid.clone();
                                                         spawn(async move {
@@ -386,13 +382,13 @@ pub fn McpBundleDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
-                        None => rsx! { p { class: "text-sm", {t!("loading")} } },
+                        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                        None => rsx! { HelpText { {t!("loading")} } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { {t!("loading")} } },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
