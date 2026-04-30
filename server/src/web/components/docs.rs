@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::ui::{Badge, BadgeVariant, ErrorText};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocEntry {
@@ -130,14 +131,10 @@ async fn get_doc(slug: String) -> Result<(String, String, String), ServerFnError
 fn AudienceBadge(audience: String) -> Element {
     match audience.as_str() {
         "admin" => rsx! {
-            span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-                {t!("docs-badge-admin")}
-            }
+            Badge { variant: BadgeVariant::Accent, {t!("docs-badge-admin")} }
         },
         "user" => rsx! {
-            span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-                {t!("docs-badge-user")}
-            }
+            Badge { variant: BadgeVariant::Success, {t!("docs-badge-user")} }
         },
         _ => rsx! {},
     }
@@ -149,7 +146,7 @@ pub fn DocList() -> Element {
 
     rsx! {
         div {
-            h2 { class: "text-2xl font-bold mb-4", {t!("docs-title")} }
+            h2 { class: "h-page", {t!("docs-title")} }
             {match &*docs.read() {
                 Some(Ok(entries)) => {
                     let user_docs: Vec<_> = entries.iter().filter(|e| e.audience == "user").collect();
@@ -157,16 +154,16 @@ pub fn DocList() -> Element {
                     let other_docs: Vec<_> = entries.iter().filter(|e| e.audience != "user" && e.audience != "admin").collect();
                     rsx! {
                         if !user_docs.is_empty() {
-                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", {t!("docs-user-guides")} }
-                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700 mb-6",
+                            h3 { class: "h-section text-fg mt-6", {t!("docs-user-guides")} }
+                            div { class: "card divide-y divide-line-soft mb-6",
                                 for entry in &user_docs {
                                     Link {
                                         key: "{entry.slug}",
                                         to: Route::DocPage { slug: entry.slug.clone() },
-                                        class: "flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                        class: "flex items-center justify-between px-6 py-4 hover:bg-surface-2 transition-colors",
                                         div {
-                                            h4 { class: "text-lg font-medium text-blue-600 dark:text-blue-400", "{entry.title}" }
-                                            p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{entry.slug}" }
+                                            h4 { class: "text-lg font-medium text-brand", "{entry.title}" }
+                                            p { class: "text-sm text-fg-muted mt-1", "{entry.slug}" }
                                         }
                                         AudienceBadge { audience: entry.audience.clone() }
                                     }
@@ -174,16 +171,16 @@ pub fn DocList() -> Element {
                             }
                         }
                         if !admin_docs.is_empty() {
-                            h3 { class: "text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3", {t!("docs-administration")} }
-                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700 mb-6",
+                            h3 { class: "h-section text-fg mt-6", {t!("docs-administration")} }
+                            div { class: "card divide-y divide-line-soft mb-6",
                                 for entry in &admin_docs {
                                     Link {
                                         key: "{entry.slug}",
                                         to: Route::DocPage { slug: entry.slug.clone() },
-                                        class: "flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                        class: "flex items-center justify-between px-6 py-4 hover:bg-surface-2 transition-colors",
                                         div {
-                                            h4 { class: "text-lg font-medium text-blue-600 dark:text-blue-400", "{entry.title}" }
-                                            p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{entry.slug}" }
+                                            h4 { class: "text-lg font-medium text-brand", "{entry.title}" }
+                                            p { class: "text-sm text-fg-muted mt-1", "{entry.slug}" }
                                         }
                                         AudienceBadge { audience: entry.audience.clone() }
                                     }
@@ -191,23 +188,23 @@ pub fn DocList() -> Element {
                             }
                         }
                         if !other_docs.is_empty() {
-                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700",
+                            div { class: "card divide-y divide-line-soft",
                                 for entry in &other_docs {
                                     Link {
                                         key: "{entry.slug}",
                                         to: Route::DocPage { slug: entry.slug.clone() },
-                                        class: "flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors",
+                                        class: "flex items-center justify-between px-6 py-4 hover:bg-surface-2 transition-colors",
                                         div {
-                                            h4 { class: "text-lg font-medium text-blue-600 dark:text-blue-400", "{entry.title}" }
-                                            p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{entry.slug}" }
+                                            h4 { class: "text-lg font-medium text-brand", "{entry.title}" }
+                                            p { class: "text-sm text-fg-muted mt-1", "{entry.slug}" }
                                         }
                                     }
                                 }
                             }
                         }
                         if entries.is_empty() {
-                            div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                                p { class: "px-6 py-8 text-gray-500 dark:text-gray-400 text-center",
+                            div { class: "card",
+                                p { class: "px-6 py-8 text-fg-muted text-center",
                                     {t!("docs-none-prefix")}
                                     code { {t!("docs-none-md")} }
                                     " "
@@ -217,7 +214,7 @@ pub fn DocList() -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+                Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
                 None => rsx! { p { {t!("loading")} } },
             }}
         }
@@ -233,12 +230,12 @@ pub fn DocPage(slug: String) -> Element {
         div {
             Link {
                 to: Route::DocList {},
-                class: "text-sm text-blue-600 dark:text-blue-400 hover:underline mb-4 inline-block",
+                class: "link text-sm mb-4 inline-block",
                 {t!("docs-back")}
             }
             {match &*doc.read() {
                 Some(Ok((_, html_content, audience))) => rsx! {
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 px-8 py-6",
+                    div { class: "card px-8 py-6",
                         if !audience.is_empty() {
                             div { class: "mb-4",
                                 AudienceBadge { audience: audience.clone() }
@@ -250,7 +247,7 @@ pub fn DocPage(slug: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+                Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
                 None => rsx! { p { {t!("loading")} } },
             }}
         }

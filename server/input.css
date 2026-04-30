@@ -230,6 +230,29 @@
   .td-mono     { @apply td font-mono text-sm; }
   .td-muted    { @apply px-6 py-4 text-fg-muted; }
 
+  /* ── Tile launcher ─────────────────────────────────────────────
+     Square button used on the easy-access page. Pair the class
+     with `group` on the element so child .tile-icon / .tile-label
+     can light up via group-hover. */
+  .tile {
+    @apply flex flex-col items-center justify-center w-28 h-28 rounded-xl
+           bg-surface border-2 border-line-soft
+           hover:border-info hover:shadow-lg hover:scale-105
+           transition-all duration-150 cursor-pointer;
+  }
+  .tile-disabled {
+    @apply flex flex-col items-center justify-center w-28 h-28 rounded-xl
+           bg-surface-2 border-2 border-line-soft
+           opacity-50 cursor-not-allowed;
+  }
+  .tile-icon {
+    @apply h-10 w-10 text-fg-muted group-hover:text-info transition-colors mb-2;
+  }
+  .tile-label {
+    @apply text-xs font-medium text-fg group-hover:text-info
+           transition-colors text-center leading-tight;
+  }
+
   /* ── Log viewer ───────────────────────────────────────────────── */
   .log-output {
     @apply p-3 rounded text-xs font-mono whitespace-pre-wrap
