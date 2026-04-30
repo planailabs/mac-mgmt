@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh, Td,
     TdMuted, Th,
@@ -201,16 +202,20 @@ fn health_variant(state: &str) -> (BadgeVariant, String) {
 
 #[component]
 pub fn RolloutList() -> Element {
+    use_topbar(t!("rollout-list-title"), None);
     let rollouts = use_server_future(move || async move { get_rollouts().await })?;
 
     rsx! {
-        div { class: "flex justify-between items-center mb-4",
+        // Title row stacks below sm so the two action buttons don't
+        // overflow the right edge on phones; from sm up they sit on
+        // the same line as the title.
+        div { class: "flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("rollout-list-title")} }
-            div { class: "flex gap-2",
-                Link { to: Route::RolloutGroupList {}, class: "btn btn-lg btn-secondary",
+            div { class: "flex gap-2 flex-wrap",
+                Link { to: Route::RolloutGroupList {}, class: "btn btn-md btn-secondary",
                     {t!("rollout-list-manage-groups")}
                 }
-                Link { to: Route::RolloutForm {}, class: "btn btn-lg btn-primary",
+                Link { to: Route::RolloutForm {}, class: "btn btn-md btn-primary",
                     {t!("rollout-list-new")}
                 }
             }

@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -154,6 +155,7 @@ fn service_icon(name: &str) -> &'static str {
 
 #[component]
 pub fn EasyAccess() -> Element {
+    use_topbar(t!("nav-easy-access"), None);
     let nodes = use_server_future(get_easy_access_nodes)?;
 
     match &*nodes.read() {

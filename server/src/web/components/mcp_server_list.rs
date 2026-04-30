@@ -7,6 +7,7 @@ use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, HelpText, PageHeader};
 
 #[server]
@@ -75,10 +76,11 @@ async fn list_mcp_servers() -> Result<Vec<CatalogEntry>, ServerFnError> {
 
 #[component]
 pub fn McpServerList() -> Element {
+    use_topbar(t!("mcp-server-list-title"), None);
     let mut servers = use_server_future(list_mcp_servers)?;
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("mcp-server-list-title")} }
             div { class: "flex items-center gap-2",
                 {match &*servers.read() {

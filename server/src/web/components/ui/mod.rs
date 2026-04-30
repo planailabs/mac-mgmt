@@ -19,16 +19,30 @@ pub mod alert;
 pub mod badge;
 pub mod button;
 pub mod card;
+pub mod chart;
 pub mod data_table;
+pub mod feed;
 pub mod form;
+pub mod hero;
+pub mod metric;
+pub mod pill;
+pub mod session;
 pub mod text;
+pub mod timeline;
 
 pub use alert::{Alert, AlertVariant};
 pub use badge::{Badge, BadgeVariant};
 pub use button::{Button, ButtonKind, ButtonSize, ButtonVariant};
 pub use card::Card;
+pub use chart::{Bars, ChartColor, Sparkline};
 pub use data_table::{
     Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th,
 };
+pub use feed::{ActivityFeed, ActivityItem};
 pub use form::FormField;
+pub use hero::PageHero;
+pub use metric::{Kicker, KpiCard, Mono, StatBlock};
+pub use pill::{Dot, Pill, PillVariant};
+pub use session::{ActiveSessionCard, TraceStatus, TraceStep};
 pub use text::{ErrorText, HelpText, PageHeader, SectionHeading, SuccessText};
+pub use timeline::{StageItem, StageStatus, StageTimeline};

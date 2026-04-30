@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 
 use super::skill_center_list::SkillCenterRow;
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ButtonVariant, ErrorText, FormField, HelpText, PageHeader,
     SectionHeading,
@@ -202,6 +203,7 @@ async fn delete_skill_center(id: String) -> Result<(), ServerFnError> {
 
 #[component]
 pub fn SkillCenterDetail(id: String) -> Element {
+    use_topbar(t!("nav-skill-centers"), None);
     let id2 = id.clone();
     let id3 = id.clone();
     let mut center_future = use_server_future(move || {

@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
-use crate::web::components::ui::{ErrorText, HelpText, PageHeader};
+use crate::web::components::topbar::use_topbar;
+use crate::web::components::ui::{
+    ChartColor, Dot, ErrorText, HelpText, KpiCard, Mono, PageHero, Pill, PillVariant,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -353,6 +356,8 @@ impl Searchable for FleetEntry {
 
 #[component]
 pub fn FleetDashboard(stage_id: Option<String>) -> Element {
+    use_topbar(t!("fleet-title"), None);
+
     let mut data: Signal<Option<Result<Vec<FleetEntry>, String>>> = use_signal(|| None);
     let mut stage_label: Signal<Option<String>> = use_signal(|| None);
     let mut last_refreshed = use_signal(|| None::<DateTime<Utc>>);
@@ -563,11 +568,121 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
             let limit_val = *limit.read();
             let shown = filtered_count.min(limit_val);
 
+            // ── KPI summary computed from the current heartbeat snapshot.
+            // We deliberately compute these synchronously from `entries`
+            // rather than firing a separate query: the dashboard already
+            // re-fetches heartbeats every 5s so these stats stay live for
+            // free.
+            let now = Utc::now();
+            let total_instances = entries.len();
+            let online_instances = entries
+                .iter()
+                .filter(|e| now.signed_duration_since(e.reported_at).num_seconds() < 300)
+                .count();
+            let total_clusters: usize = entries
+                .iter()
+                .map(|e| e.cluster_id.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+
+            // Healthy services percentage across every heartbeat's services
+            // array. Cheaper than a SQL aggregate and mirrors the table
+            // visually: the same green/red state drives both.
+            let (svc_healthy, svc_total): (usize, usize) = entries
+                .iter()
+                .filter_map(|e| e.services.as_array())
+                .flat_map(|arr| arr.iter())
+                .fold((0usize, 0usize), |(h, t), s| {
+                    let healthy = s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
+                    (h + usize::from(healthy), t + 1)
+                });
+            let svc_pct: f64 = if svc_total == 0 {
+                100.0
+            } else {
+                (svc_healthy as f64) / (svc_total as f64) * 100.0
+            };
+
+            // Failing probes — a separate signal from "service healthy"
+            // because a probe failure means the verification layer noticed
+            // something the daemon's self-report didn't.
+            let failing_probes: usize = entries
+                .iter()
+                .filter_map(|e| e.services_extended.as_ref())
+                .filter_map(|v| v.as_array())
+                .flat_map(|arr| arr.iter())
+                .filter(|s| {
+                    s.get("last_probe_ok")
+                        .and_then(|v| v.as_bool())
+                        .map(|ok| !ok)
+                        .unwrap_or(false)
+                })
+                .count();
+
             rsx! {
-                div { class: "flex items-center justify-between mb-4",
-                    PageHeader { class: "mb-0", {t!("fleet-title")} }
-                    span { class: "text-xs text-fg-faint",
-                        {t!("fleet-last-refreshed", time: refresh_ago)}
+                // ── Page hero ────────────────────────────────────────
+                // Composes kicker + display title + right-side live
+                // indicator. The "live" dot pulses via the dot's halo;
+                // the timestamp comes from the existing 5s refresh loop.
+                PageHero {
+                    kicker: t!("fleet-title").to_uppercase(),
+                    // Match the design's hero pattern ("47 instances
+                    // healthy across 14 clusters") with muted connective
+                    // words. Falls back to a calmer empty-state copy
+                    // when the fleet hasn't reported yet — the giant
+                    // "0 · 0" reads broken.
+                    title: rsx! {
+                        if online_instances == 0 && total_clusters == 0 {
+                            span { class: "text-fg-muted", {t!("fleet-no-daemons")} }
+                        } else {
+                            "{online_instances} "
+                            span { class: "text-fg-muted", "instances " }
+                            span { class: "text-fg-muted", "across " }
+                            "{total_clusters} "
+                            span { class: "text-fg-muted", "clusters" }
+                        }
+                    },
+                    right: rsx! {
+                        div { class: "flex items-center gap-2 text-fg-muted text-xs",
+                            Dot { variant: PillVariant::Ok }
+                            span { "live" }
+                        }
+                        span { class: "text-fg-faint text-xs font-mono",
+                            {t!("fleet-last-refreshed", time: refresh_ago)}
+                        }
+                    },
+                    class: "mb-5",
+                }
+
+                // ── KPI strip ────────────────────────────────────────
+                // Responsive: 1 col on phones, 2 on tablets, 4 on desktop.
+                // Sparklines are deliberately omitted — we don't have a
+                // time-series feed yet; passing empty `data` makes
+                // KpiCard skip the chart cleanly.
+                div { class: "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5",
+                    KpiCard {
+                        label: t!("fleet-kpi-online"),
+                        value: format!("{online_instances}"),
+                        delta: Some(format!("/ {total_instances}")),
+                        delta_kind: ChartColor::Muted,
+                        color: ChartColor::Brand,
+                    }
+                    KpiCard {
+                        label: t!("fleet-kpi-services-healthy"),
+                        value: format!("{:.1}%", svc_pct),
+                        delta: Some(format!("{svc_healthy}/{svc_total}")),
+                        delta_kind: ChartColor::Muted,
+                        color: ChartColor::Ok,
+                    }
+                    KpiCard {
+                        label: t!("fleet-kpi-clusters"),
+                        value: format!("{total_clusters}"),
+                        color: ChartColor::Info,
+                    }
+                    KpiCard {
+                        label: t!("fleet-kpi-failing-probes"),
+                        value: format!("{failing_probes}"),
+                        delta_kind: if failing_probes == 0 { ChartColor::Ok } else { ChartColor::Bad },
+                        color: ChartColor::Bad,
                     }
                 }
                 // Stage filter banner — visible when the route was loaded
@@ -627,8 +742,17 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                         let now = Utc::now();
                                         let age = now.signed_duration_since(entry.reported_at);
                                         let is_online = age.num_seconds() < 300;
-                                        let status_class = if is_online { "text-success font-semibold" } else { "text-danger font-semibold" };
+                                        // Status pill: ok pill+dot when online, bad pill+dot otherwise.
+                                        // (`status_class` / `status_text` removed — replaced by the Pill below.)
+                                        let status_variant = if is_online { PillVariant::Ok } else { PillVariant::Bad };
                                         let status_text = if is_online { t!("fleet-online") } else { t!("fleet-offline") };
+                                        // Env variant: production stands out (brand-tinted accent),
+                                        // staging is warn-tinted, anything else (dev / unset) is muted.
+                                        let env_variant = match entry.environment.as_str() {
+                                            "production" => PillVariant::Accent,
+                                            "staging"    => PillVariant::Warn,
+                                            _            => PillVariant::Muted,
+                                        };
                                         let last_seen = if age.num_seconds() < 60 {
                                             t!("fleet-just-now")
                                         } else if age.num_minutes() < 60 {
@@ -639,37 +763,37 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                             entry.reported_at.format("%Y-%m-%d %H:%M").to_string()
                                         };
 
-                                        // Service badges reflect the local daemon's health flag only — the
+                                        // Service pills reflect the local daemon's health flag only — the
                                         // Services column answers "does the daemon think the service is up?".
                                         // Probe data goes in its own column below so the two signals don't
                                         // get conflated when only one of them is failing.
-                                        let mut services_badges: Vec<(String, String, String)> = entry.services
+                                        //
+                                        // Per design language: healthy services are muted/quiet (a fleet of
+                                        // green pills is loud and useless); only unhealthy services pop in
+                                        // bad-red. The tooltip carries the full status word.
+                                        let mut services_pills: Vec<(String, PillVariant, String)> = entry.services
                                             .as_array()
                                             .map(|arr| {
                                                 arr.iter().map(|s| {
                                                     let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
                                                     let healthy = s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
-                                                    let (cls, title) = if healthy {
-                                                        (
-                                                            "badge badge-success".to_string(),
-                                                            t!("fleet-healthy"),
-                                                        )
+                                                    let (variant, title) = if healthy {
+                                                        (PillVariant::Muted, t!("fleet-healthy").to_string())
                                                     } else {
-                                                        (
-                                                            "badge badge-danger".to_string(),
-                                                            t!("fleet-unhealthy"),
-                                                        )
+                                                        (PillVariant::Bad, t!("fleet-unhealthy").to_string())
                                                     };
-                                                    (name, cls, title)
+                                                    (name, variant, title)
                                                 }).collect()
                                             })
                                             .unwrap_or_default();
-                                        services_badges.sort_by(|a, b| a.0.cmp(&b.0));
+                                        services_pills.sort_by(|a, b| a.0.cmp(&b.0));
 
-                                        // Probe badges: one per service present in services_extended, colored
-                                        // by the latest probe outcome. Tooltip carries kind + age so operators
-                                        // can tell a just-ran green from a stale-but-previously-ok green.
-                                        let mut probe_badges: Vec<(String, String, String)> = entry.services_extended
+                                        // Probe pills: one per service in services_extended, colored by the
+                                        // latest probe outcome. Same loudness rule as Services — passing
+                                        // probes are muted, failures pop in bad-red. Tooltip carries kind +
+                                        // age + duration so operators can tell a just-ran green from a
+                                        // stale-but-previously-ok green.
+                                        let mut probe_pills: Vec<(String, PillVariant, String)> = entry.services_extended
                                             .as_ref()
                                             .and_then(|v| v.as_array())
                                             .map(|arr| arr.iter().filter_map(|s| {
@@ -689,29 +813,16 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     }
                                                 }).unwrap_or_else(|| "never".into());
                                                 let dur_txt = dur.map(|d| format!(", {d}ms")).unwrap_or_default();
-                                                let (cls, label, ok_text) = match ok {
-                                                    Some(true) => (
-                                                        "badge badge-success",
-                                                        t!("fleet-ok"),
-                                                        t!("fleet-ok"),
-                                                    ),
-                                                    Some(false) => (
-                                                        "badge badge-danger",
-                                                        t!("fleet-fail"),
-                                                        t!("fleet-fail"),
-                                                    ),
-                                                    None => (
-                                                        "badge badge-neutral",
-                                                        t!("fleet-pending"),
-                                                        t!("fleet-no-result"),
-                                                    ),
+                                                let (variant, ok_text) = match ok {
+                                                    Some(true)  => (PillVariant::Muted, t!("fleet-ok").to_string()),
+                                                    Some(false) => (PillVariant::Bad,   t!("fleet-fail").to_string()),
+                                                    None        => (PillVariant::Muted, t!("fleet-no-result").to_string()),
                                                 };
-                                                let _ = label;
                                                 let title = format!("{kind} {ok_text} · {age_txt}{dur_txt}");
-                                                Some((name, cls.to_string(), title))
+                                                Some((name, variant, title))
                                             }).collect())
                                             .unwrap_or_default();
-                                        probe_badges.sort_by(|a, b| a.0.cmp(&b.0));
+                                        probe_pills.sort_by(|a, b| a.0.cmp(&b.0));
 
                                         // Compact load cell: "1.2 · 78% · nominal"
                                         let load_cell: Option<String> = entry.sample.as_ref().map(|s| {
@@ -723,8 +834,9 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                             format!("{cpu:.2} · {mem_pct}% · {thermal}")
                                         });
 
-                                        // Compact GPU badge set, one per GPU: "nvidia 72% · 64°C".
-                                        let gpu_cells: Vec<(String, String)> = entry.sample.as_ref()
+                                        // Compact GPU pill set, one per GPU: "gpu0 72% · 64°C".
+                                        // Hot GPUs (≥85% utilisation) render in warn-yellow; idle in muted.
+                                        let gpu_cells: Vec<(String, PillVariant)> = entry.sample.as_ref()
                                             .and_then(|s| s.get("gpus"))
                                             .and_then(|v| v.as_array())
                                             .map(|arr| {
@@ -734,41 +846,51 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     let mut parts: Vec<String> = Vec::new();
                                                     if let Some(u) = util { parts.push(format!("{u}%")); }
                                                     if let Some(t) = temp { parts.push(format!("{t}°C")); }
-                                                    let label = if parts.is_empty() { t!("fleet-idle") } else { parts.join(" · ") };
+                                                    let label = if parts.is_empty() { t!("fleet-idle").to_string() } else { parts.join(" · ") };
                                                     let idx = g.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-                                                    let cls = match util {
-                                                        Some(u) if u >= 85 => "badge badge-warn",
-                                                        Some(_) => "badge badge-accent",
-                                                        None => "badge badge-neutral",
+                                                    let variant = match util {
+                                                        Some(u) if u >= 85 => PillVariant::Warn,
+                                                        Some(_)            => PillVariant::Accent,
+                                                        None               => PillVariant::Muted,
                                                     };
-                                                    (format!("gpu{idx} {label}"), cls.to_string())
+                                                    (format!("gpu{idx} {label}"), variant)
                                                 }).collect()
                                             })
                                             .unwrap_or_default();
 
                                         rsx! {
                                             tr {
+                                                // Cluster name in brand orange (principle: cluster names are the
+                                                // page's primary navigation surface — they get the only colored link).
                                                 td { class: "td text-sm",
-                                                    Link { to: Route::ClusterDetail { id: entry.cluster_id.clone() }, class: "link",
+                                                    Link {
+                                                        to: Route::ClusterDetail { id: entry.cluster_id.clone() },
+                                                        class: "text-brand font-medium hover:underline",
                                                         "{entry.cluster_name}"
                                                     }
                                                 }
-                                                td { class: "td text-sm",
-                                                    Link { to: Route::FleetDetail { instance_id: entry.instance_id.clone() }, class: "link",
+                                                // Hostname is a "fact" → mono. Empty hostnames fall back to a
+                                                // truncated mono instance_id so each row still has something
+                                                // identifying.
+                                                td { class: "td",
+                                                    Link {
+                                                        to: Route::FleetDetail { instance_id: entry.instance_id.clone() },
+                                                        class: "text-fg hover:text-brand transition-colors",
                                                         if entry.hostname.is_empty() {
-                                                            span { class: "font-mono text-xs", "{entry.instance_id}" }
+                                                            Mono { class: "text-xs", "{entry.instance_id}" }
                                                         } else {
-                                                            span { "{entry.hostname}" }
+                                                            Mono { class: "text-xs", "{entry.hostname}" }
                                                         }
                                                     }
                                                 }
+                                                // Env pill (production / staging / dev tones).
                                                 td { class: "td text-sm",
                                                     if !entry.environment.is_empty() {
-                                                        span { class: "badge badge-neutral", "{entry.environment}" }
+                                                        Pill { variant: env_variant, "{entry.environment}" }
                                                     }
                                                 }
-                                                td { class: "td text-sm",
-                                                    div { "{entry.version}" }
+                                                td { class: "td",
+                                                    Mono { class: "text-xs text-fg-muted", "v{entry.version}" }
                                                     if let Some(sha) = &entry.git_sha {
                                                         {
                                                             let short: String = sha.chars().take(12).collect();
@@ -808,7 +930,15 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         }
                                                     }
                                                 }
-                                                td { class: "td text-sm {status_class}", "{status_text}" }
+                                                // Status: pill with leading dot (the design's
+                                                // "online" / "down" pattern — colour redundant
+                                                // with the dot for accessibility).
+                                                td { class: "td",
+                                                    Pill { variant: status_variant,
+                                                        Dot { variant: status_variant }
+                                                        "{status_text}"
+                                                    }
+                                                }
                                                 td { class: "td text-xs font-mono",
                                                     if let Some(lc) = &load_cell {
                                                         span { "{lc}" }
@@ -817,26 +947,26 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     }
                                                     if !gpu_cells.is_empty() {
                                                         div { class: "flex gap-1 flex-wrap mt-1",
-                                                            for (label, cls) in &gpu_cells {
-                                                                span { class: "{cls}", "{label}" }
+                                                            for (label, variant) in gpu_cells.iter().cloned() {
+                                                                Pill { variant, mono: true, "{label}" }
                                                             }
                                                         }
                                                     }
                                                 }
-                                                td { class: "td text-sm",
+                                                td { class: "td",
                                                     div { class: "flex gap-1 flex-wrap",
-                                                        for (name, badge_class, title) in &services_badges {
-                                                            span { class: "{badge_class}", title: "{title}", "{name}" }
+                                                        for (name, variant, title) in services_pills.iter().cloned() {
+                                                            Pill { variant, mono: true, title: title.clone(), "{name}" }
                                                         }
                                                     }
                                                 }
-                                                td { class: "td text-sm",
-                                                    if probe_badges.is_empty() {
+                                                td { class: "td",
+                                                    if probe_pills.is_empty() {
                                                         span { class: "text-fg-faint", {t!("em-dash")} }
                                                     } else {
                                                         div { class: "flex gap-1 flex-wrap",
-                                                            for (name, badge_class, title) in &probe_badges {
-                                                                span { class: "{badge_class}", title: "{title}", "{name}" }
+                                                            for (name, variant, title) in probe_pills.iter().cloned() {
+                                                                Pill { variant, mono: true, title: title.clone(), "{name}" }
                                                             }
                                                         }
                                                     }

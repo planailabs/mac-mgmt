@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 
 // ── Server functions ───────────────────────────────────────────────────
 
@@ -210,6 +211,7 @@ pub fn ImportSources(
     prefill_slug: Option<String>,
     prefill_name: Option<String>,
 ) -> Element {
+    use_topbar(t!("nav-import-sources"), None);
     let navigator = navigator();
     let has_prefill = prefill_slug.as_ref().is_some_and(|s| !s.is_empty());
 

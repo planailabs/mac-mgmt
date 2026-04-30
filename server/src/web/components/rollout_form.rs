@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonSize, ErrorText, FormField, HelpText, PageHeader,
 };
@@ -250,6 +251,7 @@ async fn create_rollout(
 
 #[component]
 pub fn RolloutForm() -> Element {
+    use_topbar(t!("nav-rollouts"), None);
     let groups = use_server_future(move || async move { get_group_options().await })?;
     let versions = use_server_future(move || async move { get_available_versions().await })?;
     let mut name = use_signal(String::new);

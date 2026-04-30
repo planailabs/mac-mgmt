@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
 
 #[server]
@@ -39,6 +40,7 @@ async fn create_organization(name: String) -> Result<String, ServerFnError> {
 
 #[component]
 pub fn OrganizationForm() -> Element {
+    use_topbar(t!("nav-organizations"), None);
     let mut name = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let nav = navigator();

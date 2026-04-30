@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh,
     TdMono, TdMuted,
@@ -128,13 +129,14 @@ async fn sync_daemon_versions_from_xzar() -> Result<DaemonSyncResult, ServerFnEr
 
 #[component]
 pub fn DaemonVersionList() -> Element {
+    use_topbar(t!("daemon-version-list-title"), None);
     let mut versions = use_server_future(list_daemon_versions)?;
     let mut syncing = use_signal(|| false);
     let mut sync_msg = use_signal(|| None::<String>);
     let mut sync_err = use_signal(|| None::<String>);
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("daemon-version-list-title")} }
             Button {
                 variant: ButtonVariant::Primary,

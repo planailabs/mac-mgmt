@@ -4,6 +4,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card,
     ErrorText, HelpText, SectionHeading,
@@ -522,6 +523,7 @@ fn role_variant(role: &str) -> BadgeVariant {
 
 #[component]
 pub fn OrganizationDetail(id: String) -> Element {
+    use_topbar(t!("nav-organizations"), None);
     let id_for_org = id.clone();
     let mut org_future = use_server_future(move || {
         let id = id_for_org.clone();

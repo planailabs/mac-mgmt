@@ -5,6 +5,7 @@ use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::McpServerBundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ErrorText, FormField, PageHeader,
 };
@@ -35,6 +36,7 @@ async fn create_mcp_bundle(
 
 #[component]
 pub fn McpBundleForm() -> Element {
+    use_topbar(t!("nav-mcp-bundles"), None);
     let navigator = navigator();
     let mut slug = use_signal(String::new);
     let mut name = use_signal(String::new);

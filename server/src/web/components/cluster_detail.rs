@@ -3,9 +3,10 @@ use dioxus_i18n::t;
 
 use crate::models::Cluster;
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, ErrorText, HelpText,
-    SectionHeading,
+    Kicker, SectionHeading,
 };
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -368,6 +369,14 @@ pub fn ClusterDetail(id: String) -> Element {
         async move { get_cluster(id).await }
     })?;
 
+    // Topbar shows the cluster name once it loads. Kept empty during
+    // the loading flicker rather than showing a placeholder.
+    let topbar_title = match &*cluster.read() {
+        Some(Ok(c)) => c.name.clone(),
+        _ => String::new(),
+    };
+    use_topbar(topbar_title, Some(t!("nav-clusters").to_string()));
+
     let cid_for_write = id.clone();
     let write_check = use_server_future(move || {
         let cid = cid_for_write.clone();
@@ -401,40 +410,58 @@ pub fn ClusterDetail(id: String) -> Element {
             let name = c.name.clone();
             let name_for_modal = name.clone();
             rsx! {
-                div { class: "flex items-center gap-3 mb-2",
-                    if *editing.read() {
-                        form { class: "flex items-center gap-2",
-                            onsubmit: move |evt: FormEvent| {
-                                evt.prevent_default();
-                                let id = cid.clone();
-                                let new_name = draft_name.read().clone();
-                                async move {
-                                    if !new_name.trim().is_empty() {
-                                        let _ = rename_cluster(id, new_name).await;
-                                        cluster.restart();
+                // ── Hero ────────────────────────────────────────────
+                // Kicker label + display name on the left; admin-only
+                // edit/delete cluster as small links on the right. The
+                // row stacks vertically below `sm` so the controls
+                // don't squeeze the title on phones.
+                div { class: "flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-2",
+                    div { class: "min-w-0",
+                        Kicker { class: "mb-2", {t!("nav-clusters")} }
+                        if *editing.read() {
+                            form { class: "flex items-center gap-2 flex-wrap",
+                                // Pre-clone `cid` for the rename closure so the
+                                // outer `cid` stays available for the delete
+                                // closure further down — the two branches are
+                                // logically mutually exclusive but the borrow
+                                // checker can't see that.
+                                onsubmit: {
+                                    let cid_for_rename = cid.clone();
+                                    move |evt: FormEvent| {
+                                        evt.prevent_default();
+                                        let id = cid_for_rename.clone();
+                                        let new_name = draft_name.read().clone();
+                                        async move {
+                                            if !new_name.trim().is_empty() {
+                                                let _ = rename_cluster(id, new_name).await;
+                                                cluster.restart();
+                                            }
+                                            editing.set(false);
+                                        }
                                     }
-                                    editing.set(false);
+                                },
+                                input {
+                                    class: "input text-2xl font-bold w-auto py-1",
+                                    r#type: "text",
+                                    value: "{draft_name}",
+                                    oninput: move |e| draft_name.set(e.value()),
+                                    autofocus: true,
                                 }
-                            },
-                            input {
-                                class: "input text-2xl font-bold w-auto py-1",
-                                r#type: "text",
-                                value: "{draft_name}",
-                                oninput: move |e| draft_name.set(e.value()),
-                                autofocus: true,
+                                button { class: "text-success hover:opacity-80", r#type: "submit",
+                                    {t!("save")}
+                                }
+                                button { class: "text-fg-muted hover:text-fg-strong", r#type: "button",
+                                    onclick: move |_| editing.set(false),
+                                    {t!("cancel")}
+                                }
                             }
-                            button { class: "text-success hover:opacity-80", r#type: "submit",
-                                {t!("save")}
-                            }
-                            button { class: "text-fg-muted hover:text-fg-strong", r#type: "button",
-                                onclick: move |_| editing.set(false),
-                                {t!("cancel")}
-                            }
+                        } else {
+                            h1 { class: "h-display", "{name}" }
                         }
-                    } else {
-                        h2 { class: "h-page mb-0", "{name}" }
-                        if is_admin {
-                            button { class: "text-fg-faint hover:text-fg-muted",
+                    }
+                    if is_admin && !*editing.read() {
+                        div { class: "flex items-center gap-2 flex-wrap shrink-0",
+                            button { class: "btn btn-sm btn-ghost",
                                 onclick: move |_| {
                                     draft_name.set(name.clone());
                                     editing.set(true);
@@ -456,12 +483,12 @@ pub fn ClusterDetail(id: String) -> Element {
                                     },
                                     {t!("cluster-detail-confirm-delete")}
                                 }
-                                button { class: "text-fg-muted hover:text-fg-strong text-sm",
+                                button { class: "btn btn-sm btn-ghost",
                                     onclick: move |_| confirm_delete.set(false),
                                     {t!("cancel")}
                                 }
                             } else {
-                                button { class: "link-danger text-sm",
+                                button { class: "btn btn-sm btn-danger-soft",
                                     onclick: move |_| confirm_delete.set(true),
                                     {t!("delete")}
                                 }
@@ -469,13 +496,19 @@ pub fn ClusterDetail(id: String) -> Element {
                         }
                     }
                 }
-                div { class: "text-fg-muted mb-6 flex items-center gap-4 flex-wrap",
-                    span { {t!("cluster-detail-created", date: created)} }
+
+                // ── Meta strip ──────────────────────────────────────
+                // Created date + version + nixpkgs + active rollouts +
+                // cloud-init / push actions, all on a single wrap row.
+                // Mono `created` label keeps the timestamp-as-fact
+                // contract (principle 4).
+                div { class: "text-fg-muted mb-6 flex items-center gap-3 flex-wrap text-sm",
+                    span { class: "font-mono text-xs", {t!("cluster-detail-created", date: created)} }
                     PinnedVersion { cluster_id: cid2.clone(), version: pinned.clone(), read_only, on_change: move |_| cluster.restart() }
                     NixpkgsCommit { cluster_id: cid2.clone(), commit: nix_commit.clone(), read_only, on_change: move |_| cluster.restart() }
                     ActiveRollouts { cluster_id: cid2.clone() }
                     if can_write {
-                        Button { size: ButtonSize::Sm,
+                        Button { size: ButtonSize::Sm, variant: ButtonVariant::Secondary,
                             onclick: move |_| cloud_init_open.set(true),
                             {t!("cluster-detail-cloud-init")}
                         }

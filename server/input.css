@@ -14,90 +14,145 @@
  * Views and Rust components reference the semantic classes (`btn`,
  * `input`, `card`, `h-page`, …) — they should not contain hex literals
  * or palette utilities like `bg-blue-600`.
+ *
+ * Design language v1 (orange · sparse · hairlines · mono-for-facts)
+ * lives in `mgmt-design/Design Language.html`.
  */
 
 @layer base {
   :root {
-    /* RGB triplets so Tailwind's `<alpha-value>` interpolation works */
-    --c-bg:           249 250 251;  /* gray-50  — page background */
-    --c-surface:        255 255 255;  /* white    — cards, table body */
-    --c-surface-2:      249 250 251;  /* gray-50  — table head, hover */
-    --c-surface-3:      229 231 235;  /* gray-200 — secondary button bg */
-    --c-surface-strong: 209 213 219;  /* gray-300 — secondary button hover */
+    /* ── Surfaces ───────────────────────────────────────────────────
+       Three visible tiers, ~10–15 RGB points apart so users can
+       distinguish chrome (sidebar/topbar) from main content from cards
+       at a glance. The previous spread (4 + 4 points) collapsed into
+       a single visual layer.
 
-    --c-fg:           17 24 39;     /* gray-900 — body text */
-    --c-fg-strong:    17 24 39;     /* gray-900 — headings, labels */
-    --c-fg-muted:     107 114 128;  /* gray-500 — secondary text */
-    --c-fg-faint:     156 163 175;  /* gray-400 — placeholders, dashes */
-    --c-fg-invert:    255 255 255;  /* white    — text on solid color buttons */
+         canvas (main content) → chrome (sidebar/topbar) → cards
+         #f0ede4              → #faf7f0              → #ffffff
 
-    --c-line:         209 213 219;  /* gray-300 — input borders */
-    --c-line-soft:    229 231 235;  /* gray-200 — table dividers */
+       The main content sits on a slightly more saturated cream so the
+       white sidebar+topbar+cards "panels" pop above it. */
+    --c-bg:             240 237 228;  /* #f0ede4 — tan cream canvas */
+    --c-surface:        255 255 255;  /* white — cards, table body */
+    --c-surface-2:      250 247 240;  /* #faf7f0 — sub-panel, chrome */
+    --c-surface-3:      230 226 215;  /* secondary button bg */
+    --c-surface-strong: 215 209 195;  /* secondary button hover */
 
-    --c-brand:        37 99 235;    /* blue-600 — primary, links */
-    --c-brand-strong: 29 78 216;    /* blue-700 — primary hover */
-    --c-brand-soft:   219 234 254;  /* blue-100 — soft backgrounds */
+    /* ── Text ───────────────────────────────────────────────────────
+       Apparent colors over the canvas — translucent ink at full opacity.
+       Bumped slightly to keep contrast on the new (darker) canvas. */
+    --c-fg:           22 26 34;       /* #161a22 — primary text */
+    --c-fg-strong:    11 15 21;       /* near-black headings */
+    --c-fg-muted:     104 106 110;    /* ≈ rgba(22,26,34,0.62) over canvas */
+    --c-fg-faint:     150 150 148;    /* ≈ rgba(22,26,34,0.42) over canvas */
+    --c-fg-invert:    255 255 255;    /* text on solid color buttons */
 
-    --c-danger:        220 38 38;   /* red-600 */
-    --c-danger-strong: 185 28 28;   /* red-700 */
-    --c-danger-soft:   254 226 226; /* red-100 */
+    /* ── Lines ──────────────────────────────────────────────────────
+       `border-line` (1px opaque) renders the apparent colour of a
+       hairline at the design's alpha. Re-derived for the new chrome
+       surface so card borders, dividers and form inputs remain
+       visible without reading as heavy. */
+    --c-line:         224 220 209;    /* hairline over chrome */
+    --c-line-soft:    214 209 196;    /* slightly stronger divider */
 
-    --c-warn:          245 158 11;  /* amber-500 */
-    --c-warn-strong:   180 83 9;    /* amber-700 */
-    --c-warn-soft:     254 243 199; /* amber-100 */
+    /* ── Brand · accent orange (replaces previous blue) ────────────
+       Reserved for: brand mark, primary CTA, active nav, healing
+       state, in-progress rollouts. Never decorative. */
+    --c-brand:        234 88 12;      /* #ea580c orange-600 */
+    --c-brand-strong: 194 65 12;      /* #c2410c — primary hover */
+    --c-brand-soft:   246 230 219;    /* peach surface (≈ accent at 10%) */
 
-    --c-success:      22 163 74;    /* green-600 */
-    --c-success-soft: 220 252 231;  /* green-100 */
+    /* ── Status ────────────────────────────────────────────────────
+       Status owns color: green ok · amber warn · red bad · blue info.
+       Don't reuse status hues for chrome. */
+    --c-danger:        220 38 38;     /* #dc2626 */
+    --c-danger-strong: 185 28 28;
+    --c-danger-soft:   244 225 222;
 
-    --c-info:         37 99 235;    /* blue-600 */
-    --c-info-soft:    219 234 254;  /* blue-100 */
+    --c-warn:          217 119 6;     /* #d97706 amber-600 */
+    --c-warn-strong:   180 83 9;
+    --c-warn-soft:     244 233 218;
 
-    --c-accent:        147 51 234;  /* purple-600 */
-    --c-accent-strong: 126 34 206;  /* purple-700 */
-    --c-accent-soft:   243 232 255; /* purple-100 */
+    --c-success:      5 150 105;      /* #059669 emerald-600 */
+    --c-success-soft: 223 236 228;
 
-    --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --c-info:         37 99 235;      /* #2563eb blue-600 */
+    --c-info-soft:    226 231 241;
+
+    /* ── Accent ────────────────────────────────────────────────────
+       Per principle 2 ("orange means action"), accent and brand are
+       the same hue. Aliasing keeps `BadgeVariant::Accent`,
+       `ButtonVariant::Accent` and `.btn-accent` callers rendering in
+       brand colors without a code-side migration. */
+    --c-accent:        var(--c-brand);
+    --c-accent-strong: var(--c-brand-strong);
+    --c-accent-soft:   var(--c-brand-soft);
+
+    /* ── Surfaces & shadows ─────────────────────────────────────────
+       Cards get a hairline, not a drop-shadow (principle 5). Shadow
+       is reserved for floating overlays — modals, dropdowns. */
+    --shadow-card: none;
+    --shadow-pop:  0 12px 40px rgb(0 0 0 / 0.18);
+
+    /* ── Type stacks ────────────────────────────────────────────────
+       Inter Tight + JetBrains Mono with system fallback. The fallback
+       chain renders well on Apple/Linux without any web-font fetch. */
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter Tight", Inter, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
 
   .dark {
-    --c-bg:           17 24 39;     /* gray-900 */
-    --c-surface:        31 41 55;     /* gray-800 */
-    --c-surface-2:      55 65 81;     /* gray-700 */
-    --c-surface-3:      75 85 99;     /* gray-600 */
-    --c-surface-strong: 107 114 128;  /* gray-500 */
+    /*
+       Three visible tiers in dark mode: canvas darkest, chrome
+       slightly raised, cards more raised. Pushed apart from the
+       original (3 + 3 RGB points) to give the sidebar/topbar a
+       clearly distinct surface without sacrificing the calm feel.
 
-    --c-fg:           249 250 251;  /* gray-50  */
-    --c-fg-strong:    255 255 255;  /* white    */
-    --c-fg-muted:     156 163 175;  /* gray-400 */
-    --c-fg-faint:     107 114 128;  /* gray-500 */
+         canvas (main content) → chrome (sidebar/topbar) → cards
+         #0b0f15              → #161e29              → #1c2735
+    */
+    --c-bg:             11 15 21;     /* #0b0f15 — near-black canvas */
+    --c-surface:        28 39 53;     /* #1c2735 — cards, brightest */
+    --c-surface-2:      22 30 41;     /* #161e29 — chrome */
+    --c-surface-3:      45 60 80;     /* secondary button bg */
+    --c-surface-strong: 65 85 110;    /* secondary button hover */
+
+    --c-fg:           232 237 245;    /* #e8edf5 */
+    --c-fg-strong:    255 255 255;
+    --c-fg-muted:     147 152 161;    /* ≈ rgba(232,237,245,0.6) over canvas */
+    --c-fg-faint:     102 108 117;    /* ≈ rgba(232,237,245,0.4) over canvas */
     --c-fg-invert:    255 255 255;
 
-    --c-line:         75 85 99;     /* gray-600 */
-    --c-line-soft:    55 65 81;     /* gray-700 */
+    /* Lines re-derived over the new chrome surface. Slightly heavier
+       than before so the card borders read at 1px on standard DPI. */
+    --c-line:         52 64 80;       /* ≈ rgba(255,255,255,0.10) over chrome */
+    --c-line-soft:    65 78 96;       /* divider/track */
 
-    --c-brand:        96 165 250;   /* blue-400 — lighter on dark */
-    --c-brand-strong: 59 130 246;   /* blue-500 */
-    --c-brand-soft:   30 58 138;    /* blue-900 */
+    --c-brand:        249 115 22;     /* #f97316 orange-500 */
+    --c-brand-strong: 234 88 12;      /* #ea580c — hover */
+    --c-brand-soft:   44 29 21;       /* tinted surface */
 
-    --c-danger:        248 113 113; /* red-400 */
-    --c-danger-strong: 239 68 68;   /* red-500 */
-    --c-danger-soft:   127 29 29;   /* red-900 */
+    --c-danger:        248 113 113;   /* #f87171 */
+    --c-danger-strong: 239 68 68;
+    --c-danger-soft:   44 29 34;
 
-    --c-warn:          251 191 36;  /* amber-400 */
-    --c-warn-strong:   245 158 11;  /* amber-500 */
-    --c-warn-soft:     120 53 15;   /* amber-900 */
+    --c-warn:          251 191 36;    /* #fbbf24 amber-400 */
+    --c-warn-strong:   245 158 11;
+    --c-warn-soft:     45 40 23;
 
-    --c-success:      74 222 128;   /* green-400 */
-    --c-success-soft: 20 83 45;     /* green-900 */
+    --c-success:      52 211 153;     /* #34d399 emerald-400 */
+    --c-success-soft: 17 42 40;
 
-    --c-info:         96 165 250;
-    --c-info-soft:    30 58 138;
+    --c-info:         122 162 255;    /* #7aa2ff */
+    --c-info-soft:    27 36 54;
 
-    --c-accent:        192 132 252; /* purple-400 */
-    --c-accent-strong: 168 85 247;  /* purple-500 */
-    --c-accent-soft:   76 29 149;   /* purple-900 */
+    /* Accent aliases brand — see :root for rationale. */
+    --c-accent:        var(--c-brand);
+    --c-accent-strong: var(--c-brand-strong);
+    --c-accent-soft:   var(--c-brand-soft);
 
-    --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+    --shadow-card: none;
+    --shadow-pop:  0 12px 40px rgb(0 0 0 / 0.4);
   }
 
   /* Smooth color transitions when toggling themes. */
@@ -113,10 +168,22 @@
    * Theme `<html>` and `<body>` from the same tokens. Styling `<html>` here
    * means the theme-toggle JS only needs to flip the `.dark` class — it
    * never touches inline style colors.
+   *
+   * Font stack lives on the root so every utility, including Tailwind's
+   * built-in `font-mono`, can be overridden in one place.
    */
   html, body {
     background-color: rgb(var(--c-bg));
     color: rgb(var(--c-fg));
+    font-family: var(--font-sans);
+  }
+
+  /* Tailwind's `font-mono` utility points at the platform stack by
+     default. Re-route it through our token so JetBrains Mono kicks in
+     when present, and turn on tabular-nums so figures align in tables. */
+  .font-mono, code, kbd, samp, pre {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum" 1, "cv11" 1;
   }
 
   /*
@@ -138,6 +205,19 @@
 
   .dark input[type="checkbox"],
   .dark input[type="radio"] { background-color: transparent; }
+
+  /*
+   * Native form controls (checkbox, radio, range, progress) use the
+   * platform `accent-color` for their "checked" / fill state. Without
+   * this rule they render in browser blue, which clashes with the
+   * brand orange the rest of the app uses.
+   */
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"],
+  progress {
+    accent-color: rgb(var(--c-brand));
+  }
 }
 
 /*
@@ -148,9 +228,11 @@
  * `<Button>`, `<TextInput>`, etc. instead.
  */
 @layer components {
-  /* ── Buttons ─────────────────────────────────────────────────── */
+  /* ── Buttons ───────────────────────────────────────────────────
+     Slightly more rounded (`rounded-md` ≈ 6px) than the previous
+     `rounded` (4px) — matches the design language's 7px radius. */
   .btn {
-    @apply inline-flex items-center justify-center font-medium rounded
+    @apply inline-flex items-center justify-center font-medium rounded-md
            focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface
            disabled:opacity-50 disabled:cursor-not-allowed
            transition-colors;
@@ -192,21 +274,73 @@
   /* ── Typography ──────────────────────────────────────────────── */
   .h-page    { @apply text-2xl font-bold mb-4; }
   .h-section { @apply text-lg font-semibold mb-3; }
+
+  /* New design-language scale. `.h-display` is the standard page hero
+     (Fleet, Cluster Detail, Healer); `.h-hero` is the giant numeric
+     used for KPIs (e.g. 99.94%); `.h-card` is the card title; `.kicker`
+     is the uppercase tertiary label that sits above titles.
+     The display title scales down on phones so it fits a 390px-wide
+     screen without forcing horizontal scroll on long copy. */
+  .h-display { @apply text-[26px] sm:text-[32px] xl:text-[36px] font-semibold
+                       leading-[1.1] tracking-[-0.02em] text-fg-strong break-words; }
+  .h-hero    { font-size: 64px; font-weight: 600; line-height: 1; letter-spacing: -0.04em;
+               color: rgb(var(--c-fg-strong)); font-feature-settings: "tnum"; }
+  .h-card    { @apply text-sm font-semibold tracking-tight text-fg-strong; }
+  .kicker    { @apply text-[11px] font-semibold tracking-[0.12em] uppercase text-fg-faint; }
+
   .link        { @apply text-brand hover:underline; }
   .link-mono   { @apply text-brand hover:underline font-mono text-sm; }
   .link-danger { @apply text-danger hover:text-danger-strong; }
 
-  /* ── Surfaces ────────────────────────────────────────────────── */
-  .card { @apply bg-surface rounded shadow-card overflow-hidden; }
+  /* ── Surfaces ──────────────────────────────────────────────────
+     Cards rely on a hairline border (no drop shadow — principle 5).
+     `.card-pad` is a sibling helper for callers that want the design's
+     22px breathing room without writing `p-[22px]`. */
+  .card     { @apply bg-surface rounded-xl border border-line shadow-card overflow-hidden; }
+  .card-pad { @apply p-5 sm:p-[22px]; }
 
-  /* ── Badges (small status pills) ─────────────────────────────── */
-  .badge         { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium; }
+  /* ── Pills (status-bearing rounded-full chips) ───────────────────
+     The design language calls these "pills, not badges" (principle 8).
+     The `.badge` family below is now a thin alias so existing callers
+     pick up the pill shape automatically; new code should reach for
+     `.pill` directly via the `<Pill>` component. */
+  .pill        { @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full
+                        text-[11px] font-medium whitespace-nowrap; letter-spacing: 0.01em; }
+  .pill-ok     { @apply bg-success-soft text-success; }
+  .pill-warn   { @apply bg-warn-soft text-warn-strong; }
+  .pill-bad    { @apply bg-danger-soft text-danger; }
+  .pill-info   { @apply bg-info-soft text-info; }
+  .pill-accent { @apply bg-brand-soft text-brand; }
+  .pill-muted  { @apply text-fg-muted border border-line bg-transparent; }
+  /* Modifier — apply alongside a color variant to render the pill in
+     mono with slightly tighter type. Used for identifiers (versions,
+     hashes, model names) so they read as "facts" per principle 4. */
+  .pill-mono   { @apply font-mono text-[10.5px]; letter-spacing: 0; }
+
+  /* ── Badges (legacy alias) ────────────────────────────────────
+     Kept so the 60+ existing `Badge` callsites pick up the new pill
+     shape without code changes. New code should use `.pill` /
+     `<Pill>` directly. */
+  .badge         { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium; }
   .badge-neutral { @apply bg-surface-2 text-fg-muted border border-line-soft; }
   .badge-info    { @apply bg-info-soft text-info; }
   .badge-warn    { @apply bg-warn-soft text-warn-strong; }
   .badge-success { @apply bg-success-soft text-success; }
   .badge-danger  { @apply bg-danger-soft text-danger; }
   .badge-accent  { @apply bg-accent-soft text-accent; }
+
+  /* ── Status dots ──────────────────────────────────────────────
+     6×6 colored disc with a 3px soft ring — used inside pills and as
+     leading bullets in activity feeds. Each variant pairs the solid
+     status color with the matching `*-soft` ring so the dot reads at
+     small sizes without becoming heavy. */
+  .dot        { @apply inline-block w-1.5 h-1.5 rounded-full; }
+  .dot-ok     { background-color: rgb(var(--c-success));     box-shadow: 0 0 0 3px rgb(var(--c-success-soft)); }
+  .dot-warn   { background-color: rgb(var(--c-warn));        box-shadow: 0 0 0 3px rgb(var(--c-warn-soft)); }
+  .dot-bad    { background-color: rgb(var(--c-danger));      box-shadow: 0 0 0 3px rgb(var(--c-danger-soft)); }
+  .dot-info   { background-color: rgb(var(--c-info));        box-shadow: 0 0 0 3px rgb(var(--c-info-soft)); }
+  .dot-accent { background-color: rgb(var(--c-brand));       box-shadow: 0 0 0 3px rgb(var(--c-brand-soft)); }
+  .dot-muted  { background-color: rgb(var(--c-fg-faint)); }
 
   /* ── Banners (full-width inline notices) ─────────────────────── */
   .banner        { @apply px-4 py-1.5 text-sm text-center; }
@@ -231,16 +365,31 @@
   .td-muted    { @apply px-6 py-4 text-fg-muted; }
 
   /* ── Navigation chrome ─────────────────────────────────────────
-     Shared between the desktop sidebar and the mobile drawer. */
+     Desktop sidebar (`.nav-side`) is 220px per the design language;
+     mobile drawer reuses the same nav-link styling. The new `.topbar`
+     is the slim 56px chrome bar that replaces the old full-height
+     navbar — always visible, holds the user/theme/lang controls and
+     the mobile hamburger. */
   .nav-shell      { @apply bg-surface shadow shrink-0; }
-  .nav-side       { @apply hidden xl:flex xl:flex-col w-64 bg-surface
-                            border-line-soft overflow-y-auto; }
+  .nav-side       { @apply hidden xl:flex xl:flex-col w-[220px]
+                            bg-surface-2 border-r border-line shrink-0
+                            overflow-y-auto; }
+  .topbar         { @apply h-14 px-4 sm:px-6 flex items-center justify-between
+                            shrink-0 bg-surface-2 border-b border-line; }
   .nav-group-head { @apply px-3 text-xs font-semibold text-fg-muted
                             uppercase tracking-wider; }
-  .nav-link       { @apply flex items-center px-3 py-2 text-sm
+  .nav-link       { @apply relative flex items-center px-3 py-2 text-sm
                             font-medium rounded-md text-fg
                             hover:bg-surface-2 hover:text-fg-strong
                             transition-colors; }
+  /* Active-state helper. Adds the design's 3px accent rule on the left
+     edge plus the brand-soft background and orange text. Used in
+     `Link active_class="nav-link-active"`. */
+  .nav-link-active {
+    @apply !bg-brand-soft !text-brand font-semibold
+           before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2
+           before:h-3.5 before:w-[3px] before:rounded-sm before:bg-brand;
+  }
   .nav-icon-btn   { @apply ml-1 p-2 rounded-md text-fg-muted
                             hover:text-fg-strong hover:bg-surface-2
                             focus:outline-none focus:ring-2 focus:ring-info

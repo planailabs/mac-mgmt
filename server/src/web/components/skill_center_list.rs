@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Badge, BadgeVariant, ErrorText, HelpText, PageHeader, Th};
 
 #[server]
@@ -34,6 +35,7 @@ pub struct SkillCenterRow {
 
 #[component]
 pub fn SkillCenterList() -> Element {
+    use_topbar(t!("skill-center-list-title"), None);
     let skill_centers = use_server_future(list_skill_centers)?;
 
     rsx! {

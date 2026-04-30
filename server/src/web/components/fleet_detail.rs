@@ -3,7 +3,10 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
-use crate::web::components::ui::{ErrorText, HelpText, SectionHeading};
+use crate::web::components::topbar::use_topbar;
+use crate::web::components::ui::{
+    ChartColor, Dot, ErrorText, HelpText, Kicker, Mono, Pill, PillVariant, SectionHeading, StatBlock,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -262,6 +265,20 @@ pub fn FleetDetail(instance_id: String) -> Element {
         async move { get_fleet_detail(iid).await }
     })?;
 
+    // Topbar shows the hostname (or instance id when hostname is empty).
+    // We pull it from the loaded data; while loading, the topbar stays
+    // empty rather than flashing a placeholder.
+    let topbar_title = match &*data.read() {
+        Some(Ok(d)) if !d.hostname.is_empty() => d.hostname.clone(),
+        Some(Ok(d)) => d.instance_id.clone(),
+        _ => String::new(),
+    };
+    let topbar_subtitle = match &*data.read() {
+        Some(Ok(d)) => Some(format!("{} · {}", d.cluster_name, d.environment)),
+        _ => None,
+    };
+    use_topbar(topbar_title, topbar_subtitle);
+
     match &*data.read() {
         Some(Ok(d)) => render_detail(d),
         Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
@@ -352,16 +369,28 @@ fn render_detail(d: &FleetDetailData) -> Element {
     let proxy_url = d.relay_proxy_url.clone();
     let instance_prefix: String = d.instance_id.chars().take(12).collect();
 
+    // ── Page hero ────────────────────────────────────────────────
+    // Composes the design's "Cluster Detail" hero: row of status pills
+    // (env / version / commit#) above a 36px display name with the
+    // monospace instance hash underneath. Right side carries the live
+    // dot + last-heartbeat timestamp. Stacks vertically on phones.
+    let env_variant = match d.environment.as_str() {
+        "production" => PillVariant::Accent,
+        "staging" => PillVariant::Warn,
+        _ => PillVariant::Muted,
+    };
+    let online = Utc::now().signed_duration_since(d.reported_at).num_seconds() < 300;
+    let live_variant = if online { PillVariant::Ok } else { PillVariant::Bad };
+    let instance_short: String = d.instance_id.chars().take(56).collect();
+
     rsx! {
-        div { class: "flex items-baseline justify-between mb-4",
-            div {
-                h2 { class: "text-2xl font-bold", "{d.hostname}" }
-                div { class: "text-sm text-fg-muted",
-                    "{d.cluster_name} · {d.environment} · v{d.version}"
+        div { class: "flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4 mb-6",
+            div { class: "min-w-0",
+                div { class: "flex items-center gap-2 mb-2 flex-wrap",
+                    Pill { variant: env_variant, "{d.environment}" }
+                    Pill { variant: PillVariant::Muted, mono: true, "v{d.version}" }
                     if let Some(sha) = &d.git_sha {
                         {
-                            let short: String = sha.chars().take(12).collect();
-                            let url = format!("https://git.plan.ai/plan-ai/mac-mgmt/-/commit/{sha}");
                             let sha_for_count = sha.clone();
                             let count_res = use_resource(move || {
                                 let s = sha_for_count.clone();
@@ -369,27 +398,90 @@ fn render_detail(d: &FleetDetailData) -> Element {
                             });
                             let count_label = count_res.read().as_ref()
                                 .and_then(|n| n.as_ref())
-                                .map(|n| format!(" #{n}"))
-                                .unwrap_or_default();
+                                .map(|n| format!("#{n}"))
+                                .unwrap_or_else(|| {
+                                    let short: String = sha.chars().take(7).collect();
+                                    short
+                                });
                             rsx! {
-                                " · "
-                                a {
-                                    class: "font-mono hover:text-brand",
-                                    href: "{url}",
-                                    target: "_blank",
-                                    title: "{sha}",
-                                    "{short}{count_label}"
-                                }
+                                Pill { variant: PillVariant::Muted, mono: true, "{count_label}" }
                             }
                         }
                     }
                 }
+                Kicker { class: "mb-1", "{d.cluster_name}" }
+                h1 { class: "h-display", "{d.hostname}" }
+                div { class: "mt-2 text-fg-muted text-sm font-mono truncate",
+                    "{instance_short}"
+                }
             }
-            div { class: "text-right text-xs text-fg-muted",
-                {t!("fleet-detail-instance-id")}
-                code { class: "font-mono", "{d.instance_id}" }
-                br {}
-                {t!("fleet-detail-last-heartbeat", time: reported)}
+            div { class: "flex flex-col items-start xl:items-end gap-2 shrink-0",
+                div { class: "flex items-center gap-2 text-fg-muted text-xs",
+                    Dot { variant: live_variant }
+                    span { {t!("fleet-detail-last-heartbeat", time: reported.clone())} }
+                }
+                div { class: "text-fg-faint text-xs",
+                    {t!("fleet-detail-instance-id")} " "
+                    Mono { class: "text-xs", "{d.instance_id}" }
+                }
+            }
+        }
+
+        // ── Live system (design language summary) ──
+        // 2x2 grid of `StatBlock` cards giving an at-a-glance read of
+        // the most recent daemon sample. The detailed `Dynamic sample`
+        // section further down still carries the full key/value
+        // dump — this is the "headline metrics" view the design's
+        // Cluster Detail mock surfaces above the services list.
+        if let Some(sample) = d.sample.as_ref() {
+            {
+                let cpu = sample.get("cpu_load_1m").and_then(|x| x.as_f64());
+                let mem_used = sample.get("mem_used_bytes").and_then(|x| x.as_u64());
+                let mem_total = sample.get("mem_total_bytes").and_then(|x| x.as_u64());
+                let rx = sample.get("net_rx_bytes").and_then(|x| x.as_u64());
+                let tx = sample.get("net_tx_bytes").and_then(|x| x.as_u64());
+
+                let mem_value = match (mem_used, mem_total) {
+                    (Some(u), _) => human_bytes(u),
+                    _ => t!("em-dash").to_string(),
+                };
+                let mem_sub = match (mem_used, mem_total) {
+                    (Some(u), Some(t)) if t > 0 => Some(format!("{}% / {}", u * 100 / t, human_bytes(t))),
+                    (_, Some(t)) => Some(human_bytes(t)),
+                    _ => None,
+                };
+                let cpu_value = cpu.map(|n| format!("{n:.2}")).unwrap_or_else(|| t!("em-dash").to_string());
+                let rx_value = rx.map(human_bytes).unwrap_or_else(|| t!("em-dash").to_string());
+                let tx_value = tx.map(human_bytes).unwrap_or_else(|| t!("em-dash").to_string());
+
+                rsx! {
+                    div { class: "grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6",
+                        StatBlock {
+                            label: t!("fleet-detail-stat-cpu"),
+                            value: cpu_value,
+                            sub: t!("fleet-detail-stat-cpu-sub").to_string(),
+                            color: ChartColor::Brand,
+                        }
+                        StatBlock {
+                            label: t!("fleet-detail-stat-memory"),
+                            value: mem_value,
+                            sub: mem_sub,
+                            color: ChartColor::Info,
+                        }
+                        StatBlock {
+                            label: t!("fleet-detail-stat-net-rx"),
+                            value: rx_value,
+                            sub: t!("fleet-detail-stat-net-sub").to_string(),
+                            color: ChartColor::Ok,
+                        }
+                        StatBlock {
+                            label: t!("fleet-detail-stat-net-tx"),
+                            value: tx_value,
+                            sub: t!("fleet-detail-stat-net-sub").to_string(),
+                            color: ChartColor::Warn,
+                        }
+                    }
+                }
             }
         }
 

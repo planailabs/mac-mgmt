@@ -2,7 +2,10 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
-use crate::web::components::ui::{Badge, BadgeVariant};
+use crate::web::components::topbar::use_topbar;
+use crate::web::components::ui::{
+    ActiveSessionCard, Badge, BadgeVariant, Kicker, Pill, PillVariant, TraceStatus, TraceStep,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -587,6 +590,16 @@ pub fn FleetHealer(instance_id: String) -> Element {
         async move { get_healer_context(iid).await }
     })?;
 
+    // Title shows the hostname (the recognizable handle) and the
+    // subtitle disambiguates with the page label, mirroring the
+    // design's "Healer Agent · autonomous remediation" pattern.
+    let topbar_title = match &*ctx.read() {
+        Some(Ok(c)) if !c.hostname.is_empty() => c.hostname.clone(),
+        Some(Ok(c)) => c.instance_id.clone(),
+        _ => String::new(),
+    };
+    use_topbar(topbar_title, Some(t!("healer-title").to_string()));
+
     match &*ctx.read() {
         Some(Ok(c)) => render_healer(c),
         Some(Err(e)) => rsx! { p { class: "text-danger text-sm", {t!("error-message", message: e.to_string())} } },
@@ -622,10 +635,41 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let instance_id = ctx.instance_id.clone();
     let sessions = ctx.sessions.clone();
 
+    // ── Page hero ─────────────────────────────────────────────────
+    // Design language reference shows the healer hero as
+    //   "HEALER AGENT · LAST 24H"
+    //   "<accent>128</accent> sessions · <ok>97%</ok> auto-resolved"
+    // We don't yet aggregate session counts here — that lives in the
+    // global healer summary endpoint — so this hero just identifies the
+    // instance and lets the running session card carry the live signal.
+    let session_count = ctx.sessions.len();
     rsx! {
-        h2 { class: "h-page", {t!("healer-title")} }
-        p { class: "text-sm text-fg-muted mb-4",
-            {t!("healer-instance", instance_id: ctx.instance_id.clone(), hostname: ctx.hostname.clone())}
+        div { class: "flex flex-col xl:flex-row xl:items-end xl:justify-between gap-3 mb-5",
+            div {
+                Kicker { class: "mb-2", {t!("healer-title")} }
+                h1 { class: "h-display",
+                    {t!("healer-title")}
+                    " "
+                    span { class: "text-fg-muted", "·" }
+                    " "
+                    span { class: "text-brand", "{ctx.hostname}" }
+                }
+                div { class: "mt-2 text-fg-muted text-sm",
+                    {t!("healer-instance", instance_id: ctx.instance_id.clone(), hostname: ctx.hostname.clone())}
+                }
+            }
+            div { class: "flex items-center gap-2 shrink-0",
+                Pill { variant: PillVariant::Muted, mono: true,
+                    "{session_count} sessions"
+                }
+                if unhealthy.is_empty() {
+                    Pill { variant: PillVariant::Ok, "all healthy" }
+                } else {
+                    Pill { variant: PillVariant::Bad,
+                        "{unhealthy.len()} unhealthy"
+                    }
+                }
+            }
         }
 
         if !unhealthy.is_empty() {
@@ -920,6 +964,93 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 state_reason.set(None);
                             },
                             {t!("healer-back-to-sessions")}
+                        }
+                    }
+                }
+
+                // ── Active session card (design language hero) ──────
+                // When the healer is working on a request, surface the
+                // current state in a `ActiveSessionCard` so an operator
+                // glancing at the page sees what's happening at a
+                // glance — title pulled from the most recent user
+                // message, trace synthesised from the chat state and
+                // any running tools. The chat below stays the source
+                // of truth; this is a visual recap.
+                if *running.read() {
+                    {
+                        let messages_snap = messages.read();
+                        let last_user = messages_snap.iter()
+                            .rev()
+                            .find(|m| m.role == "user")
+                            .map(|m| {
+                                let text = m.content.lines().next().unwrap_or("").trim();
+                                if text.len() > 80 {
+                                    format!("{}…", &text[..80])
+                                } else {
+                                    text.to_string()
+                                }
+                            })
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| t!("healer-thinking").to_string());
+
+                        let svc_count = ctx.services_extended.len();
+                        let tools_snap = active_tools.read();
+                        let current_tool = tools_snap.first().map(|t| t.name.clone());
+                        let model_label = selected_model_key.read().clone();
+
+                        // Four-step abstract trace. The first two are
+                        // always done by the time the chat is running;
+                        // step 3 reflects whatever tool is in flight (or
+                        // "Investigating" while the model is thinking);
+                        // step 4 is the post-condition we're moving
+                        // towards.
+                        let mut trace: Vec<TraceStep> = vec![
+                            TraceStep {
+                                status: TraceStatus::Done,
+                                text: t!(
+                                    "healer-instance",
+                                    instance_id: ctx.instance_id.clone(),
+                                    hostname: ctx.hostname.clone()
+                                ).to_string(),
+                            },
+                            TraceStep {
+                                status: TraceStatus::Done,
+                                text: format!("loaded service status · {svc_count} services"),
+                            },
+                        ];
+                        let current_step = if let Some(name) = current_tool.as_ref() {
+                            trace.push(TraceStep {
+                                status: TraceStatus::InProgress,
+                                text: format!("running tool · {name}"),
+                            });
+                            3
+                        } else {
+                            trace.push(TraceStep {
+                                status: TraceStatus::InProgress,
+                                text: t!("healer-thinking").to_string(),
+                            });
+                            3
+                        };
+                        trace.push(TraceStep {
+                            status: TraceStatus::Pending,
+                            text: t!("healer-verify-outcome").to_string(),
+                        });
+
+                        let subtitle = if model_label.is_empty() {
+                            None
+                        } else {
+                            Some(format!("model · {model_label}"))
+                        };
+
+                        rsx! {
+                            div { class: "mb-4",
+                                ActiveSessionCard {
+                                    title: last_user,
+                                    subtitle,
+                                    trace,
+                                    current_step,
+                                }
+                            }
                         }
                     }
                 }

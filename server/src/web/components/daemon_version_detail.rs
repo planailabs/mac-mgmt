@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     DataTable, ErrorText, HelpText, PageHeader, SectionHeading, SortState, SortableTh, Td, TdMono,
     TdMuted, Th,
@@ -186,6 +187,7 @@ async fn get_daemon_store_paths(version: String) -> Result<Vec<DaemonStorePath>,
 
 #[component]
 pub fn DaemonVersionDetail(version: String) -> Element {
+    use_topbar(t!("nav-daemon-versions"), None);
     let api_base = use_server_future(get_api_base_url)?;
     let api_base_url: String = match &*api_base.read() {
         Some(Ok(url)) => url.trim_end_matches('/').to_string(),

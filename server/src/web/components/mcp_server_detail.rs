@@ -7,6 +7,7 @@ use crate::models::McpServer;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, FormField, HelpText, PageHeader, SectionHeading,
 };
@@ -256,6 +257,7 @@ fn McpServerFormFields(
 
 #[component]
 pub fn McpServerDetail(id: String) -> Element {
+    use_topbar(t!("nav-mcp-servers"), None);
     let navigator = navigator();
     let id_clone = id.clone();
     let mut server = use_server_future(move || {

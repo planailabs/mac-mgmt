@@ -7,6 +7,7 @@ use crate::web::app::Route;
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{DataTable, ErrorText, HelpText, PageHeader};
 
 #[server]
@@ -75,10 +76,11 @@ async fn list_bundles() -> Result<Vec<CatalogEntry>, ServerFnError> {
 
 #[component]
 pub fn BundleList() -> Element {
+    use_topbar(t!("bundle-list-title"), None);
     let mut bundles = use_server_future(list_bundles)?;
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("bundle-list-title")} }
             div { class: "flex items-center gap-2",
                 {match &*bundles.read() {

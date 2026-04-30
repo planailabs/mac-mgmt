@@ -1,5 +1,18 @@
+//! Sidebar navigation + the mobile drawer that mirrors it.
+//!
+//! Layout owns:
+//!   * `Sidebar`     — desktop-only 220px column. Logo at top, nav
+//!                     groups below. Hidden under xl breakpoint.
+//!   * `MobileDrawer` — slide-in panel for narrow screens. Same nav
+//!                     content as the sidebar; opened by the topbar
+//!                     hamburger via a shared `is_open` signal.
+//!
+//! The pre-redesign `Navbar` (full-width chrome with logo + theme
+//! controls) is gone — its responsibilities split between `Topbar`
+//! (chrome) and `Sidebar` (logo).
+
 use dioxus::prelude::*;
-use dioxus_i18n::{prelude::*, t, unic_langid::langid};
+use dioxus_i18n::t;
 
 use crate::web::app::Route;
 
@@ -10,123 +23,7 @@ async fn get_swagger_url() -> Result<String, ServerFnError> {
     Ok(format!("{base}/api/swagger-ui/"))
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum ThemeMode {
-    System,
-    Light,
-    Dark,
-}
-
-impl ThemeMode {
-    fn next(self) -> Self {
-        match self {
-            Self::System => Self::Light,
-            Self::Light => Self::Dark,
-            Self::Dark => Self::System,
-        }
-    }
-
-}
-
-#[component]
-fn ThemeIcon(mode: ThemeMode) -> Element {
-    match mode {
-        ThemeMode::System => rsx! {
-            svg {
-                class: "h-5 w-5",
-                fill: "none",
-                stroke: "currentColor",
-                stroke_width: "1.5",
-                view_box: "0 0 24 24",
-                rect { x: "2", y: "3", width: "20", height: "14", rx: "2", ry: "2" }
-                line { x1: "8", y1: "21", x2: "16", y2: "21" }
-                line { x1: "12", y1: "17", x2: "12", y2: "21" }
-            }
-        },
-        ThemeMode::Light => rsx! {
-            svg {
-                class: "h-5 w-5",
-                fill: "none",
-                stroke: "currentColor",
-                stroke_width: "2",
-                view_box: "0 0 24 24",
-                circle { cx: "12", cy: "12", r: "5" }
-                line { x1: "12", y1: "1", x2: "12", y2: "3" }
-                line { x1: "12", y1: "21", x2: "12", y2: "23" }
-                line { x1: "4.22", y1: "4.22", x2: "5.64", y2: "5.64" }
-                line { x1: "18.36", y1: "18.36", x2: "19.78", y2: "19.78" }
-                line { x1: "1", y1: "12", x2: "3", y2: "12" }
-                line { x1: "21", y1: "12", x2: "23", y2: "12" }
-                line { x1: "4.22", y1: "19.78", x2: "5.64", y2: "18.36" }
-                line { x1: "18.36", y1: "5.64", x2: "19.78", y2: "4.22" }
-            }
-        },
-        ThemeMode::Dark => rsx! {
-            svg {
-                class: "h-5 w-5",
-                fill: "none",
-                stroke: "currentColor",
-                stroke_width: "2",
-                view_box: "0 0 24 24",
-                path { d: "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" }
-            }
-        },
-    }
-}
-
-/// Available locales with their native display names.
-const LOCALES: &[(&str, &str)] = &[("en-US", "English"), ("de-DE", "Deutsch")];
-
-#[component]
-fn LanguagePicker() -> Element {
-    let mut i18n = i18n();
-    let current = i18n.language();
-    let current_tag = current.to_string();
-
-    let on_change = move |evt: Event<FormData>| {
-        let val = evt.value();
-        if val == "de-DE" {
-            let _ = i18n.set_language(langid!("de-DE"));
-        } else {
-            let _ = i18n.set_language(langid!("en-US"));
-        }
-        document::eval(&format!(
-            "try {{ localStorage.setItem('lang', '{}'); }} catch(e) {{}}",
-            val
-        ));
-    };
-
-    rsx! {
-        div { class: "relative ml-1",
-            label { class: "sr-only", r#for: "lang-picker", {t!("language-picker-label")} }
-            select {
-                id: "lang-picker",
-                class: "appearance-none bg-transparent text-fg-muted hover:text-fg-strong text-sm rounded-md px-2 py-2 pr-6 cursor-pointer focus:outline-none focus:ring-2 focus:ring-info transition-colors",
-                value: "{current_tag}",
-                onchange: on_change,
-                for &(tag, label) in LOCALES.iter() {
-                    option {
-                        key: "{tag}",
-                        value: "{tag}",
-                        selected: tag == current_tag,
-                        "{label}"
-                    }
-                }
-            }
-            // Dropdown chevron
-            svg {
-                class: "pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 h-3 w-3 text-fg-faint",
-                fill: "none",
-                stroke: "currentColor",
-                stroke_width: "2",
-                view_box: "0 0 24 24",
-                path { stroke_linecap: "round", stroke_linejoin: "round", d: "M19 9l-7 7-7-7" }
-            }
-        }
-    }
-}
-
-// -- Navigation Structure --
+// -- Navigation Structure --------------------------------------------------
 
 #[derive(Clone, PartialEq)]
 pub enum NavLink {
@@ -142,6 +39,9 @@ pub struct NavGroup {
 
 pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGroup> {
     let mut overview_links = vec![
+        // Command Center first — it's the at-a-glance landing page;
+        // Clusters and Fleet are the drill-down details.
+        NavLink::Internal(Route::Overview {}, "nav-command-center".to_string()),
         NavLink::Internal(Route::ClusterList {}, "nav-clusters".to_string()),
     ];
     overview_links.push(NavLink::Internal(
@@ -168,31 +68,31 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
         groups.push(NavGroup {
             title: "nav-import".to_string(),
             links: vec![
-                NavLink::Internal(Route::ImportSources { prefill_slug: None, prefill_name: None }, "nav-import-sources".to_string()),
+                NavLink::Internal(
+                    Route::ImportSources { prefill_slug: None, prefill_name: None },
+                    "nav-import-sources".to_string(),
+                ),
             ],
         });
 
-        {
-            let admin_links = vec![
+        groups.push(NavGroup {
+            title: "nav-admin".to_string(),
+            links: vec![
                 NavLink::Internal(Route::AdminTokens {}, "nav-admin-tokens".to_string()),
                 NavLink::Internal(Route::StaffPings {}, "nav-staff-pings".to_string()),
                 NavLink::Internal(Route::OrganizationList {}, "nav-organizations".to_string()),
                 NavLink::Internal(Route::UserList {}, "nav-users".to_string()),
                 NavLink::Internal(Route::SkillCenterList {}, "nav-skill-centers".to_string()),
-            ];
-            groups.push(NavGroup {
-                title: "nav-admin".to_string(),
-                links: admin_links,
-            });
+            ],
+        });
 
-            groups.push(NavGroup {
-                title: "nav-version".to_string(),
-                links: vec![
-                    NavLink::Internal(Route::RolloutList {}, "nav-rollouts".to_string()),
-                    NavLink::Internal(Route::DaemonVersionList {}, "nav-daemon-versions".to_string()),
-                ],
-            });
-        }
+        groups.push(NavGroup {
+            title: "nav-version".to_string(),
+            links: vec![
+                NavLink::Internal(Route::RolloutList {}, "nav-rollouts".to_string()),
+                NavLink::Internal(Route::DaemonVersionList {}, "nav-daemon-versions".to_string()),
+            ],
+        });
     }
 
     let mut resources_links = vec![NavLink::Internal(Route::DocList {}, "nav-docs".to_string())];
@@ -207,6 +107,105 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 
     groups
 }
+
+// -- Logo ------------------------------------------------------------------
+
+/// Brand mark — orange rounded-square outline + filled inner square,
+/// followed by "plan.ai mgmt" wordmark. Used at the top of both the
+/// desktop sidebar and the mobile drawer.
+#[component]
+fn Logo() -> Element {
+    rsx! {
+        Link {
+            to: Route::ClusterList {},
+            class: "flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight",
+            svg {
+                width: "20",
+                height: "20",
+                view_box: "0 0 20 20",
+                fill: "none",
+                rect {
+                    x: "1.5", y: "1.5", width: "17", height: "17", rx: "5",
+                    stroke: "rgb(var(--c-brand))",
+                    "stroke-width": "1.6",
+                }
+                rect {
+                    x: "6", y: "6", width: "8", height: "8", rx: "1.5",
+                    fill: "rgb(var(--c-brand))",
+                }
+            }
+            // Wordmark is brand chrome, not translatable copy — hard-code so
+            // we don't accidentally render "<i18n value> mgmt" twice when the
+            // i18n key already contains the full brand string.
+            span {
+                "plan.ai "
+                span { class: "text-fg-muted font-medium", "mgmt" }
+            }
+        }
+    }
+}
+
+// -- Navigation list -------------------------------------------------------
+
+/// Renders one group of nav links. Shared between desktop sidebar and
+/// mobile drawer so they stay in sync.
+#[component]
+fn NavGroupList(
+    groups: Vec<NavGroup>,
+    /// Optional callback fired when an internal link is clicked. The
+    /// mobile drawer uses this to close itself; the sidebar passes
+    /// `None`.
+    #[props(default)] on_navigate: Option<EventHandler<()>>,
+) -> Element {
+    rsx! {
+        // `min-h-0` is the flexbox escape hatch that lets this child
+        // shrink below its content size — without it, `overflow-y-auto`
+        // would never trigger and the sidebar would clip its bottom
+        // links on short viewports. Extra bottom padding leaves room
+        // below the last group so it doesn't kiss the viewport edge.
+        nav { class: "flex-1 min-h-0 overflow-y-auto px-3 py-5 pb-8 space-y-7",
+            for group in groups {
+                div { key: "{group.title}",
+                    h3 { class: "nav-group-head", {t!(&group.title)} }
+                    div { class: "mt-2 space-y-0.5",
+                        for link in group.links {
+                            match link {
+                                NavLink::Internal(route, label) => {
+                                    let nav = on_navigate;
+                                    rsx! {
+                                        Link {
+                                            key: "{label}",
+                                            to: route.clone(),
+                                            class: "nav-link",
+                                            active_class: "nav-link-active",
+                                            onclick: move |_| if let Some(h) = nav { h.call(()); },
+                                            {t!(&label)}
+                                        }
+                                    }
+                                }
+                                NavLink::External(url, label) => {
+                                    let nav = on_navigate;
+                                    rsx! {
+                                        a {
+                                            key: "{label}",
+                                            href: "{url}",
+                                            target: "_blank",
+                                            class: "nav-link",
+                                            onclick: move |_| if let Some(h) = nav { h.call(()); },
+                                            {t!(&label)}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// -- Sidebar (desktop) -----------------------------------------------------
 
 #[component]
 pub fn Sidebar(is_admin: bool) -> Element {
@@ -223,45 +222,23 @@ pub fn Sidebar(is_admin: bool) -> Element {
 
     rsx! {
         aside { class: "nav-side",
-            nav { class: "flex-1 px-4 py-6 space-y-8",
-                for group in groups {
-                    div { key: "{group.title}",
-                        h3 { class: "nav-group-head", {t!(&group.title)} }
-                        div { class: "mt-2 space-y-1",
-                            for link in group.links {
-                                match link {
-                                    NavLink::Internal(route, label) => rsx! {
-                                        Link {
-                                            key: "{label}",
-                                            to: route.clone(),
-                                            class: "nav-link",
-                                            active_class: "!bg-surface-2 !text-fg-strong",
-                                            {t!(&label)}
-                                        }
-                                    },
-                                    NavLink::External(url, label) => rsx! {
-                                        a {
-                                            key: "{label}",
-                                            href: "{url}",
-                                            target: "_blank",
-                                            class: "nav-link",
-                                            {t!(&label)}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            div { class: "px-5 pt-5 pb-4 shrink-0",
+                Logo {}
             }
+            NavGroupList { groups }
         }
     }
 }
 
+// -- Mobile drawer ---------------------------------------------------------
+
 #[component]
-pub fn Navbar(is_admin: bool, display_name: String) -> Element {
-    let mut is_open = use_signal(|| false);
-    let mut theme = use_signal(|| ThemeMode::System);
+pub fn MobileDrawer(
+    is_admin: bool,
+    display_name: String,
+    is_open: Signal<bool>,
+) -> Element {
+    let open = *is_open.read();
 
     let swagger_fut = use_server_future(get_swagger_url);
     let swagger_url: Option<String> = match swagger_fut {
@@ -271,250 +248,101 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
         },
         Err(_) => None,
     };
+    let groups = get_nav_groups(is_admin, swagger_url);
 
-    use_effect(move || {
-        spawn(async move {
-            let result = document::eval(
-                r#"
-                try {
-                    var t = localStorage.getItem('theme');
-                    if (t === 'dark') return 'dark';
-                    if (t === 'light') return 'light';
-                    return 'system';
-                } catch(e) { return 'system'; }
-            "#,
-            )
-            .await;
-            if let Ok(val) = result {
-                if let Some(s) = val.as_str() {
-                    match s {
-                        "dark" => theme.set(ThemeMode::Dark),
-                        "light" => theme.set(ThemeMode::Light),
-                        _ => theme.set(ThemeMode::System),
-                    }
-                }
-            }
-        });
-    });
-
-    // Toggle the theme by flipping the `.dark` class on `<html>`; CSS
-    // variables in `input.css` drive every color from there. No color
-    // literals belong in this script.
-    let toggle_theme = move |_| {
-        let next = theme().next();
-        theme.set(next);
-        let store = match next {
-            ThemeMode::System => "localStorage.removeItem('theme');",
-            ThemeMode::Light  => "localStorage.setItem('theme', 'light');",
-            ThemeMode::Dark   => "localStorage.setItem('theme', 'dark');",
-        };
-        let js = format!(
-            r#"
-            {store}
-            var d = document.documentElement;
-            var t = localStorage.getItem('theme');
-            var dark = t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches);
-            d.classList.toggle('dark', dark);
-            d.style.colorScheme = dark ? 'dark' : 'light';
-            "#
-        );
-        document::eval(&js);
+    let backdrop_cls = if open {
+        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
+    } else {
+        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
     };
 
-    let current_aria = match theme() {
-        ThemeMode::System => t!("theme-system"),
-        ThemeMode::Light => t!("theme-light"),
-        ThemeMode::Dark => t!("theme-dark"),
+    let drawer_cls = if open {
+        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-line translate-x-0 pointer-events-auto"
+    } else {
+        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-line translate-x-full pointer-events-none"
     };
-    let current_theme = theme();
 
     rsx! {
-        nav { class: "nav-shell",
-            div { class: "w-full mx-auto px-4 sm:px-6 lg:px-8",
-                div { class: "flex justify-between h-16 items-center",
-                    // Left side: Logo
-                    Link { to: Route::ClusterList {},
-                        h1 { class: "text-xl font-bold text-fg-strong", {t!("nav-logo")} }
-                    }
+        div {
+            id: "mobile-drawer-container",
+            class: "xl:hidden relative z-50",
 
-                    // Right side: Profile & Theme (Desktop & Mobile share some parts)
-                    div { class: "flex space-x-1 items-center",
-
-                        // Desktop user icon + logout
-                        if !display_name.is_empty() {
-                            div { class: "hidden xl:flex items-center",
-                                Link { to: Route::Profile {},
-                                    class: "nav-link ml-3",
-                                    active_class: "!bg-surface-2 !text-fg-strong",
-                                    svg {
-                                        class: "h-5 w-5 shrink-0",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "1.5",
-                                        view_box: "0 0 24 24",
-                                        path {
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
-                                            d: "M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
-                                        }
-                                    }
-                                    "{display_name}"
-                                }
-                                a { href: "/auth/logout",
-                                    class: "nav-icon-btn hover:!text-danger",
-                                    title: t!("nav-sign-out"),
-                                    svg {
-                                        class: "h-5 w-5",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        stroke_width: "1.5",
-                                        view_box: "0 0 24 24",
-                                        path {
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
-                                            d: "M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3-3h-9m9 0-3-3m3 3-3 3",
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Language Picker
-                        LanguagePicker {}
-
-                        // Theme Toggle
-                        button {
-                            onclick: toggle_theme,
-                            class: "nav-icon-btn",
-                            "aria-label": current_aria.clone(),
-                            title: current_aria,
-                            ThemeIcon { mode: current_theme }
-                        }
-
-                        // Hamburger button (Mobile)
-                        button {
-                            onclick: move |_| is_open.set(!is_open()),
-                            class: "nav-icon-btn xl:hidden inline-flex items-center justify-center",
-                            "aria-expanded": "{is_open}",
-                            "aria-controls": "mobile-drawer",
-                            span { class: "sr-only", {t!("nav-open-main-menu")} }
-                            svg {
-                                class: "h-6 w-6",
-                                fill: "none",
-                                stroke: "currentColor",
-                                view_box: "0 0 24 24",
-                                if *is_open.read() {
-                                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
-                                } else {
-                                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M4 6h16M4 12h16M4 18h16" }
-                                }
-                            }
-                        }
-                    }
-                }
+            // Backdrop — taps close the drawer.
+            div {
+                class: backdrop_cls,
+                "aria-hidden": "true",
+                onclick: move |_| is_open.set(false),
             }
 
-            // Mobile Slide-in Drawer
+            // Drawer panel.
             div {
-                id: "mobile-drawer-container",
-                class: "xl:hidden relative z-50",
+                class: drawer_cls,
+                id: "mobile-drawer",
 
-                // Backdrop
-                div {
-                    class: if *is_open.read() {
-                        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
-                    } else {
-                        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
-                    },
-                    "aria-hidden": "true",
-                    onclick: move |_| is_open.set(false),
-                }
-
-                // Drawer
-                div {
-                    class: if *is_open.read() {
-                        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-line-soft translate-x-0 pointer-events-auto"
-                    } else {
-                        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-line-soft translate-x-full pointer-events-none"
-                    },
-
-                    // Header Area with User & Close Button
-                    div { class: "p-4 border-b border-line-soft bg-surface-2 flex justify-between items-center",
-                        div { class: "flex-1 mr-4 overflow-hidden",
-                            if !display_name.is_empty() {
-                                div { class: "flex items-center gap-3",
-                                    div { class: "flex-shrink-0",
-                                        svg { class: "h-10 w-10 text-fg-faint bg-surface rounded-full p-2 border border-line", fill: "none", stroke: "currentColor", view_box: "0 0 24 24", stroke_width: "1.5",
-                                            path { stroke_linecap: "round", stroke_linejoin: "round", d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" }
-                                        }
-                                    }
-                                    div { class: "flex flex-col overflow-hidden",
-                                        span { class: "text-sm font-medium text-fg-strong truncate block", "{display_name}" }
-                                        div { class: "flex gap-3",
-                                            Link { to: Route::Profile {},
-                                                class: "link text-xs block",
-                                                onclick: move |_| is_open.set(false),
-                                                {t!("nav-view-profile")}
-                                            }
-                                            a { href: "/auth/logout",
-                                                class: "link-danger text-xs block",
-                                                {t!("nav-sign-out")}
-                                            }
-                                        }
-                                    }
-                                }
-
+                // Header: logo + close button. We deliberately repeat
+                // the logo here (rather than only in the sidebar) so
+                // the drawer is self-contained on phones.
+                div { class: "px-5 py-4 border-b border-line bg-surface-2 flex justify-between items-center shrink-0",
+                    Logo {}
+                    button {
+                        onclick: move |_| is_open.set(false),
+                        class: "nav-icon-btn",
+                        "aria-label": t!("nav-close-menu"),
+                        svg {
+                            class: "h-5 w-5",
+                            fill: "none",
+                            stroke: "currentColor",
+                            view_box: "0 0 24 24",
+                            path {
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                stroke_width: "2",
+                                d: "M6 18L18 6M6 6l12 12",
                             }
                         }
+                    }
+                }
 
-                        button {
-                            onclick: move |_| is_open.set(false),
-                            class: "nav-icon-btn flex-shrink-0 -mr-2",
-                            "aria-label": t!("nav-close-menu"),
+                // User block — only when authenticated.
+                if !display_name.is_empty() {
+                    div { class: "px-5 py-3 border-b border-line bg-surface-2",
+                        div { class: "flex items-center gap-3",
                             svg {
-                                class: "h-6 w-6",
+                                class: "h-9 w-9 text-fg-faint bg-surface rounded-full p-1.5 border border-line shrink-0",
                                 fill: "none",
                                 stroke: "currentColor",
                                 view_box: "0 0 24 24",
-                                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
+                                stroke_width: "1.5",
+                                path {
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z",
+                                }
                             }
-                        }
-                    }
-
-                    // Navigation Groups
-                    nav { class: "flex-1 px-4 py-6 space-y-8",
-                        for group in get_nav_groups(is_admin, swagger_url.clone()) {
-                            div { key: "{group.title}",
-                                h3 { class: "nav-group-head", {t!(&group.title)} }
-                                div { class: "mt-2 space-y-1",
-                                    for link in group.links {
-                                        match link {
-                                            NavLink::Internal(route, label) => rsx! {
-                                                Link {
-                                                    key: "{label}",
-                                                    to: route.clone(),
-                                                    class: "nav-link",
-                                                    active_class: "!bg-surface-2 !text-fg-strong",
-                                                    onclick: move |_| is_open.set(false),
-                                                    {t!(&label)}
-                                                }
-                                            },
-                                            NavLink::External(url, label) => rsx! {
-                                                a {
-                                                    key: "{label}",
-                                                    href: "{url}",
-                                                    target: "_blank",
-                                                    class: "nav-link",
-                                                    onclick: move |_| is_open.set(false),
-                                                    {t!(&label)}
-                                                }
-                                            }
-                                        }
+                            div { class: "flex flex-col min-w-0",
+                                span { class: "text-sm font-medium text-fg-strong truncate", "{display_name}" }
+                                div { class: "flex gap-3",
+                                    Link {
+                                        to: Route::Profile {},
+                                        class: "link text-xs",
+                                        onclick: move |_| is_open.set(false),
+                                        {t!("nav-view-profile")}
+                                    }
+                                    a {
+                                        href: "/auth/logout",
+                                        class: "link-danger text-xs",
+                                        {t!("nav-sign-out")}
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                // Nav groups — clicking a link closes the drawer.
+                NavGroupList {
+                    groups,
+                    on_navigate: move |_| is_open.set(false),
                 }
             }
         }

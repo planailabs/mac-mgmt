@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 
 use crate::models::Cluster;
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -23,6 +24,7 @@ async fn create_cluster(name: String) -> Result<Cluster, ServerFnError> {
 
 #[component]
 pub fn ClusterForm() -> Element {
+    use_topbar(t!("nav-clusters"), None);
     let navigator = navigator();
     let mut name = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);

@@ -6,6 +6,7 @@ use crate::anthropic::{EntityKind, GenerateAllItem, GenerateContext};
 use crate::web::components::generate_all_button::GenerateAllButton;
 use crate::web::components::hidden_badge::HiddenColumn;
 use crate::web::components::table_utils::*;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonVariant, DataTable, ErrorText, HelpText, PageHeader, SuccessText,
 };
@@ -105,15 +106,17 @@ async fn sync_from_xzar() -> Result<SyncResult, ServerFnError> {
 
 #[component]
 pub fn SkillList() -> Element {
+    use_topbar(t!("skill-list-title"), None);
     let mut skills = use_server_future(list_skills)?;
     let mut syncing = use_signal(|| false);
     let mut sync_msg = use_signal(|| None::<String>);
     let mut sync_err = use_signal(|| None::<String>);
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        // Stack on mobile so the action buttons don't overflow.
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("skill-list-title")} }
-            div { class: "flex items-center gap-2",
+            div { class: "flex items-center gap-2 flex-wrap",
                 {match &*skills.read() {
                     Some(Ok(list)) => {
                         let gen_items: Vec<GenerateAllItem> = list.iter()

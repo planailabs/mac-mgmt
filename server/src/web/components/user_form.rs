@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{Button, ButtonKind, ErrorText, FormField, PageHeader};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -27,6 +28,7 @@ async fn create_user(email: String, name: String, is_admin: bool) -> Result<Stri
 
 #[component]
 pub fn UserForm() -> Element {
+    use_topbar(t!("nav-users"), None);
     let navigator = navigator();
     let mut email = use_signal(String::new);
     let mut name = use_signal(String::new);
