@@ -14,90 +14,122 @@
  * Views and Rust components reference the semantic classes (`btn`,
  * `input`, `card`, `h-page`, …) — they should not contain hex literals
  * or palette utilities like `bg-blue-600`.
+ *
+ * Design language v1 (orange · sparse · hairlines · mono-for-facts)
+ * lives in `mgmt-design/Design Language.html`.
  */
 
 @layer base {
   :root {
-    /* RGB triplets so Tailwind's `<alpha-value>` interpolation works */
-    --c-bg:           249 250 251;  /* gray-50  — page background */
-    --c-surface:        255 255 255;  /* white    — cards, table body */
-    --c-surface-2:      249 250 251;  /* gray-50  — table head, hover */
-    --c-surface-3:      229 231 235;  /* gray-200 — secondary button bg */
-    --c-surface-strong: 209 213 219;  /* gray-300 — secondary button hover */
+    /* ── Surfaces ───────────────────────────────────────────────────
+       Light theme is warm cream canvas with white panels — the
+       "paper" feel from the design language. */
+    --c-bg:             247 246 242;  /* #f7f6f2 — warm cream canvas */
+    --c-surface:        255 255 255;  /* white — cards, table body */
+    --c-surface-2:      251 250 246;  /* #fbfaf6 — sub-panel, chrome, table head */
+    --c-surface-3:      240 238 232;  /* secondary button bg */
+    --c-surface-strong: 226 224 215;  /* secondary button hover */
 
-    --c-fg:           17 24 39;     /* gray-900 — body text */
-    --c-fg-strong:    17 24 39;     /* gray-900 — headings, labels */
-    --c-fg-muted:     107 114 128;  /* gray-500 — secondary text */
-    --c-fg-faint:     156 163 175;  /* gray-400 — placeholders, dashes */
-    --c-fg-invert:    255 255 255;  /* white    — text on solid color buttons */
+    /* ── Text ───────────────────────────────────────────────────────
+       Apparent colors approximate the design's rgba dim-on-canvas
+       so opaque tokens read like translucent ink. */
+    --c-fg:           22 26 34;       /* #161a22 — primary text */
+    --c-fg-strong:    11 15 21;       /* near-black headings */
+    --c-fg-muted:     112 114 117;    /* ≈ rgba(22,26,34,0.6) over canvas */
+    --c-fg-faint:     157 158 159;    /* ≈ rgba(22,26,34,0.4) over canvas */
+    --c-fg-invert:    255 255 255;    /* text on solid color buttons */
 
-    --c-line:         209 213 219;  /* gray-300 — input borders */
-    --c-line-soft:    229 231 235;  /* gray-200 — table dividers */
+    /* ── Lines ──────────────────────────────────────────────────────
+       Hairline-equivalent: `border-line` (1px opaque) renders the same
+       apparent color as `rgba(20,25,35,0.07)` over a white panel. */
+    --c-line:         235 233 227;
+    --c-line-soft:    227 225 219;
 
-    --c-brand:        37 99 235;    /* blue-600 — primary, links */
-    --c-brand-strong: 29 78 216;    /* blue-700 — primary hover */
-    --c-brand-soft:   219 234 254;  /* blue-100 — soft backgrounds */
+    /* ── Brand · accent orange (replaces previous blue) ────────────
+       Reserved for: brand mark, primary CTA, active nav, healing
+       state, in-progress rollouts. Never decorative. */
+    --c-brand:        234 88 12;      /* #ea580c orange-600 */
+    --c-brand-strong: 194 65 12;      /* #c2410c — primary hover */
+    --c-brand-soft:   246 230 219;    /* peach surface (≈ accent at 10%) */
 
-    --c-danger:        220 38 38;   /* red-600 */
-    --c-danger-strong: 185 28 28;   /* red-700 */
-    --c-danger-soft:   254 226 226; /* red-100 */
+    /* ── Status ────────────────────────────────────────────────────
+       Status owns color: green ok · amber warn · red bad · blue info.
+       Don't reuse status hues for chrome. */
+    --c-danger:        220 38 38;     /* #dc2626 */
+    --c-danger-strong: 185 28 28;
+    --c-danger-soft:   244 225 222;
 
-    --c-warn:          245 158 11;  /* amber-500 */
-    --c-warn-strong:   180 83 9;    /* amber-700 */
-    --c-warn-soft:     254 243 199; /* amber-100 */
+    --c-warn:          217 119 6;     /* #d97706 amber-600 */
+    --c-warn-strong:   180 83 9;
+    --c-warn-soft:     244 233 218;
 
-    --c-success:      22 163 74;    /* green-600 */
-    --c-success-soft: 220 252 231;  /* green-100 */
+    --c-success:      5 150 105;      /* #059669 emerald-600 */
+    --c-success-soft: 223 236 228;
 
-    --c-info:         37 99 235;    /* blue-600 */
-    --c-info-soft:    219 234 254;  /* blue-100 */
+    --c-info:         37 99 235;      /* #2563eb blue-600 */
+    --c-info-soft:    226 231 241;
 
-    --c-accent:        147 51 234;  /* purple-600 */
-    --c-accent-strong: 126 34 206;  /* purple-700 */
-    --c-accent-soft:   243 232 255; /* purple-100 */
+    /* ── Accent (legacy purple, kept for back-compat) ──────────────
+       Pre-redesign code uses `accent` for special non-status items.
+       The redesign collapses accent into brand orange; legacy callers
+       keep purple until migrated in the long-tail sweep. */
+    --c-accent:        147 51 234;
+    --c-accent-strong: 126 34 206;
+    --c-accent-soft:   243 232 255;
 
-    --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    /* ── Surfaces & shadows ─────────────────────────────────────────
+       Cards get a hairline, not a drop-shadow (principle 5). Shadow
+       is reserved for floating overlays — modals, dropdowns. */
+    --shadow-card: none;
+    --shadow-pop:  0 12px 40px rgb(0 0 0 / 0.18);
+
+    /* ── Type stacks ────────────────────────────────────────────────
+       Inter Tight + JetBrains Mono with system fallback. The fallback
+       chain renders well on Apple/Linux without any web-font fetch. */
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter Tight", Inter, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
 
   .dark {
-    --c-bg:           17 24 39;     /* gray-900 */
-    --c-surface:        31 41 55;     /* gray-800 */
-    --c-surface-2:      55 65 81;     /* gray-700 */
-    --c-surface-3:      75 85 99;     /* gray-600 */
-    --c-surface-strong: 107 114 128;  /* gray-500 */
+    --c-bg:             11 15 21;     /* #0b0f15 — near-black canvas */
+    --c-surface:        17 23 31;     /* #11171f — cards, panels */
+    --c-surface-2:      14 19 26;     /* #0e131a — sub-panel, chrome */
+    --c-surface-3:      33 41 51;     /* secondary button bg */
+    --c-surface-strong: 51 60 72;     /* secondary button hover */
 
-    --c-fg:           249 250 251;  /* gray-50  */
-    --c-fg-strong:    255 255 255;  /* white    */
-    --c-fg-muted:     156 163 175;  /* gray-400 */
-    --c-fg-faint:     107 114 128;  /* gray-500 */
+    --c-fg:           232 237 245;    /* #e8edf5 */
+    --c-fg-strong:    255 255 255;
+    --c-fg-muted:     133 137 144;    /* ≈ rgba(232,237,245,0.55) over canvas */
+    --c-fg-faint:     88 93 99;       /* ≈ rgba(232,237,245,0.35) over canvas */
     --c-fg-invert:    255 255 255;
 
-    --c-line:         75 85 99;     /* gray-600 */
-    --c-line-soft:    55 65 81;     /* gray-700 */
+    --c-line:         31 37 44;       /* ≈ rgba(255,255,255,0.06) over panel */
+    --c-line-soft:    41 46 53;       /* ≈ rgba(255,255,255,0.10) over panel */
 
-    --c-brand:        96 165 250;   /* blue-400 — lighter on dark */
-    --c-brand-strong: 59 130 246;   /* blue-500 */
-    --c-brand-soft:   30 58 138;    /* blue-900 */
+    --c-brand:        249 115 22;     /* #f97316 orange-500 */
+    --c-brand-strong: 234 88 12;      /* #ea580c — hover */
+    --c-brand-soft:   44 29 21;       /* tinted surface */
 
-    --c-danger:        248 113 113; /* red-400 */
-    --c-danger-strong: 239 68 68;   /* red-500 */
-    --c-danger-soft:   127 29 29;   /* red-900 */
+    --c-danger:        248 113 113;   /* #f87171 */
+    --c-danger-strong: 239 68 68;
+    --c-danger-soft:   44 29 34;
 
-    --c-warn:          251 191 36;  /* amber-400 */
-    --c-warn-strong:   245 158 11;  /* amber-500 */
-    --c-warn-soft:     120 53 15;   /* amber-900 */
+    --c-warn:          251 191 36;    /* #fbbf24 amber-400 */
+    --c-warn-strong:   245 158 11;
+    --c-warn-soft:     45 40 23;
 
-    --c-success:      74 222 128;   /* green-400 */
-    --c-success-soft: 20 83 45;     /* green-900 */
+    --c-success:      52 211 153;     /* #34d399 emerald-400 */
+    --c-success-soft: 17 42 40;
 
-    --c-info:         96 165 250;
-    --c-info-soft:    30 58 138;
+    --c-info:         122 162 255;    /* #7aa2ff */
+    --c-info-soft:    27 36 54;
 
-    --c-accent:        192 132 252; /* purple-400 */
-    --c-accent-strong: 168 85 247;  /* purple-500 */
-    --c-accent-soft:   76 29 149;   /* purple-900 */
+    --c-accent:        192 132 252;
+    --c-accent-strong: 168 85 247;
+    --c-accent-soft:   76 29 149;
 
-    --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+    --shadow-card: none;
+    --shadow-pop:  0 12px 40px rgb(0 0 0 / 0.4);
   }
 
   /* Smooth color transitions when toggling themes. */
@@ -113,10 +145,22 @@
    * Theme `<html>` and `<body>` from the same tokens. Styling `<html>` here
    * means the theme-toggle JS only needs to flip the `.dark` class — it
    * never touches inline style colors.
+   *
+   * Font stack lives on the root so every utility, including Tailwind's
+   * built-in `font-mono`, can be overridden in one place.
    */
   html, body {
     background-color: rgb(var(--c-bg));
     color: rgb(var(--c-fg));
+    font-family: var(--font-sans);
+  }
+
+  /* Tailwind's `font-mono` utility points at the platform stack by
+     default. Re-route it through our token so JetBrains Mono kicks in
+     when present, and turn on tabular-nums so figures align in tables. */
+  .font-mono, code, kbd, samp, pre {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum" 1, "cv11" 1;
   }
 
   /*
@@ -197,7 +241,7 @@
   .link-danger { @apply text-danger hover:text-danger-strong; }
 
   /* ── Surfaces ────────────────────────────────────────────────── */
-  .card { @apply bg-surface rounded shadow-card overflow-hidden; }
+  .card { @apply bg-surface rounded border border-line shadow-card overflow-hidden; }
 
   /* ── Badges (small status pills) ─────────────────────────────── */
   .badge         { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium; }
