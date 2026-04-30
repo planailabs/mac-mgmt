@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::ui::{Alert, AlertVariant, Button, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -50,7 +51,6 @@ pub async fn get_file_editor_context(
         .relay_proxy_url
         .ok_or_else(|| ServerFnError::new("daemon has no relay proxy URL"))?;
 
-    // Mint a 6-hour proxy token.
     use rand::Rng;
     use sha2::{Digest, Sha256};
 
@@ -240,16 +240,15 @@ async fn relay_file_write(
 pub fn FleetFiles(instance_id: String) -> Element {
     let mut selected_tunnel = use_signal(|| Option::<String>::None);
     let mut selected_path = use_signal(|| Option::<String>::None);
-    let mut editor_content = use_signal(|| String::new());
+    let mut editor_content = use_signal(String::new);
     let mut editor_mtime = use_signal(|| 0i64);
     let mut editor_dirty = use_signal(|| false);
     let mut editor_loading = use_signal(|| false);
     let mut editor_error = use_signal(|| Option::<String>::None);
     let mut editor_is_binary = use_signal(|| false);
     let mut save_status = use_signal(|| Option::<String>::None);
-    // Directory expansion: tunnel_name → list of file entries
     let mut dir_entries: Signal<std::collections::HashMap<String, Vec<serde_json::Value>>> =
-        use_signal(|| std::collections::HashMap::new());
+        use_signal(std::collections::HashMap::new);
     let mut dir_loading = use_signal(|| Option::<String>::None);
 
     let ctx = use_server_future(move || {
@@ -262,7 +261,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
         Some(Err(e)) => {
             return rsx! {
                 div { class: "max-w-6xl mx-auto px-4 py-6",
-                    div { class: "p-4 bg-red-50 dark:bg-red-900/30 rounded text-sm text-red-700 dark:text-red-300",
+                    Alert { variant: AlertVariant::Danger,
                         {t!("file-editor-unavailable", error: e.to_string())}
                     }
                 }
@@ -274,7 +273,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
     let Some(ctx_data) = ctx_data else {
         return rsx! {
             div { class: "max-w-6xl mx-auto px-4 py-6",
-                p { class: "text-sm text-gray-500", {t!("file-editor-loading")} }
+                HelpText { {t!("file-editor-loading")} }
             }
         };
     };
@@ -318,9 +317,7 @@ pub fn FleetFiles(instance_id: String) -> Element {
                             editor_dirty.set(false);
                             save_status.set(Some(t!("file-editor-saved").to_string()));
                         } else if status == 409 {
-                            save_status.set(Some(
-                                t!("file-editor-conflict").to_string(),
-                            ));
+                            save_status.set(Some(t!("file-editor-conflict").to_string()));
                         } else {
                             let err = result["error"].as_str().unwrap_or("Save failed");
                             save_status.set(Some(err.to_string()));
@@ -337,21 +334,19 @@ pub fn FleetFiles(instance_id: String) -> Element {
         div { class: "max-w-6xl mx-auto px-4 py-6",
             // Header with back link
             div { class: "flex items-center gap-3 mb-4",
-                Link {
-                    to: back_url,
-                    class: "text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400",
+                Link { to: back_url, class: "link text-sm",
                     {t!("file-editor-back")}
                 }
-                h2 { class: "text-xl font-semibold", {t!("file-editor-title")} }
+                h2 { class: "text-xl font-semibold text-fg-strong", {t!("file-editor-title")} }
             }
 
-            div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-800 dark:text-amber-200",
+            Alert { variant: AlertVariant::Warn, class: "mb-4",
                 {t!("file-editor-disclaimer")}
             }
 
             div { class: "grid grid-cols-1 lg:grid-cols-3 gap-4",
                 // Left panel: file tree
-                div { class: "lg:col-span-1 bg-white dark:bg-gray-800 rounded shadow p-4 max-h-[calc(100vh-12rem)] overflow-y-auto",
+                div { class: "lg:col-span-1 card p-4 max-h-[calc(100vh-12rem)] overflow-y-auto",
                     for ft in &file_tunnels {
                         {
                             let name = ft["name"].as_str().unwrap_or("").to_string();
@@ -365,20 +360,18 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                 && selected_path.read().is_none();
 
                             let bg = if is_selected {
-                                "bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700"
+                                "bg-info-soft border-info"
                             } else {
-                                "hover:bg-gray-50 dark:hover:bg-gray-700 border-transparent"
+                                "hover:bg-surface-2 border-transparent"
                             };
 
                             let name_click = name.clone();
                             let name_entries = name.clone();
                             rsx! {
-                                button {
-                                    class: "w-full text-left p-2 rounded border mb-1 {bg}",
+                                button { class: "w-full text-left p-2 rounded border mb-1 {bg}",
                                     onclick: move |_| {
                                         let n = name_click.clone();
                                         if is_dir {
-                                            // Toggle directory expansion
                                             if dir_entries.read().contains_key(&n) {
                                                 dir_entries.write().remove(&n);
                                             } else {
@@ -396,7 +389,6 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                                 });
                                             }
                                         } else {
-                                            // Single file tunnel — load directly
                                             selected_tunnel.set(Some(n.clone()));
                                             selected_path.set(None);
                                             let ru = relay_url.read().clone();
@@ -429,19 +421,19 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                             }
                                             span { class: "font-medium text-sm", "{name}" }
                                             if !writable {
-                                                span { class: "ml-2 text-xs px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded", {t!("file-editor-readonly")} }
+                                                span { class: "ml-2 badge badge-neutral", {t!("file-editor-readonly")} }
                                             }
                                         }
-                                        span { class: "text-xs text-gray-500", "{service}" }
+                                        span { class: "text-xs text-fg-muted", "{service}" }
                                     }
                                     if !description.is_empty() {
-                                        p { class: "text-xs text-gray-500 mt-1", "{description}" }
+                                        p { class: "help-xs mt-1", "{description}" }
                                     }
                                 }
                                 // Expanded directory entries
                                 if is_dir {
                                     if dir_loading.read().as_deref() == Some(&*name_entries) {
-                                        div { class: "ml-4 py-1 text-xs text-gray-500", {t!("loading")} }
+                                        div { class: "ml-4 py-1 help-xs", {t!("loading")} }
                                     }
                                     if let Some(entries) = dir_entries.read().get(&name_entries) {
                                         for entry in entries.iter() {
@@ -454,14 +446,13 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                                 let is_file_selected = selected_tunnel.read().as_deref() == Some(&*tunnel_for_file)
                                                     && selected_path.read().as_deref() == Some(&*fname);
                                                 let file_bg = if is_file_selected {
-                                                    "bg-blue-50 dark:bg-blue-900/30"
+                                                    "bg-info-soft"
                                                 } else {
-                                                    "hover:bg-gray-50 dark:hover:bg-gray-700"
+                                                    "hover:bg-surface-2"
                                                 };
                                                 if fkind == "file" {
                                                     rsx! {
-                                                        button {
-                                                            class: "w-full text-left ml-4 pl-2 py-1 rounded text-sm {file_bg}",
+                                                        button { class: "w-full text-left ml-4 pl-2 py-1 rounded text-sm {file_bg}",
                                                             onclick: move |_| {
                                                                 let tn = tunnel_for_file.clone();
                                                                 let fp = fname_click.clone();
@@ -486,13 +477,13 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                                                     editor_loading.set(false);
                                                                 });
                                                             },
-                                                            span { class: "text-gray-700 dark:text-gray-300", "{fname}" }
-                                                            span { class: "ml-2 text-xs text-gray-400", "{fsize}B" }
+                                                            span { class: "text-fg", "{fname}" }
+                                                            span { class: "ml-2 text-xs text-fg-faint", "{fsize}B" }
                                                         }
                                                     }
                                                 } else {
                                                     rsx! {
-                                                        div { class: "ml-4 pl-2 py-1 text-sm text-gray-500",
+                                                        div { class: "ml-4 pl-2 py-1 text-sm text-fg-muted",
                                                             "{fname}/"
                                                         }
                                                     }
@@ -505,14 +496,14 @@ pub fn FleetFiles(instance_id: String) -> Element {
                         }
                     }
                     if file_tunnels.is_empty() {
-                        p { class: "text-sm text-gray-500 italic", {t!("file-editor-no-files")} }
+                        p { class: "help italic", {t!("file-editor-no-files")} }
                     }
                 }
 
                 // Right panel: editor
-                div { class: "lg:col-span-2 bg-white dark:bg-gray-800 rounded shadow p-4",
+                div { class: "lg:col-span-2 card p-4",
                     if selected_tunnel.read().is_none() {
-                        p { class: "text-sm text-gray-500 italic", {t!("file-editor-select")} }
+                        p { class: "help italic", {t!("file-editor-select")} }
                     } else {
                         div { class: "flex items-center justify-between mb-2",
                             div {
@@ -520,18 +511,17 @@ pub fn FleetFiles(instance_id: String) -> Element {
                                     "{selected_tunnel.read().as_deref().unwrap_or(\"\")}"
                                 }
                                 if let Some(ref p) = *selected_path.read() {
-                                    span { class: "text-gray-500 text-xs ml-2", "/{p}" }
+                                    span { class: "text-fg-muted text-xs ml-2", "/{p}" }
                                 }
                             }
                             div { class: "flex items-center gap-2",
                                 if *editor_dirty.read() {
-                                    span { class: "text-xs text-amber-600", {t!("file-editor-unsaved")} }
+                                    span { class: "text-xs text-warn-strong", {t!("file-editor-unsaved")} }
                                 }
                                 if let Some(ref status) = *save_status.read() {
                                     span { class: "text-xs", "{status}" }
                                 }
-                                button {
-                                    class: "px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50",
+                                Button { size: ButtonSize::Sm,
                                     disabled: !*editor_dirty.read() || *editor_loading.read() || *editor_is_binary.read(),
                                     onclick: save_file,
                                     if *editor_loading.read() { {t!("file-editor-saving")} } else { {t!("save")} }
@@ -540,22 +530,19 @@ pub fn FleetFiles(instance_id: String) -> Element {
                         }
 
                         if let Some(ref err) = *editor_error.read() {
-                            div { class: "mb-2 p-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-300",
-                                "{err}"
-                            }
+                            ErrorText { class: "mb-2", "{err}" }
                         }
 
                         if *editor_loading.read() && editor_content.read().is_empty() {
                             div { class: "flex items-center justify-center h-64",
-                                span { class: "text-gray-500", {t!("loading")} }
+                                HelpText { {t!("loading")} }
                             }
                         } else if *editor_is_binary.read() {
-                            div { class: "flex items-center justify-center h-64 text-gray-500",
+                            div { class: "flex items-center justify-center h-64 text-fg-muted",
                                 {t!("file-editor-binary")}
                             }
                         } else {
-                            textarea {
-                                class: "w-full h-[calc(100vh-16rem)] font-mono text-sm p-2 border rounded bg-gray-50 dark:bg-gray-900 dark:border-gray-600 resize-y",
+                            textarea { class: "input h-[calc(100vh-16rem)] font-mono text-sm resize-y",
                                 spellcheck: false,
                                 value: "{editor_content}",
                                 oninput: move |e| {

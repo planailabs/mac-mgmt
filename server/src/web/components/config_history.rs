@@ -4,6 +4,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::web::components::ui::{Button, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -74,7 +75,6 @@ async fn get_config_diff(
     let right_uuid: Uuid = right_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Verify user has access to the cluster that owns these configs
     if let Some(ids) = user
         .accessible_cluster_ids(&pool)
         .await
@@ -143,9 +143,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
     match &*history.read() {
         Some(Ok(versions)) => {
             if versions.is_empty() {
-                return rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("config-history-no-history")} }
-                };
+                return rsx! { HelpText { {t!("config-history-no-history")} } };
             }
 
             let versions_left = versions.clone();
@@ -155,11 +153,8 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                 div { class: "mt-4",
                     div { class: "flex gap-4 mb-3 items-end",
                         div {
-                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                                {t!("config-history-left")}
-                            }
-                            select {
-                                class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm",
+                            label { class: "label", {t!("config-history-left")} }
+                            select { class: "input input-sm",
                                 onchange: move |e| {
                                     let val = e.value();
                                     if val.is_empty() {
@@ -179,11 +174,8 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                             }
                         }
                         div {
-                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                                {t!("config-history-right")}
-                            }
-                            select {
-                                class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm",
+                            label { class: "label", {t!("config-history-right")} }
+                            select { class: "input input-sm",
                                 onchange: move |e| {
                                     let val = e.value();
                                     if val.is_empty() {
@@ -202,8 +194,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                                 }
                             }
                         }
-                        button {
-                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                        Button { size: ButtonSize::Sm,
                             disabled: left_id.read().is_none()
                                 || right_id.read().is_none()
                                 || *diff_loading.read(),
@@ -215,12 +206,8 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                                         diff_loading.set(true);
                                         diff_error.set(None);
                                         match get_config_diff(l, r).await {
-                                            Ok(lines) => {
-                                                diff_lines.set(Some(lines));
-                                            }
-                                            Err(e) => {
-                                                diff_error.set(Some(e.to_string()));
-                                            }
+                                            Ok(lines) => { diff_lines.set(Some(lines)); }
+                                            Err(e) => { diff_error.set(Some(e.to_string())); }
                                         }
                                         diff_loading.set(false);
                                     }
@@ -235,21 +222,21 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                     }
 
                     if let Some(error) = &*diff_error.read() {
-                        p { class: "text-red-600 dark:text-red-400 text-sm", "{error}" }
+                        ErrorText { "{error}" }
                     }
 
                     if let Some(lines) = &*diff_lines.read() {
-                        div { class: "border dark:border-gray-700 rounded overflow-auto max-h-96",
+                        div { class: "border border-line-soft rounded overflow-auto max-h-96",
                             pre { class: "text-xs font-mono p-2",
                                 for line in lines {
                                     {
-                                        let (bg, prefix) = match line.tag.as_str() {
-                                            "insert" => ("bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300", "+ "),
-                                            "delete" => ("bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-300", "- "),
+                                        let (cls, prefix) = match line.tag.as_str() {
+                                            "insert" => ("bg-success-soft text-success", "+ "),
+                                            "delete" => ("bg-danger-soft text-danger", "- "),
                                             _ => ("", "  "),
                                         };
                                         rsx! {
-                                            span { class: "block {bg}", "{prefix}{line.content}" }
+                                            span { class: "block {cls}", "{prefix}{line.content}" }
                                         }
                                     }
                                 }
@@ -259,11 +246,7 @@ pub fn ConfigHistory(cluster_id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }

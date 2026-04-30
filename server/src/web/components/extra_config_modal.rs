@@ -174,14 +174,13 @@ pub fn ExtraConfigField(form_values: Signal<serde_json::Value>, mut open: Signal
 
     rsx! {
         div { class: "flex flex-col gap-0.5",
-            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", {t!("extra-config-label")} }
-            p { class: "text-xs text-gray-500 dark:text-gray-400",
+            label { class: "text-sm font-medium text-fg-strong", {t!("extra-config-label")} }
+            p { class: "text-xs text-fg-muted",
                 {t!("extra-config-help")}
             }
             div {
-                button {
-                    r#type: "button",
-                    class: "bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-700",
+                button { r#type: "button",
+                    class: "btn btn-md btn-primary",
                     onclick: move |evt| {
                         evt.prevent_default();
                         evt.stop_propagation();
@@ -189,7 +188,7 @@ pub fn ExtraConfigField(form_values: Signal<serde_json::Value>, mut open: Signal
                     },
                     {t!("extra-config-edit")}
                 }
-                span { class: "ml-2 text-xs text-gray-500 dark:text-gray-400", {t!("extra-config-values-set", count: key_count)} }
+                span { class: "ml-2 text-xs text-fg-muted", {t!("extra-config-values-set", count: key_count)} }
             }
         }
     }
@@ -263,15 +262,13 @@ fn ExtraConfigModal(
         div {
             class: "fixed inset-0 z-50 flex items-center justify-center bg-black/50",
             onclick: move |_| open.set(false),
-            div {
-                class: "bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col",
+            div { class: "bg-surface rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col",
                 onclick: move |e| e.stop_propagation(),
 
-                div { class: "px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between",
-                    h2 { class: "font-semibold text-base", {t!("extra-config-title")} }
-                    button {
-                        r#type: "button",
-                        class: "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 text-xl leading-none",
+                div { class: "px-4 py-3 border-b border-line-soft flex items-center justify-between",
+                    h2 { class: "font-semibold text-base text-fg-strong", {t!("extra-config-title")} }
+                    button { r#type: "button",
+                        class: "text-fg-muted hover:text-fg-strong text-xl leading-none",
                         onclick: move |evt| {
                             evt.prevent_default();
                             evt.stop_propagation();
@@ -284,27 +281,27 @@ fn ExtraConfigModal(
                 div { class: "px-4 py-2 border-b space-y-2",
                     input {
                         r#type: "text",
-                        class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                        class: "input input-sm",
                         placeholder: t!("extra-config-filter"),
                         value: "{filter}",
                         oninput: move |e| filter.set(e.value()),
                     }
-                    div { class: "flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400",
+                    div { class: "flex flex-wrap items-center gap-3 text-xs text-fg-muted",
                         span { {t!("extra-config-legend")} }
                         span { class: "flex items-center gap-1",
-                            span { class: "inline-block w-2 h-3 bg-purple-500 rounded-sm" }
+                            span { class: "inline-block w-2 h-3 bg-accent rounded-sm" }
                             {t!("extra-config-sensitive")}
                         }
                         span { class: "flex items-center gap-1",
-                            span { class: "inline-block w-2 h-3 bg-emerald-300 rounded-sm" }
+                            span { class: "inline-block w-2 h-3 bg-success rounded-sm" }
                             {t!("extra-config-array-of-objects")}
                         }
                         span { class: "flex items-center gap-1",
-                            span { class: "inline-block w-2 h-3 bg-amber-300 rounded-sm" }
+                            span { class: "inline-block w-2 h-3 bg-warn rounded-sm" }
                             {t!("extra-config-string-map")}
                         }
                         span { class: "flex items-center gap-1",
-                            span { class: "px-1 rounded bg-blue-600 text-white", {t!("extra-config-type")} }
+                            span { class: "px-1 rounded bg-brand text-fg-invert", {t!("extra-config-type")} }
                             {t!("extra-config-active-union")}
                         }
                     }
@@ -327,16 +324,15 @@ fn ExtraConfigModal(
                             }
                         }
                         (Some(Err(e)), _) => rsx! {
-                            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("extra-config-schema-error", error: e.to_string())} }
+                            p { class: "text-danger text-sm", {t!("extra-config-schema-error", error: e.to_string())} }
                         },
                         _ => rsx! { p { class: "text-sm", {t!("extra-config-loading-schema")} } },
                     }}
                 }
 
-                div { class: "px-4 py-3 border-t flex justify-end gap-2",
-                    button {
-                        r#type: "button",
-                        class: "px-3 py-1 rounded text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-200",
+                div { class: "px-4 py-3 border-t border-line-soft flex justify-end gap-2",
+                    button { r#type: "button",
+                        class: "btn btn-md btn-secondary",
                         onclick: move |evt| {
                             evt.prevent_default();
                             evt.stop_propagation();
@@ -344,9 +340,8 @@ fn ExtraConfigModal(
                         },
                         {t!("cancel")}
                     }
-                    button {
-                        r#type: "button",
-                        class: "px-3 py-1 rounded text-sm bg-blue-600 text-white hover:bg-blue-700",
+                    button { r#type: "button",
+                        class: "btn btn-md btn-primary",
                         onclick: move |evt| {
                             evt.prevent_default();
                             evt.stop_propagation();
@@ -611,15 +606,15 @@ fn render_node_inner(
             return body;
         }
         return rsx! {
-            details { class: "border border-gray-200 dark:border-gray-700 rounded",
+            details { class: "border border-line-soft rounded",
                 key: "{key}",
                 open: !filter.is_empty() || has_value,
-                summary { class: "px-2 py-1 bg-gray-50 dark:bg-gray-700 cursor-pointer text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-600",
+                summary { class: "px-2 py-1 bg-surface-2 cursor-pointer text-sm font-semibold hover:bg-surface-3",
                     "{title} "
-                    span { class: "text-gray-400 dark:text-gray-500 font-normal text-xs", "({node.name})" }
+                    span { class: "text-fg-faint font-normal text-xs", "({node.name})" }
                 }
                 if !help.is_empty() {
-                    p { class: "px-2 pt-1 text-xs text-gray-500 dark:text-gray-400", "{help}" }
+                    p { class: "px-2 pt-1 text-xs text-fg-muted", "{help}" }
                 }
                 {body}
             }
@@ -654,15 +649,15 @@ fn render_node_inner(
             return body;
         }
         return rsx! {
-            details { class: "border border-gray-200 dark:border-gray-700 rounded",
+            details { class: "border border-line-soft rounded",
                 key: "{key}",
                 open: !filter.is_empty() || has_value,
-                summary { class: "px-2 py-1 bg-gray-50 dark:bg-gray-700 cursor-pointer text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-600",
+                summary { class: "px-2 py-1 bg-surface-2 cursor-pointer text-sm font-semibold hover:bg-surface-3",
                     "{title} "
-                    span { class: "text-gray-400 dark:text-gray-500 font-normal text-xs", "({node.name})" }
+                    span { class: "text-fg-faint font-normal text-xs", "({node.name})" }
                 }
                 if !help.is_empty() {
-                    p { class: "px-2 pt-1 text-xs text-gray-500 dark:text-gray-400", "{help}" }
+                    p { class: "px-2 pt-1 text-xs text-fg-muted", "{help}" }
                 }
                 {body}
             }
@@ -699,7 +694,7 @@ fn render_node_inner(
             rsx! {
                 input {
                     r#type: "number",
-                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+                    class: "input input-sm",
                     value: val_str,
                     oninput: move |e| {
                         let v = e.value();
@@ -728,7 +723,7 @@ fn render_node_inner(
                 input {
                     r#type: "number",
                     step: "any",
-                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+                    class: "input input-sm",
                     value: val_str,
                     oninput: move |e| {
                         let v = e.value();
@@ -784,7 +779,7 @@ fn render_node_inner(
             rsx! {
                 input {
                     r#type: if sensitive { "password" } else { "text" },
-                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+                    class: "input input-sm",
                     value: val_str,
                     oninput: move |e| {
                         let v = e.value();
@@ -807,7 +802,7 @@ fn render_node_inner(
     let is_set = current.is_some();
     let reset_path = path.clone();
     let wrapper_class = if sensitive {
-        "flex flex-col gap-0.5 border-l-4 border-purple-500 pl-2"
+        "flex flex-col gap-0.5 border-l-4 border-accent pl-2"
     } else {
         "flex flex-col gap-0.5"
     };
@@ -816,14 +811,14 @@ fn render_node_inner(
         div { class: wrapper_class,
             key: "{key}",
             div { class: "flex items-center justify-between gap-2",
-                label { class: "text-sm font-medium text-gray-700 dark:text-gray-200",
+                label { class: "text-sm font-medium text-fg-strong",
                     "{title} "
-                    span { class: "text-gray-400 dark:text-gray-500 font-normal text-xs", "({node.name})" }
+                    span { class: "text-fg-faint font-normal text-xs", "({node.name})" }
                 }
                 if is_set {
                     button {
                         r#type: "button",
-                        class: "text-xs text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 underline",
+                        class: "text-xs text-fg-muted hover:text-danger underline",
                         onclick: move |evt| {
                             evt.prevent_default();
                             evt.stop_propagation();
@@ -834,7 +829,7 @@ fn render_node_inner(
                 }
             }
             if !help.is_empty() {
-                p { class: "text-xs text-gray-500 dark:text-gray-400", "{help}" }
+                p { class: "text-xs text-fg-muted", "{help}" }
             }
             {field}
         }
@@ -868,7 +863,7 @@ fn render_union_node(
     let sensitive = node.entry.as_ref().map(|e| e.sensitive).unwrap_or(false);
     let key = node.full_path.clone();
     let wrapper_class = if sensitive {
-        "flex flex-col gap-1 border-l-4 border-purple-500 pl-2"
+        "flex flex-col gap-1 border-l-4 border-accent pl-2"
     } else {
         "flex flex-col gap-1"
     };
@@ -876,23 +871,23 @@ fn render_union_node(
     rsx! {
         div { class: wrapper_class,
             key: "{key}",
-            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200",
+            label { class: "text-sm font-medium text-fg-strong",
                 "{title} "
-                span { class: "text-gray-400 dark:text-gray-500 font-normal text-xs", "({node.name})" }
+                span { class: "text-fg-faint font-normal text-xs", "({node.name})" }
             }
             if !help.is_empty() {
-                p { class: "text-xs text-gray-500 dark:text-gray-400", "{help}" }
+                p { class: "text-xs text-fg-muted", "{help}" }
             }
             div { class: "flex items-center gap-1 flex-wrap",
-                span { class: "text-xs text-gray-500 dark:text-gray-400", "as:" }
+                span { class: "text-xs text-fg-muted", "as:" }
                 {tys.iter().enumerate().map(|(i, ty)| {
                     let is_active = ty == &active;
                     let ty_clone = ty.clone();
                     let path_clone = json_path.clone();
                     let class = if is_active {
-                        "px-2 py-0.5 text-xs rounded bg-blue-600 text-white"
+                        "px-2 py-0.5 text-xs rounded bg-brand text-fg-invert"
                     } else {
-                        "px-2 py-0.5 text-xs rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-500"
+                        "px-2 py-0.5 text-xs rounded bg-surface-3 text-fg-strong hover:bg-surface-strong"
                     };
                     rsx! {
                         button {
@@ -980,7 +975,7 @@ fn render_object_map(
     let filter_outer = filter.to_string();
 
     rsx! {
-        div { class: "space-y-2 border-l-2 border-amber-300 pl-2",
+        div { class: "space-y-2 border-l-2 border-warn pl-2",
             for k in keys {
                 {
                     let mut entry_path = path.clone();
@@ -996,13 +991,13 @@ fn render_object_map(
                     rsx! {
                         details {
                             key: "{dom_key}",
-                            class: "border border-gray-200 dark:border-gray-700 rounded",
+                            class: "border border-line-soft rounded",
                             open: true,
-                            summary { class: "px-2 py-1 bg-gray-50 dark:bg-gray-700 cursor-pointer text-sm font-semibold flex items-center justify-between",
+                            summary { class: "px-2 py-1 bg-surface-2 cursor-pointer text-sm font-semibold flex items-center justify-between",
                                 span { "{label}" }
                                 button {
                                     r#type: "button",
-                                    class: "text-red-500 hover:text-red-700 text-xs",
+                                    class: "link-danger text-xs",
                                     onclick: move |evt| {
                                         evt.prevent_default();
                                         evt.stop_propagation();
@@ -1034,14 +1029,14 @@ fn render_object_map(
             div { class: "flex gap-1",
                 input {
                     r#type: "text",
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                    class: "input input-sm flex-1 w-auto",
                     placeholder: t!("extra-config-key"),
                     value: "{new_key}",
                     oninput: move |e| new_key.set(e.value()),
                 }
                 button {
                     r#type: "button",
-                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                    class: "btn btn-xs btn-primary",
                     onclick: move |evt| {
                         evt.prevent_default();
                         evt.stop_propagation();
@@ -1093,7 +1088,7 @@ fn render_object_array(
     let path_for_add = path.clone();
 
     rsx! {
-        div { class: "space-y-2 border-l-2 border-emerald-300 pl-2",
+        div { class: "space-y-2 border-l-2 border-success pl-2",
             for idx in 0..arr_len {
                 {
                     let mut item_path = path.clone();
@@ -1107,13 +1102,13 @@ fn render_object_array(
                     rsx! {
                         details {
                             key: "{key}",
-                            class: "border border-gray-200 dark:border-gray-700 rounded",
+                            class: "border border-line-soft rounded",
                             open: true,
-                            summary { class: "px-2 py-1 bg-gray-50 dark:bg-gray-700 cursor-pointer text-sm font-semibold flex items-center justify-between",
+                            summary { class: "px-2 py-1 bg-surface-2 cursor-pointer text-sm font-semibold flex items-center justify-between",
                                 span { "[{idx}]" }
                                 button {
                                     r#type: "button",
-                                    class: "text-red-500 hover:text-red-700 text-xs",
+                                    class: "link-danger text-xs",
                                     onclick: move |evt| {
                                         evt.prevent_default();
                                         evt.stop_propagation();
@@ -1141,7 +1136,7 @@ fn render_object_array(
             }
             button {
                 r#type: "button",
-                class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
+                class: "btn btn-xs btn-primary",
                 onclick: move |evt| {
                     evt.prevent_default();
                     evt.stop_propagation();
@@ -1226,12 +1221,12 @@ fn render_primitive_array(
                 div {
                     key: "{idx}",
                     class: "flex items-center gap-1",
-                    span { class: "flex-1 text-sm font-mono bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-2 py-0.5 truncate",
+                    span { class: "flex-1 text-sm font-mono bg-surface-2 border border-line-soft rounded px-2 py-0.5 truncate",
                         "{item}"
                     }
                     button {
                         r#type: "button",
-                        class: "text-red-500 hover:text-red-700 text-xs px-1",
+                        class: "link-danger text-xs px-1",
                         onclick: {
                             let path = path.clone();
                             move |_| {
@@ -1251,14 +1246,14 @@ fn render_primitive_array(
             div { class: "flex gap-1",
                 input {
                     r#type: "text",
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white",
+                    class: "input input-xs flex-1 w-auto",
                     placeholder: t!("config-editor-add-item"),
                     value: "{new_val}",
                     oninput: move |e| new_val.set(e.value()),
                 }
                 button {
                     r#type: "button",
-                    class: "bg-blue-600 text-white px-2 py-0.5 rounded text-xs hover:bg-blue-700",
+                    class: "btn btn-xs btn-primary",
                     onclick: add,
                     "+"
                 }
@@ -1552,7 +1547,7 @@ fn render_json_textarea(
     let path_d = path.clone();
     rsx! {
         textarea {
-            class: "w-full h-24 font-mono text-xs border border-gray-300 dark:border-gray-600 rounded p-1 dark:bg-gray-700 dark:text-white",
+            class: "input h-24 font-mono text-xs",
             placeholder: "JSON value",
             value: "{text}",
             oninput: move |e| {
