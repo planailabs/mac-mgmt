@@ -4,6 +4,10 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::ui::{
+    Alert, AlertVariant, Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ButtonVariant, Card,
+    ErrorText, HelpText, SectionHeading,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -66,7 +70,6 @@ async fn get_organization(id: String) -> Result<OrgInfo, ServerFnError> {
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    // Global admins or org members can view
     if !user.is_admin && !user.org_ids().contains(&oid) {
         return Err(ServerFnError::new("access denied"));
     }
@@ -108,7 +111,6 @@ async fn get_org_members(org_id: String) -> Result<Vec<MemberEntry>, ServerFnErr
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    // Global admins or org members can view members
     if !user.is_admin && !user.org_ids().contains(&oid) {
         return Err(ServerFnError::new("access denied"));
     }
@@ -153,7 +155,6 @@ async fn get_org_clusters(org_id: String) -> Result<Vec<ClusterEntry>, ServerFnE
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-    // Global admins or org members can view clusters
     if !user.is_admin && !user.org_ids().contains(&oid) {
         return Err(ServerFnError::new("access denied"));
     }
@@ -193,7 +194,6 @@ async fn get_available_users(org_id: String) -> Result<Vec<UserOption>, ServerFn
     let oid: uuid::Uuid = org_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Org admins can add members
     user.require_org_admin(&oid)?;
     let pool = crate::server_pool()?;
 
@@ -227,7 +227,7 @@ async fn get_available_users(org_id: String) -> Result<Vec<UserOption>, ServerFn
 #[server]
 async fn get_available_clusters(org_id: String) -> Result<Vec<ClusterOption>, ServerFnError> {
     let user = current_user().await?;
-    user.require_admin()?; // Only global admins can assign clusters to orgs
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let oid: uuid::Uuid = org_id
         .parse()
@@ -345,7 +345,7 @@ async fn change_member_role(
 #[server]
 async fn add_org_cluster(org_id: String, cluster_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
-    user.require_admin()?; // Only global admins
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let oid: uuid::Uuid = org_id
         .parse()
@@ -365,7 +365,7 @@ async fn add_org_cluster(org_id: String, cluster_id: String) -> Result<(), Serve
 #[server]
 async fn remove_org_cluster(org_id: String, cluster_id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
-    user.require_admin()?; // Only global admins
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let oid: uuid::Uuid = org_id
         .parse()
@@ -499,7 +499,7 @@ async fn rename_organization(id: String, name: String) -> Result<(), ServerFnErr
 #[server]
 async fn delete_organization(id: String) -> Result<(), ServerFnError> {
     let user = current_user().await?;
-    user.require_admin()?; // Only global admins
+    user.require_admin()?;
     let pool = crate::server_pool()?;
     let uid: uuid::Uuid = id
         .parse()
@@ -510,6 +510,14 @@ async fn delete_organization(id: String) -> Result<(), ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(())
+}
+
+fn role_variant(role: &str) -> BadgeVariant {
+    match role {
+        "admin" => BadgeVariant::Accent,
+        "write" => BadgeVariant::Info,
+        _ => BadgeVariant::Neutral,
+    }
 }
 
 #[component]
@@ -560,7 +568,7 @@ pub fn OrganizationDetail(id: String) -> Element {
     let mut selected_role = use_signal(|| "read".to_string());
     let mut selected_cluster = use_signal(|| Option::<String>::None);
     let mut confirm_delete = use_signal(|| false);
-    let mut token_label = use_signal(|| String::new());
+    let mut token_label = use_signal(String::new);
     let mut created_token = use_signal(|| Option::<String>::None);
     let mut editing_name = use_signal(|| false);
     let mut draft_name = use_signal(String::new);
@@ -604,13 +612,13 @@ pub fn OrganizationDetail(id: String) -> Element {
 
             let org_name = info.name.clone();
             let oid_for_rename = id.clone();
+            let created = info.created_at.format("%Y-%m-%d %H:%M").to_string();
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
                     div {
                         div { class: "flex items-center gap-3",
                             if *editing_name.read() {
-                                form {
-                                    class: "flex items-center gap-2",
+                                form { class: "flex items-center gap-2",
                                     onsubmit: move |evt: FormEvent| {
                                         evt.prevent_default();
                                         let oid = oid_for_rename.clone();
@@ -624,29 +632,24 @@ pub fn OrganizationDetail(id: String) -> Element {
                                         }
                                     },
                                     input {
-                                        class: "text-2xl font-bold border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-white",
+                                        class: "input text-2xl font-bold w-auto py-1",
                                         r#type: "text",
                                         value: "{draft_name}",
                                         oninput: move |e| draft_name.set(e.value()),
                                         autofocus: true,
                                     }
-                                    button {
-                                        class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300",
-                                        r#type: "submit",
+                                    button { class: "text-success hover:opacity-80", r#type: "submit",
                                         {t!("save")}
                                     }
-                                    button {
-                                        class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200",
-                                        r#type: "button",
+                                    button { class: "text-fg-muted hover:text-fg-strong", r#type: "button",
                                         onclick: move |_| editing_name.set(false),
                                         {t!("cancel")}
                                     }
                                 }
                             } else {
-                                h2 { class: "text-2xl font-bold", "{info.name}" }
+                                h2 { class: "h-page mb-0", "{info.name}" }
                                 if perms.is_org_admin {
-                                    button {
-                                        class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300",
+                                    button { class: "text-fg-faint hover:text-fg-muted",
                                         onclick: move |_| {
                                             draft_name.set(org_name.clone());
                                             editing_name.set(true);
@@ -656,16 +659,15 @@ pub fn OrganizationDetail(id: String) -> Element {
                                 }
                             }
                         }
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            {t!("org-detail-created", date: info.created_at.format("%Y-%m-%d %H:%M").to_string())}
+                        p { class: "help",
+                            {t!("org-detail-created", date: created)}
                         }
                     }
                     if can_delete {
                         div { class: "flex gap-2",
                             if *confirm_delete.read() {
-                                span { class: "text-sm text-red-600 dark:text-red-400 self-center mr-2", {t!("org-detail-confirm")} }
-                                button {
-                                    class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                                span { class: "text-sm text-danger self-center mr-2", {t!("org-detail-confirm")} }
+                                Button { variant: ButtonVariant::Danger, size: ButtonSize::Sm,
                                     onclick: {
                                         let oid = id.clone();
                                         move |_| {
@@ -678,14 +680,12 @@ pub fn OrganizationDetail(id: String) -> Element {
                                     },
                                     {t!("org-detail-confirm-delete")}
                                 }
-                                button {
-                                    class: "bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600",
+                                Button { variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
                                     onclick: move |_| confirm_delete.set(false),
                                     {t!("cancel")}
                                 }
                             } else {
-                                button {
-                                    class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                                Button { variant: ButtonVariant::Danger, size: ButtonSize::Sm,
                                     onclick: move |_| confirm_delete.set(true),
                                     {t!("org-detail-delete")}
                                 }
@@ -696,13 +696,12 @@ pub fn OrganizationDetail(id: String) -> Element {
 
                 div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                     // Members section
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                        h3 { class: "text-lg font-semibold mb-3", {t!("org-detail-members")} }
+                    Card { class: "p-4",
+                        SectionHeading { {t!("org-detail-members")} }
 
                         if can_manage_members {
                             div { class: "flex gap-2 mb-4",
-                                select {
-                                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
+                                select { class: "input flex-1 w-auto py-1 text-sm",
                                     onchange: move |e| {
                                         let val = e.value();
                                         if val.is_empty() {
@@ -720,16 +719,14 @@ pub fn OrganizationDetail(id: String) -> Element {
                                         }
                                     }
                                 }
-                                select {
-                                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-24 dark:bg-gray-700 dark:text-white",
+                                select { class: "input w-24 py-1 text-sm",
                                     value: "{selected_role}",
                                     onchange: move |e| selected_role.set(e.value()),
                                     option { value: "read", {t!("org-detail-role-read")} }
                                     option { value: "write", {t!("org-detail-role-write")} }
                                     option { value: "admin", {t!("org-detail-role-admin")} }
                                 }
-                                button {
-                                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                                Button { size: ButtonSize::Sm,
                                     disabled: selected_user.read().is_none(),
                                     onclick: {
                                         let oid = id.clone();
@@ -753,29 +750,24 @@ pub fn OrganizationDetail(id: String) -> Element {
                         }
 
                         if members.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("org-detail-no-members")} }
+                            HelpText { {t!("org-detail-no-members")} }
                         } else {
-                            div { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                            div { class: "divide-y divide-line-soft",
                                 for m in &members {
                                     {
                                         let uid = m.user_id.clone();
                                         let oid = id.clone();
                                         let current_role = m.role.clone();
-                                        let badge_class = match m.role.as_str() {
-                                            "admin" => "bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300",
-                                            "write" => "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-                                            _ => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-                                        };
+                                        let variant = role_variant(&m.role);
                                         rsx! {
                                             div { class: "flex justify-between items-center py-2",
                                                 div { class: "flex items-center gap-2",
                                                     span { class: "text-sm font-medium", "{m.email}" }
                                                     if !m.name.is_empty() {
-                                                        span { class: "text-sm text-gray-500 dark:text-gray-400", "({m.name})" }
+                                                        span { class: "text-sm text-fg-muted", "({m.name})" }
                                                     }
                                                     if can_manage_members {
-                                                        select {
-                                                            class: "text-xs border border-gray-300 dark:border-gray-600 rounded px-1 py-0.5 dark:bg-gray-700 dark:text-white",
+                                                        select { class: "input input-xs w-auto",
                                                             value: "{current_role}",
                                                             onchange: {
                                                                 let uid = uid.clone();
@@ -795,12 +787,11 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                             option { value: "admin", {t!("org-detail-role-admin")} }
                                                         }
                                                     } else {
-                                                        span { class: "text-xs px-1.5 py-0.5 rounded {badge_class}", "{current_role}" }
+                                                        Badge { variant, "{current_role}" }
                                                     }
                                                 }
                                                 if can_manage_members {
-                                                    button {
-                                                        class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                                    button { class: "link-danger text-sm",
                                                         onclick: {
                                                             let uid = uid.clone();
                                                             let oid = oid.clone();
@@ -826,13 +817,12 @@ pub fn OrganizationDetail(id: String) -> Element {
                     }
 
                     // Clusters section
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                        h3 { class: "text-lg font-semibold mb-3", {t!("org-detail-clusters")} }
+                    Card { class: "p-4",
+                        SectionHeading { {t!("org-detail-clusters")} }
 
                         if can_manage_clusters {
                             div { class: "flex gap-2 mb-4",
-                                select {
-                                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
+                                select { class: "input flex-1 w-auto py-1 text-sm",
                                     onchange: move |e| {
                                         let val = e.value();
                                         if val.is_empty() {
@@ -850,8 +840,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                         }
                                     }
                                 }
-                                button {
-                                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                                Button { size: ButtonSize::Sm,
                                     disabled: selected_cluster.read().is_none(),
                                     onclick: {
                                         let oid = id.clone();
@@ -874,23 +863,21 @@ pub fn OrganizationDetail(id: String) -> Element {
                         }
 
                         if clusters.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("org-detail-no-clusters")} }
+                            HelpText { {t!("org-detail-no-clusters")} }
                         } else {
-                            div { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                            div { class: "divide-y divide-line-soft",
                                 for c in &clusters {
                                     {
                                         let cid = c.cluster_id.clone();
                                         let oid = id.clone();
                                         rsx! {
                                             div { class: "flex justify-between items-center py-2",
-                                                Link {
-                                                    to: Route::ClusterDetail { id: cid.clone() },
-                                                    class: "text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium",
+                                                Link { to: Route::ClusterDetail { id: cid.clone() },
+                                                    class: "link text-sm font-medium",
                                                     "{c.name}"
                                                 }
                                                 if can_manage_clusters {
-                                                    button {
-                                                        class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                                    button { class: "link-danger text-sm",
                                                         onclick: {
                                                             let cid = cid.clone();
                                                             let oid = oid.clone();
@@ -917,19 +904,17 @@ pub fn OrganizationDetail(id: String) -> Element {
 
                     // Tokens section (org admins only)
                     if can_manage_tokens {
-                        div { class: "lg:col-span-2 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                            h3 { class: "text-lg font-semibold mb-3", {t!("org-detail-tokens")} }
+                        Card { class: "lg:col-span-2 p-4",
+                            SectionHeading { {t!("org-detail-tokens")} }
 
                             div { class: "flex gap-2 mb-4",
-                                input {
-                                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
+                                input { class: "input flex-1 w-auto py-1 text-sm",
                                     r#type: "text",
                                     placeholder: t!("org-detail-token-label-placeholder"),
                                     value: "{token_label}",
                                     oninput: move |e| token_label.set(e.value()),
                                 }
-                                button {
-                                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                                Button { kind: ButtonKind::Button, size: ButtonSize::Sm,
                                     disabled: token_label.read().trim().is_empty(),
                                     onclick: {
                                         let oid = id.clone();
@@ -937,13 +922,10 @@ pub fn OrganizationDetail(id: String) -> Element {
                                             let oid = oid.clone();
                                             let label = token_label.read().clone();
                                             async move {
-                                                match create_org_token(oid, label).await {
-                                                    Ok(raw) => {
-                                                        created_token.set(Some(raw));
-                                                        token_label.set(String::new());
-                                                        tokens_future.restart();
-                                                    }
-                                                    Err(_) => {}
+                                                if let Ok(raw) = create_org_token(oid, label).await {
+                                                    created_token.set(Some(raw));
+                                                    token_label.set(String::new());
+                                                    tokens_future.restart();
                                                 }
                                             }
                                         }
@@ -953,16 +935,16 @@ pub fn OrganizationDetail(id: String) -> Element {
                             }
 
                             if let Some(raw) = &*created_token.read() {
-                                div { class: "bg-green-100 dark:bg-green-900 border border-green-400 dark:border-green-600 text-green-800 dark:text-green-200 rounded p-3 mb-4 text-sm",
-                                    p { class: "font-semibold mb-1", {t!("org-detail-token-created")} }
-                                    code { class: "block break-all", "{raw}" }
+                                Alert { variant: AlertVariant::Success, class: "mb-4",
+                                    p { class: "font-semibold mb-1 text-sm", {t!("org-detail-token-created")} }
+                                    code { class: "block break-all text-xs", "{raw}" }
                                 }
                             }
 
                             if tokens.is_empty() {
-                                p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("org-detail-no-tokens")} }
+                                HelpText { {t!("org-detail-no-tokens")} }
                             } else {
-                                div { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                                div { class: "divide-y divide-line-soft",
                                     for t in &tokens {
                                         {
                                             let tid = t.id.clone();
@@ -974,16 +956,17 @@ pub fn OrganizationDetail(id: String) -> Element {
                                                 div { class: "flex justify-between items-center py-2",
                                                     div {
                                                         span { class: "text-sm font-medium", "{label}" }
-                                                        if is_revoked {
-                                                            span { class: "ml-2 text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded", {t!("revoked")} }
-                                                        } else {
-                                                            span { class: "ml-2 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded", {t!("active")} }
+                                                        span { class: "ml-2",
+                                                            if is_revoked {
+                                                                Badge { variant: BadgeVariant::Danger, {t!("revoked")} }
+                                                            } else {
+                                                                Badge { variant: BadgeVariant::Success, {t!("active")} }
+                                                            }
                                                         }
-                                                        span { class: "text-sm text-gray-500 dark:text-gray-400 ml-2", "{created}" }
+                                                        span { class: "text-sm text-fg-muted ml-2", "{created}" }
                                                     }
                                                     if !is_revoked {
-                                                        button {
-                                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                                        button { class: "link-danger text-sm",
                                                             onclick: {
                                                                 let tid = tid.clone();
                                                                 let oid = oid_for_revoke.clone();
@@ -1011,9 +994,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => {
-            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } }
-        }
-        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
