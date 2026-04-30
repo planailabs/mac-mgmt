@@ -38,6 +38,7 @@ em-dash = —
 
 nav-logo = mac-mgmt
 nav-clusters = Clusters
+nav-command-center = Command Center
 nav-fleet = Fleet
 nav-easy-access = Easy Access
 nav-overview = Overview
@@ -969,3 +970,13 @@ secrets-update = Update
 secrets-new-value = New value...
 secrets-value-placeholder = Secret value...
 secrets-confirm-delete = Delete?
+
+# Overview / Command Center
+overview-title = Command Center
+overview-subtitle = all organizations
+overview-kicker = Command Center
+overview-kpi-online = Instances online
+overview-kpi-services = Healthy services
+overview-kpi-rollouts = Active rollouts
+overview-kpi-pings = Open staff pings
+overview-activity-title = Live activity

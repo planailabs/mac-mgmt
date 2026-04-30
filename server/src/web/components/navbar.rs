@@ -39,6 +39,9 @@ pub struct NavGroup {
 
 pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGroup> {
     let mut overview_links = vec![
+        // Command Center first — it's the at-a-glance landing page;
+        // Clusters and Fleet are the drill-down details.
+        NavLink::Internal(Route::Overview {}, "nav-command-center".to_string()),
         NavLink::Internal(Route::ClusterList {}, "nav-clusters".to_string()),
     ];
     overview_links.push(NavLink::Internal(

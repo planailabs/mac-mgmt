@@ -38,6 +38,7 @@ pub mod mcp_server_list;
 pub mod navbar;
 pub mod topbar;
 pub mod organization_detail;
+pub mod overview;
 pub mod organization_form;
 pub mod organization_list;
 pub mod profile;

@@ -31,6 +31,7 @@ use super::components::mcp_server_list::McpServerList;
 use super::components::organization_detail::OrganizationDetail;
 use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
+use super::components::overview::Overview;
 use super::components::profile::Profile;
 use super::components::rollout_detail::RolloutDetail;
 use super::components::rollout_form::RolloutForm;
@@ -93,6 +94,8 @@ pub enum Route {
     RolloutDetail { id: String },
     #[route("/easy-access")]
     EasyAccess {},
+    #[route("/overview")]
+    Overview {},
     #[route("/fleet?:stage_id")]
     FleetDashboard { stage_id: Option<String> },
     #[route("/fleet/:instance_id")]
