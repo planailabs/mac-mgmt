@@ -118,7 +118,7 @@ pub fn ClusterList() -> Element {
     let is_admin = matches!(&*admin_check.read(), Some(Ok(true)));
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("cluster-list-title")} }
             if is_admin {
                 Link { to: Route::ClusterForm {}, class: "btn btn-md btn-primary",

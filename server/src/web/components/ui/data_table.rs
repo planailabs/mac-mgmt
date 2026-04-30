@@ -44,12 +44,18 @@ pub fn DataTable(
     rsx! {
         TableToolbar { search, limit, total, filtered, shown }
         Card {
-            table { class: "table",
-                thead { class: "thead",
-                    tr { {headers} }
-                }
-                tbody { class: "tbody",
-                    {body}
+            // Tables hold their natural width via column content; on
+            // narrow viewports we let the user scroll horizontally
+            // rather than wrapping cells. Without this wrap the Card's
+            // `overflow-hidden` would clip the right edge silently.
+            div { class: "overflow-x-auto",
+                table { class: "table",
+                    thead { class: "thead",
+                        tr { {headers} }
+                    }
+                    tbody { class: "tbody",
+                        {body}
+                    }
                 }
             }
         }
@@ -99,10 +105,13 @@ pub fn TableToolbar(
     shown: usize,
 ) -> Element {
     rsx! {
-        div { class: "flex items-center justify-between mb-3 gap-4",
-            div { class: "relative",
+        // Wraps to two rows below `sm` so the search box doesn't shove
+        // the row counter and page-size dropdown off the right edge.
+        // Search input stretches to fill on phones (`w-full sm:w-64`).
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-3",
+            div { class: "relative w-full sm:w-auto",
                 input {
-                    class: "input py-1.5 w-64 pl-8",
+                    class: "input py-1.5 w-full sm:w-64 pl-8",
                     r#type: "text",
                     placeholder: t!("search-placeholder"),
                     value: "{search}",

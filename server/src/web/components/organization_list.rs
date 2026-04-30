@@ -68,7 +68,7 @@ pub fn OrganizationList() -> Element {
     let orgs = use_server_future(list_organizations)?;
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("org-list-title")} }
             Link { to: Route::OrganizationForm {}, class: "btn btn-md btn-primary",
                 {t!("org-list-new")}

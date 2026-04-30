@@ -136,7 +136,7 @@ pub fn DaemonVersionList() -> Element {
     let mut sync_err = use_signal(|| None::<String>);
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
+        div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4",
             PageHeader { class: "mb-0", {t!("daemon-version-list-title")} }
             Button {
                 variant: ButtonVariant::Primary,
