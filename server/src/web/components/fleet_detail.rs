@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Dot, ErrorText, HelpText, Kicker, Mono, Pill, PillVariant, SectionHeading,
+    ChartColor, Dot, ErrorText, HelpText, Kicker, Mono, Pill, PillVariant, SectionHeading, StatBlock,
 };
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -423,6 +423,64 @@ fn render_detail(d: &FleetDetailData) -> Element {
                 div { class: "text-fg-faint text-xs",
                     {t!("fleet-detail-instance-id")} " "
                     Mono { class: "text-xs", "{d.instance_id}" }
+                }
+            }
+        }
+
+        // ── Live system (design language summary) ──
+        // 2x2 grid of `StatBlock` cards giving an at-a-glance read of
+        // the most recent daemon sample. The detailed `Dynamic sample`
+        // section further down still carries the full key/value
+        // dump — this is the "headline metrics" view the design's
+        // Cluster Detail mock surfaces above the services list.
+        if let Some(sample) = d.sample.as_ref() {
+            {
+                let cpu = sample.get("cpu_load_1m").and_then(|x| x.as_f64());
+                let mem_used = sample.get("mem_used_bytes").and_then(|x| x.as_u64());
+                let mem_total = sample.get("mem_total_bytes").and_then(|x| x.as_u64());
+                let rx = sample.get("net_rx_bytes").and_then(|x| x.as_u64());
+                let tx = sample.get("net_tx_bytes").and_then(|x| x.as_u64());
+
+                let mem_value = match (mem_used, mem_total) {
+                    (Some(u), _) => human_bytes(u),
+                    _ => t!("em-dash").to_string(),
+                };
+                let mem_sub = match (mem_used, mem_total) {
+                    (Some(u), Some(t)) if t > 0 => Some(format!("{}% / {}", u * 100 / t, human_bytes(t))),
+                    (_, Some(t)) => Some(human_bytes(t)),
+                    _ => None,
+                };
+                let cpu_value = cpu.map(|n| format!("{n:.2}")).unwrap_or_else(|| t!("em-dash").to_string());
+                let rx_value = rx.map(human_bytes).unwrap_or_else(|| t!("em-dash").to_string());
+                let tx_value = tx.map(human_bytes).unwrap_or_else(|| t!("em-dash").to_string());
+
+                rsx! {
+                    div { class: "grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6",
+                        StatBlock {
+                            label: t!("fleet-detail-stat-cpu"),
+                            value: cpu_value,
+                            sub: t!("fleet-detail-stat-cpu-sub").to_string(),
+                            color: ChartColor::Brand,
+                        }
+                        StatBlock {
+                            label: t!("fleet-detail-stat-memory"),
+                            value: mem_value,
+                            sub: mem_sub,
+                            color: ChartColor::Info,
+                        }
+                        StatBlock {
+                            label: t!("fleet-detail-stat-net-rx"),
+                            value: rx_value,
+                            sub: t!("fleet-detail-stat-net-sub").to_string(),
+                            color: ChartColor::Ok,
+                        }
+                        StatBlock {
+                            label: t!("fleet-detail-stat-net-tx"),
+                            value: tx_value,
+                            sub: t!("fleet-detail-stat-net-sub").to_string(),
+                            color: ChartColor::Warn,
+                        }
+                    }
                 }
             }
         }
