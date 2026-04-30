@@ -279,13 +279,23 @@ pub async fn prefetch_all(validators: &[Validator]) {
 // ── Pattern matching (used by file tunnels) ────────────────────────────
 
 impl Validator {
-    /// Whether this validator's pattern matches the filename component of `path`.
+    /// Whether this validator's pattern matches `path`.
+    ///
+    /// Uses `require_literal_separator` so `*` does not cross `/`
+    /// boundaries — pattern `openclaw.json` matches `openclaw.json`
+    /// but not `skills/openclaw.json`.  Pass a relative path (within
+    /// the tunnel folder) for scoped matching.
     pub fn matches(&self, path: &Path) -> bool {
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|name| {
-                glob::Pattern::new(&self.pattern).is_ok_and(|p| p.matches(name))
-            })
+        let s = path.to_string_lossy();
+        glob::Pattern::new(&self.pattern).is_ok_and(|p| {
+            p.matches_with(
+                &s,
+                glob::MatchOptions {
+                    require_literal_separator: true,
+                    ..Default::default()
+                },
+            )
+        })
     }
 }
 

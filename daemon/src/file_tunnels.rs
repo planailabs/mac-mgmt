@@ -186,13 +186,17 @@ pub(crate) fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
     false
 }
 
-/// Find the first [`Validator`] whose pattern matches the written filename.
+/// Find the first [`Validator`] whose pattern matches the file's path
+/// relative to the tunnel root.  This ensures patterns like `openclaw.json`
+/// only match at the tunnel root, not in subdirectories.
 #[cfg(feature = "services")]
 fn find_validator<'a>(tunnel: &'a FileTunnel, file_path: &Path) -> Option<&'a crate::validator::Validator> {
     let FileTunnelDef::Folder { validators, .. } = &tunnel.def else {
         return None;
     };
-    crate::validator::find_matching(validators, file_path)
+    let root = std::path::Path::new(tunnel.path());
+    let rel = file_path.strip_prefix(root).unwrap_or(file_path);
+    crate::validator::find_matching(validators, rel)
 }
 
 /// Get the mtime of a file as a Unix timestamp (seconds).
