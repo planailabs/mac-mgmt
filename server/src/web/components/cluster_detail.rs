@@ -420,16 +420,24 @@ pub fn ClusterDetail(id: String) -> Element {
                         Kicker { class: "mb-2", {t!("nav-clusters")} }
                         if *editing.read() {
                             form { class: "flex items-center gap-2 flex-wrap",
-                                onsubmit: move |evt: FormEvent| {
-                                    evt.prevent_default();
-                                    let id = cid.clone();
-                                    let new_name = draft_name.read().clone();
-                                    async move {
-                                        if !new_name.trim().is_empty() {
-                                            let _ = rename_cluster(id, new_name).await;
-                                            cluster.restart();
+                                // Pre-clone `cid` for the rename closure so the
+                                // outer `cid` stays available for the delete
+                                // closure further down — the two branches are
+                                // logically mutually exclusive but the borrow
+                                // checker can't see that.
+                                onsubmit: {
+                                    let cid_for_rename = cid.clone();
+                                    move |evt: FormEvent| {
+                                        evt.prevent_default();
+                                        let id = cid_for_rename.clone();
+                                        let new_name = draft_name.read().clone();
+                                        async move {
+                                            if !new_name.trim().is_empty() {
+                                                let _ = rename_cluster(id, new_name).await;
+                                                cluster.restart();
+                                            }
+                                            editing.set(false);
                                         }
-                                        editing.set(false);
                                     }
                                 },
                                 input {
