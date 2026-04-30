@@ -52,6 +52,9 @@ struct Daemon {
     /// supervisor to reexec before the daemon itself has restarted is
     /// premature and causes a needless supervisor cycle.
     first_update: bool,
+    /// Serializes heartbeat POSTs so a faster-arriving later send can't
+    /// overtake an earlier one and leave the server with a stale snapshot.
+    heartbeat_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Daemon {
@@ -461,7 +464,12 @@ impl Daemon {
             let pending = Arc::clone(&self.initial_assessment_pending);
             let assessor = Arc::clone(&self.assessor);
             let metrics = Arc::clone(&self.metrics);
+            let lock = Arc::clone(&self.heartbeat_lock);
             tokio::spawn(async move {
+                // Serialize POSTs from this daemon. Without this, two
+                // overlapping spawns can land at the server in the wrong
+                // order, leaving the row with stale data.
+                let _guard = lock.lock().await;
                 let ok = do_send_heartbeat(
                     &url,
                     &token,
@@ -1212,6 +1220,7 @@ pub async fn run(
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
         first_update: true,
+        heartbeat_lock: Arc::new(tokio::sync::Mutex::new(())),
     };
 
     // Fetch target version before attempting self-update so check_and_apply
@@ -1762,6 +1771,7 @@ pub async fn run_sim(
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
         first_update: true,
+        heartbeat_lock: Arc::new(tokio::sync::Mutex::new(())),
     };
 
     if let (Some(url), Some(token)) = (&daemon.server_url, &daemon.server_token) {
@@ -2036,6 +2046,7 @@ pub async fn run_sim_with_services(
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
         first_update: true,
+        heartbeat_lock: Arc::new(tokio::sync::Mutex::new(())),
     };
 
     daemon.spawn_sync_skills_and_mcp();
