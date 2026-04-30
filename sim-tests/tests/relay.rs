@@ -24,7 +24,7 @@ async fn relay_unreachable_daemon_still_works() {
 
     // Configure relay to a port that nothing listens on
     let mut cfg = sim_tests::daemon_config_for(addr);
-    cfg.relay.url = Some("ws://127.0.0.1:1".to_string());
+    cfg.relay.relay_multiaddr = Some("/ip4/127.0.0.1/tcp/1/ws".to_string());
     cfg.relay.remote_ssh_enabled = false;
 
     let (shutdown_tx, instance_id) = sim_tests::start_sim_daemon_with_config(cfg).await;
@@ -97,7 +97,7 @@ async fn relay_crash_heartbeats_continue() {
 
     // Point relay to a port we'll never open — simulates permanent relay failure
     let mut cfg = sim_tests::daemon_config_for(addr);
-    cfg.relay.url = Some("ws://127.0.0.1:1".to_string());
+    cfg.relay.relay_multiaddr = Some("/ip4/127.0.0.1/tcp/1/ws".to_string());
     cfg.relay.remote_ssh_enabled = true;
 
     let (shutdown_tx, instance_id) = sim_tests::start_sim_daemon_with_config(cfg).await;
@@ -133,7 +133,7 @@ async fn push_ssh_keys_sync_with_relay() {
     let (addr, state) = sim_tests::start_mock_server().await;
 
     let mut cfg = sim_tests::daemon_config_for(addr);
-    cfg.relay.url = Some("ws://127.0.0.1:1".to_string());
+    cfg.relay.relay_multiaddr = Some("/ip4/127.0.0.1/tcp/1/ws".to_string());
     cfg.relay.remote_ssh_enabled = false;
 
     let (shutdown_tx, _instance_id) = sim_tests::start_sim_daemon_with_config(cfg).await;

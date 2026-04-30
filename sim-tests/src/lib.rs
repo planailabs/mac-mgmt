@@ -50,10 +50,10 @@ pub fn daemon_config_with_intervals(
 /// Build a daemon config with relay support.
 pub fn daemon_config_with_relay(
     server_addr: SocketAddr,
-    relay_url: &str,
+    relay_multiaddr: &str,
 ) -> mac_mgmt_common::DaemonConfig {
     let mut cfg = daemon_config_for(server_addr);
-    cfg.relay.url = Some(relay_url.to_string());
+    cfg.relay.relay_multiaddr = Some(relay_multiaddr.to_string());
     cfg.relay.remote_ssh_enabled = true;
     cfg
 }
