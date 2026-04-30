@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, DataTable, ErrorText, HelpText, PageHeader, SortState, SortableTh, Td,
     TdMuted, Th,
@@ -201,6 +202,7 @@ fn health_variant(state: &str) -> (BadgeVariant, String) {
 
 #[component]
 pub fn RolloutList() -> Element {
+    use_topbar(t!("rollout-list-title"), None);
     let rollouts = use_server_future(move || async move { get_rollouts().await })?;
 
     rsx! {

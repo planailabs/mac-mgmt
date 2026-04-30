@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
-    SectionHeading,
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText, Kicker,
+    Mono, Pill, PillVariant, SectionHeading,
 };
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
@@ -1216,6 +1217,18 @@ pub fn RolloutDetail(id: String) -> Element {
         let id = id_clone.clone();
         async move { get_rollout_detail(id).await }
     })?;
+
+    // Topbar shows the human-friendly rollout name (or short id when
+    // none was given). The "Rollouts" subtitle keeps it grounded in the
+    // section navigation.
+    let topbar_title = match &*detail.read() {
+        Some(Ok(info)) => info
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("Rollout {}", &info.id.to_string()[..8])),
+        _ => String::new(),
+    };
+    use_topbar(topbar_title, Some(t!("nav-rollouts").to_string()));
     let nav = navigator();
     // Inline feedback for "Request fresh assessment" — Option<(stage_id,
     // message, is_error)>. Cleared when the operator clicks a different
@@ -1243,13 +1256,40 @@ pub fn RolloutDetail(id: String) -> Element {
             let badge_variant = status_variant(&info.status);
 
             let display_name = info.name.clone().unwrap_or_else(|| t!("rollout-detail-rollout-prefix", id: &rid[..8]));
+            // ── Page hero ─────────────────────────────────────────
+            // Matches the design's Rollouts hero: status pill + created
+            // timestamp on top, monospace display title underneath, and
+            // the action buttons on the right (Rollback / Delete come
+            // through unchanged below).
+            let status_pill_variant = match info.status.as_str() {
+                "rolling" => PillVariant::Accent,
+                "completed" => PillVariant::Ok,
+                "paused" | "rolled_back" => PillVariant::Warn,
+                "failed" => PillVariant::Bad,
+                _ => PillVariant::Muted,
+            };
+            // The id is a UUID; rendering the full string is noise. Show
+            // the first 8 chars in mono — same convention as the design.
+            let short_id: String = rid.chars().take(8).collect();
+            let _ = badge_variant; // suppress unused-warning for legacy pill
             rsx! {
-                div { class: "flex justify-between items-center mb-4",
-                    div {
-                        h2 { class: "h-page mb-1", "{display_name}" }
-                        div { class: "flex items-center gap-2",
-                            Badge { variant: badge_variant, "{status}" }
-                            span { class: "help", {t!("rollout-detail-created-label", date: created.clone())} }
+                div { class: "flex flex-col xl:flex-row xl:justify-between xl:items-end gap-3 mb-5",
+                    div { class: "min-w-0",
+                        div { class: "flex items-center gap-2 mb-2 flex-wrap",
+                            Pill { variant: status_pill_variant, "{status}" }
+                            span { class: "text-fg-muted text-xs font-mono",
+                                {t!("rollout-detail-created-label", date: created.clone())}
+                            }
+                        }
+                        Kicker { class: "mb-1", {t!("nav-rollouts")} }
+                        h1 { class: "h-display font-mono",
+                            "{display_name}"
+                            if info.name.is_some() {
+                                span { class: "text-fg-muted ml-2 text-xl", "#{short_id}" }
+                            }
+                        }
+                        div { class: "mt-2 flex items-center gap-2",
+                            Mono { class: "text-xs text-fg-muted", "{rid}" }
                         }
                     }
                     div { class: "flex gap-2",
