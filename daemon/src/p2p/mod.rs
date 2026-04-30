@@ -64,6 +64,8 @@ pub struct P2pConfig {
     pub ai_proxy_distribution: bool,
     /// Server sync token for relay registration (relay validates to get cluster_id).
     pub server_token: Option<String>,
+    /// Server API URL for fetching cluster_id via /api/self.
+    pub server_url: Option<String>,
     /// Handler state for processing incoming control requests.
     pub handler_state: Option<Arc<handler::HandlerState>>,
 }
@@ -301,8 +303,27 @@ async fn swarm_loop(
     // Initialize relay state machine.
     let mut relay = RelayState::new(config.relay_multiaddr.clone());
 
-    // Gossipsub topic is set after registration when we learn the cluster_id.
+    // Gossipsub topic is set once we learn the cluster_id (from server /api/self
+    // or from the relay registration response, whichever comes first).
     let mut cluster_topic: Option<gossipsub::IdentTopic> = None;
+
+    // Try to learn cluster_id from server at startup (non-blocking).
+    if let (Some(url), Some(token)) = (&config.server_url, &config.server_token) {
+        match fetch_cluster_id(url, token).await {
+            Some(cid) => {
+                let topic = gossipsub::IdentTopic::new(format!("mac-mgmt/cluster/{cid}"));
+                if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&topic) {
+                    tracing::warn!("failed to subscribe to cluster topic: {e}");
+                } else {
+                    tracing::info!(%cid, "subscribed to cluster gossipsub topic (from server)");
+                }
+                cluster_topic = Some(topic);
+            }
+            None => {
+                tracing::debug!("could not fetch cluster_id from server, will learn from relay");
+            }
+        }
+    }
 
     loop {
         // If the relay has an RPC stream, poll it for incoming messages.
@@ -1288,6 +1309,23 @@ fn parse_relay_proxy_url(agent_version: &str) -> Option<String> {
         .decode(b64)
         .ok()?;
     String::from_utf8(bytes).ok()
+}
+
+/// Fetch the daemon's cluster_id from the server's /api/self endpoint.
+async fn fetch_cluster_id(server_url: &str, token: &str) -> Option<uuid::Uuid> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{server_url}/api/self"))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    body["cluster_id"].as_str().and_then(|s| s.parse().ok())
 }
 
 /// Verify the PSK auth token in a peer's agent version string.
