@@ -325,20 +325,5 @@ pub(crate) fn resolve_model(config: &CloudConfig) -> String {
     }
 }
 
-/// Recursively merge `source` into `target`. For objects, keys from source
-/// are merged into target. For all other types, source overwrites target.
-pub fn merge_json(target: &mut serde_json::Value, source: &serde_json::Value) {
-    match (target, source) {
-        (serde_json::Value::Object(target), serde_json::Value::Object(source)) => {
-            for (key, value) in source {
-                merge_json(
-                    target.entry(key.clone()).or_insert(serde_json::Value::Null),
-                    value,
-                );
-            }
-        }
-        (target, source) => {
-            *target = source.clone();
-        }
-    }
-}
+// Re-export for backwards compatibility with connectors that import from here.
+pub use crate::validator::merge_json;

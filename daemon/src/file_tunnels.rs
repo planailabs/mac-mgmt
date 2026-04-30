@@ -186,39 +186,13 @@ pub(crate) fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
     false
 }
 
-/// Matched validator with resolved command args.
+/// Find the first [`Validator`] whose pattern matches the written filename.
 #[cfg(feature = "services")]
-pub(crate) struct MatchedValidator {
-    pub(crate) builtin: Option<String>,
-    pub(crate) command: Vec<String>,
-    pub(crate) schema_url: Option<String>,
-}
-
-/// Find the first matching validator for a filename.
-#[cfg(feature = "services")]
-pub(crate) fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<MatchedValidator> {
+fn find_validator<'a>(tunnel: &'a FileTunnel, file_path: &Path) -> Option<&'a crate::validator::Validator> {
     let FileTunnelDef::Folder { validators, .. } = &tunnel.def else {
         return None;
     };
-    let filename = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    for v in validators {
-        if let Ok(pat) = glob::Pattern::new(&v.glob) {
-            if pat.matches(filename) {
-                let path_str = file_path.to_string_lossy();
-                let cmd: Vec<String> = v
-                    .command
-                    .iter()
-                    .map(|arg| arg.replace("{}", &path_str))
-                    .collect();
-                return Some(MatchedValidator {
-                    builtin: v.builtin.clone(),
-                    command: cmd,
-                    schema_url: v.schema_url.clone(),
-                });
-            }
-        }
-    }
-    None
+    crate::validator::find_matching(validators, file_path)
 }
 
 /// Get the mtime of a file as a Unix timestamp (seconds).
@@ -395,73 +369,17 @@ pub(crate) fn write_file(
         return Err((500, format!("rename failed: {e}")));
     }
 
-    // Run validator if one matches
+    // Run validator if one matches.
     if let Some(validator) = find_validator(tunnel, &path) {
-        let rollback = || {
+        if let Err(msg) = validator.validate_file(&path) {
+            tracing::warn!("validation failed for {}: {msg}", path.display());
+            // Rollback: restore original or remove newly created file.
             if had_original {
                 let _ = std::fs::rename(&backup_path, &path);
             } else {
                 let _ = std::fs::remove_file(&path);
             }
-        };
-
-        // 1. Run builtin validator first (if configured)
-        if let Some(name) = &validator.builtin {
-            if let Err(msg) = crate::managed_service::run_builtin_validator(name, &path) {
-                tracing::warn!(
-                    "builtin validation ({name}) failed for {}: {msg}",
-                    path.display()
-                );
-                rollback();
-                return Err((422, format!("validation failed: {msg}")));
-            }
-            tracing::debug!("builtin validation ({name}) passed for {}", path.display());
-        }
-
-        // 2. Validate against JSON Schema (if configured).
-        if let Some(url) = &validator.schema_url {
-            if let Err(msg) = crate::schema_cache::validate_file(url, &path) {
-                tracing::warn!(
-                    "JSON schema validation failed for {}: {msg}",
-                    path.display()
-                );
-                rollback();
-                return Err((422, format!("schema validation failed: {msg}")));
-            }
-            tracing::debug!("JSON schema validation passed for {}", path.display());
-        }
-
-        // 3. Run external command validator (if configured).
-        //    If the binary is missing, log a warning but don't fail — the
-        //    builtin validator (if any) already passed.
-        if !validator.command.is_empty() {
-            let result = std::process::Command::new(&validator.command[0])
-                .args(&validator.command[1..])
-                .output();
-            match result {
-                Ok(output) if !output.status.success() => {
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    tracing::warn!("command validation failed for {}: {stderr}", path.display());
-                    rollback();
-                    return Err((422, format!("validation failed: {stderr}")));
-                }
-                Err(e) if validator.builtin.is_some() => {
-                    // Binary missing but builtin already passed — log and continue
-                    tracing::warn!(
-                        "validation command {:?} not available ({}), builtin passed — accepting write",
-                        validator.command[0],
-                        e
-                    );
-                }
-                Err(e) => {
-                    // No builtin fallback — this is fatal
-                    rollback();
-                    return Err((500, format!("validation command failed to run: {e}")));
-                }
-                Ok(_) => {
-                    tracing::debug!("command validation passed for {}", path.display());
-                }
-            }
+            return Err((422, format!("validation failed: {msg}")));
         }
     }
 

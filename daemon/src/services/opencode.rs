@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::connectors::merge_json;
-use crate::managed_service::{DataPath, FileTunnelDef, FileValidator, ManagedService, TunnelDef};
+use crate::managed_service::{DataPath, FileTunnelDef, ManagedService, TunnelDef};
 use crate::sentry_ext;
+use crate::validator::{Validator, merge_json};
 pub use mac_mgmt_common::OpencodeConfig;
+
+pub const SCHEMA_URL: &str = "https://opencode.ai/config.json";
 
 /// Returns the path to ~/.config/opencode/config.json
 pub fn config_path() -> Result<PathBuf> {
@@ -13,18 +15,14 @@ pub fn config_path() -> Result<PathBuf> {
         .join(".config/opencode/config.json"))
 }
 
-pub const SCHEMA_URL: &str = "https://opencode.ai/config.json";
+/// Validator for opencode JSON config files.
+pub fn validator() -> Validator {
+    Validator::json("*.json").with_schema_url(SCHEMA_URL)
+}
 
 /// Atomically merge a JSON patch into the opencode config with JSON schema validation.
 pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
-    super::merge_json_config(
-        config_path,
-        patch,
-        super::MergeValidateOpts {
-            schema_url: Some(SCHEMA_URL),
-            ..Default::default()
-        },
-    )
+    validator().merge_validate_and_write(config_path, patch)
 }
 
 pub struct Opencode {
@@ -124,7 +122,6 @@ impl ManagedService for Opencode {
     }
 
     fn check_health(&self) -> Result<bool> {
-        // Simple HTTP check against the opencode server
         let url = format!("http://{}:{}/", self.config.host, self.config.port);
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
@@ -205,12 +202,7 @@ impl ManagedService for Opencode {
             writable: true,
             allow_write: Vec::new(),
             include: Some(vec!["config.json".into()]),
-            validators: vec![FileValidator {
-                glob: "*.json".into(),
-                command: Vec::new(),
-                builtin: Some("json".into()),
-                schema_url: Some(SCHEMA_URL.into()),
-            }],
+            validators: vec![validator()],
             description: "OpenCode configuration".into(),
         }]
     }
@@ -248,7 +240,6 @@ impl ManagedService for Opencode {
         Box::pin(async move {
             let mut findings = Vec::new();
 
-            // Check if the opencode server has a password configured.
             if let Ok(path) = config_path() {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) {

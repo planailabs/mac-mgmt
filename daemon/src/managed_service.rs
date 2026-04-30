@@ -62,12 +62,11 @@ pub enum FileTunnelDef {
         /// `None` = all files. Examples: `["*.json", "*.toml"]`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         include: Option<Vec<String>>,
-        /// Per-file validation rules. After a write, the first validator whose
-        /// glob matches the written filename is run. If it exits non-zero the
-        /// write is rolled back. `{}` in command args is replaced with the
-        /// file's absolute path; if no `{}` is present the command runs as-is.
+        /// Per-file validators. The first [`Validator`] whose pattern matches
+        /// the written filename is run.  Validation failure rolls back the
+        /// write.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        validators: Vec<FileValidator>,
+        validators: Vec<Validator>,
         /// Human-readable description for the UI.
         description: String,
     },
@@ -120,52 +119,8 @@ impl std::ops::Deref for FileTunnel {
     }
 }
 
-/// A glob → validation pair: after writing a file whose name matches `glob`,
-/// the validator runs. Non-zero exit / error rolls back the write.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileValidator {
-    /// Glob pattern to match filenames (e.g. `"*.json"`, `"openclaw.json"`, `"*"`).
-    pub glob: String,
-    /// External command + args. `{}` in any arg is replaced with the written
-    /// file's absolute path. Ignored if `builtin` is set.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub command: Vec<String>,
-    /// Built-in validator name. When set, uses an in-process function instead
-    /// of shelling out. Supported: "json", "toml", "json_schema".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub builtin: Option<String>,
-    /// URL of a JSON Schema to validate the file against. Schemas are
-    /// pre-fetched at daemon startup via [`crate::schema_cache`]; if not
-    /// cached, a runtime fetch is attempted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schema_url: Option<String>,
-}
-
-/// Run a built-in validator on a file. Returns Ok(()) if valid,
-/// Err(message) if invalid.
-pub fn run_builtin_validator(name: &str, path: &std::path::Path) -> Result<(), String> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("failed to read file: {e}"))?;
-    match name {
-        "json" => {
-            serde_json::from_str::<serde_json::Value>(&content)
-                .map_err(|e| format!("invalid JSON: {e}"))?;
-            Ok(())
-        }
-        "toml" => {
-            content
-                .parse::<toml::Value>()
-                .map_err(|e| format!("invalid TOML: {e}"))?;
-            Ok(())
-        }
-        "json_schema" => {
-            // Just validate it's valid JSON (schema validation would need the schema)
-            serde_json::from_str::<serde_json::Value>(&content)
-                .map_err(|e| format!("invalid JSON: {e}"))?;
-            Ok(())
-        }
-        _ => Err(format!("unknown builtin validator: {name}")),
-    }
-}
+// Re-export for backwards compatibility and convenience.
+pub use crate::validator::Validator;
 
 // ── Shell tunnels ──────────────────────────────────────────────────────
 
