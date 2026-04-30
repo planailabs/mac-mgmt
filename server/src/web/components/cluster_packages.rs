@@ -3,6 +3,10 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::ui::{
+    Badge, BadgeVariant, Button, ButtonKind, ButtonSize, ErrorText, HelpText, PageHeader,
+    SectionHeading,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -150,7 +154,6 @@ async fn list_all_packages(
 
     let mut packages: HashMap<String, Vec<String>> = HashMap::new();
 
-    // MCP server packages (direct + bundle)
     #[derive(sqlx::FromRow)]
     struct PkgRow {
         slug: String,
@@ -182,7 +185,6 @@ async fn list_all_packages(
         }
     }
 
-    // Skill channel packages
     #[derive(sqlx::FromRow)]
     struct SkillRow {
         skill_slug: String,
@@ -216,7 +218,6 @@ async fn list_all_packages(
         }
     }
 
-    // Manual packages
     let manual: Vec<String> = sqlx::query_scalar(
         "SELECT package FROM cluster_packages WHERE cluster_id = $1",
     )
@@ -229,7 +230,6 @@ async fn list_all_packages(
         packages.entry(pkg).or_default().push("manual".to_string());
     }
 
-    // Deduplicate and sort
     let mut result: Vec<PackageWithSources> = packages
         .into_iter()
         .map(|(package, mut sources)| {
@@ -286,27 +286,24 @@ pub fn ClusterPackagesPage(id: String) -> Element {
 
     rsx! {
         div { class: "mb-4",
-            Link {
-                to: Route::ClusterDetail { id: id.clone() },
-                class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
+            Link { to: Route::ClusterDetail { id: id.clone() }, class: "link text-sm",
                 "← {t!(\"back\")}"
             }
             if !name.is_empty() {
-                h2 { class: "text-2xl font-bold mt-1", "{name} — {t!(\"cluster-packages-title\")}" }
+                PageHeader { class: "mt-1", "{name} — {t!(\"cluster-packages-title\")}" }
             }
         }
 
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
+            ErrorText { class: "mb-4", "{err}" }
         }
 
         div { class: "space-y-6",
             // Manual packages section
             div {
-                h3 { class: "text-lg font-semibold mb-3", {t!("cluster-packages-manual")} }
+                SectionHeading { {t!("cluster-packages-manual")} }
                 if !read_only {
-                    form {
-                        class: "flex gap-2 mb-4",
+                    form { class: "flex gap-2 mb-4",
                         onsubmit: move |evt: FormEvent| {
                             evt.prevent_default();
                             let cid = id_form.clone();
@@ -325,26 +322,23 @@ pub fn ClusterPackagesPage(id: String) -> Element {
                                 }
                             });
                         },
-                        input {
-                            class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                        input { class: "input flex-1 w-auto py-1 text-sm font-mono",
                             r#type: "text",
                             placeholder: t!("cluster-packages-add-placeholder"),
                             value: "{new_pkg}",
                             oninput: move |e| new_pkg.set(e.value()),
                         }
-                        button {
-                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                            r#type: "submit",
+                        Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                             {t!("add")}
                         }
                     }
                 }
                 {match &*manual_pkgs.read() {
                     Some(Ok(list)) if list.is_empty() => rsx! {
-                        p { class: "text-sm text-gray-400 dark:text-gray-500", {t!("cluster-packages-no-manual")} }
+                        HelpText { {t!("cluster-packages-no-manual")} }
                     },
                     Some(Ok(list)) => rsx! {
-                        ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        ul { class: "divide-y divide-line-soft",
                             for pkg in list {
                                 {
                                     let pkg_id = pkg.id.clone();
@@ -354,8 +348,7 @@ pub fn ClusterPackagesPage(id: String) -> Element {
                                         li { class: "py-2 flex justify-between items-center",
                                             span { class: "font-mono text-sm", "{pkg_name}" }
                                             if !read_only {
-                                                button {
-                                                    class: "text-xs text-red-600 dark:text-red-400 hover:underline",
+                                                button { class: "link-danger text-xs",
                                                     onclick: move |_| {
                                                         let pid = pkg_id.clone();
                                                         let c = cid.clone();
@@ -375,25 +368,25 @@ pub fn ClusterPackagesPage(id: String) -> Element {
                             }
                         }
                     },
-                    Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
-                    None => rsx! { p { class: "text-sm", {t!("loading")} } },
+                    Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                    None => rsx! { HelpText { {t!("loading")} } },
                 }}
             }
 
             // All packages overview
             div {
-                h3 { class: "text-lg font-semibold mb-3", {t!("cluster-packages-all")} }
+                SectionHeading { {t!("cluster-packages-all")} }
                 {match &*all_pkgs.read() {
                     Some(Ok(list)) if list.is_empty() => rsx! {
-                        p { class: "text-sm text-gray-400 dark:text-gray-500", "No packages from any source." }
+                        HelpText { "No packages from any source." }
                     },
                     Some(Ok(list)) => rsx! {
                         div { class: "overflow-x-auto",
                             table { class: "min-w-full text-sm",
                                 thead {
-                                    tr { class: "border-b border-gray-200 dark:border-gray-700",
-                                        th { class: "text-left py-2 pr-4 font-semibold", "Package" }
-                                        th { class: "text-left py-2 font-semibold", "Sources" }
+                                    tr { class: "border-b border-line-soft",
+                                        th { class: "text-left py-2 pr-4 font-semibold text-fg-strong", "Package" }
+                                        th { class: "text-left py-2 font-semibold text-fg-strong", "Sources" }
                                     }
                                 }
                                 tbody {
@@ -402,18 +395,15 @@ pub fn ClusterPackagesPage(id: String) -> Element {
                                             let name = pkg.package.clone();
                                             let sources = pkg.sources.clone();
                                             rsx! {
-                                                tr { class: "border-b border-gray-100 dark:border-gray-800",
+                                                tr { class: "border-b border-line-soft",
                                                     td { class: "py-2 pr-4 font-mono", "{name}" }
                                                     td { class: "py-2",
                                                         div { class: "flex flex-wrap gap-1",
                                                             for src in &sources {
                                                                 {
-                                                                    let (color, label) = source_badge(src);
+                                                                    let (variant, label) = source_badge(src);
                                                                     rsx! {
-                                                                        span {
-                                                                            class: "inline-block px-2 py-0.5 rounded text-xs font-medium {color}",
-                                                                            "{label}"
-                                                                        }
+                                                                        Badge { variant, "{label}" }
                                                                     }
                                                                 }
                                                             }
@@ -427,34 +417,22 @@ pub fn ClusterPackagesPage(id: String) -> Element {
                             }
                         }
                     },
-                    Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
-                    None => rsx! { p { class: "text-sm", {t!("loading")} } },
+                    Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                    None => rsx! { HelpText { {t!("loading")} } },
                 }}
             }
         }
     }
 }
 
-fn source_badge(src: &str) -> (&'static str, String) {
+fn source_badge(src: &str) -> (BadgeVariant, String) {
     if let Some(slug) = src.strip_prefix("mcp:") {
-        (
-            "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200",
-            format!("MCP: {slug}"),
-        )
+        (BadgeVariant::Accent, format!("MCP: {slug}"))
     } else if let Some(slug) = src.strip_prefix("skill:") {
-        (
-            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-            format!("Skill: {slug}"),
-        )
+        (BadgeVariant::Success, format!("Skill: {slug}"))
     } else if src == "manual" {
-        (
-            "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
-            "Manual".to_string(),
-        )
+        (BadgeVariant::Info, "Manual".to_string())
     } else {
-        (
-            "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
-            src.to_string(),
-        )
+        (BadgeVariant::Neutral, src.to_string())
     }
 }

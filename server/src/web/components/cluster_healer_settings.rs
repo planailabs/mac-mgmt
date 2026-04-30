@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::ui::{Button, ButtonSize, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -155,7 +156,7 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
     })?;
 
     let Some(Ok(data)) = &*data_future.read() else {
-        return rsx! { p { class: "text-sm text-gray-500", {t!("loading")} } };
+        return rsx! { HelpText { {t!("loading")} } };
     };
 
     let models = data.models.clone();
@@ -181,11 +182,12 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                     r#type: "checkbox",
                     disabled: read_only,
                     checked: is_enabled,
+                    class: "rounded border-line",
                     onchange: move |e| enabled.set(e.checked()),
                 }
-                span { class: "text-sm font-medium", {t!("healer-settings-override")} }
+                span { class: "text-sm font-medium text-fg-strong", {t!("healer-settings-override")} }
                 if !is_enabled {
-                    span { class: "text-xs text-gray-400 dark:text-gray-500", {t!("healer-settings-using-defaults")} }
+                    span { class: "text-xs text-fg-faint", {t!("healer-settings-using-defaults")} }
                 }
             }
 
@@ -197,15 +199,15 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             r#type: "checkbox",
                             disabled: fields_disabled,
                             checked: *auto_trigger.read(),
+                            class: "rounded border-line",
                             onchange: move |e| auto_trigger.set(e.checked()),
                         }
-                        span { class: "text-sm", {t!("healer-settings-auto-trigger")} }
+                        span { class: "text-sm text-fg", {t!("healer-settings-auto-trigger")} }
                     }
                     // Auto-trigger model
                     div {
-                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", {t!("healer-settings-auto-trigger-model")} }
-                        select {
-                            class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                        label { class: "block help-xs mb-1", {t!("healer-settings-auto-trigger-model")} }
+                        select { class: "input input-sm",
                             disabled: fields_disabled,
                             value: "{auto_trigger_key}",
                             onchange: move |e| auto_trigger_key.set(e.value()),
@@ -219,15 +221,15 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
                             r#type: "checkbox",
                             disabled: fields_disabled,
                             checked: *auto_approve.read(),
+                            class: "rounded border-line",
                             onchange: move |e| auto_approve.set(e.checked()),
                         }
-                        span { class: "text-sm", {t!("healer-settings-auto-approve")} }
+                        span { class: "text-sm text-fg", {t!("healer-settings-auto-approve")} }
                     }
                     // Fix model
                     div {
-                        label { class: "block text-xs text-gray-500 dark:text-gray-400 mb-1", {t!("healer-settings-fix-model")} }
-                        select {
-                            class: "w-full px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                        label { class: "block help-xs mb-1", {t!("healer-settings-fix-model")} }
+                        select { class: "input input-sm",
                             disabled: fields_disabled,
                             value: "{fix_model_key}",
                             onchange: move |e| fix_model_key.set(e.value()),
@@ -239,8 +241,8 @@ pub fn ClusterHealerSettings(cluster_id: String, read_only: bool) -> Element {
             }
 
             if !read_only {
-                button {
-                    class: "px-3 py-1 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50",
+                Button {
+                    size: ButtonSize::Sm,
                     disabled: *saving.read(),
                     onclick: {
                         let cluster_id = cluster_id.clone();
