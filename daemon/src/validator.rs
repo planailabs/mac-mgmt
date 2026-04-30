@@ -278,12 +278,20 @@ pub async fn prefetch_all(validators: &[Validator]) {
 
 // ── Pattern matching (used by file tunnels) ────────────────────────────
 
-/// Find the first validator whose pattern matches `filename`.
+impl Validator {
+    /// Whether this validator's pattern matches the filename component of `path`.
+    pub fn matches(&self, path: &Path) -> bool {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| {
+                glob::Pattern::new(&self.pattern).is_ok_and(|p| p.matches(name))
+            })
+    }
+}
+
+/// Find the first validator whose pattern matches `path`.
 pub fn find_matching<'a>(validators: &'a [Validator], path: &Path) -> Option<&'a Validator> {
-    let filename = path.file_name().and_then(|n| n.to_str())?;
-    validators
-        .iter()
-        .find(|v| glob::Pattern::new(&v.pattern).is_ok_and(|p| p.matches(filename)))
+    validators.iter().find(|v| v.matches(path))
 }
 
 // ── Deep JSON merge ────────────────────────────────────────────────────
