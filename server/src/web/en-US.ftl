@@ -717,6 +717,7 @@ healer-cancel-session = Cancel
 healer-resume = Resume
 healer-back-to-sessions = Back to sessions
 healer-thinking = Agent is thinking...
+healer-verify-outcome = verify outcome
 healer-previous-sessions = Previous Sessions
 healer-approval-pending = approval pending
 healer-auto = auto
