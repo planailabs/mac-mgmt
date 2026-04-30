@@ -4,6 +4,7 @@
 //! is expensive by design — a full-prompt round-trip against an LLM backend can
 //! take tens of seconds. Do **not** run on the heartbeat cadence.
 
+pub mod ai_proxy;
 pub mod apprise;
 pub mod lms;
 pub mod mcporter;
@@ -177,6 +178,10 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
     // Always probe apprise + mcporter if configured (cheap liveness checks).
     probes.push(Box::new(apprise::AppriseProbe));
     probes.push(Box::new(mcporter::McPorterProbe));
+
+    if cfg.ai_proxy.enabled {
+        probes.push(Box::new(ai_proxy::AiProxyProbe::from_config(&cfg.ai_proxy)));
+    }
 
     probes
 }

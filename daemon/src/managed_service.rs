@@ -216,6 +216,10 @@ pub enum ServiceMode {
     Managed,
     /// Install and upgrade only; no process to spawn or monitor.
     InstallOnly,
+    /// Process is run by the daemon itself (e.g. embedded HTTP server).
+    /// Participates in health checks and tunnel exposure but is not
+    /// registered with the services supervisor.
+    Integrated,
 }
 
 /// A service that the daemon manages: installs, spawns, monitors, and upgrades.

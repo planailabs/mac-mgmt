@@ -224,6 +224,7 @@ impl ServiceManager {
             litellm_cfg,
             cloud_cfgs,
             backup_cfg,
+            &cfg.ai_proxy,
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
@@ -244,8 +245,13 @@ impl ServiceManager {
                 continue;
             }
 
-            if let Err(e) = svc.preflight() {
-                tracing::warn!("{name} preflight failed: {e}");
+            let integrated = svc.service_mode() == ServiceMode::Integrated;
+
+            // Integrated services have no external process to clean up.
+            if !integrated {
+                if let Err(e) = svc.preflight() {
+                    tracing::warn!("{name} preflight failed: {e}");
+                }
             }
             sentry_ext::breadcrumb(
                 "service",
@@ -255,13 +261,19 @@ impl ServiceManager {
             services.push(ServiceState {
                 name,
                 service: svc,
-                phase: ServicePhase::Stopped,
+                // Integrated services are already running inside the daemon.
+                phase: if integrated {
+                    ServicePhase::Starting
+                } else {
+                    ServicePhase::Stopped
+                },
                 upgrade_pending: false,
                 restart_pending: false,
                 post_start_done: false,
                 consecutive_crashes: 0,
                 running_store_path: None,
-                registered: false,
+                // Integrated services don't need supervisor registration.
+                registered: integrated,
                 restart_at: None,
                 connector_env: std::collections::HashMap::new(),
             });
@@ -405,6 +417,10 @@ impl ServiceManager {
 
         for i in 0..self.services.len() {
             let state = &mut self.services[i];
+            // Integrated services are not registered with the supervisor.
+            if state.service.service_mode() == ServiceMode::Integrated {
+                continue;
+            }
             let name = &state.name;
             if let Some(status) = running_services.get(name.as_str()) {
                 tracing::info!("{name} already running in supervisor (pid {:?}), adopting", status.pid);
@@ -620,25 +636,34 @@ impl ServiceManager {
         if self.services.is_empty() {
             return;
         }
-        if !self.ensure_client().await {
+        let has_managed = self.services.iter().any(|s| s.service.service_mode() == ServiceMode::Managed);
+        let client_ok = if has_managed {
+            self.ensure_client().await
+        } else {
+            true
+        };
+        if !client_ok {
             for s in &mut self.services {
                 Self::update_metrics(metrics, &s.name, false, s.upgrade_pending, false, s.phase);
             }
             return;
         }
 
-        // Ensure every service has been registered at least once this connection.
+        // Ensure every managed service has been registered at least once.
         for i in 0..self.services.len() {
-            if !self.services[i].registered {
+            if !self.services[i].registered
+                && self.services[i].service.service_mode() == ServiceMode::Managed
+            {
                 self.register_service(i).await;
             }
         }
 
         // Refresh running_store_path from the supervisor so that a restart
         // between upgrade-install and upgrade-apply is still detected.
-        self.refresh_running_store_paths().await;
-
-        self.drain_notifications();
+        if has_managed {
+            self.refresh_running_store_paths().await;
+            self.drain_notifications();
+        }
 
         // Phase 0: handle crash backoff expiry.
         // The supervisor auto-restarts crashed processes, so we don't
@@ -647,6 +672,10 @@ impl ServiceManager {
         // the next tick promotes to Healthy and resumes health checks.
         let now = Instant::now();
         for state in self.services.iter_mut() {
+            // Integrated services don't crash-backoff via the supervisor.
+            if state.service.service_mode() == ServiceMode::Integrated {
+                continue;
+            }
             if state.phase == ServicePhase::CrashBackoff {
                 let ready = state.restart_at.map_or(true, |t| now >= t);
                 if !ready {
@@ -678,33 +707,39 @@ impl ServiceManager {
                 continue;
             }
 
+            let integrated = state.service.service_mode() == ServiceMode::Integrated;
+
             let busy = state.service.is_busy().unwrap_or(false);
             busy_flags[i] = busy;
 
-            if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
-                tracing::info!("{name} needs restart (external change detected)");
-                state.restart_pending = true;
-            }
+            // Supervisor-managed lifecycle (restart, upgrade, binary drift)
+            // does not apply to integrated services.
+            if !integrated {
+                if !state.restart_pending && state.phase.is_healthy() && state.service.needs_restart() {
+                    tracing::info!("{name} needs restart (external change detected)");
+                    state.restart_pending = true;
+                }
 
-            if state.restart_pending && (!busy || in_upgrade_window) {
-                pending_reregisters.push(i);
-                state.restart_pending = false;
-                state.upgrade_pending = false;
-                continue;
-            }
-
-            if state.upgrade_pending && in_upgrade_window {
-                pending_reregisters.push(i);
-                state.upgrade_pending = false;
-                continue;
-            }
-
-            // Detect binary store-path drift.
-            let current_store = crate::nix::binary_store_path(state.service.binary_name());
-            if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
-                if old != new && (!busy || in_upgrade_window) {
-                    tracing::info!("{name} binary changed ({old} → {new}), restarting");
+                if state.restart_pending && (!busy || in_upgrade_window) {
                     pending_reregisters.push(i);
+                    state.restart_pending = false;
+                    state.upgrade_pending = false;
+                    continue;
+                }
+
+                if state.upgrade_pending && in_upgrade_window {
+                    pending_reregisters.push(i);
+                    state.upgrade_pending = false;
+                    continue;
+                }
+
+                // Detect binary store-path drift.
+                let current_store = crate::nix::binary_store_path(state.service.binary_name());
+                if let (Some(old), Some(new)) = (&state.running_store_path, &current_store) {
+                    if old != new && (!busy || in_upgrade_window) {
+                        tracing::info!("{name} binary changed ({old} → {new}), restarting");
+                        pending_reregisters.push(i);
+                    }
                 }
             }
 
@@ -771,8 +806,11 @@ impl ServiceManager {
                             service: name.clone(),
                         });
                     }
-                    if let Err(e) = state.service.repair() {
-                        tracing::error!("{name} repair failed: {e}");
+                    // Integrated services have no external process to repair.
+                    if state.service.service_mode() != ServiceMode::Integrated {
+                        if let Err(e) = state.service.repair() {
+                            tracing::error!("{name} repair failed: {e}");
+                        }
                     }
                 }
                 Err(e) => {

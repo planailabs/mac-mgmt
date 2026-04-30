@@ -1,3 +1,4 @@
+pub mod ai_proxy_svc;
 pub mod apprise;
 pub mod gpu_tool_common;
 pub mod litellm;

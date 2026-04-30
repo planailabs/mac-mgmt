@@ -780,15 +780,7 @@ impl Daemon {
             relay_mgr.update_tunnel_defs(vec![]);
             return;
         }
-        let mut td = self.svc_mgr.collect_tunnels();
-        // Expose AI proxy as a tunnel if enabled.
-        if self.current_cfg.ai_proxy.enabled {
-            td.push(crate::managed_service::TunnelDef {
-                name: "ai-proxy".into(),
-                host: self.current_cfg.ai_proxy.host.clone(),
-                tcp_port: self.current_cfg.ai_proxy.port,
-            });
-        }
+        let td = self.svc_mgr.collect_tunnels();
         relay_mgr.update_tunnel_defs(td);
     }
 

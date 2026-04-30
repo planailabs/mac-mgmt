@@ -18,13 +18,13 @@ use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 use crate::services::{
-    apprise::Apprise, litellm::Litellm, lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi,
-    ollama::Ollama, openclaw::OpenClaw, opencode::Opencode, restic::Restic, rocm_smi::RocmSmi,
-    unsloth::Unsloth,
+    ai_proxy_svc::AiProxyService, apprise::Apprise, litellm::Litellm, lms::Lms,
+    mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw,
+    opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
 };
 use mac_mgmt_common::{
-    AgentProvider, BackupConfig, CloudConfig, GlobalConfig, LitellmConfig, LlmProvider, LmsConfig,
-    OllamaConfig, OpenClawConfig, OpencodeConfig, UnslothConfig,
+    AgentProvider, AiProxyConfig, BackupConfig, CloudConfig, GlobalConfig, LitellmConfig,
+    LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig, OpencodeConfig, UnslothConfig,
 };
 
 /// When a connector runs relative to service startup.
@@ -75,6 +75,7 @@ pub fn build_services(
     litellm_cfg: LitellmConfig,
     cloud_cfgs: Vec<CloudConfig>,
     backup_cfg: BackupConfig,
+    ai_proxy_cfg: &AiProxyConfig,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
@@ -132,6 +133,13 @@ pub fn build_services(
         services.push(Box::new(Restic::new(backup_cfg)));
     } else {
         tracing::info!("backup disabled");
+    }
+
+    if ai_proxy_cfg.enabled {
+        tracing::info!("ai-proxy enabled (integrated)");
+        services.push(Box::new(AiProxyService::new(ai_proxy_cfg)));
+    } else {
+        tracing::info!("ai-proxy disabled");
     }
 
     services
