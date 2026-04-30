@@ -1,10 +1,12 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::managed_service::{FileTunnelDef, ManagedService, ServiceMode};
+use crate::managed_service::{FileTunnelDef, FileValidator, ManagedService, ServiceMode};
 use crate::sentry_ext;
 
 const PKG: &str = "mcporter";
+pub const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/steipete/mcporter/main/mcporter.schema.json";
 
 pub struct McPorter;
 
@@ -80,7 +82,12 @@ impl ManagedService for McPorter {
             writable: false,
             allow_write: Vec::new(),
             include: Some(vec!["*.json".into()]),
-            validators: Vec::new(),
+            validators: vec![FileValidator {
+                glob: "*.json".into(),
+                command: Vec::new(),
+                builtin: Some("json".into()),
+                schema_url: Some(SCHEMA_URL.into()),
+            }],
             description: "McPorter MCP server configuration (managed by daemon)".into(),
         }]
     }

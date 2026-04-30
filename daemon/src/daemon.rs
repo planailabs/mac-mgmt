@@ -922,8 +922,11 @@ pub async fn run(
     // Pre-fetch JSON schemas used for config validation so they're
     // available without network delay during service setup.
     #[cfg(feature = "services")]
-    if cfg.opencode.enabled {
-        crate::schema_cache::prefetch(crate::services::opencode::SCHEMA_URL).await;
+    {
+        if cfg.opencode.enabled {
+            crate::schema_cache::prefetch(crate::services::opencode::SCHEMA_URL).await;
+        }
+        crate::schema_cache::prefetch(crate::services::mcporter::SCHEMA_URL).await;
     }
 
     // When the unmanaged marker exists, services are run by
