@@ -3,11 +3,14 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::web::components::table_utils::{SortableTh, TableToolbar};
+use crate::web::components::ui::{
+    Button, ButtonSize, ButtonVariant, DataTable, ErrorText, HelpText, SectionHeading, SortState,
+    SortableTh, Td, Th,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct GroupInfo {
     id: Uuid,
     name: String,
@@ -15,14 +18,14 @@ struct GroupInfo {
     members: Vec<MemberEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct MemberEntry {
     member_id: Uuid,
     cluster_id: Uuid,
     cluster_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ClusterOption {
     id: Uuid,
     name: String,
@@ -249,10 +252,9 @@ pub fn RolloutGroupDetail(id: String) -> Element {
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
                     div {
-                        h2 { class: "text-2xl font-bold", "{info.name}" }
+                        h2 { class: "h-page mb-0", "{info.name}" }
                         if *editing_desc.read() {
-                            form {
-                                class: "flex items-center gap-2 mt-1",
+                            form { class: "flex items-center gap-2 mt-1",
                                 onsubmit: {
                                     let gid = gid.clone();
                                     move |evt: FormEvent| {
@@ -266,17 +268,16 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                         }
                                     }
                                 },
-                                input {
-                                    class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white w-80",
+                                input { class: "input input-sm w-80",
                                     r#type: "text",
                                     value: "{draft_desc}",
                                     oninput: move |e| draft_desc.set(e.value()),
                                     autofocus: true,
                                 }
-                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm", r#type: "submit", {t!("save")} }
-                                button {
-                                    class: "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm",
-                                    r#type: "button",
+                                button { class: "text-success hover:opacity-80 text-sm", r#type: "submit",
+                                    {t!("save")}
+                                }
+                                button { class: "text-fg-muted hover:text-fg-strong text-sm", r#type: "button",
                                     onclick: move |_| editing_desc.set(false),
                                     {t!("cancel")}
                                 }
@@ -286,9 +287,8 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                                 let desc = info.description.clone();
                                 rsx! {
                                     div { class: "flex items-center gap-2 mt-1",
-                                        p { class: "text-gray-500 dark:text-gray-400 text-sm", "{info.description}" }
-                                        button {
-                                            class: "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm",
+                                        p { class: "help", "{info.description}" }
+                                        button { class: "text-fg-faint hover:text-fg-muted text-sm",
                                             onclick: move |_| {
                                                 draft_desc.set(desc.clone());
                                                 editing_desc.set(true);
@@ -300,8 +300,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                             }
                         }
                     }
-                    button {
-                        class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                    Button { variant: ButtonVariant::Danger, size: ButtonSize::Sm,
                         onclick: {
                             let gid = gid.clone();
                             move |_| {
@@ -316,11 +315,10 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                     }
                 }
 
-                h3 { class: "text-lg font-semibold mb-3", {t!("rollout-group-members")} }
+                SectionHeading { {t!("rollout-group-members")} }
 
                 div { class: "flex gap-2 mb-4",
-                    select {
-                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 flex-1 dark:bg-gray-700 dark:text-white",
+                    select { class: "input flex-1 w-auto py-1 text-sm",
                         onchange: move |e| {
                             let val = e.value();
                             if val.is_empty() {
@@ -338,8 +336,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                             }
                         }
                     }
-                    button {
-                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                    Button { size: ButtonSize::Sm,
                         disabled: selected_cluster.read().is_none(),
                         onclick: {
                             let gid = gid.clone();
@@ -359,8 +356,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                         {t!("add")}
                     }
                     if !clusters.is_empty() {
-                        button {
-                            class: "bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700",
+                        Button { variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
                             onclick: {
                                 let gid = gid.clone();
                                 move |_| {
@@ -379,82 +375,85 @@ pub fn RolloutGroupDetail(id: String) -> Element {
                 }
 
                 if info.members.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("rollout-group-no-members")} }
-                } else {{
-                    let search = use_signal(String::new);
-                    let limit = use_signal(|| 20usize);
-                    let sort = use_signal(|| ("cluster".to_string(), true));
+                    HelpText { {t!("rollout-group-no-members")} }
+                } else {
+                    MembersTable { members: info.members.clone(), on_remove: move |_| { detail.restart(); available.restart(); } }
+                }
+            }
+        }
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
+    }
+}
 
-                    let mut filtered: Vec<MemberEntry> = {
-                        let q = search.read().to_lowercase();
-                        if q.is_empty() {
-                            info.members.clone()
-                        } else {
-                            info.members.iter()
-                                .filter(|m| m.cluster_name.to_lowercase().contains(&q))
-                                .cloned().collect()
-                        }
-                    };
+#[component]
+fn MembersTable(members: Vec<MemberEntry>, on_remove: EventHandler<()>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("cluster".to_string(), true));
+
+    let members_clone = members.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<MemberEntry> = if q.is_empty() {
+            members_clone.clone()
+        } else {
+            members_clone
+                .iter()
+                .filter(|m| m.cluster_name.to_lowercase().contains(&q))
+                .cloned()
+                .collect()
+        };
+        let (_key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = a.cluster_name.to_lowercase().cmp(&b.cluster_name.to_lowercase());
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = members.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("rollout-group-col-cluster"), sort_key: "cluster".to_string(), sort }
+                Th { "" }
+            },
+            body: rsx! {
+                for m in filtered.read().iter().take(limit_val) {
                     {
-                        let (_key, asc) = sort.read().clone();
-                        filtered.sort_by(|a, b| {
-                            let ord = a.cluster_name.to_lowercase().cmp(&b.cluster_name.to_lowercase());
-                            if asc { ord } else { ord.reverse() }
-                        });
-                    }
-                    let total = info.members.len();
-                    let filtered_count = filtered.len();
-                    let limit_val = *limit.read();
-                    let shown = filtered_count.min(limit_val);
-
-                    rsx! {
-                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                                thead { class: "bg-gray-50 dark:bg-gray-700",
-                                    tr {
-                                        SortableTh { label: t!("rollout-group-col-cluster"), sort_key: "cluster".to_string(), sort }
-                                        th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
-                                    }
-                                }
-                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                    for m in filtered.into_iter().take(limit_val) {
-                                    {
-                                        let mid = m.member_id.to_string();
-                                        rsx! {
-                                            tr {
-                                                td { class: "px-6 py-4 text-sm", "{m.cluster_name}" }
-                                                td { class: "px-6 py-4 text-right",
-                                                    button {
-                                                        class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
-                                                        onclick: {
-                                                            let mid = mid.clone();
-                                                            move |_| {
-                                                                let mid = mid.clone();
-                                                                async move {
-                                                                    let _ = remove_member(mid).await;
-                                                                    detail.restart();
-                                                                    available.restart();
-                                                                }
-                                                            }
-                                                        },
-                                                        {t!("remove")}
+                        let mid = m.member_id.to_string();
+                        let cluster_name = m.cluster_name.clone();
+                        rsx! {
+                            tr { key: "{mid}",
+                                Td { class: "text-sm", "{cluster_name}" }
+                                td { class: "td text-right",
+                                    button { class: "link-danger text-sm",
+                                        onclick: {
+                                            let mid = mid.clone();
+                                            move |_| {
+                                                let mid = mid.clone();
+                                                let on_remove = on_remove;
+                                                async move {
+                                                    if remove_member(mid).await.is_ok() {
+                                                        on_remove.call(());
                                                     }
                                                 }
                                             }
-                                        }
+                                        },
+                                        {t!("remove")}
                                     }
                                 }
                             }
                         }
                     }
-                }}
                 }
-            }
+            },
         }
-        Some(Err(e)) => {
-            rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } }
-        }
-        None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
     }
 }
