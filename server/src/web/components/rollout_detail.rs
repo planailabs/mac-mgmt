@@ -8,7 +8,7 @@ use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText, Kicker,
-    Mono, Pill, PillVariant, SectionHeading,
+    Mono, Pill, PillVariant, SectionHeading, StageItem, StageStatus, StageTimeline,
 };
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
@@ -1421,7 +1421,52 @@ pub fn RolloutDetail(id: String) -> Element {
                     }
                 }
 
-                // Stages
+                // ── Stage timeline (design-language summary) ─────────
+                // Horizontal connector with one circle per stage, the
+                // way the design's Rollouts mock surfaces progress at a
+                // glance. The detailed admin cards (gate config,
+                // evaluations, gate edits) live below, since the
+                // timeline only carries status + fleet rollup.
+                {
+                    let timeline_stages: Vec<StageItem> = info.stages.iter().map(|s| {
+                        let status = match s.status.as_str() {
+                            "completed" => StageStatus::Completed,
+                            "rolling"   => StageStatus::InProgress,
+                            _           => StageStatus::Pending,
+                        };
+                        let fleet_total  = s.total_count.max(0) as usize;
+                        // The "fleet" filled tracks version-upgrade progress,
+                        // matching the design's bars-fill-as-rollout-promotes
+                        // intuition. Online-but-not-yet-upgraded reads as
+                        // pending, which is the right colour weight.
+                        let fleet_filled = s.upgraded_count.clamp(0, s.total_count) as usize;
+                        let summary = if s.total_count > 0 {
+                            format!(
+                                "{}/{} online · nixpkgs {}/{}",
+                                s.healthy_count, s.total_count,
+                                s.nixpkgs_upgraded_count, s.total_count,
+                            )
+                        } else {
+                            t!("rollout-detail-no-heartbeats").to_string()
+                        };
+                        StageItem {
+                            name: s.group_name.clone(),
+                            status,
+                            fleet_total,
+                            fleet_filled,
+                            summary,
+                        }
+                    }).collect();
+                    rsx! {
+                        div { class: "mb-6",
+                            StageTimeline { stages: timeline_stages }
+                        }
+                    }
+                }
+
+                // Stages — detailed admin view (per-stage gate config,
+                // evaluations, gate editing). Kept as the source of
+                // truth for actions; the timeline above is read-only.
                 SectionHeading { {t!("rollout-detail-stages")} }
                 div { class: "space-y-3 mb-6",
                     for stage in &info.stages {
