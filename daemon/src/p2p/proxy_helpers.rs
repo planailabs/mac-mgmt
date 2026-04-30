@@ -47,11 +47,10 @@ pub fn apply_fake_origin(
     if let Ok(v) = format!("{}:{}", target.host, target.port).parse() {
         headers.insert("Host", v);
     }
-    // Replace Origin if present (don't add if absent).
-    if headers.contains_key("origin") {
-        if let Ok(v) = local_origin.parse() {
-            headers.insert("Origin", v);
-        }
+    // Always set Origin to the local target so services that require it
+    // (e.g. OpenClaw's allowedOrigins check) see a valid local origin.
+    if let Ok(v) = local_origin.parse() {
+        headers.insert("Origin", v);
     }
     // Replace Referer if present.
     if headers.contains_key("referer") {
