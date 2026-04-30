@@ -103,12 +103,19 @@ pub fn Topbar(
                 }
             }
 
-            // ── Right: global controls.
+            // ── Right: global controls. Below xl the language picker
+            // and user pill move into the mobile drawer (the hamburger
+            // already opens it), so we keep only the theme toggle on
+            // narrow screens to avoid the cluster overflowing the topbar.
             div { class: "flex items-center gap-1",
-                LanguagePicker {}
+                div { class: "hidden xl:flex items-center gap-1",
+                    LanguagePicker {}
+                }
                 ThemeToggle {}
                 if !display_name.is_empty() {
-                    UserPill { display_name }
+                    div { class: "hidden xl:block",
+                        UserPill { display_name }
+                    }
                 }
             }
         }

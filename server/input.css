@@ -69,13 +69,14 @@
     --c-info:         37 99 235;      /* #2563eb blue-600 */
     --c-info-soft:    226 231 241;
 
-    /* ── Accent (legacy purple, kept for back-compat) ──────────────
-       Pre-redesign code uses `accent` for special non-status items.
-       The redesign collapses accent into brand orange; legacy callers
-       keep purple until migrated in the long-tail sweep. */
-    --c-accent:        147 51 234;
-    --c-accent-strong: 126 34 206;
-    --c-accent-soft:   243 232 255;
+    /* ── Accent ────────────────────────────────────────────────────
+       Per principle 2 ("orange means action"), accent and brand are
+       the same hue. Aliasing keeps `BadgeVariant::Accent`,
+       `ButtonVariant::Accent` and `.btn-accent` callers rendering in
+       brand colors without a code-side migration. */
+    --c-accent:        var(--c-brand);
+    --c-accent-strong: var(--c-brand-strong);
+    --c-accent-soft:   var(--c-brand-soft);
 
     /* ── Surfaces & shadows ─────────────────────────────────────────
        Cards get a hairline, not a drop-shadow (principle 5). Shadow
@@ -124,9 +125,10 @@
     --c-info:         122 162 255;    /* #7aa2ff */
     --c-info-soft:    27 36 54;
 
-    --c-accent:        192 132 252;
-    --c-accent-strong: 168 85 247;
-    --c-accent-soft:   76 29 149;
+    /* Accent aliases brand — see :root for rationale. */
+    --c-accent:        var(--c-brand);
+    --c-accent-strong: var(--c-brand-strong);
+    --c-accent-soft:   var(--c-brand-soft);
 
     --shadow-card: none;
     --shadow-pop:  0 12px 40px rgb(0 0 0 / 0.4);
@@ -242,8 +244,11 @@
   /* New design-language scale. `.h-display` is the standard page hero
      (Fleet, Cluster Detail, Healer); `.h-hero` is the giant numeric
      used for KPIs (e.g. 99.94%); `.h-card` is the card title; `.kicker`
-     is the uppercase tertiary label that sits above titles. */
-  .h-display { @apply text-[36px] font-semibold leading-[1.05] tracking-[-0.02em] text-fg-strong; }
+     is the uppercase tertiary label that sits above titles.
+     The display title scales down on phones so it fits a 390px-wide
+     screen without forcing horizontal scroll on long copy. */
+  .h-display { @apply text-[26px] sm:text-[32px] xl:text-[36px] font-semibold
+                       leading-[1.1] tracking-[-0.02em] text-fg-strong break-words; }
   .h-hero    { font-size: 64px; font-weight: 600; line-height: 1; letter-spacing: -0.04em;
                color: rgb(var(--c-fg-strong)); font-feature-settings: "tnum"; }
   .h-card    { @apply text-sm font-semibold tracking-tight text-fg-strong; }

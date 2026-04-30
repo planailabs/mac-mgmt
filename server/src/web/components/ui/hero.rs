@@ -27,17 +27,21 @@ pub fn PageHero(
     #[props(default)] right: Option<Element>,
     #[props(default, into)] class: String,
 ) -> Element {
-    let cls = format!("flex items-end justify-between gap-6 mb-1 {class}");
+    // Stack title and right-side content vertically on phones (where the
+    // 36px display title already eats most of the viewport) and put them
+    // side-by-side from `sm` up. `flex-wrap` on the right cluster keeps
+    // long status text from forcing a horizontal scroll.
+    let cls = format!("flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-6 mb-1 {class}");
     rsx! {
         div { class: "{cls}",
-            div {
+            div { class: "min-w-0",
                 if let Some(k) = kicker {
                     Kicker { class: "mb-2", "{k}" }
                 }
                 h1 { class: "h-display", {title} }
             }
             if let Some(r) = right {
-                div { class: "flex items-center gap-4 shrink-0", {r} }
+                div { class: "flex items-center gap-3 sm:gap-4 flex-wrap shrink-0", {r} }
             }
         }
     }

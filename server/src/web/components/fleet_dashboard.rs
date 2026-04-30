@@ -625,10 +625,21 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 // the timestamp comes from the existing 5s refresh loop.
                 PageHero {
                     kicker: t!("fleet-title").to_uppercase(),
+                    // Match the design's hero pattern ("47 instances
+                    // healthy across 14 clusters") with muted connective
+                    // words. Falls back to a calmer empty-state copy
+                    // when the fleet hasn't reported yet — the giant
+                    // "0 · 0" reads broken.
                     title: rsx! {
-                        "{online_instances} "
-                        span { class: "text-fg-muted", {t!("fleet-online")} }
-                        " · {total_clusters}"
+                        if online_instances == 0 && total_clusters == 0 {
+                            span { class: "text-fg-muted", {t!("fleet-no-daemons")} }
+                        } else {
+                            "{online_instances} "
+                            span { class: "text-fg-muted", "instances " }
+                            span { class: "text-fg-muted", "across " }
+                            "{total_clusters} "
+                            span { class: "text-fg-muted", "clusters" }
+                        }
                     },
                     right: rsx! {
                         div { class: "flex items-center gap-2 text-fg-muted text-xs",

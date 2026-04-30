@@ -131,8 +131,11 @@ fn Logo() -> Element {
                     fill: "rgb(var(--c-brand))",
                 }
             }
+            // Wordmark is brand chrome, not translatable copy — hard-code so
+            // we don't accidentally render "<i18n value> mgmt" twice when the
+            // i18n key already contains the full brand string.
             span {
-                {t!("nav-logo")} " "
+                "plan.ai "
                 span { class: "text-fg-muted font-medium", "mgmt" }
             }
         }
@@ -152,7 +155,12 @@ fn NavGroupList(
     #[props(default)] on_navigate: Option<EventHandler<()>>,
 ) -> Element {
     rsx! {
-        nav { class: "flex-1 px-3 py-5 space-y-7",
+        // `min-h-0` is the flexbox escape hatch that lets this child
+        // shrink below its content size — without it, `overflow-y-auto`
+        // would never trigger and the sidebar would clip its bottom
+        // links on short viewports. Extra bottom padding leaves room
+        // below the last group so it doesn't kiss the viewport edge.
+        nav { class: "flex-1 min-h-0 overflow-y-auto px-3 py-5 pb-8 space-y-7",
             for group in groups {
                 div { key: "{group.title}",
                     h3 { class: "nav-group-head", {t!(&group.title)} }
