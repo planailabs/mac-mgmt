@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
+use crate::web::components::ui::{ErrorText, HelpText, PageHeader};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -564,28 +565,26 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
 
             rsx! {
                 div { class: "flex items-center justify-between mb-4",
-                    h2 { class: "text-2xl font-bold", {t!("fleet-title")} }
-                    span { class: "text-xs text-gray-400 dark:text-gray-500",
+                    PageHeader { class: "mb-0", {t!("fleet-title")} }
+                    span { class: "text-xs text-fg-faint",
                         {t!("fleet-last-refreshed", time: refresh_ago)}
                     }
                 }
                 // Stage filter banner — visible when the route was loaded
                 // with a stage_id and the server resolved it to a label.
                 if let Some(label) = stage_label.read().clone() {
-                    div { class: "flex items-center justify-between gap-2 mb-3 px-3 py-2 rounded bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800",
-                        div { class: "text-sm text-blue-800 dark:text-blue-200",
+                    div { class: "flex items-center justify-between gap-2 mb-3 px-3 py-2 rounded bg-info-soft border border-info",
+                        div { class: "text-sm text-info",
                             span { class: "font-medium", {t!("fleet-filtered-by")} }
                             "{label}"
                         }
-                        Link {
-                            to: Route::FleetDashboard { stage_id: None },
-                            class: "text-xs text-blue-700 dark:text-blue-300 hover:underline",
+                        Link { to: Route::FleetDashboard { stage_id: None }, class: "text-xs link",
                             {t!("fleet-clear-filter")}
                         }
                     }
                 }
                 if entries.is_empty() {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("fleet-no-daemons")} }
+                    HelpText { {t!("fleet-no-daemons")} }
                 } else {
                     TableToolbar { search, limit, total, filtered: filtered_count, shown }
                     div { class: "flex items-center gap-2 mb-3",
@@ -594,9 +593,9 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                             rsx! {
                                 button {
                                     class: if active {
-                                        "px-3 py-1.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700"
+                                        "btn btn-md btn-danger-soft border border-danger"
                                     } else {
-                                        "px-3 py-1.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600"
+                                        "btn btn-md btn-secondary"
                                     },
                                     onclick: move |_| unhealthy_only.set(!active),
                                     {t!("fleet-unhealthy-only")}
@@ -604,31 +603,31 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                             }
                         }
                     }
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                        table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                            thead { class: "bg-gray-50 dark:bg-gray-700",
+                    div { class: "card",
+                        table { class: "table",
+                            thead { class: "thead",
                                 tr {
                                     SortableTh { label: t!("fleet-col-cluster"), sort_key: "cluster".to_string(), sort }
                                     SortableTh { label: t!("fleet-col-hostname"), sort_key: "hostname".to_string(), sort }
                                     SortableTh { label: t!("fleet-col-env"), sort_key: "env".to_string(), sort }
                                     SortableTh { label: t!("version"), sort_key: "version".to_string(), sort }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("cluster-list-col-nixpkgs")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-status")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-load")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-services")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-probes")} }
-                                    th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-col-tunnels")} }
+                                    th { class: "th", {t!("cluster-list-col-nixpkgs")} }
+                                    th { class: "th", {t!("fleet-col-status")} }
+                                    th { class: "th", {t!("fleet-col-load")} }
+                                    th { class: "th", {t!("fleet-col-services")} }
+                                    th { class: "th", {t!("fleet-col-probes")} }
+                                    th { class: "th", {t!("fleet-col-tunnels")} }
                                     SortableTh { label: t!("fleet-col-last-seen"), sort_key: "last_seen".to_string(), sort }
-                                    th { class: "px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
+                                    th { class: "th text-right", "" }
                                 }
                             }
-                            tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
+                            tbody { class: "tbody",
                                 for entry in filtered.into_iter().take(limit_val) {
                                     {
                                         let now = Utc::now();
                                         let age = now.signed_duration_since(entry.reported_at);
                                         let is_online = age.num_seconds() < 300;
-                                        let status_class = if is_online { "text-green-600 dark:text-green-400 font-semibold" } else { "text-red-600 dark:text-red-400 font-semibold" };
+                                        let status_class = if is_online { "text-success font-semibold" } else { "text-danger font-semibold" };
                                         let status_text = if is_online { t!("fleet-online") } else { t!("fleet-offline") };
                                         let last_seen = if age.num_seconds() < 60 {
                                             t!("fleet-just-now")
@@ -652,12 +651,12 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     let healthy = s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
                                                     let (cls, title) = if healthy {
                                                         (
-                                                            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200".to_string(),
+                                                            "badge badge-success".to_string(),
                                                             t!("fleet-healthy"),
                                                         )
                                                     } else {
                                                         (
-                                                            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200".to_string(),
+                                                            "badge badge-danger".to_string(),
                                                             t!("fleet-unhealthy"),
                                                         )
                                                     };
@@ -692,17 +691,17 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                 let dur_txt = dur.map(|d| format!(", {d}ms")).unwrap_or_default();
                                                 let (cls, label, ok_text) = match ok {
                                                     Some(true) => (
-                                                        "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
+                                                        "badge badge-success",
                                                         t!("fleet-ok"),
                                                         t!("fleet-ok"),
                                                     ),
                                                     Some(false) => (
-                                                        "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
+                                                        "badge badge-danger",
                                                         t!("fleet-fail"),
                                                         t!("fleet-fail"),
                                                     ),
                                                     None => (
-                                                        "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                                        "badge badge-neutral",
                                                         t!("fleet-pending"),
                                                         t!("fleet-no-result"),
                                                     ),
@@ -738,9 +737,9 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                     let label = if parts.is_empty() { t!("fleet-idle") } else { parts.join(" · ") };
                                                     let idx = g.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
                                                     let cls = match util {
-                                                        Some(u) if u >= 85 => "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200",
-                                                        Some(_) => "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200",
-                                                        None => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                                        Some(u) if u >= 85 => "badge badge-warn",
+                                                        Some(_) => "badge badge-accent",
+                                                        None => "badge badge-neutral",
                                                     };
                                                     (format!("gpu{idx} {label}"), cls.to_string())
                                                 }).collect()
@@ -749,17 +748,13 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
 
                                         rsx! {
                                             tr {
-                                                td { class: "px-6 py-4 text-sm",
-                                                    Link {
-                                                        to: Route::ClusterDetail { id: entry.cluster_id.clone() },
-                                                        class: "text-blue-600 dark:text-blue-400 hover:underline",
+                                                td { class: "td text-sm",
+                                                    Link { to: Route::ClusterDetail { id: entry.cluster_id.clone() }, class: "link",
                                                         "{entry.cluster_name}"
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm",
-                                                    Link {
-                                                        to: Route::FleetDetail { instance_id: entry.instance_id.clone() },
-                                                        class: "text-blue-600 dark:text-blue-400 hover:underline",
+                                                td { class: "td text-sm",
+                                                    Link { to: Route::FleetDetail { instance_id: entry.instance_id.clone() }, class: "link",
                                                         if entry.hostname.is_empty() {
                                                             span { class: "font-mono text-xs", "{entry.instance_id}" }
                                                         } else {
@@ -767,14 +762,12 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm",
+                                                td { class: "td text-sm",
                                                     if !entry.environment.is_empty() {
-                                                        span { class: "px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200",
-                                                            "{entry.environment}"
-                                                        }
+                                                        span { class: "badge badge-neutral", "{entry.environment}" }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm",
+                                                td { class: "td text-sm",
                                                     div { "{entry.version}" }
                                                     if let Some(sha) = &entry.git_sha {
                                                         {
@@ -785,8 +778,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                 .map(|n| format!(" #{n}"))
                                                                 .unwrap_or_default();
                                                             rsx! {
-                                                                a {
-                                                                    class: "text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400",
+                                                                a { class: "text-xs font-mono text-fg-muted hover:text-brand",
                                                                     href: "{url}",
                                                                     target: "_blank",
                                                                     title: "{sha}",
@@ -796,7 +788,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm",
+                                                td { class: "td text-sm",
                                                     if let Some(nix_sha) = &entry.nixpkgs_commit {
                                                         {
                                                             let short: String = nix_sha.chars().take(12).collect();
@@ -806,8 +798,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                 .map(|n| format!(" #{n}"))
                                                                 .unwrap_or_default();
                                                             rsx! {
-                                                                a {
-                                                                    class: "text-xs font-mono text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400",
+                                                                a { class: "text-xs font-mono text-fg-muted hover:text-brand",
                                                                     href: "{url}",
                                                                     target: "_blank",
                                                                     title: "{nix_sha}",
@@ -817,50 +808,40 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm {status_class}", "{status_text}" }
-                                                td { class: "px-6 py-4 text-xs font-mono text-gray-600 dark:text-gray-300",
+                                                td { class: "td text-sm {status_class}", "{status_text}" }
+                                                td { class: "td text-xs font-mono",
                                                     if let Some(lc) = &load_cell {
                                                         span { "{lc}" }
                                                     } else {
-                                                        span { class: "text-gray-400 dark:text-gray-500", {t!("em-dash")} }
+                                                        span { class: "text-fg-faint", {t!("em-dash")} }
                                                     }
                                                     if !gpu_cells.is_empty() {
                                                         div { class: "flex gap-1 flex-wrap mt-1",
                                                             for (label, cls) in &gpu_cells {
-                                                                span { class: "inline-block px-1.5 py-0.5 rounded text-xs font-medium {cls}",
-                                                                    "{label}"
-                                                                }
+                                                                span { class: "{cls}", "{label}" }
                                                             }
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm",
+                                                td { class: "td text-sm",
                                                     div { class: "flex gap-1 flex-wrap",
                                                         for (name, badge_class, title) in &services_badges {
-                                                            span {
-                                                                class: "inline-block px-2 py-0.5 rounded text-xs font-medium {badge_class}",
-                                                                title: "{title}",
-                                                                "{name}"
-                                                            }
+                                                            span { class: "{badge_class}", title: "{title}", "{name}" }
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm",
+                                                td { class: "td text-sm",
                                                     if probe_badges.is_empty() {
-                                                        span { class: "text-gray-400 dark:text-gray-500", {t!("em-dash")} }
+                                                        span { class: "text-fg-faint", {t!("em-dash")} }
                                                     } else {
                                                         div { class: "flex gap-1 flex-wrap",
                                                             for (name, badge_class, title) in &probe_badges {
-                                                                span {
-                                                                    class: "inline-block px-2 py-0.5 rounded text-xs font-medium {badge_class}",
-                                                                    title: "{title}",
-                                                                    "{name}"
-                                                                }
+                                                                span { class: "{badge_class}", title: "{title}", "{name}" }
                                                             }
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm",
+                                                td { class: "td text-sm",
                                                     {
                                                         let proxy_url = entry.relay_proxy_url.clone();
                                                         let tunnel_names: Vec<String> = entry.tunnels
@@ -880,8 +861,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                                 let tn = tname.clone();
                                                                                 let pu = purl.clone();
                                                                                 rsx! {
-                                                                                    button {
-                                                                                        class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
+                                                                                    button { class: "btn btn-xs btn-info-soft",
                                                                                         title: "Open tunnel in new tab",
                                                                                         onclick: move |_| {
                                                                                             let iid = iid.clone();
@@ -913,10 +893,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                                 } else if !tunnel_names.is_empty() {
                                                                     div { class: "flex gap-1 flex-wrap",
                                                                         for tname in &tunnel_names {
-                                                                            span {
-                                                                                class: "inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300",
-                                                                                "{tname}"
-                                                                            }
+                                                                            span { class: "badge badge-neutral", "{tname}" }
                                                                         }
                                                                     }
                                                                 }
@@ -924,11 +901,10 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                                                         }
                                                     }
                                                 }
-                                                td { class: "px-6 py-4 text-sm text-gray-500 dark:text-gray-400", "{last_seen}" }
-                                                td { class: "px-6 py-4 text-right",
+                                                td { class: "td-muted text-sm", "{last_seen}" }
+                                                td { class: "td text-right",
                                                     if age.num_hours() >= 24 {
-                                                        button {
-                                                            class: "text-red-600 dark:text-red-400 text-xs hover:underline",
+                                                        button { class: "link-danger text-xs",
                                                             title: "Delete this stale instance from the dashboard. Only available after 24h of silence.",
                                                             onclick: {
                                                                 let iid = entry.instance_id.clone();
@@ -963,11 +939,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
