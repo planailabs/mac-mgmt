@@ -208,13 +208,21 @@ pkgs.testers.nixosTest {
     machine.log("Tunnel list API verified")
 
     # Verify the daemon sent relay_proxy_url in its heartbeat.
-    # The server stores it in daemon_heartbeats — query via heartbeat API.
-    time.sleep(5)  # wait for heartbeat to arrive
-    hb_json = machine.succeed(
-        "curl -sf -H 'Authorization: Bearer ${settingToken}' "
-        f"'http://127.0.0.1:7378/api/fleet?instance_id={instance_id}'"
-    )
-    machine.log(f"Heartbeat query response: {hb_json[:500]}")
+    # Poll the daemon_heartbeats row directly — there is no public read API
+    # for heartbeats and the daemon writes asynchronously after registration.
+    relay_proxy_url = ""
+    for _ in range(60):
+        relay_proxy_url = machine.succeed(
+            "sudo -u postgres psql -d mac-mgmt -t -A -c "
+            "\"SELECT relay_proxy_url FROM daemon_heartbeats "
+            f"WHERE cluster_id = '${clusterId}' AND instance_id = '{instance_id}'\""
+        ).strip()
+        if relay_proxy_url:
+            break
+        time.sleep(1)
+    assert relay_proxy_url, \
+        f"daemon never wrote relay_proxy_url for instance_id={instance_id}"
+    machine.log(f"Heartbeat relay_proxy_url={relay_proxy_url}")
 
     machine.log("All relay integration tests passed!")
   '';
