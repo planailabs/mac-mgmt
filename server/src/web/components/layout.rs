@@ -1,10 +1,22 @@
+//! Application shell.
+//!
+//! Layout is the row of [Sidebar | (Topbar / impersonation banner /
+//! main content)]. Sidebar is desktop-only (xl+); under that breakpoint
+//! the content fills the screen and the topbar's hamburger reveals
+//! the mobile drawer.
+//!
+//! The shell also provides the `TopbarMeta` context so any page can
+//! call `use_topbar(...)` to populate the topbar title without a
+//! second prop-drilling chain.
+
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
-use super::navbar::{Navbar, Sidebar};
+use super::navbar::{MobileDrawer, Sidebar};
+use super::topbar::{Topbar, TopbarMeta};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UserInfo {
@@ -73,48 +85,64 @@ fn LoadingSpinner() -> Element {
 #[component]
 pub fn Layout() -> Element {
     let user_info = use_server_future(get_current_user_info)?;
-    let (is_admin, _real_is_admin, impersonating_email, display_name) = match &*user_info.read() {
+    let (is_admin, impersonating_email, display_name) = match &*user_info.read() {
         Some(Ok(info)) => (
             info.is_admin,
-            info.real_is_admin,
             info.impersonating_email.clone(),
             info.display_name.clone(),
         ),
-        _ => (false, false, None, String::new()),
+        _ => (false, None, String::new()),
     };
 
-    rsx! {
-        div { class: "h-screen w-full flex flex-col overflow-hidden",
-            // Top Nav
-            Navbar { is_admin, display_name: display_name.clone() }
+    // Provide the topbar context so any descendant page can populate
+    // its own title via `use_topbar`. Default is empty — pages that
+    // forget to populate get an empty topbar rather than a wrong one.
+    use_context_provider::<Signal<TopbarMeta>>(|| Signal::new(TopbarMeta::default()));
 
-            // Impersonation banner
-            if let Some(email) = &impersonating_email {
-                div { class: "shrink-0 bg-warn text-warn-strong text-center text-sm py-1.5 px-4 flex items-center justify-center gap-3 relative z-10",
-                    span { {t!("impersonating", email: email.clone())} }
-                    button { class: "btn btn-xs btn-warn",
-                        onclick: move |_| {
-                            document::eval(
-                                "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
-                            );
-                        },
-                        {t!("impersonate-stop")}
+    // Mobile drawer open/closed — shared between the topbar's
+    // hamburger and the drawer itself.
+    let drawer_open = use_signal(|| false);
+
+    rsx! {
+        div { class: "h-screen w-full flex overflow-hidden",
+            // ── Desktop sidebar (220px column, hidden under xl)
+            Sidebar { is_admin }
+
+            // ── Main column: topbar + optional banner + page content
+            div { class: "flex-1 flex flex-col min-w-0 overflow-hidden",
+                Topbar {
+                    display_name: display_name.clone(),
+                    is_drawer_open: drawer_open,
+                }
+
+                if let Some(email) = &impersonating_email {
+                    div { class: "shrink-0 banner banner-warn flex items-center justify-center gap-3",
+                        span { {t!("impersonating", email: email.clone())} }
+                        button {
+                            class: "btn btn-xs btn-warn",
+                            onclick: move |_| {
+                                document::eval(
+                                    "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
+                                );
+                            },
+                            {t!("impersonate-stop")}
+                        }
                     }
                 }
-            }
 
-            // Body flex container
-            div { class: "flex flex-1 overflow-hidden relative",
-                // Sidebar (Desktop)
-                Sidebar { is_admin }
-
-                // Main content
                 main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8",
                     SuspenseBoundary {
                         fallback: |_| rsx! { LoadingSpinner {} },
                         Outlet::<Route> {}
                     }
                 }
+            }
+
+            // ── Mobile drawer (overlay, hidden on xl+)
+            MobileDrawer {
+                is_admin,
+                display_name,
+                is_open: drawer_open,
             }
         }
     }
