@@ -123,7 +123,7 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
     let healthy_services_pct = if healthy_services_total > 0 {
         healthy_services_count as f64 * 100.0 / healthy_services_total as f64
     } else {
-        100.0
+        0.0
     };
 
     // Rollouts. Two scopes: currently rolling, and "completed in the
@@ -134,9 +134,13 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
     .fetch_one(&pool)
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
+    // The rollouts table tracks state transitions via updated_at —
+    // there's no separate completed_at column (those live on
+    // rollout_stages). updated_at moves to "now" when status flips
+    // to 'completed', so it's the right proxy here.
     let rollouts_completed_24h: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM rollouts \
-         WHERE status = 'completed' AND completed_at > now() - interval '24 hours'",
+         WHERE status = 'completed' AND updated_at > now() - interval '24 hours'",
     )
     .fetch_one(&pool)
     .await
@@ -151,21 +155,24 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
     .unwrap_or(0); // table may not exist on legacy installs
 
     // Activity feed: union of the most recent rollout state changes
-    // and the latest cluster-online heartbeats.
+    // and the latest cluster-online heartbeats. The rollouts table
+    // doesn't carry separate started_at/completed_at — we use
+    // created_at as the start moment and updated_at as the
+    // last-state-change moment (which is "completed_at" for completed
+    // rollouts and the latest progress tick for rolling ones).
     #[derive(sqlx::FromRow)]
     struct RolloutEvent {
         id: uuid::Uuid,
         status: String,
-        started_at: Option<DateTime<Utc>>,
-        completed_at: Option<DateTime<Utc>>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
         target_version: Option<String>,
     }
     let rollout_events: Vec<RolloutEvent> = sqlx::query_as(
-        "SELECT id, status, started_at, completed_at, target_version \
+        "SELECT id, status, created_at, updated_at, target_version \
          FROM rollouts \
-         WHERE started_at > now() - interval '24 hours' \
-            OR completed_at > now() - interval '24 hours' \
-         ORDER BY COALESCE(completed_at, started_at) DESC \
+         WHERE updated_at > now() - interval '24 hours' \
+         ORDER BY updated_at DESC \
          LIMIT 6",
     )
     .fetch_all(&pool)
@@ -182,31 +189,25 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
             .unwrap_or_default();
         match r.status.as_str() {
             "completed" => {
-                if let Some(at) = r.completed_at {
-                    activity.push(OverviewActivity {
-                        kind: "rollout-completed".into(),
-                        text: format!("Rollout {id_short}{ver} completed"),
-                        at,
-                    });
-                }
+                activity.push(OverviewActivity {
+                    kind: "rollout-completed".into(),
+                    text: format!("Rollout {id_short}{ver} completed"),
+                    at: r.updated_at,
+                });
             }
             "rolling" => {
-                if let Some(at) = r.started_at {
-                    activity.push(OverviewActivity {
-                        kind: "rollout-started".into(),
-                        text: format!("Rollout {id_short}{ver} started"),
-                        at,
-                    });
-                }
+                activity.push(OverviewActivity {
+                    kind: "rollout-started".into(),
+                    text: format!("Rollout {id_short}{ver} started"),
+                    at: r.created_at,
+                });
             }
             other => {
-                if let Some(at) = r.completed_at.or(r.started_at) {
-                    activity.push(OverviewActivity {
-                        kind: "rollout-other".into(),
-                        text: format!("Rollout {id_short}{ver} · {other}"),
-                        at,
-                    });
-                }
+                activity.push(OverviewActivity {
+                    kind: "rollout-other".into(),
+                    text: format!("Rollout {id_short}{ver} · {other}"),
+                    at: r.updated_at,
+                });
             }
         }
     }
