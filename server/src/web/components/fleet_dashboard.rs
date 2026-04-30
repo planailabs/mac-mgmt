@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::{Searchable, SortableTh, TableToolbar};
-use crate::web::components::ui::{ErrorText, HelpText, PageHeader};
+use crate::web::components::topbar::use_topbar;
+use crate::web::components::ui::{
+    ChartColor, Dot, ErrorText, HelpText, KpiCard, PageHero, PillVariant,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -353,6 +356,8 @@ impl Searchable for FleetEntry {
 
 #[component]
 pub fn FleetDashboard(stage_id: Option<String>) -> Element {
+    use_topbar(t!("fleet-title"), None);
+
     let mut data: Signal<Option<Result<Vec<FleetEntry>, String>>> = use_signal(|| None);
     let mut stage_label: Signal<Option<String>> = use_signal(|| None);
     let mut last_refreshed = use_signal(|| None::<DateTime<Utc>>);
@@ -563,11 +568,110 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
             let limit_val = *limit.read();
             let shown = filtered_count.min(limit_val);
 
+            // ── KPI summary computed from the current heartbeat snapshot.
+            // We deliberately compute these synchronously from `entries`
+            // rather than firing a separate query: the dashboard already
+            // re-fetches heartbeats every 5s so these stats stay live for
+            // free.
+            let now = Utc::now();
+            let total_instances = entries.len();
+            let online_instances = entries
+                .iter()
+                .filter(|e| now.signed_duration_since(e.reported_at).num_seconds() < 300)
+                .count();
+            let total_clusters: usize = entries
+                .iter()
+                .map(|e| e.cluster_id.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+
+            // Healthy services percentage across every heartbeat's services
+            // array. Cheaper than a SQL aggregate and mirrors the table
+            // visually: the same green/red state drives both.
+            let (svc_healthy, svc_total): (usize, usize) = entries
+                .iter()
+                .filter_map(|e| e.services.as_array())
+                .flat_map(|arr| arr.iter())
+                .fold((0usize, 0usize), |(h, t), s| {
+                    let healthy = s.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
+                    (h + usize::from(healthy), t + 1)
+                });
+            let svc_pct: f64 = if svc_total == 0 {
+                100.0
+            } else {
+                (svc_healthy as f64) / (svc_total as f64) * 100.0
+            };
+
+            // Failing probes — a separate signal from "service healthy"
+            // because a probe failure means the verification layer noticed
+            // something the daemon's self-report didn't.
+            let failing_probes: usize = entries
+                .iter()
+                .filter_map(|e| e.services_extended.as_ref())
+                .filter_map(|v| v.as_array())
+                .flat_map(|arr| arr.iter())
+                .filter(|s| {
+                    s.get("last_probe_ok")
+                        .and_then(|v| v.as_bool())
+                        .map(|ok| !ok)
+                        .unwrap_or(false)
+                })
+                .count();
+
             rsx! {
-                div { class: "flex items-center justify-between mb-4",
-                    PageHeader { class: "mb-0", {t!("fleet-title")} }
-                    span { class: "text-xs text-fg-faint",
-                        {t!("fleet-last-refreshed", time: refresh_ago)}
+                // ── Page hero ────────────────────────────────────────
+                // Composes kicker + display title + right-side live
+                // indicator. The "live" dot pulses via the dot's halo;
+                // the timestamp comes from the existing 5s refresh loop.
+                PageHero {
+                    kicker: t!("fleet-title").to_uppercase(),
+                    title: rsx! {
+                        "{online_instances} "
+                        span { class: "text-fg-muted", {t!("fleet-online")} }
+                        " · {total_clusters}"
+                    },
+                    right: rsx! {
+                        div { class: "flex items-center gap-2 text-fg-muted text-xs",
+                            Dot { variant: PillVariant::Ok }
+                            span { "live" }
+                        }
+                        span { class: "text-fg-faint text-xs font-mono",
+                            {t!("fleet-last-refreshed", time: refresh_ago)}
+                        }
+                    },
+                    class: "mb-5",
+                }
+
+                // ── KPI strip ────────────────────────────────────────
+                // Responsive: 1 col on phones, 2 on tablets, 4 on desktop.
+                // Sparklines are deliberately omitted — we don't have a
+                // time-series feed yet; passing empty `data` makes
+                // KpiCard skip the chart cleanly.
+                div { class: "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5",
+                    KpiCard {
+                        label: t!("fleet-kpi-online"),
+                        value: format!("{online_instances}"),
+                        delta: Some(format!("/ {total_instances}")),
+                        delta_kind: ChartColor::Muted,
+                        color: ChartColor::Brand,
+                    }
+                    KpiCard {
+                        label: t!("fleet-kpi-services-healthy"),
+                        value: format!("{:.1}%", svc_pct),
+                        delta: Some(format!("{svc_healthy}/{svc_total}")),
+                        delta_kind: ChartColor::Muted,
+                        color: ChartColor::Ok,
+                    }
+                    KpiCard {
+                        label: t!("fleet-kpi-clusters"),
+                        value: format!("{total_clusters}"),
+                        color: ChartColor::Info,
+                    }
+                    KpiCard {
+                        label: t!("fleet-kpi-failing-probes"),
+                        value: format!("{failing_probes}"),
+                        delta_kind: if failing_probes == 0 { ChartColor::Ok } else { ChartColor::Bad },
+                        color: ChartColor::Bad,
                     }
                 }
                 // Stage filter banner — visible when the route was loaded
