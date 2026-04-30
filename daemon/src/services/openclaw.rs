@@ -15,72 +15,11 @@ pub fn config_path() -> Result<PathBuf> {
 }
 
 /// Atomically merge a JSON patch into openclaw.json with validation and rollback.
-///
-/// 1. Reads current config
-/// 2. Deep-merges the patch
-/// 3. Writes the result
-/// 4. Runs `openclaw config validate`
-/// 5. If invalid: restores the original and returns Err
 pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
     if !config_path.exists() {
         anyhow::bail!("openclaw config not found at {}", config_path.display());
     }
-
-    let patch_keys: Vec<&str> = patch
-        .as_object()
-        .map(|o| o.keys().map(|k| k.as_str()).collect())
-        .unwrap_or_default();
-    tracing::info!(
-        "merge_and_validate: merging patch with keys [{}] into {}",
-        patch_keys.join(", "),
-        config_path.display()
-    );
-    tracing::debug!("merge_and_validate: patch content: {patch}");
-
-    let backup = std::fs::read_to_string(config_path)
-        .with_context(|| format!("failed to read {}", config_path.display()))?;
-    let mut existing: serde_json::Value =
-        serde_json::from_str(&backup).context("failed to parse openclaw.json")?;
-
-    merge_json(&mut existing, patch);
-
-    let merged =
-        serde_json::to_string_pretty(&existing).context("failed to serialize merged config")?;
-
-    tracing::debug!("merge_and_validate: writing merged config ({} bytes)", merged.len());
-    std::fs::write(config_path, &merged)
-        .with_context(|| format!("failed to write {}", config_path.display()))?;
-
-    // Validate
-    let valid = match crate::cmd::output_with_timeout(
-        Command::new("openclaw").args(["config", "validate"]),
-        crate::cmd::DEFAULT_TIMEOUT,
-    ) {
-        Ok(output) if output.status.success() => true,
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            tracing::warn!(
-                "openclaw config invalid: {} {}",
-                stdout.trim(),
-                stderr.trim()
-            );
-            false
-        }
-        Err(e) => {
-            tracing::warn!("failed to run openclaw config validate: {e}");
-            true // Can't validate — don't block
-        }
-    };
-
-    if !valid {
-        tracing::warn!("rolling back openclaw.json");
-        std::fs::write(config_path, &backup)
-            .with_context(|| format!("failed to rollback {}", config_path.display()))?;
-        anyhow::bail!("openclaw config validation failed, rolled back");
-    }
-
-    Ok(())
+    super::merge_json_config(config_path, patch, Some(&["openclaw", "config", "validate"]))
 }
 
 pub struct OpenClaw {

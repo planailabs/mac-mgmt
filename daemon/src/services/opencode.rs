@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::connectors::merge_json;
-use crate::managed_service::{DataPath, FileTunnelDef, ManagedService, TunnelDef};
+use crate::managed_service::{DataPath, FileTunnelDef, FileValidator, ManagedService, TunnelDef};
 use crate::sentry_ext;
 pub use mac_mgmt_common::OpencodeConfig;
 
@@ -15,28 +15,7 @@ pub fn config_path() -> Result<PathBuf> {
 
 /// Atomically merge a JSON patch into the opencode config.
 pub fn merge_and_write(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
-    let existing_text = if config_path.exists() {
-        std::fs::read_to_string(config_path)
-            .with_context(|| format!("failed to read {}", config_path.display()))?
-    } else {
-        // Ensure parent dir exists
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        "{}".to_string()
-    };
-
-    let mut existing: serde_json::Value =
-        serde_json::from_str(&existing_text).context("failed to parse opencode config")?;
-
-    merge_json(&mut existing, patch);
-
-    let merged =
-        serde_json::to_string_pretty(&existing).context("failed to serialize merged config")?;
-    std::fs::write(config_path, &merged)
-        .with_context(|| format!("failed to write {}", config_path.display()))?;
-
-    Ok(())
+    super::merge_json_config(config_path, patch, None)
 }
 
 pub struct Opencode {
@@ -217,7 +196,11 @@ impl ManagedService for Opencode {
             writable: true,
             allow_write: Vec::new(),
             include: Some(vec!["config.json".into()]),
-            validators: Vec::new(),
+            validators: vec![FileValidator {
+                glob: "*.json".into(),
+                command: Vec::new(),
+                builtin: Some("json".into()),
+            }],
             description: "OpenCode configuration".into(),
         }]
     }
