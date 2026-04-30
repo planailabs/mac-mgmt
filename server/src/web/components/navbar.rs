@@ -145,6 +145,88 @@ fn Logo() -> Element {
     }
 }
 
+// -- Active-route matching -------------------------------------------------
+
+/// Whether the link target should highlight when the user is on `current`.
+///
+/// `Link`'s built-in `active_class` does an exact route comparison — that
+/// fails for our query-param routes (`#[route("/fleet?:stage_id")]`)
+/// because the link's target route (`stage_id: None`) doesn't match a
+/// current route carrying any other field state, even when a user clicks
+/// over from another page. We match by variant family so e.g. the Fleet
+/// link stays lit on `/fleet`, `/fleet?stage_id=...`, the instance-detail
+/// page, and its tunnels/files/shell sub-routes — the same intuition the
+/// user has when they think "I'm in the Fleet area".
+fn route_active(link: &Route, current: &Route) -> bool {
+    use Route::*;
+    match (link, current) {
+        // Fleet "area" — dashboard + every per-instance sub-page.
+        (
+            FleetDashboard { .. },
+            FleetDashboard { .. }
+                | FleetDetail { .. }
+                | FleetFiles { .. }
+                | FleetShell { .. }
+                | FleetLogs { .. }
+                | FleetHealer { .. }
+                | FleetHealerSession { .. },
+        ) => true,
+        // Clusters area — list + detail + sub-pages + form.
+        (
+            ClusterList { .. },
+            ClusterList { .. }
+                | ClusterDetail { .. }
+                | ClusterConfigPage { .. }
+                | ClusterPackagesPage { .. }
+                | ClusterForm { .. },
+        ) => true,
+        // Skills, MCP, Bundles, Rollouts, Orgs, Users, Skill Centers,
+        // Daemon Versions, Import Sources, Docs all light their list
+        // entry when on a list/detail/form page in that family.
+        (SkillList { .. }, SkillList { .. } | SkillDetail { .. }) => true,
+        (
+            McpServerList { .. },
+            McpServerList { .. } | McpServerDetail { .. } | McpServerEdit { .. } | McpServerForm { .. },
+        ) => true,
+        (
+            McpBundleList { .. },
+            McpBundleList { .. } | McpBundleDetail { .. } | McpBundleForm { .. },
+        ) => true,
+        (BundleList { .. }, BundleList { .. } | BundleDetail { .. } | BundleForm { .. }) => true,
+        (
+            RolloutList { .. },
+            RolloutList { .. }
+                | RolloutDetail { .. }
+                | RolloutForm { .. }
+                | RolloutGroupList { .. }
+                | RolloutGroupDetail { .. },
+        ) => true,
+        (
+            OrganizationList { .. },
+            OrganizationList { .. } | OrganizationDetail { .. } | OrganizationForm { .. },
+        ) => true,
+        (UserList { .. }, UserList { .. } | UserDetail { .. } | UserForm { .. }) => true,
+        (
+            SkillCenterList { .. },
+            SkillCenterList { .. } | SkillCenterDetail { .. } | SkillCenterForm { .. },
+        ) => true,
+        (
+            DaemonVersionList { .. },
+            DaemonVersionList { .. } | DaemonVersionDetail { .. },
+        ) => true,
+        (
+            ImportSources { .. },
+            ImportSources { .. }
+                | ImportSourcesSearch { .. }
+                | ImportSourceDetail { .. }
+                | ImportSourceEdit { .. },
+        ) => true,
+        (DocList { .. }, DocList { .. } | DocPage { .. }) => true,
+        // Single-page entries — match exact variant.
+        (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
+    }
+}
+
 // -- Navigation list -------------------------------------------------------
 
 /// Renders one group of nav links. Shared between desktop sidebar and
@@ -157,6 +239,7 @@ fn NavGroupList(
     /// `None`.
     #[props(default)] on_navigate: Option<EventHandler<()>>,
 ) -> Element {
+    let current_route = use_route::<Route>();
     rsx! {
         // `min-h-0` is the flexbox escape hatch that lets this child
         // shrink below its content size — without it, `overflow-y-auto`
@@ -172,12 +255,16 @@ fn NavGroupList(
                             match link {
                                 NavLink::Internal(route, label) => {
                                     let nav = on_navigate;
+                                    let cls = if route_active(&route, &current_route) {
+                                        "nav-link nav-link-active"
+                                    } else {
+                                        "nav-link"
+                                    };
                                     rsx! {
                                         Link {
                                             key: "{label}",
                                             to: route.clone(),
-                                            class: "nav-link",
-                                            active_class: "nav-link-active",
+                                            class: cls,
                                             onclick: move |_| if let Some(h) = nav { h.call(()); },
                                             {t!(&label)}
                                         }
