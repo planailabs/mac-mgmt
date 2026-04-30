@@ -134,6 +134,11 @@ pub struct FileValidator {
     /// of shelling out. Supported: "json", "toml", "json_schema".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin: Option<String>,
+    /// URL of a JSON Schema to validate the file against. Schemas are
+    /// pre-fetched at daemon startup via [`crate::schema_cache`]; if not
+    /// cached, a runtime fetch is attempted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_url: Option<String>,
 }
 
 /// Run a built-in validator on a file. Returns Ok(()) if valid,

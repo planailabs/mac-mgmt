@@ -39,6 +39,7 @@ pub mod scripts;
 pub mod self_update;
 /// Re-export common sentry helpers for backwards compatibility.
 pub use mac_mgmt_common::sentry_ext;
+pub mod schema_cache;
 pub mod secrets_cache;
 pub mod server_push;
 pub mod service;

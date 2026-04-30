@@ -452,6 +452,7 @@ impl ManagedService for OpenClaw {
                 glob: "*.json".into(),
                 command: vec!["openclaw".into(), "config".into(), "validate".into()],
                 builtin: Some("json".into()),
+                schema_url: None,
             }],
             description: "OpenClaw gateway configuration".into(),
         }];

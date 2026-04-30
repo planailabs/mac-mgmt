@@ -191,6 +191,7 @@ pub(crate) fn matches_allow_write(tunnel: &FileTunnel, filename: &str) -> bool {
 pub(crate) struct MatchedValidator {
     pub(crate) builtin: Option<String>,
     pub(crate) command: Vec<String>,
+    pub(crate) schema_url: Option<String>,
 }
 
 /// Find the first matching validator for a filename.
@@ -212,6 +213,7 @@ pub(crate) fn find_validator(tunnel: &FileTunnel, file_path: &Path) -> Option<Ma
                 return Some(MatchedValidator {
                     builtin: v.builtin.clone(),
                     command: cmd,
+                    schema_url: v.schema_url.clone(),
                 });
             }
         }
@@ -416,7 +418,20 @@ pub(crate) fn write_file(
             tracing::debug!("builtin validation ({name}) passed for {}", path.display());
         }
 
-        // 2. Run external command validator (if configured).
+        // 2. Validate against JSON Schema (if configured).
+        if let Some(url) = &validator.schema_url {
+            if let Err(msg) = crate::schema_cache::validate_file(url, &path) {
+                tracing::warn!(
+                    "JSON schema validation failed for {}: {msg}",
+                    path.display()
+                );
+                rollback();
+                return Err((422, format!("schema validation failed: {msg}")));
+            }
+            tracing::debug!("JSON schema validation passed for {}", path.display());
+        }
+
+        // 3. Run external command validator (if configured).
         //    If the binary is missing, log a warning but don't fail — the
         //    builtin validator (if any) already passed.
         if !validator.command.is_empty() {

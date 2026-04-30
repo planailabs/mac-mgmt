@@ -1277,6 +1277,7 @@ fn daemon_config_file_tunnels() -> Vec<FileTunnel> {
                 glob: "config.toml".into(),
                 command: Vec::new(),
                 builtin: Some("toml".into()),
+                schema_url: None,
             }],
             description: "Daemon configuration directory".into(),
         },

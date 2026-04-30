@@ -209,6 +209,7 @@ impl ManagedService for Opencode {
                 glob: "*.json".into(),
                 command: Vec::new(),
                 builtin: Some("json".into()),
+                schema_url: Some(SCHEMA_URL.into()),
             }],
             description: "OpenCode configuration".into(),
         }]

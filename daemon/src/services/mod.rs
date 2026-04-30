@@ -27,104 +27,6 @@ pub async fn http_get(host: &str, port: u16, path: &str) -> Result<String> {
     Ok(resp.text().await?)
 }
 
-// ── JSON Schema cache ──────────────────────────────────────────────────
-
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
-/// Global schema cache. Populated at daemon startup, consulted by
-/// `merge_json_config` when a `schema_url` is provided.
-static SCHEMA_CACHE: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();
-
-fn cache() -> &'static Mutex<HashMap<String, serde_json::Value>> {
-    SCHEMA_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Pre-fetch a JSON Schema from `url` and store it in the global cache.
-/// Called at daemon startup so validation doesn't block on network later.
-/// Logs a warning and continues if the fetch fails.
-pub async fn prefetch_schema(url: &str) {
-    tracing::info!("prefetching JSON schema from {url}");
-    match fetch_schema(url).await {
-        Ok(schema) => {
-            cache().lock().unwrap().insert(url.to_string(), schema);
-            tracing::info!("cached JSON schema from {url}");
-        }
-        Err(e) => {
-            tracing::warn!("failed to prefetch JSON schema from {url}: {e}");
-        }
-    }
-}
-
-async fn fetch_schema(url: &str) -> Result<serde_json::Value> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(15))
-        .build()?;
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch schema from {url}"))?;
-    let schema: serde_json::Value = resp
-        .json()
-        .await
-        .with_context(|| format!("failed to parse schema from {url}"))?;
-    Ok(schema)
-}
-
-/// Try to get a cached schema. If not cached, attempt a blocking fetch
-/// and cache for next time. Returns `None` if fetch fails.
-fn get_or_fetch_schema(url: &str) -> Option<serde_json::Value> {
-    {
-        let c = cache().lock().unwrap();
-        if let Some(schema) = c.get(url) {
-            return Some(schema.clone());
-        }
-    }
-    // Not cached — try a blocking fetch at runtime.
-    tracing::info!("schema not cached, fetching {url} at runtime");
-    match reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(15))
-        .build()
-        .and_then(|c| c.get(url).send())
-        .and_then(|r| r.json::<serde_json::Value>())
-    {
-        Ok(schema) => {
-            cache()
-                .lock()
-                .unwrap()
-                .insert(url.to_string(), schema.clone());
-            tracing::info!("fetched and cached JSON schema from {url}");
-            Some(schema)
-        }
-        Err(e) => {
-            tracing::warn!("failed to fetch JSON schema from {url}: {e}");
-            None
-        }
-    }
-}
-
-/// Validate `instance` against a JSON schema from the given URL.
-/// Returns a list of validation errors, or an empty vec if valid.
-/// Returns `None` if the schema couldn't be obtained (skip validation).
-fn validate_against_schema(url: &str, instance: &serde_json::Value) -> Option<Vec<String>> {
-    let schema = get_or_fetch_schema(url)?;
-    let validator = match jsonschema::validator_for(&schema) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("failed to compile JSON schema from {url}: {e}");
-            return None;
-        }
-    };
-    let errors: Vec<String> = validator
-        .iter_errors(instance)
-        .map(|e| format!("{} (at {})", e, e.instance_path()))
-        .collect();
-    Some(errors)
-}
-
 // ── Config merge + validate ────────────────────────────────────────────
 
 /// Options for [`merge_json_config`].
@@ -133,9 +35,7 @@ pub struct MergeValidateOpts<'a> {
     /// External command to run after writing (e.g. `["openclaw", "config", "validate"]`).
     pub validate_cmd: Option<&'a [&'a str]>,
     /// URL of a JSON Schema to validate the merged config against.
-    /// Schemas are pre-fetched at startup; if not cached, a runtime
-    /// fetch is attempted. Validation is skipped if the schema can't
-    /// be obtained.
+    /// Uses [`crate::schema_cache`] for caching.
     pub schema_url: Option<&'a str>,
 }
 
@@ -182,12 +82,12 @@ pub fn merge_json_config(
 
     // Validate against JSON Schema before writing, if configured.
     if let Some(url) = opts.schema_url {
-        if let Some(errors) = validate_against_schema(url, &existing) {
-            if !errors.is_empty() {
-                let summary = errors.join("; ");
-                tracing::warn!("JSON schema validation failed for {}: {summary}", config_path.display());
-                anyhow::bail!("JSON schema validation failed: {summary}");
-            }
+        if let Err(summary) = crate::schema_cache::validate(url, &existing) {
+            tracing::warn!(
+                "JSON schema validation failed for {}: {summary}",
+                config_path.display()
+            );
+            anyhow::bail!("JSON schema validation failed: {summary}");
         }
     }
 
