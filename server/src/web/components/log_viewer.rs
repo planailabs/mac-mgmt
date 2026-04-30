@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::ui::{Button, ButtonSize, ButtonVariant, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -114,12 +115,8 @@ pub fn FleetLogs(instance_id: String) -> Element {
 
     match &*ctx.read() {
         Some(Ok(c)) => render_logs(c),
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
 
@@ -133,12 +130,11 @@ fn render_logs(ctx: &LogsContext) -> Element {
     let mut polling = use_signal(|| false);
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("log-title")} }
+        h2 { class: "h-page", {t!("log-title")} }
 
         div { class: "flex items-center gap-3 mb-4",
             // Service filter
-            select {
-                class: "px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+            select { class: "input input-sm w-auto",
                 value: "{selected_service}",
                 onchange: move |e| selected_service.set(e.value()),
                 option { value: "", {t!("log-all-services")} }
@@ -148,8 +144,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
             }
 
             // Load / Poll toggle
-            button {
-                class: "px-3 py-1 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
+            button { class: "btn btn-sm btn-primary",
                 onclick: {
                     let logs_url = logs_url.clone();
                     let token = token.clone();
@@ -222,8 +217,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
             }
 
             // Clear
-            button {
-                class: "px-3 py-1 text-sm font-medium bg-gray-600 text-white rounded hover:bg-gray-700",
+            Button { size: ButtonSize::Sm, variant: ButtonVariant::Secondary,
                 onclick: move |_| {
                     log_output.set(String::new());
                 },
@@ -231,8 +225,7 @@ fn render_logs(ctx: &LogsContext) -> Element {
             }
 
             // One-shot fetch
-            button {
-                class: "px-3 py-1 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700",
+            button { class: "btn btn-sm btn-success-soft",
                 onclick: {
                     let logs_url = logs_url.clone();
                     let token = token.clone();
@@ -272,9 +265,9 @@ fn render_logs(ctx: &LogsContext) -> Element {
         }
 
         // Log output
-        pre { class: "log-output p-3 bg-gray-900 text-green-400 text-xs font-mono rounded overflow-x-auto max-h-[600px] overflow-y-auto whitespace-pre-wrap min-h-[200px]",
+        pre { class: "log-output",
             if log_output.read().is_empty() {
-                span { class: "text-gray-500", {t!("log-empty-hint")} }
+                span { class: "text-fg-faint", {t!("log-empty-hint")} }
             } else {
                 "{log_output}"
             }

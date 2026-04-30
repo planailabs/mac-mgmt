@@ -7,16 +7,16 @@ use super::federation_token_list::FederationTokenList;
 #[component]
 pub fn AdminTokens() -> Element {
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4 dark:text-white", {t!("admin-tokens-title")} }
-        p { class: "text-gray-600 dark:text-gray-300 mb-6 text-sm",
+        h2 { class: "h-page text-fg-strong", {t!("admin-tokens-title")} }
+        p { class: "text-fg mb-6 text-sm",
             {t!("admin-tokens-description")}
         }
         AdminTokenList {}
 
-        hr { class: "my-8 border-gray-200 dark:border-gray-700" }
+        hr { class: "my-8 border-line-soft" }
 
-        h2 { class: "text-2xl font-bold mb-4 dark:text-white", {t!("federation-tokens-title")} }
-        p { class: "text-gray-600 dark:text-gray-300 mb-6 text-sm",
+        h2 { class: "h-page text-fg-strong", {t!("federation-tokens-title")} }
+        p { class: "text-fg mb-6 text-sm",
             {t!("federation-tokens-description")}
         }
         FederationTokenList {}

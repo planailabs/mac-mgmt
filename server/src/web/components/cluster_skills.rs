@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use super::bundle_detail::SkillChannelDisplay;
+use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -148,7 +149,6 @@ async fn list_bundle_skills(cluster_id: String) -> Result<Vec<BundleSkillDisplay
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // A bundle skill is overwritten if a direct assignment exists for the same slug.
     let direct_slugs: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT s.slug \
          FROM cluster_skills cs \
@@ -282,7 +282,6 @@ async fn remove_cluster_skill(cluster_skill_id: String) -> Result<(), ServerFnEr
     let uuid: uuid::Uuid = cluster_skill_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Check access before deleting
     let owner_cid =
         sqlx::query_scalar::<_, uuid::Uuid>("SELECT cluster_id FROM cluster_skills WHERE id = $1")
             .bind(uuid)
@@ -363,8 +362,6 @@ async fn add_cluster_bundle(
             .parse()
             .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
 
-        // Check for overlap: does the new bundle share any skill_channel_id with
-        // any bundle already assigned to this cluster?
         let overlap = sqlx::query_scalar::<_, String>(
             "SELECT s.slug || '/' || sc.channel \
              FROM bundle_items new_bi \
@@ -405,7 +402,6 @@ async fn remove_cluster_bundle(cluster_bundle_id: String) -> Result<(), ServerFn
     let uuid: uuid::Uuid = cluster_bundle_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Check access before deleting
     let owner_cid =
         sqlx::query_scalar::<_, uuid::Uuid>("SELECT cluster_id FROM cluster_bundles WHERE id = $1")
             .bind(uuid)
@@ -482,7 +478,7 @@ async fn list_remote_skill_options() -> Result<Vec<RemoteSkillOption>, ServerFnE
     for (sc_id, cached) in &catalogs {
         let sc_name = sc_names.get(sc_id).cloned().unwrap_or_default();
         if sc_name.is_empty() {
-            continue; // skill center disabled or deleted
+            continue;
         }
         for sc in &cached.catalog.skill_channels {
             if sc.hidden {
@@ -590,10 +586,9 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         // Direct skill assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-skills-direct")} }
+            h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("cluster-skills-direct")} }
             if !read_only {
-                form {
-                    class: "flex gap-2 mb-3",
+                form { class: "flex gap-2 mb-3",
                     onsubmit: move |evt: FormEvent| {
                         evt.prevent_default();
                         let cid = cid_add_skill.clone();
@@ -604,8 +599,8 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                             }
                             if let Some(rest) = val.strip_prefix("remote|") {
                                 let parts: Vec<&str> = rest.splitn(5, '|').collect();
-                                if parts.len() == 5 {
-                                    if add_cluster_skill(
+                                if parts.len() == 5
+                                    && add_cluster_skill(
                                         cid,
                                         None,
                                         Some(parts[0].to_string()),
@@ -616,10 +611,9 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                     )
                                     .await
                                     .is_ok()
-                                    {
-                                        selected_sc.set(String::new());
-                                        skills.restart();
-                                    }
+                                {
+                                    selected_sc.set(String::new());
+                                    skills.restart();
                                 }
                             } else if add_cluster_skill(cid, Some(val), None, None, None, None, None).await.is_ok() {
                                 selected_sc.set(String::new());
@@ -627,8 +621,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                             }
                         });
                     },
-                    select {
-                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                    select { class: "input flex-1 w-auto py-1 text-sm",
                         value: "{selected_sc}",
                         onchange: move |evt| selected_sc.set(evt.value()),
                         option { value: "", {t!("cluster-skills-select")} }
@@ -648,7 +641,6 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         }}
                         {match &*available_remote_sc.read() {
                             Some(Ok(list)) if !list.is_empty() => {
-                                // Group by skill center name
                                 let mut by_sc: std::collections::BTreeMap<String, Vec<&RemoteSkillOption>> = std::collections::BTreeMap::new();
                                 for rsc in list.iter() {
                                     by_sc.entry(rsc.skill_center_name.clone()).or_default().push(rsc);
@@ -674,19 +666,17 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                             _ => rsx! {},
                         }}
                     }
-                    button {
-                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                        r#type: "submit",
+                    Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                         {t!("add")}
                     }
                 }
             }
             {match &*skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-skills-no-direct")} }
+                    HelpText { {t!("cluster-skills-no-direct")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for cs in list {
                             {
                                 let csid = cs.cluster_skill_id.to_string();
@@ -697,16 +687,15 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "flex items-center gap-2",
                                             span {
-                                                class: if is_remote { "text-sm font-mono text-purple-700 dark:text-purple-400" } else { "text-sm font-mono" },
+                                                class: if is_remote { "text-sm font-mono text-accent-strong" } else { "text-sm font-mono" },
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-skills-via", source: via.clone())} }
+                                                span { class: "text-xs text-accent", {t!("cluster-skills-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
-                                            button {
-                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                            button { class: "link-danger text-sm",
                                                 onclick: move |_| {
                                                     let csid = csid.clone();
                                                     spawn(async move {
@@ -724,20 +713,20 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
+                None => rsx! { HelpText { "Loading..." } },
             }}
         }
 
-        // Skills from bundles (read-only, blue)
+        // Skills from bundles (read-only, info color)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2", {t!("cluster-skills-from-bundles")} }
+            h4 { class: "text-sm font-semibold text-info mb-2", {t!("cluster-skills-from-bundles")} }
             {match &*bundle_skills.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-skills-no-bundle-skills")} }
+                    HelpText { {t!("cluster-skills-no-bundle-skills")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for bs in list {
                             {
                                 let label = format!("{} / {}", bs.skill_slug, bs.channel);
@@ -746,12 +735,12 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                 rsx! {
                                     li { class: "py-2 flex items-center gap-2",
                                         span {
-                                            class: if overwritten { "text-sm font-mono text-blue-400 dark:text-blue-600 line-through" } else { "text-sm font-mono text-blue-700 dark:text-blue-400" },
+                                            class: if overwritten { "text-sm font-mono text-info opacity-50 line-through" } else { "text-sm font-mono text-info" },
                                             "{label}"
                                         }
-                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, {t!("cluster-skills-via", source: via.clone())} }
+                                        span { class: if overwritten { "text-xs text-info opacity-50" } else { "text-xs text-info" }, {t!("cluster-skills-via", source: via.clone())} }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", {t!("cluster-skills-overwritten")} }
+                                            span { class: "text-xs text-fg-faint italic", {t!("cluster-skills-overwritten")} }
                                         }
                                     }
                                 }
@@ -759,20 +748,19 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
+                None => rsx! { HelpText { "Loading..." } },
             }}
         }
 
         // Bundle assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-skills-bundles-title")} }
+            h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("cluster-skills-bundles-title")} }
             if let Some(err) = &*bundle_error.read() {
-                p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
+                ErrorText { class: "mb-2", "{err}" }
             }
             if !read_only {
-                form {
-                    class: "flex gap-2 mb-3",
+                form { class: "flex gap-2 mb-3",
                     onsubmit: move |evt: FormEvent| {
                         evt.prevent_default();
                         let cid = cid_add_bundle.clone();
@@ -818,8 +806,7 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                             }
                         });
                     },
-                    select {
-                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                    select { class: "input flex-1 w-auto py-1 text-sm",
                         value: "{selected_bundle}",
                         onchange: move |evt| selected_bundle.set(evt.value()),
                         option { value: "", {t!("cluster-skills-select-bundle")} }
@@ -864,19 +851,17 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                             _ => rsx! {},
                         }}
                     }
-                    button {
-                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                        r#type: "submit",
+                    Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                         {t!("add")}
                     }
                 }
             }
             {match &*bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-skills-no-bundle-assign")} }
+                    HelpText { {t!("cluster-skills-no-bundle-assign")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for cb in list {
                             {
                                 let cbid = cb.cluster_bundle_id.to_string();
@@ -887,16 +872,15 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "flex items-center gap-2",
                                             span {
-                                                class: if is_remote { "text-sm text-purple-700 dark:text-purple-400" } else { "text-sm" },
+                                                class: if is_remote { "text-sm text-accent-strong" } else { "text-sm" },
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-skills-via", source: via.clone())} }
+                                                span { class: "text-xs text-accent", {t!("cluster-skills-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
-                                            button {
-                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                            button { class: "link-danger text-sm",
                                                 onclick: move |_| {
                                                     let cbid = cbid.clone();
                                                     spawn(async move {
@@ -914,8 +898,8 @@ pub fn ClusterSkills(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
+                None => rsx! { HelpText { "Loading..." } },
             }}
         }
     }

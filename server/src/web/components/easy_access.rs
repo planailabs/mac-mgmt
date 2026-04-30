@@ -161,8 +161,8 @@ pub fn EasyAccess() -> Element {
             if nodes.is_empty() {
                 return rsx! {
                     div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                        h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", {t!("easy-access-title")} }
-                        p { class: "text-gray-500 dark:text-gray-400 text-lg",
+                        h1 { class: "text-3xl font-bold text-fg-strong mb-4", {t!("easy-access-title")} }
+                        p { class: "text-fg-muted text-lg",
                             {t!("easy-access-no-nodes")}
                         }
                     }
@@ -171,20 +171,20 @@ pub fn EasyAccess() -> Element {
 
             rsx! {
                 div { class: "max-w-6xl mx-auto px-4 py-8",
-                    h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-8", {t!("easy-access-title")} }
+                    h1 { class: "text-3xl font-bold text-fg-strong mb-8", {t!("easy-access-title")} }
 
                     for node in nodes {
                         div { key: "{node.instance_id}", class: "mb-10",
                             // Node heading
                             div { class: "mb-4",
-                                h2 { class: "text-2xl font-bold text-gray-900 dark:text-white",
+                                h2 { class: "text-2xl font-bold text-fg-strong",
                                     Link {
                                         to: Route::FleetDetail { instance_id: node.instance_id.clone() },
-                                        class: "hover:text-blue-600 dark:hover:text-blue-400 transition-colors",
+                                        class: "hover:text-info transition-colors",
                                         "{node.hostname}"
                                     }
                                 }
-                                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1",
+                                p { class: "text-sm text-fg-muted mt-1",
                                     "{node.cluster_name}"
                                 }
                             }
@@ -202,21 +202,7 @@ pub fn EasyAccess() -> Element {
                                         rsx! {
                                             button {
                                                 key: "{tn}",
-                                                class: if has_proxy {
-                                                    "flex flex-col items-center justify-center w-28 h-28 rounded-xl \
-                                                        bg-white dark:bg-gray-800 \
-                                                        border-2 border-gray-200 dark:border-gray-700 \
-                                                        hover:border-blue-400 dark:hover:border-blue-500 \
-                                                        hover:shadow-lg hover:scale-105 \
-                                                        transition-all duration-150 cursor-pointer \
-                                                        group"
-                                                } else {
-                                                    "flex flex-col items-center justify-center w-28 h-28 rounded-xl \
-                                                        bg-gray-50 dark:bg-gray-900 \
-                                                        border-2 border-gray-200 dark:border-gray-700 \
-                                                        opacity-50 cursor-not-allowed \
-                                                        group"
-                                                },
+                                                class: if has_proxy { "tile group" } else { "tile-disabled group" },
                                                 disabled: !has_proxy,
                                                 onclick: move |_| {
                                                     let iid = iid.clone();
@@ -239,8 +225,7 @@ pub fn EasyAccess() -> Element {
                                                         }
                                                     }
                                                 },
-                                                svg {
-                                                    class: "h-10 w-10 text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors mb-2",
+                                                svg { class: "tile-icon",
                                                     fill: "none",
                                                     stroke: "currentColor",
                                                     stroke_width: "1.5",
@@ -249,9 +234,7 @@ pub fn EasyAccess() -> Element {
                                                     view_box: "0 0 24 24",
                                                     path { d: "{icon_path}" }
                                                 }
-                                                span { class: "text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors text-center leading-tight",
-                                                    "{display_name}"
-                                                }
+                                                span { class: "tile-label", "{display_name}" }
                                             }
                                         }
                                     }
@@ -262,17 +245,9 @@ pub fn EasyAccess() -> Element {
                                     {
                                         let iid = node.instance_id.clone();
                                         rsx! {
-                                            Link {
-                                                to: Route::FleetFiles { instance_id: iid },
-                                                class: "flex flex-col items-center justify-center w-28 h-28 rounded-xl \
-                                                        bg-white dark:bg-gray-800 \
-                                                        border-2 border-gray-200 dark:border-gray-700 \
-                                                        hover:border-blue-400 dark:hover:border-blue-500 \
-                                                        hover:shadow-lg hover:scale-105 \
-                                                        transition-all duration-150 cursor-pointer \
-                                                        group",
-                                                svg {
-                                                    class: "h-10 w-10 text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors mb-2",
+                                            Link { to: Route::FleetFiles { instance_id: iid },
+                                                class: "tile group",
+                                                svg { class: "tile-icon",
                                                     fill: "none",
                                                     stroke: "currentColor",
                                                     stroke_width: "1.5",
@@ -281,9 +256,7 @@ pub fn EasyAccess() -> Element {
                                                     view_box: "0 0 24 24",
                                                     path { d: "{service_icon(\"files\")}" }
                                                 }
-                                                span { class: "text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors text-center leading-tight",
-                                                    {t!("easy-access-files")}
-                                                }
+                                                span { class: "tile-label", {t!("easy-access-files")} }
                                             }
                                         }
                                     }
@@ -294,17 +267,9 @@ pub fn EasyAccess() -> Element {
                                     {
                                         let iid = node.instance_id.clone();
                                         rsx! {
-                                            Link {
-                                                to: Route::FleetShell { instance_id: iid },
-                                                class: "flex flex-col items-center justify-center w-28 h-28 rounded-xl \
-                                                        bg-white dark:bg-gray-800 \
-                                                        border-2 border-gray-200 dark:border-gray-700 \
-                                                        hover:border-blue-400 dark:hover:border-blue-500 \
-                                                        hover:shadow-lg hover:scale-105 \
-                                                        transition-all duration-150 cursor-pointer \
-                                                        group",
-                                                svg {
-                                                    class: "h-10 w-10 text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors mb-2",
+                                            Link { to: Route::FleetShell { instance_id: iid },
+                                                class: "tile group",
+                                                svg { class: "tile-icon",
                                                     fill: "none",
                                                     stroke: "currentColor",
                                                     stroke_width: "1.5",
@@ -313,9 +278,7 @@ pub fn EasyAccess() -> Element {
                                                     view_box: "0 0 24 24",
                                                     path { d: "{service_icon(\"shell\")}" }
                                                 }
-                                                span { class: "text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors text-center leading-tight",
-                                                    {t!("easy-access-shell")}
-                                                }
+                                                span { class: "tile-label", {t!("easy-access-shell")} }
                                             }
                                         }
                                     }
@@ -328,14 +291,14 @@ pub fn EasyAccess() -> Element {
         }
         Some(Err(e)) => rsx! {
             div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", {t!("easy-access-title")} }
-                p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} }
+                h1 { class: "text-3xl font-bold text-fg-strong mb-4", {t!("easy-access-title")} }
+                p { class: "text-danger", {t!("error-message", message: e.to_string())} }
             }
         },
         None => rsx! {
             div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                h1 { class: "text-3xl font-bold text-gray-900 dark:text-white mb-4", {t!("easy-access-title")} }
-                p { class: "text-gray-500 dark:text-gray-400", {t!("loading")} }
+                h1 { class: "text-3xl font-bold text-fg-strong mb-4", {t!("easy-access-title")} }
+                p { class: "text-fg-muted", {t!("loading")} }
             }
         },
     }

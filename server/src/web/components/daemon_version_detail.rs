@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
-use crate::web::components::table_utils::{SortableTh, TableToolbar};
+use crate::web::components::ui::{
+    DataTable, ErrorText, HelpText, PageHeader, SectionHeading, SortState, SortableTh, Td, TdMono,
+    TdMuted, Th,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -15,14 +18,14 @@ async fn get_api_base_url() -> Result<String, ServerFnError> {
     Ok(cfg.api.external_url.clone())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VersionCluster {
     pub id: Uuid,
     pub name: String,
     pub instances: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VersionRollout {
     pub id: Uuid,
     pub status: String,
@@ -62,7 +65,7 @@ async fn get_rollouts_for_version(version: String) -> Result<Vec<VersionRollout>
         .collect())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PinnedCluster {
     pub id: Uuid,
     pub name: String,
@@ -133,7 +136,7 @@ async fn get_clusters_on_version(version: String) -> Result<Vec<VersionCluster>,
         .collect())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DaemonStorePath {
     pub system: String,
     pub store_path: String,
@@ -212,260 +215,60 @@ pub fn DaemonVersionDetail(version: String) -> Element {
 
     rsx! {
         div { class: "flex items-center justify-between mb-6",
-            h2 { class: "text-2xl font-bold", {t!("daemon-version-detail-title", version: version.clone())} }
-            Link {
-                to: Route::DaemonVersionList {},
-                class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
+            PageHeader { class: "mb-0", {t!("daemon-version-detail-title", version: version.clone())} }
+            Link { to: Route::DaemonVersionList {}, class: "link text-sm",
                 {t!("daemon-version-detail-all")}
             }
         }
         {match &*paths.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
-                    rsx! {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            {t!("daemon-version-detail-no-paths")}
-                        }
-                    }
-                } else {{
-                    let search = use_signal(String::new);
-                    let limit = use_signal(|| 20usize);
-                    let sort = use_signal(|| ("system".to_string(), true));
-                    let list_clone = list.clone();
-                    let mut filtered: Vec<DaemonStorePath> = {
-                        let q = search.read().to_lowercase();
-                        if q.is_empty() {
-                            list_clone.clone()
-                        } else {
-                            list_clone.iter()
-                                .filter(|p| p.system.to_lowercase().contains(&q) || p.store_path.to_lowercase().contains(&q))
-                                .cloned().collect()
-                        }
-                    };
-                    {
-                        let (key, asc) = sort.read().clone();
-                        filtered.sort_by(|a, b| {
-                            let ord = match key.as_str() {
-                                "store_path" => a.store_path.cmp(&b.store_path),
-                                _ => a.system.cmp(&b.system),
-                            };
-                            if asc { ord } else { ord.reverse() }
-                        });
-                    }
-                    let total = list.len();
-                    let filtered_count = filtered.len();
-                    let limit_val = *limit.read();
-                    let shown = filtered_count.min(limit_val);
-                    rsx! {
-                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                                thead { class: "bg-gray-50 dark:bg-gray-700",
-                                    tr {
-                                        SortableTh { label: t!("daemon-version-detail-col-system"), sort_key: "system".to_string(), sort }
-                                        SortableTh { label: t!("daemon-version-detail-col-store-path"), sort_key: "store_path".to_string(), sort }
-                                        th { class: "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider",
-                                            ""
-                                        }
-                                    }
-                                }
-                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                    for p in filtered.into_iter().take(limit_val) {
-                                        {
-                                            let dl_url = format!("{}/api/daemon-download/{}/{}", api_base_url, version, p.system);
-                                            rsx! {
-                                                tr { key: "{p.system}",
-                                                    td { class: "px-6 py-4 font-mono text-sm", "{p.system}" }
-                                                    td { class: "px-6 py-4 font-mono text-xs text-gray-600 dark:text-gray-300 break-all",
-                                                        "{p.store_path}"
-                                                    }
-                                                    td { class: "px-6 py-4 text-sm",
-                                                        a {
-                                                            href: "{dl_url}",
-                                                            class: "inline-flex items-center px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700",
-                                                            {t!("download")}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }}
+                    rsx! { HelpText { {t!("daemon-version-detail-no-paths")} } }
+                } else {
+                    rsx! { PathsTable { list: list.clone(), api_base_url: api_base_url.clone(), version: version.clone() } }
+                }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", {t!("daemon-version-detail-clusters")} }
+        SectionHeading { class: "mt-10", {t!("daemon-version-detail-clusters")} }
         {match &*clusters.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
-                    rsx! {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            {t!("daemon-version-detail-no-daemons")}
-                        }
-                    }
-                } else {{
-                    let search = use_signal(String::new);
-                    let limit = use_signal(|| 20usize);
-                    let sort = use_signal(|| ("cluster".to_string(), true));
-                    let list_clone = list.clone();
-                    let mut filtered: Vec<VersionCluster> = {
-                        let q = search.read().to_lowercase();
-                        if q.is_empty() {
-                            list_clone.clone()
-                        } else {
-                            list_clone.iter()
-                                .filter(|c| c.name.to_lowercase().contains(&q))
-                                .cloned().collect()
-                        }
-                    };
-                    {
-                        let (key, asc) = sort.read().clone();
-                        filtered.sort_by(|a, b| {
-                            let ord = match key.as_str() {
-                                "instances" => a.instances.cmp(&b.instances),
-                                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                            };
-                            if asc { ord } else { ord.reverse() }
-                        });
-                    }
-                    let total = list.len();
-                    let filtered_count = filtered.len();
-                    let limit_val = *limit.read();
-                    let shown = filtered_count.min(limit_val);
-                    rsx! {
-                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                                thead { class: "bg-gray-50 dark:bg-gray-700",
-                                    tr {
-                                        SortableTh { label: t!("daemon-version-detail-col-cluster"), sort_key: "cluster".to_string(), sort }
-                                        SortableTh { label: t!("daemon-version-detail-col-instances"), sort_key: "instances".to_string(), sort }
-                                    }
-                                }
-                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                    for c in filtered.into_iter().take(limit_val) {
-                                        tr { key: "{c.id}",
-                                            td { class: "px-6 py-4 text-sm",
-                                                Link {
-                                                    to: Route::ClusterDetail { id: c.id.to_string() },
-                                                    class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                                    "{c.name}"
-                                                }
-                                            }
-                                            td { class: "px-6 py-4 text-sm text-gray-600 dark:text-gray-300", "{c.instances}" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }}
+                    rsx! { HelpText { {t!("daemon-version-detail-no-daemons")} } }
+                } else {
+                    rsx! { ClustersTable { list: list.clone() } }
+                }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", {t!("daemon-version-detail-rollouts")} }
+        SectionHeading { class: "mt-10", {t!("daemon-version-detail-rollouts")} }
         {match &*rollouts.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
-                    rsx! {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("daemon-version-detail-no-rollouts")} }
-                    }
-                } else {{
-                    let search = use_signal(String::new);
-                    let limit = use_signal(|| 20usize);
-                    let sort = use_signal(|| ("created".to_string(), false));
-                    let list_clone = list.clone();
-                    let mut filtered: Vec<VersionRollout> = {
-                        let q = search.read().to_lowercase();
-                        if q.is_empty() {
-                            list_clone.clone()
-                        } else {
-                            list_clone.iter()
-                                .filter(|r| r.id.to_string().to_lowercase().contains(&q) || r.status.to_lowercase().contains(&q))
-                                .cloned().collect()
-                        }
-                    };
-                    {
-                        let (key, asc) = sort.read().clone();
-                        filtered.sort_by(|a, b| {
-                            let ord = match key.as_str() {
-                                "rollout" => a.id.to_string().cmp(&b.id.to_string()),
-                                "status" => a.status.cmp(&b.status),
-                                _ => a.created_at.cmp(&b.created_at),
-                            };
-                            if asc { ord } else { ord.reverse() }
-                        });
-                    }
-                    let total = list.len();
-                    let filtered_count = filtered.len();
-                    let limit_val = *limit.read();
-                    let shown = filtered_count.min(limit_val);
-                    rsx! {
-                        TableToolbar { search, limit, total, filtered: filtered_count, shown }
-                        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 overflow-hidden",
-                            table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700",
-                                thead { class: "bg-gray-50 dark:bg-gray-700",
-                                    tr {
-                                        SortableTh { label: t!("daemon-version-detail-col-rollout"), sort_key: "rollout".to_string(), sort }
-                                        SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
-                                        SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
-                                    }
-                                }
-                                tbody { class: "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700",
-                                    for r in filtered.into_iter().take(limit_val) {
-                                        {
-                                            let ts = r.created_at.format("%Y-%m-%d %H:%M").to_string();
-                                            let short = r.id.to_string()[..8].to_string();
-                                            rsx! {
-                                                tr { key: "{r.id}",
-                                                    td { class: "px-6 py-4 text-sm font-mono",
-                                                        Link {
-                                                            to: Route::RolloutDetail { id: r.id.to_string() },
-                                                            class: "text-blue-600 dark:text-blue-400 hover:underline",
-                                                            "{short}"
-                                                        }
-                                                    }
-                                                    td { class: "px-6 py-4 text-sm", "{r.status}" }
-                                                    td { class: "px-6 py-4 text-xs text-gray-500 dark:text-gray-400", "{ts}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }}
+                    rsx! { HelpText { {t!("daemon-version-detail-no-rollouts")} } }
+                } else {
+                    rsx! { RolloutsTable { list: list.clone() } }
+                }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
 
-        h3 { class: "text-lg font-semibold mt-10 mb-3", {t!("daemon-version-detail-pinned")} }
+        SectionHeading { class: "mt-10", {t!("daemon-version-detail-pinned")} }
         {match &*pinned.read() {
             Some(Ok(list)) => {
                 if list.is_empty() {
-                    rsx! {
-                        p { class: "text-gray-500 dark:text-gray-400 text-sm",
-                            {t!("daemon-version-detail-no-pinned")}
-                        }
-                    }
+                    rsx! { HelpText { {t!("daemon-version-detail-no-pinned")} } }
                 } else {
                     rsx! {
                         ul { class: "list-disc pl-6 text-sm",
                             for c in list.iter() {
                                 li { key: "{c.id}",
-                                    Link {
-                                        to: Route::ClusterDetail { id: c.id.to_string() },
-                                        class: "text-blue-600 dark:text-blue-400 hover:underline",
+                                    Link { to: Route::ClusterDetail { id: c.id.to_string() }, class: "link",
                                         "{c.name}"
                                     }
                                 }
@@ -474,8 +277,195 @@ pub fn DaemonVersionDetail(version: String) -> Element {
                     }
                 }
             }
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
+    }
+}
+
+#[component]
+fn PathsTable(list: Vec<DaemonStorePath>, api_base_url: String, version: String) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("system".to_string(), true));
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<DaemonStorePath> = if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone
+                .iter()
+                .filter(|p| p.system.to_lowercase().contains(&q) || p.store_path.to_lowercase().contains(&q))
+                .cloned()
+                .collect()
+        };
+        let (key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = match key.as_str() {
+                "store_path" => a.store_path.cmp(&b.store_path),
+                _ => a.system.cmp(&b.system),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("daemon-version-detail-col-system"), sort_key: "system".to_string(), sort }
+                SortableTh { label: t!("daemon-version-detail-col-store-path"), sort_key: "store_path".to_string(), sort }
+                Th { "" }
+            },
+            body: rsx! {
+                for p in filtered.read().iter().take(limit_val) {
+                    {
+                        let dl_url = format!("{}/api/daemon-download/{}/{}", api_base_url, version, p.system);
+                        rsx! {
+                            tr { key: "{p.system}",
+                                TdMono { "{p.system}" }
+                                td { class: "td-muted font-mono text-xs break-all", "{p.store_path}" }
+                                Td {
+                                    a { href: "{dl_url}", class: "btn btn-xs btn-primary",
+                                        {t!("download")}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn ClustersTable(list: Vec<VersionCluster>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("cluster".to_string(), true));
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<VersionCluster> = if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone
+                .iter()
+                .filter(|c| c.name.to_lowercase().contains(&q))
+                .cloned()
+                .collect()
+        };
+        let (key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = match key.as_str() {
+                "instances" => a.instances.cmp(&b.instances),
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("daemon-version-detail-col-cluster"), sort_key: "cluster".to_string(), sort }
+                SortableTh { label: t!("daemon-version-detail-col-instances"), sort_key: "instances".to_string(), sort }
+            },
+            body: rsx! {
+                for c in filtered.read().iter().take(limit_val) {
+                    tr { key: "{c.id}",
+                        Td { class: "text-sm",
+                            Link { to: Route::ClusterDetail { id: c.id.to_string() }, class: "link",
+                                "{c.name}"
+                            }
+                        }
+                        TdMuted { class: "text-sm", "{c.instances}" }
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[component]
+fn RolloutsTable(list: Vec<VersionRollout>) -> Element {
+    let search = use_signal(String::new);
+    let limit = use_signal(|| 20usize);
+    let sort = use_signal::<SortState>(|| ("created".to_string(), false));
+
+    let list_clone = list.clone();
+    let filtered = use_memo(move || {
+        let q = search.read().to_lowercase();
+        let mut items: Vec<VersionRollout> = if q.is_empty() {
+            list_clone.clone()
+        } else {
+            list_clone
+                .iter()
+                .filter(|r| r.id.to_string().to_lowercase().contains(&q) || r.status.to_lowercase().contains(&q))
+                .cloned()
+                .collect()
+        };
+        let (key, asc) = sort.read().clone();
+        items.sort_by(|a, b| {
+            let ord = match key.as_str() {
+                "rollout" => a.id.to_string().cmp(&b.id.to_string()),
+                "status" => a.status.cmp(&b.status),
+                _ => a.created_at.cmp(&b.created_at),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        items
+    });
+
+    let total = list.len();
+    let filtered_count = filtered.read().len();
+    let limit_val = *limit.read();
+    let shown = filtered_count.min(limit_val);
+
+    rsx! {
+        DataTable {
+            search, limit, total, filtered: filtered_count, shown,
+            headers: rsx! {
+                SortableTh { label: t!("daemon-version-detail-col-rollout"), sort_key: "rollout".to_string(), sort }
+                SortableTh { label: t!("status"), sort_key: "status".to_string(), sort }
+                SortableTh { label: t!("created"), sort_key: "created".to_string(), sort }
+            },
+            body: rsx! {
+                for r in filtered.read().iter().take(limit_val) {
+                    {
+                        let ts = r.created_at.format("%Y-%m-%d %H:%M").to_string();
+                        let short = r.id.to_string()[..8].to_string();
+                        rsx! {
+                            tr { key: "{r.id}",
+                                TdMono {
+                                    Link { to: Route::RolloutDetail { id: r.id.to_string() }, class: "link",
+                                        "{short}"
+                                    }
+                                }
+                                Td { class: "text-sm", "{r.status}" }
+                                td { class: "td-muted text-xs", "{ts}" }
+                            }
+                        }
+                    }
+                }
+            },
+        }
     }
 }

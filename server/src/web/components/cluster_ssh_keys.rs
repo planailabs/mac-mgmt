@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -101,7 +102,6 @@ async fn remove_ssh_key(ssh_key_id: String) -> Result<(), ServerFnError> {
     let uuid: uuid::Uuid = ssh_key_id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Check access before deleting
     let owner_cid = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT cluster_id FROM cluster_ssh_keys WHERE id = $1",
     )
@@ -150,10 +150,9 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         if !read_only {
             if let Some(err) = &*error_msg.read() {
-                p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
+                ErrorText { class: "mb-2", "{err}" }
             }
-            form {
-                class: "flex gap-2 mb-3",
+            form { class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
                     evt.prevent_default();
                     let cid = cid_add.clone();
@@ -173,26 +172,26 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                         }
                     });
                 },
-                textarea {
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                textarea { class: "input flex-1 w-auto py-1 text-sm font-mono",
                     rows: 2,
                     placeholder: t!("ssh-keys-placeholder"),
                     value: "{key_input}",
                     oninput: move |e| key_input.set(e.value()),
                 }
-                button {
-                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 self-start",
-                    r#type: "submit",
+                Button {
+                    kind: ButtonKind::Submit,
+                    size: ButtonSize::Sm,
+                    class: "self-start",
                     {t!("add")}
                 }
             }
         }
         {match &*keys.read() {
             Some(Ok(list)) if list.is_empty() => rsx! {
-                p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("ssh-keys-no-keys")} }
+                HelpText { {t!("ssh-keys-no-keys")} }
             },
             Some(Ok(list)) => rsx! {
-                ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                ul { class: "divide-y divide-line-soft",
                     for key in list {
                         {
                             let kid = key.id.to_string();
@@ -203,12 +202,11 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                                     div {
                                         span { class: "text-sm font-mono", "{fp}" }
                                         if !comment.is_empty() {
-                                            span { class: "text-xs text-gray-500 dark:text-gray-400 ml-2", "{comment}" }
+                                            span { class: "text-xs text-fg-muted ml-2", "{comment}" }
                                         }
                                     }
                                     if !read_only {
-                                        button {
-                                            class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                        button { class: "link-danger text-sm",
                                             onclick: move |_| {
                                                 let kid = kid.clone();
                                                 spawn(async move {
@@ -226,8 +224,8 @@ pub fn ClusterSshKeys(cluster_id: String, read_only: bool) -> Element {
                     }
                 }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} } },
+            Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+            None => rsx! { HelpText { {t!("loading")} } },
         }}
     }
 }

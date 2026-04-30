@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::ui::{Badge, BadgeVariant, ErrorText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -81,7 +82,7 @@ pub fn Profile() -> Element {
                     // Header
                     div { class: "flex items-center gap-4",
                         // Large profile icon
-                        div { class: "flex items-center justify-center h-16 w-16 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400",
+                        div { class: "flex items-center justify-center h-16 w-16 rounded-full bg-surface-2 text-fg-muted",
                             svg {
                                 class: "h-10 w-10",
                                 fill: "none",
@@ -96,57 +97,53 @@ pub fn Profile() -> Element {
                             }
                         }
                         div {
-                            h2 { class: "text-2xl font-bold text-gray-900 dark:text-white", "{info.name}" }
-                            p { class: "text-gray-500 dark:text-gray-400 text-sm", "{info.email}" }
+                            h2 { class: "text-2xl font-bold text-fg-strong", "{info.name}" }
+                            p { class: "text-fg-muted text-sm", "{info.email}" }
                         }
                     }
 
                     // Details card
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 divide-y divide-gray-200 dark:divide-gray-700",
+                    div { class: "card divide-y divide-line-soft",
                         div { class: "px-4 py-3 flex justify-between items-center",
-                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", {t!("name")} }
-                            span { class: "text-sm text-gray-900 dark:text-white", "{info.name}" }
+                            span { class: "text-sm font-medium text-fg-muted", {t!("name")} }
+                            span { class: "text-sm text-fg-strong", "{info.name}" }
                         }
                         div { class: "px-4 py-3 flex justify-between items-center",
-                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", {t!("email")} }
-                            span { class: "text-sm text-gray-900 dark:text-white", "{info.email}" }
+                            span { class: "text-sm font-medium text-fg-muted", {t!("email")} }
+                            span { class: "text-sm text-fg-strong", "{info.email}" }
                         }
                         div { class: "px-4 py-3 flex justify-between items-center",
-                            span { class: "text-sm font-medium text-gray-500 dark:text-gray-400", {t!("profile-role")} }
+                            span { class: "text-sm font-medium text-fg-muted", {t!("profile-role")} }
                             if info.is_admin {
-                                span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-                                    {t!("admin")}
-                                }
+                                Badge { variant: BadgeVariant::Accent, {t!("admin")} }
                             } else {
-                                span { class: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200",
-                                    {t!("member")}
-                                }
+                                Badge { variant: BadgeVariant::Neutral, {t!("member")} }
                             }
                         }
                     }
 
                     // Organizations card
-                    div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
-                        h3 { class: "text-lg font-semibold text-gray-900 dark:text-white mb-3", {t!("profile-organizations")} }
+                    div { class: "card p-4",
+                        h3 { class: "h-section text-fg-strong", {t!("profile-organizations")} }
                         if orgs.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("profile-no-orgs")} }
+                            p { class: "text-fg-muted text-sm", {t!("profile-no-orgs")} }
                         } else {
-                            div { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                            div { class: "divide-y divide-line-soft",
                                 for o in &orgs {
                                     {
-                                        let badge_class = match o.role.as_str() {
-                                            "admin" => "bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300",
-                                            "write" => "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-                                            _ => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                        let badge_variant = match o.role.as_str() {
+                                            "admin" => BadgeVariant::Accent,
+                                            "write" => BadgeVariant::Info,
+                                            _ => BadgeVariant::Neutral,
                                         };
                                         rsx! {
                                             div { class: "flex items-center justify-between py-2",
                                                 Link {
                                                     to: Route::OrganizationDetail { id: o.id.clone() },
-                                                    class: "text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium",
+                                                    class: "link text-sm font-medium",
                                                     "{o.name}"
                                                 }
-                                                span { class: "text-xs px-1.5 py-0.5 rounded {badge_class}", "{o.role}" }
+                                                Badge { variant: badge_variant, "{o.role}" }
                                             }
                                         }
                                     }
@@ -157,7 +154,7 @@ pub fn Profile() -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
         None => rsx! { p { {t!("loading")} } },
     }
 }

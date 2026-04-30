@@ -167,6 +167,12 @@
   .btn-ghost     { @apply text-fg-muted hover:text-fg-strong hover:bg-surface-2; }
   .btn-accent    { @apply bg-accent-soft text-accent hover:opacity-80; }
 
+  /* Soft tinted variants for low-emphasis tertiary actions. */
+  .btn-info-soft    { @apply bg-info-soft text-info hover:opacity-80; }
+  .btn-warn-soft    { @apply bg-warn-soft text-warn-strong hover:opacity-80; }
+  .btn-success-soft { @apply bg-success-soft text-success hover:opacity-80; }
+  .btn-danger-soft  { @apply bg-danger-soft text-danger hover:opacity-80; }
+
   /* ── Form inputs ─────────────────────────────────────────────── */
   .input {
     @apply w-full rounded border border-line bg-surface text-fg
@@ -223,4 +229,51 @@
   .td          { @apply px-6 py-4 text-fg; }
   .td-mono     { @apply td font-mono text-sm; }
   .td-muted    { @apply px-6 py-4 text-fg-muted; }
+
+  /* ── Navigation chrome ─────────────────────────────────────────
+     Shared between the desktop sidebar and the mobile drawer. */
+  .nav-shell      { @apply bg-surface shadow shrink-0; }
+  .nav-side       { @apply hidden xl:flex xl:flex-col w-64 bg-surface
+                            border-line-soft overflow-y-auto; }
+  .nav-group-head { @apply px-3 text-xs font-semibold text-fg-muted
+                            uppercase tracking-wider; }
+  .nav-link       { @apply flex items-center px-3 py-2 text-sm
+                            font-medium rounded-md text-fg
+                            hover:bg-surface-2 hover:text-fg-strong
+                            transition-colors; }
+  .nav-icon-btn   { @apply ml-1 p-2 rounded-md text-fg-muted
+                            hover:text-fg-strong hover:bg-surface-2
+                            focus:outline-none focus:ring-2 focus:ring-info
+                            transition-colors; }
+
+  /* ── Tile launcher ─────────────────────────────────────────────
+     Square button used on the easy-access page. Pair the class
+     with `group` on the element so child .tile-icon / .tile-label
+     can light up via group-hover. */
+  .tile {
+    @apply flex flex-col items-center justify-center w-28 h-28 rounded-xl
+           bg-surface border-2 border-line-soft
+           hover:border-info hover:shadow-lg hover:scale-105
+           transition-all duration-150 cursor-pointer;
+  }
+  .tile-disabled {
+    @apply flex flex-col items-center justify-center w-28 h-28 rounded-xl
+           bg-surface-2 border-2 border-line-soft
+           opacity-50 cursor-not-allowed;
+  }
+  .tile-icon {
+    @apply h-10 w-10 text-fg-muted group-hover:text-info transition-colors mb-2;
+  }
+  .tile-label {
+    @apply text-xs font-medium text-fg group-hover:text-info
+           transition-colors text-center leading-tight;
+  }
+
+  /* ── Log viewer ───────────────────────────────────────────────── */
+  .log-output {
+    @apply p-3 rounded text-xs font-mono whitespace-pre-wrap
+           overflow-x-auto overflow-y-auto min-h-[200px] max-h-[600px];
+    background-color: rgb(15 23 42);   /* near-black, theme-agnostic */
+    color: rgb(74 222 128);            /* terminal green */
+  }
 }

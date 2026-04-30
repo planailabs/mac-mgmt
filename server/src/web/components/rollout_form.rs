@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::ui::{
+    Button, ButtonSize, ErrorText, FormField, HelpText, PageHeader,
+};
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
@@ -113,8 +116,6 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Resolve each stage_id to a real group UUID.
-    // "__all__" maps to the nil-UUID sentinel (no temp group created).
     let mut resolved: Vec<Uuid> = Vec::with_capacity(stage_ids.len());
     for sid in &stage_ids {
         if sid == "__all__" {
@@ -127,7 +128,6 @@ async fn create_rollout(
         }
     }
 
-    // Downgrade check: only meaningful when a target_version is set.
     if let Some(ver) = &target_version {
         #[derive(sqlx::FromRow)]
         struct DowngradeRow {
@@ -157,7 +157,6 @@ async fn create_rollout(
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         if !downgrades.is_empty() {
-            // Group by cluster
             let mut by_cluster: std::collections::BTreeMap<String, (String, Vec<String>)> =
                 std::collections::BTreeMap::new();
             for d in &downgrades {
@@ -178,7 +177,6 @@ async fn create_rollout(
         }
     }
 
-    // Verify the nixpkgs commit exists and protect against rollback.
     if let Some(nix) = &nixpkgs_commit {
         let current_commits: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT c.nixpkgs_commit \
@@ -228,8 +226,6 @@ async fn create_rollout(
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Empty service rows are dropped and percentages clamped inside
-    // to_json so an off-by-one doesn't poison evaluation.
     let gate_json: Option<serde_json::Value> = gate.as_ref().and_then(|g| g.to_json());
 
     for (i, gid) in resolved.iter().enumerate() {
@@ -269,41 +265,28 @@ pub fn RolloutForm() -> Element {
             let group_list_clone = group_list.clone();
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
-                    h2 { class: "text-2xl font-bold", {t!("rollout-form-title")} }
-                    Link {
-                        to: Route::RolloutGroupList {},
-                        class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
+                    PageHeader { class: "mb-0", {t!("rollout-form-title")} }
+                    Link { to: Route::RolloutGroupList {}, class: "link text-sm",
                         {t!("rollout-list-manage-groups")}
                     }
                 }
 
                 div { class: "space-y-4",
-                    div {
-                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            {t!("rollout-form-name-label")}
-                        }
-                        input {
-                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm dark:bg-gray-700 dark:text-white",
+                    FormField { label: t!("rollout-form-name-label"), help: t!("rollout-form-name-help"),
+                        input { class: "input",
                             placeholder: t!("rollout-form-name-placeholder"),
                             value: "{name}",
                             oninput: move |e| name.set(e.value()),
                         }
-                        p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                            {t!("rollout-form-name-help")}
-                        }
                     }
-                    div {
-                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            {t!("rollout-form-target-version")}
-                        }
+                    FormField { label: t!("rollout-form-target-version"), help: t!("rollout-form-version-help"),
                         {
                             let version_list: Vec<String> = match &*versions.read() {
                                 Some(Ok(v)) => v.clone(),
                                 _ => Vec::new(),
                             };
                             rsx! {
-                                select {
-                                    class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                                select { class: "input font-mono",
                                     value: "{target_version}",
                                     onchange: move |e| target_version.set(e.value()),
                                     option { value: "", {t!("rollout-form-none-nixpkgs")} }
@@ -312,34 +295,22 @@ pub fn RolloutForm() -> Element {
                                     }
                                 }
                                 if version_list.is_empty() {
-                                    p { class: "text-xs text-amber-600 dark:text-amber-500 mt-1",
+                                    p { class: "text-xs text-warn-strong mt-1",
                                         {t!("rollout-form-no-versions")}
                                     }
                                 }
                             }
                         }
-                        p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                            {t!("rollout-form-version-help")}
-                        }
                     }
-                    div {
-                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            {t!("rollout-form-nixpkgs-label")}
-                        }
-                        input {
-                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                    FormField { label: t!("rollout-form-nixpkgs-label"), help: t!("rollout-form-nixpkgs-help"),
+                        input { class: "input font-mono",
                             placeholder: t!("rollout-form-nixpkgs-placeholder"),
                             value: "{nixpkgs_commit}",
                             oninput: move |e| nixpkgs_commit.set(e.value()),
                         }
-                        p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                            {t!("rollout-form-nixpkgs-help")}
-                        }
                     }
                     div {
-                        label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1",
-                            {t!("rollout-form-stages-label")}
-                        }
+                        label { class: "label", {t!("rollout-form-stages-label")} }
 
                         // "All Clusters" as a selectable stage
                         {
@@ -351,6 +322,7 @@ pub fn RolloutForm() -> Element {
                                     input {
                                         r#type: "checkbox",
                                         checked: is_selected,
+                                        class: "rounded border-line text-brand focus:ring-brand",
                                         onchange: {
                                             let key = key.clone();
                                             move |_| {
@@ -365,7 +337,7 @@ pub fn RolloutForm() -> Element {
                                     }
                                     span { class: "font-semibold", {t!("rollout-form-all-clusters")} }
                                     if let Some(idx) = order {
-                                        span { class: "text-xs text-gray-400 dark:text-gray-500",
+                                        span { class: "text-xs text-fg-faint",
                                             {t!("rollout-form-stage-num", num: idx)}
                                         }
                                     }
@@ -388,14 +360,12 @@ pub fn RolloutForm() -> Element {
                                         input {
                                             r#type: "checkbox",
                                             checked: is_selected,
+                                            class: "rounded border-line text-brand focus:ring-brand",
                                             onchange: {
                                                 let gid = gid.clone();
                                                 move |_| {
-                                                    let mut stages =
-                                                        selected_stages.write();
-                                                    if let Some(pos) =
-                                                        stages.iter().position(|x| x == &gid)
-                                                    {
+                                                    let mut stages = selected_stages.write();
+                                                    if let Some(pos) = stages.iter().position(|x| x == &gid) {
                                                         stages.remove(pos);
                                                     } else {
                                                         stages.push(gid.clone());
@@ -405,7 +375,7 @@ pub fn RolloutForm() -> Element {
                                         }
                                         span { "{gname}" }
                                         if let Some(idx) = order {
-                                            span { class: "text-xs text-gray-400 dark:text-gray-500",
+                                            span { class: "text-xs text-fg-faint",
                                                 {t!("rollout-form-stage-num", num: idx)}
                                             }
                                         }
@@ -415,10 +385,8 @@ pub fn RolloutForm() -> Element {
                         }
 
                         if group_list_clone.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400 text-xs mt-1",
-                                Link {
-                                    to: Route::RolloutGroupList {},
-                                    class: "text-blue-600 dark:text-blue-400 hover:underline",
+                            p { class: "text-fg-muted text-xs mt-1",
+                                Link { to: Route::RolloutGroupList {}, class: "link",
                                     {t!("rollout-form-create-groups-prefix")}
                                 }
                                 {t!("rollout-form-create-groups-suffix")}
@@ -427,19 +395,20 @@ pub fn RolloutForm() -> Element {
                     }
 
                     // ── Health gate ──
-                    div { class: "border-t border-gray-200 dark:border-gray-700 pt-4",
+                    div { class: "border-t border-line-soft pt-4",
                         div { class: "flex items-center gap-2 mb-2",
                             input {
                                 r#type: "checkbox",
                                 checked: gate.read().enabled,
+                                class: "rounded border-line text-brand focus:ring-brand",
                                 onchange: move |e| {
                                     gate.write().enabled = e.value() == "true";
                                 },
                             }
-                            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200",
+                            label { class: "text-sm font-medium text-fg-strong",
                                 {t!("rollout-form-health-gate")}
                             }
-                            span { class: "text-xs text-gray-400 dark:text-gray-500",
+                            span { class: "text-xs text-fg-faint",
                                 {t!("rollout-form-auto-pause")}
                             }
                         }
@@ -448,14 +417,14 @@ pub fn RolloutForm() -> Element {
                             div { class: "ml-6 space-y-3",
                                 div { class: "grid grid-cols-1 sm:grid-cols-3 gap-3",
                                     div {
-                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                        label { class: "block text-xs font-medium text-fg mb-1",
                                             {t!("rollout-form-heartbeat-pct")}
                                         }
                                         input {
                                             r#type: "number",
                                             min: "0",
                                             max: "100",
-                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                            class: "input input-sm",
                                             value: "{gate.read().min_heartbeat_fresh_pct}",
                                             oninput: move |e| {
                                                 if let Ok(v) = e.value().parse::<u8>() {
@@ -465,13 +434,13 @@ pub fn RolloutForm() -> Element {
                                         }
                                     }
                                     div {
-                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                        label { class: "block text-xs font-medium text-fg mb-1",
                                             {t!("rollout-form-heartbeat-window")}
                                         }
                                         input {
                                             r#type: "number",
                                             min: "10",
-                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                            class: "input input-sm",
                                             value: "{gate.read().heartbeat_freshness_secs}",
                                             oninput: move |e| {
                                                 if let Ok(v) = e.value().parse::<u32>() {
@@ -481,13 +450,13 @@ pub fn RolloutForm() -> Element {
                                         }
                                     }
                                     div {
-                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                        label { class: "block text-xs font-medium text-fg mb-1",
                                             {t!("rollout-form-grace-period")}
                                         }
                                         input {
                                             r#type: "number",
                                             min: "0",
-                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                            class: "input input-sm",
                                             value: "{gate.read().grace_period_secs}",
                                             oninput: move |e| {
                                                 if let Ok(v) = e.value().parse::<u32>() {
@@ -499,7 +468,7 @@ pub fn RolloutForm() -> Element {
                                 }
 
                                 div {
-                                    label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                    label { class: "block text-xs font-medium text-fg mb-1",
                                         {t!("rollout-form-probe-thresholds")}
                                     }
                                     {
@@ -513,8 +482,7 @@ pub fn RolloutForm() -> Element {
                                         rsx! {
                                             for (idx, svc, pct) in rows {
                                                 div { class: "flex items-center gap-2 mb-1",
-                                                    input {
-                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white flex-1",
+                                                    input { class: "input input-sm flex-1 w-auto",
                                                         placeholder: t!("rollout-form-service-placeholder"),
                                                         value: "{svc}",
                                                         oninput: move |e| {
@@ -528,7 +496,7 @@ pub fn RolloutForm() -> Element {
                                                         r#type: "number",
                                                         min: "0",
                                                         max: "100",
-                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm w-20 dark:bg-gray-700 dark:text-white",
+                                                        class: "input input-sm w-20",
                                                         value: "{pct}",
                                                         oninput: move |e| {
                                                             if let Ok(v) = e.value().parse::<u8>() {
@@ -539,9 +507,8 @@ pub fn RolloutForm() -> Element {
                                                             }
                                                         },
                                                     }
-                                                    span { class: "text-xs text-gray-500 dark:text-gray-400", {t!("rollout-form-pct-symbol")} }
-                                                    button {
-                                                        class: "text-red-600 dark:text-red-400 text-xs hover:underline",
+                                                    span { class: "text-xs text-fg-muted", {t!("rollout-form-pct-symbol")} }
+                                                    button { class: "link-danger text-xs",
                                                         onclick: move |_| {
                                                             let mut g = gate.write();
                                                             if idx < g.probe_thresholds.len() {
@@ -554,27 +521,23 @@ pub fn RolloutForm() -> Element {
                                             }
                                         }
                                     }
-                                    button {
-                                        class: "text-blue-600 dark:text-blue-400 text-xs hover:underline mt-1",
+                                    button { class: "link text-xs mt-1",
                                         onclick: move |_| {
                                             gate.write().probe_thresholds.push((String::new(), 90));
                                         },
                                         {t!("rollout-form-add-service")}
                                     }
-                                    p { class: "text-xs text-gray-400 dark:text-gray-500 mt-1",
-                                        {t!("rollout-form-gate-help")}
-                                    }
+                                    HelpText { xs: true, class: "mt-1", {t!("rollout-form-gate-help")} }
                                 }
                             }
                         }
                     }
 
                     if let Some(err) = &*error.read() {
-                        p { class: "text-red-600 dark:text-red-400 text-sm", "{err}" }
+                        ErrorText { "{err}" }
                     }
 
-                    button {
-                        class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
+                    Button { size: ButtonSize::Lg,
                         onclick: move |_| {
                             let rollout_name = {
                                 let n = name.read().trim().to_string();
@@ -600,9 +563,7 @@ pub fn RolloutForm() -> Element {
                                     return;
                                 }
                                 match create_rollout(rollout_name, ver, stages, commit, Some(gate_input)).await {
-                                    Ok(id) => {
-                                        nav.push(Route::RolloutDetail { id });
-                                    }
+                                    Ok(id) => { nav.push(Route::RolloutDetail { id }); }
                                     Err(e) => error.set(Some(e.to_string())),
                                 }
                             }
@@ -612,11 +573,7 @@ pub fn RolloutForm() -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }

@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::ui::{ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -106,12 +107,8 @@ pub fn FleetShell(instance_id: String) -> Element {
 
     match &*ctx.read() {
         Some(Ok(c)) => render_shell(c),
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
 
@@ -133,11 +130,11 @@ fn render_shell(ctx: &ShellContext) -> Element {
     let token = ctx.proxy_token.clone();
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("shell-title")} }
+        h2 { class: "h-page", {t!("shell-title")} }
 
         for (service, cmds) in by_service.iter() {
             div { class: "mb-6",
-                h3 { class: "text-lg font-semibold mb-2 text-gray-700 dark:text-gray-200",
+                h3 { class: "h-section text-fg-strong",
                     "{service}"
                 }
                 div { class: "space-y-3",
@@ -190,10 +187,9 @@ fn ShellCommandCard(
     let mut show_modal = use_signal(|| false);
 
     rsx! {
-        div { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-3",
+        div { class: "card p-3",
             div { class: "flex items-center gap-3 mb-2",
-                button {
-                    class: "px-3 py-1 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed",
+                button { class: "btn btn-sm btn-primary",
                     disabled: *running.read(),
                     onclick: {
                         let exec_url = exec_url.clone();
@@ -275,18 +271,17 @@ fn ShellCommandCard(
                     },
                     if *running.read() { {t!("shell-running")} } else { {t!("shell-run")} }
                 }
-                span { class: "text-sm font-mono text-gray-600 dark:text-gray-300",
+                span { class: "text-sm font-mono text-fg",
                     "{run_name}"
                 }
-                span { class: "text-xs text-gray-500 dark:text-gray-400",
+                span { class: "text-xs text-fg-muted",
                     "{description}"
                 }
             }
             if requires_arg {
                 div { class: "flex items-center gap-2 mb-2",
-                    label { class: "text-xs text-gray-500 dark:text-gray-400", {t!("shell-arg-label", label: arg_label.clone())} }
-                    input {
-                        class: "px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                    label { class: "label", {t!("shell-arg-label", label: arg_label.clone())} }
+                    input { class: "input input-sm w-auto",
                         r#type: "text",
                         placeholder: "{arg_placeholder}",
                         value: "{arg_value}",
@@ -306,18 +301,18 @@ fn ShellCommandCard(
                     }
                 },
                 div {
-                    class: "bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col",
+                    class: "bg-surface rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col",
                     onclick: move |e| e.stop_propagation(),
                     // Header
-                    div { class: "flex items-center justify-between px-4 py-3 border-b dark:border-gray-700",
-                        h3 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200",
+                    div { class: "flex items-center justify-between px-4 py-3 border-b border-line-soft",
+                        h3 { class: "text-sm font-semibold text-fg-strong",
                             "{name}"
                             if *running.read() {
-                                span { class: "ml-2 text-yellow-500 animate-pulse", "running..." }
+                                span { class: "ml-2 text-warn animate-pulse", "running..." }
                             }
                         }
                         button {
-                            class: "text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-lg cursor-pointer",
+                            class: "text-fg-faint hover:text-fg-strong text-lg cursor-pointer",
                             disabled: *running.read(),
                             onclick: move |_| show_modal.set(false),
                             "x"
@@ -326,7 +321,7 @@ fn ShellCommandCard(
                     // Output
                     pre {
                         id: "shell-output",
-                        class: "flex-1 p-4 bg-gray-900 text-green-400 text-xs font-mono overflow-auto whitespace-pre-wrap min-h-[200px]",
+                        class: "log-output flex-1 max-h-none rounded-none",
                         "{output}"
                     }
                 }

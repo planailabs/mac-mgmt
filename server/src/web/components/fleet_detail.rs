@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::ui::{ErrorText, HelpText, SectionHeading};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -263,12 +264,8 @@ pub fn FleetDetail(instance_id: String) -> Element {
 
     match &*data.read() {
         Some(Ok(d)) => render_detail(d),
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
 
@@ -359,7 +356,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
         div { class: "flex items-baseline justify-between mb-4",
             div {
                 h2 { class: "text-2xl font-bold", "{d.hostname}" }
-                div { class: "text-sm text-gray-500 dark:text-gray-400",
+                div { class: "text-sm text-fg-muted",
                     "{d.cluster_name} · {d.environment} · v{d.version}"
                     if let Some(sha) = &d.git_sha {
                         {
@@ -377,7 +374,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                             rsx! {
                                 " · "
                                 a {
-                                    class: "font-mono hover:text-blue-600 dark:hover:text-blue-400",
+                                    class: "font-mono hover:text-brand",
                                     href: "{url}",
                                     target: "_blank",
                                     title: "{sha}",
@@ -388,7 +385,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                     }
                 }
             }
-            div { class: "text-right text-xs text-gray-500 dark:text-gray-400",
+            div { class: "text-right text-xs text-fg-muted",
                 {t!("fleet-detail-instance-id")}
                 code { class: "font-mono", "{d.instance_id}" }
                 br {}
@@ -397,42 +394,40 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Services ──
-        h3 { class: "text-lg font-semibold mb-2", {t!("fleet-detail-services")} }
+        SectionHeading { class: "mb-2", {t!("fleet-detail-services")} }
         if service_badges.is_empty() {
-            p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
+            p { class: "text-sm text-fg-muted mb-4",
                 {t!("fleet-detail-no-services")}
             }
         } else {
             div { class: "mb-6 overflow-x-auto",
-                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                    thead { class: "bg-gray-50 dark:bg-gray-700",
+                table { class: "table card",
+                    thead { class: "thead",
                         tr {
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-service")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("status")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-upgrade")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-busy")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-service")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("status")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-upgrade")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-busy")} }
                         }
                     }
-                    tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    tbody { class: "tbody",
                         for (name, healthy, upgrade_pending, busy) in service_badges.iter() {
                             {
                                 let (badge_cls, badge_text) = if *healthy {
-                                    ("bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200", t!("fleet-healthy"))
+                                    ("badge badge-success", t!("fleet-healthy"))
                                 } else {
-                                    ("bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200", t!("fleet-unhealthy"))
+                                    ("badge badge-danger", t!("fleet-unhealthy"))
                                 };
                                 let upgrade = if *upgrade_pending { t!("fleet-pending") } else { t!("em-dash") };
                                 let busy_text = if *busy { "yes".to_string() } else { t!("em-dash") };
                                 rsx! {
                                     tr {
-                                        td { class: "px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100", "{name}" }
+                                        td { class: "px-4 py-2 text-sm font-medium text-fg-strong", "{name}" }
                                         td { class: "px-4 py-2",
-                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_cls}",
-                                                "{badge_text}"
-                                            }
+                                            span { class: "{badge_cls}", "{badge_text}" }
                                         }
-                                        td { class: "px-4 py-2 text-xs text-gray-600 dark:text-gray-300", "{upgrade}" }
-                                        td { class: "px-4 py-2 text-xs text-gray-600 dark:text-gray-300", "{busy_text}" }
+                                        td { class: "px-4 py-2 text-xs text-fg", "{upgrade}" }
+                                        td { class: "px-4 py-2 text-xs text-fg", "{busy_text}" }
                                     }
                                 }
                             }
@@ -444,19 +439,19 @@ fn render_detail(d: &FleetDetailData) -> Element {
 
         // ── Tunnels ──
         if !tunnels.is_empty() {
-            h3 { class: "text-lg font-semibold mb-2", {t!("fleet-detail-tunnels")} }
+            SectionHeading { class: "mb-2", {t!("fleet-detail-tunnels")} }
             div { class: "mb-6 overflow-x-auto",
-                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                    thead { class: "bg-gray-50 dark:bg-gray-700",
+                table { class: "table card",
+                    thead { class: "thead",
                         tr {
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("name")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-port")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("name")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-port")} }
                             if proxy_url.is_some() {
-                                th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", "" }
+                                th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", "" }
                             }
                         }
                     }
-                    tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    tbody { class: "tbody",
                         for (tname, tport) in tunnels.iter() {
                             {
                                 let has_proxy = proxy_url.is_some();
@@ -465,12 +460,11 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                 let iid = instance_prefix.clone();
                                 rsx! {
                                     tr {
-                                        td { class: "px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100", "{tname}" }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{tport}" }
+                                        td { class: "px-4 py-2 text-sm font-medium text-fg-strong", "{tname}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{tport}" }
                                         if has_proxy {
                                             td { class: "px-4 py-2",
-                                                button {
-                                                    class: "px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800 cursor-pointer",
+                                                button { class: "btn btn-xs btn-info-soft",
                                                     title: "Open a short-lived proxy URL in a new tab",
                                                     onclick: move |_| {
                                                         let tn = tn.clone();
@@ -526,25 +520,25 @@ fn render_detail(d: &FleetDetailData) -> Element {
                         if has_files {
                             Link {
                                 to: files_url,
-                                class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
+                                class: "btn btn-md btn-primary inline-flex items-center gap-2",
                                 {t!("fleet-detail-config-files")}
                             }
                         }
                         if has_shell {
                             Link {
                                 to: shell_url,
-                                class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
+                                class: "btn btn-md btn-primary inline-flex items-center gap-2",
                                 {t!("fleet-detail-shell-commands")}
                             }
                         }
                         Link {
                             to: logs_url,
-                            class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700",
+                            class: "btn btn-md btn-primary inline-flex items-center gap-2",
                             {t!("fleet-detail-logs")}
                         }
                         Link {
                             to: healer_url,
-                            class: "inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700",
+                            class: "btn btn-md btn-success-soft inline-flex items-center gap-2",
                             {t!("fleet-detail-healer-agent")}
                         }
                         super::push_menu::PushMenu { cluster_id: d.cluster_id.clone() }
@@ -556,33 +550,33 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Probes ──
-        h3 { class: "text-lg font-semibold mb-2", {t!("fleet-detail-probes")} }
+        SectionHeading { class: "mb-2", {t!("fleet-detail-probes")} }
         if d.probes.is_empty() {
-            p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
+            p { class: "text-sm text-fg-muted mb-4",
                 {t!("fleet-detail-no-probes")}
             }
         } else {
             div { class: "mb-6 overflow-x-auto",
-                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                    thead { class: "bg-gray-50 dark:bg-gray-700",
+                table { class: "table card",
+                    thead { class: "thead",
                         tr {
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-service")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-kind")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-result")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-duration")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-tokens")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-model")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-collected")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-detail")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-service")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-kind")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-result")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-duration")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-tokens")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-model")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-collected")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-detail")} }
                         }
                     }
-                    tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    tbody { class: "tbody",
                         for p in d.probes.iter() {
                             {
                                 let (badge_cls, badge_text) = if p.ok {
-                                    ("bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200", t!("fleet-ok"))
+                                    ("badge badge-success", t!("fleet-ok"))
                                 } else {
-                                    ("bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200", t!("fleet-fail"))
+                                    ("badge badge-danger", t!("fleet-fail"))
                                 };
                                 let duration = format!("{} ms", p.duration_ms);
                                 let first_tok = p
@@ -604,20 +598,18 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                 };
                                 rsx! {
                                     tr {
-                                        td { class: "px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100", "{p.service}" }
-                                        td { class: "px-4 py-2 text-xs text-gray-500 dark:text-gray-400", "{p.kind}" }
+                                        td { class: "px-4 py-2 text-sm font-medium text-fg-strong", "{p.service}" }
+                                        td { class: "px-4 py-2 text-xs text-fg-muted", "{p.kind}" }
                                         td { class: "px-4 py-2",
-                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_cls}",
-                                                "{badge_text}"
-                                            }
+                                            span { class: "{badge_cls}", "{badge_text}" }
                                         }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300",
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg",
                                             "{duration}{first_tok}"
                                         }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{tokens}" }
-                                        td { class: "px-4 py-2 text-xs text-gray-600 dark:text-gray-300", "{model}" }
-                                        td { class: "px-4 py-2 text-xs text-gray-500 dark:text-gray-400", "{collected}" }
-                                        td { class: "px-4 py-2 text-xs text-gray-600 dark:text-gray-300 max-w-md truncate",
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{tokens}" }
+                                        td { class: "px-4 py-2 text-xs text-fg", "{model}" }
+                                        td { class: "px-4 py-2 text-xs text-fg-muted", "{collected}" }
+                                        td { class: "px-4 py-2 text-xs text-fg max-w-md truncate",
                                             title: "{detail}",
                                             "{detail}"
                                         }
@@ -631,19 +623,19 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Dynamic sample ──
-        h3 { class: "text-lg font-semibold mb-2", {t!("fleet-detail-dynamic-sample")} }
-        div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
+        SectionHeading { class: "mb-2", {t!("fleet-detail-dynamic-sample")} }
+        div { class: "mb-6 card p-4",
             if sample_rows.is_empty() {
-                p { class: "text-sm text-gray-500 dark:text-gray-400",
+                p { class: "text-sm text-fg-muted",
                     {t!("fleet-detail-no-sample")}
                 }
             } else {
                 KvGrid { rows: sample_rows }
                 if !disks.is_empty() {
-                    h4 { class: "mt-4 mb-2 text-sm font-semibold text-gray-700 dark:text-gray-200", {t!("fleet-detail-disks")} }
+                    h4 { class: "mt-4 mb-2 text-sm font-semibold text-fg-strong", {t!("fleet-detail-disks")} }
                     table { class: "min-w-full text-sm",
                         thead {
-                            tr { class: "text-xs text-gray-500 dark:text-gray-400",
+                            tr { class: "text-xs text-fg-muted",
                                 th { class: "text-left py-1 pr-4", {t!("fleet-detail-col-mount")} }
                                 th { class: "text-left py-1 pr-4", {t!("fleet-detail-col-free")} }
                                 th { class: "text-left py-1 pr-4", {t!("fleet-detail-col-total")} }
@@ -664,7 +656,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                     let free_s = human_bytes(free);
                                     let total_s = human_bytes(total);
                                     rsx! {
-                                        tr { class: "text-gray-700 dark:text-gray-300",
+                                        tr { class: "text-fg",
                                             td { class: "py-1 pr-4 font-mono text-xs", "{mount}" }
                                             td { class: "py-1 pr-4 font-mono text-xs", "{free_s}" }
                                             td { class: "py-1 pr-4 font-mono text-xs", "{total_s}" }
@@ -680,17 +672,17 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Inventory ──
-        h3 { class: "text-lg font-semibold mb-2",
+        SectionHeading { class: "mb-2",
             {t!("fleet-detail-inventory")}
             if let Some(at) = inv_collected.as_ref() {
-                span { class: "ml-2 text-xs font-normal text-gray-500 dark:text-gray-400",
+                span { class: "ml-2 text-xs font-normal text-fg-muted",
                     {t!("fleet-detail-inventory-collected", time: at.clone())}
                 }
             }
         }
-        div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
+        div { class: "mb-6 card p-4",
             if inventory_rows.is_empty() {
-                p { class: "text-sm text-gray-500 dark:text-gray-400",
+                p { class: "text-sm text-fg-muted",
                     {t!("fleet-detail-no-inventory")}
                 }
             } else {
@@ -710,11 +702,11 @@ fn render_detail(d: &FleetDetailData) -> Element {
                             .map(|n| format!(" #{n}"))
                             .unwrap_or_default();
                         rsx! {
-                            div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
-                                dt { class: "text-gray-500 dark:text-gray-400 mr-4", {t!("fleet-detail-nixpkgs-pin")} }
-                                dd { class: "text-right font-mono text-xs text-gray-800 dark:text-gray-200",
+                            div { class: "flex justify-between border-b border-line-soft pb-1 text-sm",
+                                dt { class: "text-fg-muted mr-4", {t!("fleet-detail-nixpkgs-pin")} }
+                                dd { class: "text-right font-mono text-xs text-fg-strong",
                                     a {
-                                        class: "hover:text-blue-600 dark:hover:text-blue-400",
+                                        class: "hover:text-brand",
                                         href: "{url}",
                                         target: "_blank",
                                         title: "{nix_sha}",
@@ -726,16 +718,16 @@ fn render_detail(d: &FleetDetailData) -> Element {
                     }
                 }
                 if !interfaces.is_empty() {
-                    h4 { class: "mt-4 mb-2 text-sm font-semibold text-gray-700 dark:text-gray-200", {t!("fleet-detail-network")} }
+                    h4 { class: "mt-4 mb-2 text-sm font-semibold text-fg-strong", {t!("fleet-detail-network")} }
                     div { class: "flex flex-wrap gap-2",
                         for iface in interfaces.iter() {
                             {
                                 let name = iface.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
                                 let up = iface.get("up").and_then(|v| v.as_bool()).unwrap_or(false);
                                 let cls = if up {
-                                    "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
+                                    "badge badge-success"
                                 } else {
-                                    "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
+                                    "badge badge-neutral"
                                 };
                                 rsx! {
                                     span { class: "px-2 py-0.5 rounded text-xs font-mono {cls}",
@@ -751,31 +743,31 @@ fn render_detail(d: &FleetDetailData) -> Element {
 
         // ── GPUs ──
         if !gpus.is_empty() {
-            h3 { class: "text-lg font-semibold mb-2", {t!("fleet-detail-gpus")} }
+            SectionHeading { class: "mb-2", {t!("fleet-detail-gpus")} }
             div { class: "mb-6 overflow-x-auto",
-                table { class: "min-w-full divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
-                    thead { class: "bg-gray-50 dark:bg-gray-700",
+                table { class: "table card",
+                    thead { class: "thead",
                         tr {
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-index")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-vendor")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("name")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-driver")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-vram")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-util")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-temp")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-power")} }
-                            th { class: "px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase", {t!("fleet-detail-col-gpu-pci")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-index")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-vendor")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("name")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-driver")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-vram")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-util")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-temp")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-power")} }
+                            th { class: "px-4 py-2 text-left text-xs font-medium text-fg-muted uppercase", {t!("fleet-detail-col-gpu-pci")} }
                         }
                     }
-                    tbody { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    tbody { class: "tbody",
                         for g in gpus.iter() {
                             {
                                 let vendor_cls = match g.vendor.as_str() {
-                                    "nvidia" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-                                    "amd" => "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-                                    "apple" => "bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
-                                    "intel" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
-                                    _ => "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
+                                    "nvidia" => "badge badge-success",
+                                    "amd" => "badge badge-danger",
+                                    "apple" => "badge badge-neutral",
+                                    "intel" => "badge badge-info",
+                                    _ => "badge badge-neutral",
                                 };
                                 let vram = if g.vram_total_bytes > 0 {
                                     match g.vram_used_bytes {
@@ -796,19 +788,17 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                 let pci = g.pci_bus_id.clone().unwrap_or_default();
                                 rsx! {
                                     tr {
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{g.index}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{g.index}" }
                                         td { class: "px-4 py-2",
-                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {vendor_cls}",
-                                                "{g.vendor}"
-                                            }
+                                            span { class: "{vendor_cls}", "{g.vendor}" }
                                         }
-                                        td { class: "px-4 py-2 text-sm text-gray-900 dark:text-gray-100", "{g.name}" }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{driver}" }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{vram}" }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{util}" }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{temp}" }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-600 dark:text-gray-300", "{power}" }
-                                        td { class: "px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400", "{pci}" }
+                                        td { class: "px-4 py-2 text-sm text-fg-strong", "{g.name}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{driver}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{vram}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{util}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{temp}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg", "{power}" }
+                                        td { class: "px-4 py-2 text-xs font-mono text-fg-muted", "{pci}" }
                                     }
                                 }
                             }
@@ -819,17 +809,17 @@ fn render_detail(d: &FleetDetailData) -> Element {
         }
 
         // ── Security posture ──
-        h3 { class: "text-lg font-semibold mb-2", {t!("fleet-detail-security")} }
-        div { class: "mb-6 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 p-4",
+        SectionHeading { class: "mb-2", {t!("fleet-detail-security")} }
+        div { class: "mb-6 card p-4",
             if security_items.is_empty() {
-                p { class: "text-sm text-gray-500 dark:text-gray-400",
+                p { class: "text-sm text-fg-muted",
                     {t!("fleet-detail-no-posture")}
                 }
             } else {
                 dl { class: "grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2",
                     for (label, value, badge_cls) in security_items.iter() {
-                        div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
-                            dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{label}" }
+                        div { class: "flex justify-between border-b border-line-soft pb-1 text-sm",
+                            dt { class: "text-fg-muted mr-4", "{label}" }
                             dd { class: "text-right",
                                 span { class: "px-2 py-0.5 rounded text-xs font-mono {badge_cls}",
                                     "{value}"
@@ -845,7 +835,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
         {render_per_service_sections(&d)}
 
         if let Some(commit) = d.nixpkgs_commit.as_ref() {
-            div { class: "text-xs text-gray-500 dark:text-gray-400",
+            div { class: "text-xs text-fg-muted",
                 {t!("fleet-detail-nixpkgs-commit")}
                 code { class: "font-mono", "{commit}" }
             }
@@ -858,9 +848,9 @@ fn KvGrid(rows: Vec<(String, String)>) -> Element {
     rsx! {
         dl { class: "grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2",
             for (k, v) in rows.iter() {
-                div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
-                    dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{k}" }
-                    dd { class: "text-right font-mono text-xs text-gray-800 dark:text-gray-200 break-all", "{v}" }
+                div { class: "flex justify-between border-b border-line-soft pb-1 text-sm",
+                    dt { class: "text-fg-muted mr-4", "{k}" }
+                    dd { class: "text-right font-mono text-xs text-fg-strong break-all", "{v}" }
                 }
             }
         }
@@ -946,10 +936,10 @@ fn build_inventory_rows(v: &serde_json::Value) -> Vec<(String, String)> {
 
 /// Returns (label, value, badge_css_class) triples for security posture.
 fn build_security_items(v: &serde_json::Value) -> Vec<(String, String, String)> {
-    let green = "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200";
-    let red = "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200";
-    let yellow = "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200";
-    let gray = "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300";
+    let green = "badge badge-success";
+    let red = "badge badge-danger";
+    let yellow = "badge badge-warn";
+    let gray = "badge badge-neutral";
 
     // New format: Vec<SecurityFinding> (array of {id, severity, message, pass})
     if let Some(arr) = v.as_array() {
@@ -1042,7 +1032,7 @@ fn render_per_service_sections(d: &FleetDetailData) -> Element {
     let sec_arr = d.service_security.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
     rsx! {
-        h3 { class: "text-lg font-semibold mb-2", {t!("fleet-detail-per-service")} }
+        SectionHeading { class: "mb-2", {t!("fleet-detail-per-service")} }
         div { class: "mb-6 space-y-4",
             for svc_name in service_names.iter() {
                 {
@@ -1061,30 +1051,30 @@ fn render_per_service_sections(d: &FleetDetailData) -> Element {
 
                     let svc = svc_name.clone();
                     rsx! {
-                        details { class: "bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                        details { class: "card",
                             key: "{svc}",
-                            summary { class: "px-4 py-2 cursor-pointer font-medium text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700 rounded",
+                            summary { class: "px-4 py-2 cursor-pointer font-medium text-fg-strong hover:bg-surface-2 rounded",
                                 "{svc}"
                             }
                             div { class: "px-4 pb-4 space-y-3",
                                 // Inventory entries
                                 if !inv_entries.is_empty() {
                                     div {
-                                        h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1", {t!("fleet-detail-tab-inventory")} }
+                                        h4 { class: "text-sm font-semibold text-fg mb-1", {t!("fleet-detail-tab-inventory")} }
                                         {render_inventory_entries(&inv_entries)}
                                     }
                                 }
                                 // Dynamic sample entries
                                 if !sample_entries.is_empty() {
                                     div {
-                                        h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1", {t!("fleet-detail-tab-live-status")} }
+                                        h4 { class: "text-sm font-semibold text-fg mb-1", {t!("fleet-detail-tab-live-status")} }
                                         {render_inventory_entries(&sample_entries)}
                                     }
                                 }
                                 // Security findings
                                 if !sec_findings.is_empty() {
                                     div {
-                                        h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1", {t!("fleet-detail-tab-security")} }
+                                        h4 { class: "text-sm font-semibold text-fg mb-1", {t!("fleet-detail-tab-security")} }
                                         {render_security_findings(&sec_findings)}
                                     }
                                 }
@@ -1107,9 +1097,9 @@ fn render_inventory_entries(entries: &[&serde_json::Value]) -> Element {
                     let value = entry.get("value").cloned().unwrap_or(serde_json::Value::Null);
                     let display = format_inventory_value(&value);
                     rsx! {
-                        div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
-                            dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{name}" }
-                            dd { class: "text-right font-mono text-xs text-gray-800 dark:text-gray-200 break-all", "{display}" }
+                        div { class: "flex justify-between border-b border-line-soft pb-1 text-sm",
+                            dt { class: "text-fg-muted mr-4", "{name}" }
+                            dd { class: "text-right font-mono text-xs text-fg-strong break-all", "{display}" }
                         }
                     }
                 }
@@ -1128,18 +1118,18 @@ fn render_security_findings(findings: &[&serde_json::Value]) -> Element {
                     let pass = finding.get("pass").and_then(|p| p.as_bool()).unwrap_or(false);
                     let severity = finding.get("severity").and_then(|s| s.as_str()).unwrap_or("info").to_string();
                     let cls = if pass {
-                        "text-green-700 dark:text-green-400"
+                        "text-success"
                     } else {
                         match severity.as_str() {
-                            "critical" | "high" => "text-red-700 dark:text-red-400 font-semibold",
-                            "medium" => "text-yellow-700 dark:text-yellow-400",
-                            _ => "text-gray-600 dark:text-gray-400",
+                            "critical" | "high" => "text-danger font-semibold",
+                            "medium" => "text-warn-strong",
+                            _ => "text-fg-muted",
                         }
                     };
                     let status = if pass { "pass" } else { "fail" };
                     rsx! {
-                        div { class: "flex justify-between border-b border-gray-100 dark:border-gray-700 pb-1 text-sm",
-                            dt { class: "text-gray-500 dark:text-gray-400 mr-4", "{msg}" }
+                        div { class: "flex justify-between border-b border-line-soft pb-1 text-sm",
+                            dt { class: "text-fg-muted mr-4", "{msg}" }
                             dd { class: "text-right font-mono text-xs {cls}", "{status}" }
                         }
                     }

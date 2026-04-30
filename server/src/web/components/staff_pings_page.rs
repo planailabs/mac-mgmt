@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::ui::{Badge, BadgeVariant, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -132,10 +133,10 @@ pub fn StaffPings() -> Element {
     });
 
     if !*loaded.read() {
-        return rsx! { p { class: "text-gray-500 text-sm", {t!("staff-pings-loading")} } };
+        return rsx! { HelpText { {t!("staff-pings-loading")} } };
     }
     if let Some(err) = &*error_msg.read() {
-        return rsx! { p { class: "text-red-600 text-sm", {t!("error-message", message: err.to_string())} } };
+        return rsx! { ErrorText { {t!("error-message", message: err.to_string())} } };
     }
 
     let all = pings.read();
@@ -145,15 +146,15 @@ pub fn StaffPings() -> Element {
     let resolved_count = resolved.len();
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("staff-pings-title")} }
-        p { class: "text-sm text-gray-500 dark:text-gray-400 mb-6",
+        h2 { class: "h-page", {t!("staff-pings-title")} }
+        p { class: "text-sm text-fg-muted mb-6",
             {t!("staff-pings-description")}
         }
 
         if !unresolved.is_empty() {
             div { class: "mb-8",
-                h3 { class: "text-lg font-semibold mb-3 flex items-center gap-2",
-                    span { class: "inline-block w-2.5 h-2.5 rounded-full bg-red-500" }
+                h3 { class: "h-section flex items-center gap-2",
+                    span { class: "inline-block w-2.5 h-2.5 rounded-full bg-danger" }
                     {t!("staff-pings-open", count: unresolved_count)}
                 }
                 div { class: "space-y-2",
@@ -163,14 +164,14 @@ pub fn StaffPings() -> Element {
                 }
             }
         } else {
-            div { class: "mb-8 p-6 text-center text-gray-400 dark:text-gray-500 bg-white dark:bg-gray-800 rounded shadow",
+            div { class: "card mb-8 p-6 text-center text-fg-faint",
                 {t!("staff-pings-no-open")}
             }
         }
 
         if !resolved.is_empty() {
             div {
-                h3 { class: "text-lg font-semibold mb-3 text-gray-500 dark:text-gray-400",
+                h3 { class: "h-section text-fg-muted",
                     {t!("staff-pings-resolved", count: resolved_count)}
                 }
                 div { class: "space-y-2 opacity-60",
@@ -184,7 +185,7 @@ pub fn StaffPings() -> Element {
 }
 
 fn render_ping_card(ping: &StaffPingRow, pings: Signal<Vec<StaffPingRow>>) -> Element {
-    let cat_badge = category_badge(&ping.category);
+    let cat_variant = category_badge_variant(&ping.category);
     let ping_id = ping.id.clone();
     let session_url = format!("/fleet/{}/healer/{}", ping.instance_id, ping.session_id);
     let is_resolved = ping.resolved;
@@ -196,39 +197,37 @@ fn render_ping_card(ping: &StaffPingRow, pings: Signal<Vec<StaffPingRow>>) -> El
     let resolved_by = ping.resolved_by.clone();
 
     rsx! {
-        div { class: "p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+        div { class: "card p-4",
             div { class: "flex items-start justify-between gap-4",
                 div { class: "flex-1 min-w-0",
                     div { class: "flex items-center gap-2 mb-1 flex-wrap",
-                        span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {cat_badge}", "{category}" }
-                        span { class: "text-xs text-gray-500 dark:text-gray-400", "{cluster_name}" }
-                        span { class: "text-xs text-gray-400 dark:text-gray-500", "{instance_id}" }
-                        span { class: "text-xs text-gray-400", "{created_at}" }
+                        Badge { variant: cat_variant, "{category}" }
+                        span { class: "text-xs text-fg-muted", "{cluster_name}" }
+                        span { class: "text-xs text-fg-faint", "{instance_id}" }
+                        span { class: "text-xs text-fg-faint", "{created_at}" }
                     }
                     {
                         let html = crate::web::components::healer_page::simple_md_to_html(&message);
                         let class = if is_resolved {
-                            "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none line-through"
+                            "text-sm text-fg-strong prose prose-sm dark:prose-invert max-w-none line-through"
                         } else {
-                            "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none"
+                            "text-sm text-fg-strong prose prose-sm dark:prose-invert max-w-none"
                         };
                         rsx! {
                             div { class: "{class}", dangerous_inner_html: "{html}" }
                         }
                     }
                     if let Some(by) = &resolved_by {
-                        p { class: "text-xs text-green-600 dark:text-green-400 mt-1", {t!("staff-pings-resolved-by", by: by.clone())} }
+                        p { class: "text-xs text-success mt-1", {t!("staff-pings-resolved-by", by: by.clone())} }
                     }
                 }
                 div { class: "flex items-center gap-2 shrink-0",
-                    Link {
-                        to: session_url,
-                        class: "px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200",
+                    Link { to: session_url,
+                        class: "btn btn-xs btn-info-soft",
                         {t!("staff-pings-view-session")}
                     }
                     if !is_resolved {
-                        button {
-                            class: "px-2 py-1 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded hover:bg-green-200",
+                        button { class: "btn btn-xs btn-success-soft",
                             onclick: {
                                 let mut pings = pings;
                                 move |_| {
@@ -253,18 +252,12 @@ fn render_ping_card(ping: &StaffPingRow, pings: Signal<Vec<StaffPingRow>>) -> El
     }
 }
 
-fn category_badge(cat: &str) -> &'static str {
+fn category_badge_variant(cat: &str) -> BadgeVariant {
     match cat {
-        "hardware" => "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-        "network" => "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-        "disk_space" => "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
-        "config_error" => "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-        "service_crash" => "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-        "model_issue" => "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
-        "permission" => "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-300",
-        "dependency" => "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300",
-        "security" => "bg-red-200 text-red-900 dark:bg-red-800 dark:text-red-200",
-        "performance" => "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
-        _ => "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
+        "hardware" | "service_crash" | "security" => BadgeVariant::Danger,
+        "network" | "performance" => BadgeVariant::Info,
+        "disk_space" | "config_error" => BadgeVariant::Warn,
+        "model_issue" | "permission" | "dependency" => BadgeVariant::Accent,
+        _ => BadgeVariant::Neutral,
     }
 }

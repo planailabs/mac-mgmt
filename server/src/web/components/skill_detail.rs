@@ -8,6 +8,9 @@ use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::{Skill, SkillChannel};
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+use crate::web::components::ui::{
+    Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -108,7 +111,6 @@ async fn resolve_channel_paths(
         .await
         .map_err(|e| ServerFnError::new(format!("xzar error: {e}")))?;
 
-    // Map channel → [(arch, store_path), ...]
     let mut result = HashMap::new();
     let prefix = format!("skill/{slug}/");
     for pin in &pins {
@@ -116,7 +118,6 @@ async fn resolve_channel_paths(
             continue;
         }
         if let Some(rest) = pin.name.strip_prefix(&prefix) {
-            // rest = "{channel}/{arch}"
             if let Some((channel, arch)) = rest.split_once('/') {
                 if channels.contains(&channel.to_string()) {
                     let path = crate::xzar::store_path_for_pin(&pins, &pin.name);
@@ -293,8 +294,7 @@ pub fn SkillDetail(id: String) -> Element {
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
                     if *editing.read() {
-                        form {
-                            class: "space-y-2",
+                        form { class: "space-y-2",
                             onsubmit: move |evt: FormEvent| {
                                 evt.prevent_default();
                                 let id = sid.clone();
@@ -310,31 +310,32 @@ pub fn SkillDetail(id: String) -> Element {
                                 });
                             },
                             input {
-                                class: "text-2xl font-bold border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-full dark:bg-gray-700 dark:text-white",
+                                class: "input text-2xl font-bold py-1",
                                 r#type: "text",
                                 value: "{draft_name}",
                                 oninput: move |e| draft_name.set(e.value()),
                                 autofocus: true,
                             }
                             textarea {
-                                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-white",
+                                class: "input py-1",
                                 rows: "2",
                                 value: "{draft_desc}",
                                 oninput: move |e| draft_desc.set(e.value()),
                             }
-                            label { class: "flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200",
+                            label { class: "flex items-center gap-2 text-sm text-fg-strong",
                                 input {
                                     r#type: "checkbox",
                                     checked: "{draft_hide}",
+                                    class: "rounded border-line",
                                     oninput: move |e| draft_hide.set(e.value() == "true"),
                                 }
                                 {t!("skill-detail-hide")}
                             }
                             div { class: "flex gap-2",
-                                button { class: "text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300", r#type: "submit", {t!("save")} }
-                                button {
-                                    class: "text-gray-500 hover:text-gray-700 dark:hover:text-gray-200",
-                                    r#type: "button",
+                                button { class: "text-success hover:opacity-80", r#type: "submit",
+                                    {t!("save")}
+                                }
+                                button { class: "text-fg-muted hover:text-fg-strong", r#type: "button",
                                     onclick: move |_| editing.set(false),
                                     {t!("cancel")}
                                 }
@@ -350,11 +351,10 @@ pub fn SkillDetail(id: String) -> Element {
                             }
                         }
                     } else {
-                        h2 { class: "text-2xl font-bold", "{name}" }
-                        span { class: "text-gray-400 dark:text-gray-500 font-mono text-sm", "({slug})" }
+                        h2 { class: "h-page mb-0", "{name}" }
+                        span { class: "text-fg-faint font-mono text-sm", "({slug})" }
                         HiddenBadge { hidden: hide_flag }
-                        button {
-                            class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
+                        button { class: "text-fg-faint hover:text-fg-muted",
                             onclick: move |_| {
                                 draft_name.set(name.clone());
                                 draft_desc.set(desc.clone());
@@ -366,17 +366,17 @@ pub fn SkillDetail(id: String) -> Element {
                     }
                 }
                 if !*editing.read() && !s.description.is_empty() {
-                    p { class: "text-gray-600 dark:text-gray-300 mb-2", "{s.description}" }
+                    p { class: "text-fg mb-2", "{s.description}" }
                 }
-                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", {t!("cluster-detail-created", date: created)} }
+                p { class: "help mb-6", {t!("cluster-detail-created", date: created)} }
 
                 // Channels section (read-only, synced from xzar)
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", {t!("skill-detail-channels")} }
-                    p { class: "text-xs text-gray-400 dark:text-gray-500 mb-3", {t!("skill-detail-channels-synced")} }
+                    SectionHeading { {t!("skill-detail-channels")} }
+                    p { class: "help-xs mb-3", {t!("skill-detail-channels-synced")} }
                     {match &*channels.read() {
                         Some(Ok(list)) if list.is_empty() => rsx! {
-                            p { class: "text-sm text-gray-500 dark:text-gray-400", {t!("skill-detail-no-channels")} }
+                            HelpText { {t!("skill-detail-no-channels")} }
                         },
                         Some(Ok(list)) => {
                             let path_map = match &*paths.read() {
@@ -384,7 +384,7 @@ pub fn SkillDetail(id: String) -> Element {
                                 _ => HashMap::new(),
                             };
                             rsx! {
-                                ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                                ul { class: "divide-y divide-line-soft",
                                     for ch in list {
                                         {
                                             let ch_name = ch.channel.clone();
@@ -395,11 +395,11 @@ pub fn SkillDetail(id: String) -> Element {
                                                 li { class: "py-2",
                                                     div {
                                                         span { class: "text-sm font-mono font-medium", "{ch_name}" }
-                                                        span { class: "text-xs text-gray-400 dark:text-gray-500 ml-2", "{ch_created}" }
+                                                        span { class: "text-xs text-fg-faint ml-2", "{ch_created}" }
                                                     }
                                                     for (arch, path) in &arch_paths {
-                                                        p { class: "text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5 truncate",
-                                                            span { class: "text-gray-500 dark:text-gray-400", "{arch}" }
+                                                        p { class: "text-xs text-fg-faint font-mono mt-0.5 truncate",
+                                                            span { class: "text-fg-muted", "{arch}" }
                                                             " {path}"
                                                         }
                                                     }
@@ -412,14 +412,14 @@ pub fn SkillDetail(id: String) -> Element {
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } },
-                        None => rsx! { p { class: "text-sm", {t!("loading")} } },
+                        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                        None => rsx! { HelpText { {t!("loading")} } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { {t!("loading")} } },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
 
@@ -438,24 +438,22 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
 
     rsx! {
         div { class: "mt-3",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("skill-detail-mcp-deps")} }
-            form {
-                class: "flex gap-2 mb-3",
+            h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("skill-detail-mcp-deps")} }
+            form { class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
                     evt.prevent_default();
                     let sid = selected_server.read().clone();
                     let channel = cid_add.clone();
                     spawn(async move {
-                        if !sid.is_empty() {
-                            if add_channel_mcp_dep(channel, sid).await.is_ok() {
-                                selected_server.set(String::new());
-                                deps.restart();
-                            }
+                        if !sid.is_empty()
+                            && add_channel_mcp_dep(channel, sid).await.is_ok()
+                        {
+                            selected_server.set(String::new());
+                            deps.restart();
                         }
                     });
                 },
-                select {
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                select { class: "input flex-1 w-auto py-1 text-sm",
                     value: "{selected_server}",
                     onchange: move |e| selected_server.set(e.value()),
                     option { value: "", {t!("skill-detail-select-mcp")} }
@@ -468,18 +466,16 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                         _ => rsx! {},
                     }}
                 }
-                button {
-                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
-                    r#type: "submit",
+                Button { kind: ButtonKind::Submit, size: ButtonSize::Xs,
                     {t!("add")}
                 }
             }
             {match &*deps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400 dark:text-gray-500", {t!("skill-detail-no-mcp-deps")} }
+                    HelpText { xs: true, {t!("skill-detail-no-mcp-deps")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for dep in list {
                             {
                                 let dep_id = dep.dep_id.clone();
@@ -487,8 +483,7 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                                 rsx! {
                                     li { class: "py-1 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{slug}" }
-                                        button {
-                                            class: "text-xs text-red-600 dark:text-red-400 hover:underline",
+                                        button { class: "link-danger text-xs",
                                             onclick: move |_| {
                                                 let did = dep_id.clone();
                                                 spawn(async move {
@@ -505,8 +500,8 @@ fn ChannelMcpDeps(channel_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-xs", {t!("error-message", message: e.to_string())} } },
-                None => rsx! { p { class: "text-xs", {t!("loading")} } },
+                Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                None => rsx! { HelpText { xs: true, {t!("loading")} } },
             }}
         }
     }
@@ -593,41 +588,37 @@ fn ChannelNixPackages(channel_id: String) -> Element {
 
     rsx! {
         div { class: "mt-3",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("skill-detail-nix-deps")} }
-            form {
-                class: "flex gap-2 mb-3",
+            h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("skill-detail-nix-deps")} }
+            form { class: "flex gap-2 mb-3",
                 onsubmit: move |evt: FormEvent| {
                     evt.prevent_default();
                     let pkg = new_pkg.read().clone();
                     let ch = channel_id.clone();
                     spawn(async move {
-                        if !pkg.trim().is_empty() {
-                            if add_channel_nix_package(ch, pkg).await.is_ok() {
-                                new_pkg.set(String::new());
-                                pkgs.restart();
-                            }
+                        if !pkg.trim().is_empty()
+                            && add_channel_nix_package(ch, pkg).await.is_ok()
+                        {
+                            new_pkg.set(String::new());
+                            pkgs.restart();
                         }
                     });
                 },
-                input {
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                input { class: "input flex-1 w-auto py-1 text-sm font-mono",
                     r#type: "text",
                     placeholder: t!("skill-detail-nix-placeholder"),
                     value: "{new_pkg}",
                     oninput: move |e| new_pkg.set(e.value()),
                 }
-                button {
-                    class: "bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700",
-                    r#type: "submit",
+                Button { kind: ButtonKind::Submit, size: ButtonSize::Xs,
                     {t!("add")}
                 }
             }
             {match &*pkgs.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-xs text-gray-400 dark:text-gray-500", {t!("skill-detail-no-nix-deps")} }
+                    HelpText { xs: true, {t!("skill-detail-no-nix-deps")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for pkg in list {
                             {
                                 let pkg_name = pkg.clone();
@@ -635,8 +626,7 @@ fn ChannelNixPackages(channel_id: String) -> Element {
                                 rsx! {
                                     li { class: "py-1 flex justify-between items-center",
                                         span { class: "text-sm font-mono", "{pkg_name}" }
-                                        button {
-                                            class: "text-xs text-red-600 dark:text-red-400 hover:underline",
+                                        button { class: "link-danger text-xs",
                                             onclick: move |_| {
                                                 let p = pkg_name.clone();
                                                 let c = ch.clone();
@@ -654,8 +644,8 @@ fn ChannelNixPackages(channel_id: String) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-xs", {t!("error-message", message: e.to_string())} } },
-                None => rsx! { p { class: "text-xs", {t!("loading")} } },
+                Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                None => rsx! { HelpText { xs: true, {t!("loading")} } },
             }}
         }
     }

@@ -197,11 +197,11 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
 
     rsx! {
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
+            p { class: "text-danger text-sm mb-2", "{err}" }
         }
 
         div { class: "flex items-center gap-2 mb-3",
-            label { class: "text-sm text-gray-600 dark:text-gray-300 flex items-center gap-1 cursor-pointer",
+            label { class: "text-sm text-fg flex items-center gap-1 cursor-pointer",
                 input {
                     r#type: "checkbox",
                     checked: *raw_mode.read(),
@@ -214,7 +214,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
         div {
             if *raw_mode.read() {
                 textarea {
-                    class: "w-full h-64 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded p-2 mb-2 dark:bg-gray-700 dark:text-white",
+                    class: "w-full h-64 font-mono text-sm border border-line rounded p-2 mb-2 dark:bg-surface-2 dark:text-fg",
                     placeholder: t!("config-editor-paste-placeholder"),
                     value: "{editor_text}",
                     oninput: move |evt| editor_text.set(evt.value()),
@@ -231,9 +231,9 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                     Some(Err(e)) => rsx! {
-                        p { class: "text-red-600 dark:text-red-400 text-sm", {t!("config-editor-schema-error", error: e.to_string())} }
+                        p { class: "text-danger text-sm", {t!("config-editor-schema-error", error: e.to_string())} }
                         textarea {
-                            class: "w-full h-64 font-mono text-sm border border-gray-300 dark:border-gray-600 rounded p-2 mb-2 dark:bg-gray-700 dark:text-white",
+                            class: "w-full h-64 font-mono text-sm border border-line rounded p-2 mb-2 dark:bg-surface-2 dark:text-fg",
                             placeholder: t!("config-editor-paste-placeholder"),
                             value: "{editor_text}",
                             oninput: move |evt| editor_text.set(evt.value()),
@@ -244,7 +244,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
             }
             if !read_only {
                 button {
-                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                    class: "btn btn-lg btn-primary",
                     r#type: "button",
                     onclick: move |evt| {
                         evt.prevent_default();
@@ -261,14 +261,14 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                 let saved_at = cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string();
                 rsx! {
                     div { class: "mt-4",
-                        p { class: "text-xs text-gray-500 dark:text-gray-400", {t!("config-editor-last-saved", time: saved_at)} }
+                        p { class: "text-xs text-fg-muted", {t!("config-editor-last-saved", time: saved_at)} }
                     }
                 }
             }
             Some(Ok(None)) => rsx! {
-                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-2", {t!("config-editor-no-config")} }
+                p { class: "text-sm text-fg-muted mt-2", {t!("config-editor-no-config")} }
             },
-            Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm mt-2", {t!("error-message", message: e.to_string())} } },
+            Some(Err(e)) => rsx! { p { class: "text-danger text-sm mt-2", {t!("error-message", message: e.to_string())} } },
             None => rsx! { p { class: "text-sm mt-2", {t!("loading")} } },
         }}
     }
@@ -335,14 +335,14 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
                 let is_array_section = section_type == "array";
 
                 rsx! {
-                    details { class: "border border-gray-300 dark:border-gray-600 rounded shadow-sm break-inside-avoid",
+                    details { class: "border border-line rounded shadow-sm break-inside-avoid",
                         key: "{section_name}",
                         open: form_values.read().get(&section_name).is_some(),
-                        summary { class: "px-3 py-2 bg-gray-100 dark:bg-gray-700 cursor-pointer font-semibold text-sm hover:bg-gray-200 dark:hover:bg-gray-600",
+                        summary { class: "px-3 py-2 bg-surface-2 cursor-pointer font-semibold text-sm hover:bg-surface-3",
                             "{section_name_clone}"
                         }
                         if !description.is_empty() {
-                            p { class: "px-3 pt-1 text-xs text-gray-500 dark:text-gray-400", "{description}" }
+                            p { class: "px-3 pt-1 text-xs text-fg-muted", "{description}" }
                         }
                         div { class: "px-3 py-3 space-y-3",
                             if is_array_section {
@@ -401,14 +401,14 @@ fn KeyHashField(
 
     rsx! {
         div { class: "flex flex-col gap-0.5",
-            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", {t!("config-editor-key-hash")} }
-            p { class: "text-xs text-gray-500 dark:text-gray-400",
+            label { class: "text-sm font-medium text-fg-strong", {t!("config-editor-key-hash")} }
+            p { class: "text-xs text-fg-muted",
                 {t!("config-editor-key-hash-help")}
             }
             div { class: "flex gap-2",
                 input {
                     r#type: "text",
-                    class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm font-mono",
+                    class: "flex-1 border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm font-mono",
                     value: val_str,
                     oninput: move |evt| {
                         let v = evt.value();
@@ -423,7 +423,7 @@ fn KeyHashField(
                 }
                 button {
                     r#type: "button",
-                    class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 whitespace-nowrap",
+                    class: "btn btn-md btn-primary whitespace-nowrap",
                     onclick: move |evt| {
                         evt.prevent_default();
                         evt.stop_propagation();
@@ -446,16 +446,15 @@ fn KeyHashField(
                 }
             }
             if let Some(raw_key) = generated_key.read().as_ref() {
-                div { class: "mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded",
-                    p { class: "text-xs font-semibold text-yellow-800 dark:text-yellow-200 mb-1",
+                div { class: "mt-2 alert alert-warn",
+                    p { class: "text-xs font-semibold mb-1",
                         {t!("config-editor-key-warning")}
                     }
-                    code { class: "block text-sm font-mono bg-white dark:bg-gray-800 p-2 rounded border select-all break-all",
+                    code { class: "block text-sm font-mono bg-surface p-2 rounded border border-line select-all break-all text-fg-strong",
                         "{raw_key}"
                     }
-                    button {
-                        r#type: "button",
-                        class: "mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 underline",
+                    button { r#type: "button",
+                        class: "mt-2 text-xs text-fg-muted hover:text-fg-strong underline",
                         onclick: move |_| {
                             generated_key.set(None);
                         },
@@ -505,7 +504,7 @@ fn SecretField(
     rsx! {
         input {
             r#type: "password",
-            class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+            class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
             placeholder: t!("config-editor-secret-placeholder"),
             value: val_str,
             oninput: move |evt| {
@@ -520,13 +519,12 @@ fn SecretField(
             },
         }
         div { class: "flex items-center gap-2 mt-0.5",
-            p { class: "text-xs text-gray-400 dark:text-gray-500 flex-1",
+            p { class: "text-xs text-fg-faint flex-1",
                 {t!("config-editor-secret-hint")}
             }
             if has_value && !is_already_ref {
-                button {
-                    r#type: "button",
-                    class: "text-xs px-2 py-0.5 border border-amber-400 dark:border-amber-600 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-50 dark:hover:bg-amber-900/30 whitespace-nowrap",
+                button { r#type: "button",
+                    class: "text-xs px-2 py-0.5 border border-warn text-warn-strong rounded hover:bg-warn-soft whitespace-nowrap",
                     disabled: *converting.read(),
                     onclick: move |evt| {
                         evt.prevent_default();
@@ -559,7 +557,7 @@ fn SecretField(
             }
         }
         if let Some(err) = &*convert_error.read() {
-            p { class: "text-xs text-red-500 dark:text-red-400 mt-0.5", "{err}" }
+            p { class: "text-xs text-danger mt-0.5", "{err}" }
         }
     }
 }
@@ -634,14 +632,14 @@ fn render_top_level_array(
                         .unwrap_or_else(|| format!("#{idx}"));
 
                     rsx! {
-                        div { class: "border border-gray-300 dark:border-gray-600 rounded p-2",
+                        div { class: "border border-line rounded p-2",
                             key: "{idx}",
                             div { class: "flex justify-between items-center mb-2",
-                                span { class: "text-xs font-semibold text-gray-600 dark:text-gray-300",
+                                span { class: "text-xs font-semibold text-fg",
                                     "{label}"
                                 }
                                 button {
-                                    class: "text-red-500 hover:text-red-700 text-xs px-2 py-0.5 border border-red-300 rounded",
+                                    class: "text-xs px-2 py-0.5 border border-danger text-danger hover:bg-danger-soft rounded",
                                     r#type: "button",
                                     onclick: move |_| {
                                         let mut arr = get_at_path(&form_values.read(), &path_r)
@@ -673,7 +671,7 @@ fn render_top_level_array(
             }
             button {
                 r#type: "button",
-                class: "bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700",
+                class: "btn btn-md btn-success-soft",
                 onclick: move |_| {
                     let mut arr = get_at_path(&form_values.read(), &path_add)
                         .and_then(|v| v.as_array().cloned())
@@ -771,11 +769,11 @@ fn render_section_fields(
                 // Render as a nested subsection
                 let defs_clone = defs.clone();
                 rsx! {
-                    div { class: "border-l-2 border-blue-300 pl-3 mt-2 mb-1",
+                    div { class: "border-l-2 border-info pl-3 mt-2 mb-1",
                         key: "{key}",
-                        label { class: "text-sm font-semibold text-blue-700 dark:text-blue-400", "{field_name}" }
+                        label { class: "text-sm font-semibold text-info", "{field_name}" }
                         if !description.is_empty() {
-                            p { class: "text-xs text-gray-500 dark:text-gray-400", "{description}" }
+                            p { class: "text-xs text-fg-muted", "{description}" }
                         }
                         {render_section_fields(
                             &resolved,
@@ -803,11 +801,11 @@ fn render_section_fields(
                     div { class: "flex flex-col gap-0.5",
                         key: "{key}",
                         div { class: "flex items-center justify-between gap-2",
-                            label { class: "text-sm font-medium text-gray-700 dark:text-gray-200", "{field_name}" }
+                            label { class: "text-sm font-medium text-fg-strong", "{field_name}" }
                             if is_non_default {
                                 button {
                                     r#type: "button",
-                                    class: "text-xs text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 underline",
+                                    class: "text-xs text-fg-muted hover:text-danger underline",
                                     onclick: move |evt| {
                                         evt.prevent_default();
                                         evt.stop_propagation();
@@ -823,7 +821,7 @@ fn render_section_fields(
                             }
                         }
                         if !description.is_empty() {
-                            p { class: "text-xs text-gray-500 dark:text-gray-400", "{description}" }
+                            p { class: "text-xs text-fg-muted", "{description}" }
                         }
                         {match field_type.as_str() {
                             "boolean" => {
@@ -857,7 +855,7 @@ fn render_section_fields(
                                 rsx! {
                                     input {
                                         r#type: "number",
-                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+                                        class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
                                         value: val_str,
                                         oninput: move |evt| {
                                             if let Ok(n) = evt.value().parse::<i64>() {
@@ -900,12 +898,12 @@ fn render_section_fields(
                                                     let mut entry_path = fp_remove.clone();
                                                     entry_path.push(format!("{idx}"));
                                                     rsx! {
-                                                        div { class: "border border-gray-300 dark:border-gray-600 rounded p-2 relative",
+                                                        div { class: "border border-line rounded p-2 relative",
                                                             key: "{idx}",
                                                             div { class: "flex justify-between items-center mb-1",
-                                                                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400", "#{idx}" }
+                                                                span { class: "text-xs font-semibold text-fg-muted", "#{idx}" }
                                                                 button {
-                                                                    class: "text-red-500 hover:text-red-700 text-xs px-1",
+                                                                    class: "link-danger text-xs px-1",
                                                                     r#type: "button",
                                                                     onclick: move |_| {
                                                                         let mut arr = get_at_path(&form_values.read(), &fp_r)
@@ -937,7 +935,7 @@ fn render_section_fields(
                                             }
                                             button {
                                                 r#type: "button",
-                                                class: "bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700",
+                                                class: "btn btn-xs btn-success-soft",
                                                 onclick: move |_| {
                                                     let mut arr = get_at_path(&form_values.read(), &fp_add)
                                                         .and_then(|v| v.as_array().cloned())
@@ -977,11 +975,11 @@ fn render_section_fields(
                                                 div {
                                                     key: "{idx}",
                                                     class: "flex items-center gap-1",
-                                                    span { class: "flex-1 text-sm font-mono bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-2 py-0.5 truncate",
+                                                    span { class: "flex-1 text-sm font-mono bg-surface-2 border border-line-soft rounded px-2 py-0.5 truncate",
                                                         "{item}"
                                                     }
                                                     button {
-                                                        class: "text-red-500 hover:text-red-700 text-xs px-1",
+                                                        class: "link-danger text-xs px-1",
                                                         r#type: "button",
                                                         onclick: {
                                                             let fp = fp_remove.clone();
@@ -1011,7 +1009,7 @@ fn render_section_fields(
                                                     div { class: "flex gap-1",
                                                         input {
                                                             r#type: "text",
-                                                            class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white",
+                                                            class: "flex-1 border border-line rounded px-2 py-0.5 text-sm dark:bg-surface-2 dark:text-fg",
                                                             placeholder: t!("config-editor-add-item"),
                                                             value: "{new_val}",
                                                             oninput: move |e| new_val.set(e.value()),
@@ -1037,7 +1035,7 @@ fn render_section_fields(
                                                         }
                                                         button {
                                                             r#type: "button",
-                                                            class: "bg-blue-600 text-white px-2 py-0.5 rounded text-xs hover:bg-blue-700",
+                                                            class: "btn btn-xs btn-primary",
                                                             onclick: {
                                                                 let fp = fp.clone();
                                                                 let sync_c = sync_c.clone();
@@ -1081,7 +1079,7 @@ fn render_section_fields(
                                     let selected_val = val_str.clone();
                                     rsx! {
                                         select {
-                                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+                                            class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
                                             value: val_str,
                                             onchange: move |evt| {
                                                 set_at_path(&mut form_values, &fp,
@@ -1112,7 +1110,7 @@ fn render_section_fields(
                                     rsx! {
                                         input {
                                             r#type: "text",
-                                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 dark:bg-gray-700 dark:text-white py-1 text-sm w-full",
+                                            class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
                                             value: val_str,
                                             oninput: move |evt| {
                                                 let v = evt.value();

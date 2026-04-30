@@ -3,6 +3,9 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
+use crate::web::components::ui::{
+    Button, ButtonSize, ErrorText, HelpText, PageHeader, SectionHeading,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -272,31 +275,27 @@ pub fn ClusterConfigPage(id: String) -> Element {
 
     rsx! {
         div { class: "mb-4",
-            Link {
-                to: Route::ClusterDetail { id: id.clone() },
-                class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
+            Link { to: Route::ClusterDetail { id: id.clone() }, class: "link text-sm",
                 {t!("cluster-config-back")}
             }
             if !name.is_empty() {
-                h2 { class: "text-2xl font-bold mt-1", "{name} — {t!(\"cluster-detail-tab-config\")}" }
+                PageHeader { class: "mt-1", "{name} — {t!(\"cluster-detail-tab-config\")}" }
             }
         }
 
         div { class: "space-y-6",
             div {
-                h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-config")} }
+                SectionHeading { {t!("cluster-detail-tab-config")} }
                 ConfigEditor { cluster_id: id.clone(), read_only }
             }
             div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", {t!("secrets-title")} }
-                    p { class: "text-sm text-gray-500 dark:text-gray-400 mb-3",
-                        {t!("secrets-description")}
-                    }
+                    SectionHeading { {t!("secrets-title")} }
+                    p { class: "help mb-3", {t!("secrets-description")} }
                     SecretsEditor { cluster_id: id.clone(), read_only }
                 }
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", {t!("cluster-detail-tab-config-history")} }
+                    SectionHeading { {t!("cluster-detail-tab-config-history")} }
                     ConfigHistory { cluster_id: id.clone() }
                 }
             }
@@ -324,10 +323,10 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
     let entries = match &*secrets.read() {
         Some(Ok(list)) => list.clone(),
         Some(Err(e)) => {
-            return rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} } };
+            return rsx! { ErrorText { {t!("error-message", message: e.to_string())} } };
         }
         None => {
-            return rsx! { p { class: "text-sm", {t!("loading")} } };
+            return rsx! { HelpText { {t!("loading")} } };
         }
     };
 
@@ -354,21 +353,21 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
 
     rsx! {
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
+            ErrorText { class: "mb-2", "{err}" }
         }
 
         if entries.is_empty() {
-            p { class: "text-sm text-gray-500 dark:text-gray-400 mb-3", {t!("secrets-empty")} }
+            HelpText { class: "mb-3", {t!("secrets-empty")} }
         } else {
-            div { class: "border border-gray-300 dark:border-gray-600 rounded overflow-hidden mb-3",
+            div { class: "border border-line rounded overflow-hidden mb-3",
                 table { class: "w-full text-sm",
                     thead {
-                        tr { class: "bg-gray-100 dark:bg-gray-700 text-left",
-                            th { class: "px-3 py-2 font-medium", {t!("secrets-col-name")} }
-                            th { class: "px-3 py-2 font-medium", {t!("secrets-col-reference")} }
-                            th { class: "px-3 py-2 font-medium", {t!("secrets-col-created")} }
+                        tr { class: "bg-surface-2 text-left",
+                            th { class: "px-3 py-2 font-medium text-fg-strong", {t!("secrets-col-name")} }
+                            th { class: "px-3 py-2 font-medium text-fg-strong", {t!("secrets-col-reference")} }
+                            th { class: "px-3 py-2 font-medium text-fg-strong", {t!("secrets-col-created")} }
                             if !read_only {
-                                th { class: "px-3 py-2 font-medium w-32", {t!("secrets-col-actions")} }
+                                th { class: "px-3 py-2 font-medium text-fg-strong w-32", {t!("secrets-col-actions")} }
                             }
                         }
                     }
@@ -387,25 +386,24 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
                                 let is_confirming = confirm_delete.read().as_deref() == Some(name.as_str());
 
                                 rsx! {
-                                    tr { class: "border-t border-gray-200 dark:border-gray-600",
+                                    tr { class: "border-t border-line-soft",
                                         key: "{name}",
                                         td { class: "px-3 py-2 font-mono", "{name}" }
-                                        td { class: "px-3 py-2 font-mono text-gray-500 dark:text-gray-400 select-all", "{reference}" }
-                                        td { class: "px-3 py-2 text-gray-500 dark:text-gray-400", "{created}" }
+                                        td { class: "px-3 py-2 font-mono text-fg-muted select-all", "{reference}" }
+                                        td { class: "px-3 py-2 text-fg-muted", "{created}" }
                                         if !read_only {
                                             td { class: "px-3 py-2",
                                                 if is_editing {
                                                     div { class: "flex gap-1",
                                                         input {
                                                             r#type: "password",
-                                                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-sm dark:bg-gray-700 dark:text-white w-32",
+                                                            class: "input input-xs w-32",
                                                             placeholder: t!("secrets-new-value"),
                                                             value: "{edit_value}",
                                                             oninput: move |e| edit_value.set(e.value()),
                                                         }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "text-green-600 dark:text-green-400 hover:text-green-800 text-xs",
+                                                        button { r#type: "button",
+                                                            class: "text-success hover:opacity-80 text-xs",
                                                             onclick: move |_| {
                                                                 let cid = cid_upd.clone();
                                                                 let n = name_edit.clone();
@@ -424,9 +422,8 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
                                                             },
                                                             {t!("save")}
                                                         }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "text-gray-500 dark:text-gray-400 text-xs",
+                                                        button { r#type: "button",
+                                                            class: "text-fg-muted hover:text-fg-strong text-xs",
                                                             onclick: move |_| {
                                                                 editing.set(None);
                                                                 edit_value.set(String::new());
@@ -436,10 +433,9 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
                                                     }
                                                 } else if is_confirming {
                                                     div { class: "flex gap-1 items-center",
-                                                        span { class: "text-red-600 dark:text-red-400 text-xs", {t!("secrets-confirm-delete")} }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "text-red-600 dark:text-red-400 hover:text-red-800 text-xs font-semibold",
+                                                        span { class: "text-danger text-xs", {t!("secrets-confirm-delete")} }
+                                                        button { r#type: "button",
+                                                            class: "link-danger text-xs font-semibold",
                                                             onclick: move |_| {
                                                                 let cid = cid_del.clone();
                                                                 let n = name_del.clone();
@@ -456,27 +452,24 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
                                                             },
                                                             {t!("delete")}
                                                         }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "text-gray-500 dark:text-gray-400 text-xs",
+                                                        button { r#type: "button",
+                                                            class: "text-fg-muted hover:text-fg-strong text-xs",
                                                             onclick: move |_| confirm_delete.set(None),
                                                             {t!("cancel")}
                                                         }
                                                     }
                                                 } else {
                                                     div { class: "flex gap-2",
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "text-blue-600 dark:text-blue-400 hover:underline text-xs",
+                                                        button { r#type: "button",
+                                                            class: "link text-xs",
                                                             onclick: move |_| {
                                                                 editing.set(Some(name.clone()));
                                                                 edit_value.set(String::new());
                                                             },
                                                             {t!("secrets-update")}
                                                         }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "text-red-500 hover:text-red-700 text-xs",
+                                                        button { r#type: "button",
+                                                            class: "link-danger text-xs",
                                                             onclick: move |_| {
                                                                 confirm_delete.set(Some(name_del2.clone()));
                                                             },
@@ -496,32 +489,30 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
         }
 
         if !read_only {
-            div { class: "border border-gray-300 dark:border-gray-600 rounded p-3",
-                h4 { class: "text-sm font-semibold mb-2", {t!("secrets-add")} }
+            div { class: "border border-line rounded p-3",
+                h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("secrets-add")} }
                 div { class: "flex gap-2 items-end flex-wrap",
                     div { class: "flex flex-col gap-1",
-                        label { class: "text-xs text-gray-600 dark:text-gray-300", {t!("secrets-col-name")} }
+                        label { class: "help-xs", {t!("secrets-col-name")} }
                         input {
                             r#type: "text",
-                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white w-48",
+                            class: "input input-sm w-48",
                             placeholder: "MY_API_KEY",
                             value: "{new_name}",
                             oninput: move |e| new_name.set(e.value()),
                         }
                     }
                     div { class: "flex flex-col gap-1",
-                        label { class: "text-xs text-gray-600 dark:text-gray-300", {t!("secrets-col-value")} }
+                        label { class: "help-xs", {t!("secrets-col-value")} }
                         input {
                             r#type: "password",
-                            class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white w-64",
+                            class: "input input-sm w-64",
                             placeholder: t!("secrets-value-placeholder"),
                             value: "{new_value}",
                             oninput: move |e| new_value.set(e.value()),
                         }
                     }
-                    button {
-                        r#type: "button",
-                        class: "bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700",
+                    Button { size: ButtonSize::Sm,
                         onclick: move |_| do_create(),
                         {t!("secrets-add")}
                     }

@@ -7,6 +7,9 @@ use crate::models::McpServer;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+use crate::web::components::ui::{
+    Button, ButtonKind, ButtonSize, ErrorText, FormField, HelpText, PageHeader, SectionHeading,
+};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -129,9 +132,6 @@ async fn delete_mcp_server(id: String) -> Result<(), ServerFnError> {
     let uuid: uuid::Uuid = id
         .parse()
         .map_err(|e: uuid::Error| ServerFnError::new(e.to_string()))?;
-    // Resolve affected clusters BEFORE the delete — the cascade will wipe
-    // both direct assignments and bundle memberships, so a post-delete query
-    // would find nothing.
     crate::api::push::notify_federation_global();
     crate::api::push::notify_mcp_server_global(uuid).await;
     sqlx::query("DELETE FROM mcp_servers WHERE id = $1")
@@ -199,12 +199,11 @@ fn McpServerFormFields(
     hide_from_public_catalog: Signal<bool>,
     slug_readonly: bool,
 ) -> Element {
+    let slug_extra_class = if slug_readonly { "bg-surface-2 text-fg-muted" } else { "" };
     rsx! {
-        div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("slug")} }
+        FormField { label: t!("slug"),
             input {
-                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono dark:bg-gray-700 dark:text-white",
-                class: if slug_readonly { "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400" } else { "" },
+                class: "input font-mono {slug_extra_class}",
                 r#type: "text",
                 required: true,
                 readonly: slug_readonly,
@@ -213,29 +212,26 @@ fn McpServerFormFields(
                 oninput: move |evt| slug.set(evt.value()),
             }
         }
-        div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("name")} }
+        FormField { label: t!("name"),
             input {
-                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
+                class: "input",
                 r#type: "text",
                 required: true,
                 value: "{name}",
                 oninput: move |evt| name.set(evt.value()),
             }
         }
-        div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("description")} }
+        FormField { label: t!("description"),
             textarea {
-                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 dark:bg-gray-700 dark:text-white",
+                class: "input",
                 rows: "2",
                 value: "{description}",
                 oninput: move |evt| description.set(evt.value()),
             }
         }
-        div { class: "mb-4",
-            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1", {t!("mcp-server-config-json")} }
+        FormField { label: t!("mcp-server-config-json"),
             textarea {
-                class: "w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 font-mono text-sm dark:bg-gray-700 dark:text-white",
+                class: "input font-mono text-sm",
                 rows: "10",
                 required: true,
                 value: "{config_json}",
@@ -243,10 +239,11 @@ fn McpServerFormFields(
             }
         }
         div { class: "mb-4",
-            label { class: "flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200",
+            label { class: "flex items-center gap-2 text-sm text-fg-strong",
                 input {
                     r#type: "checkbox",
                     checked: "{hide_from_public_catalog}",
+                    class: "rounded border-line",
                     oninput: move |evt| hide_from_public_catalog.set(evt.value() == "true"),
                 }
                 {t!("mcp-server-hide")}
@@ -288,19 +285,16 @@ pub fn McpServerDetail(id: String) -> Element {
 
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
-                    h2 { class: "text-2xl font-bold", "{name}" }
-                    span { class: "text-gray-400 dark:text-gray-500 font-mono text-sm", "({slug})" }
+                    h2 { class: "h-page mb-0", "{name}" }
+                    span { class: "text-fg-faint font-mono text-sm", "({slug})" }
                     HiddenBadge { hidden: hide_flag }
-                    Link {
-                        to: Route::McpServerEdit { id: sid },
-                        class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
+                    Link { to: Route::McpServerEdit { id: sid }, class: "text-fg-faint hover:text-fg-muted",
                         {t!("edit")}
                     }
-                    button {
-                        class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400",
+                    button { class: "link-danger",
                         onclick: move |_| {
                             let id = sid_del.clone();
-                            let nav = navigator.clone();
+                            let nav = navigator;
                             spawn(async move {
                                 if delete_mcp_server(id).await.is_ok() {
                                     nav.push(Route::McpServerList {});
@@ -311,52 +305,48 @@ pub fn McpServerDetail(id: String) -> Element {
                     }
                 }
                 if !s.description.is_empty() {
-                    p { class: "text-gray-600 dark:text-gray-300 mb-2", "{s.description}" }
+                    p { class: "text-fg mb-2", "{s.description}" }
                 }
-                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6", {t!("cluster-detail-created", date: created)} }
+                p { class: "help mb-6", {t!("cluster-detail-created", date: created)} }
 
                 div { class: "mb-6",
-                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-server-config-json")} }
-                    pre { class: "bg-gray-100 dark:bg-gray-700 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap",
+                    SectionHeading { {t!("mcp-server-config-json")} }
+                    pre { class: "bg-surface-2 p-4 rounded text-sm font-mono overflow-x-auto whitespace-pre-wrap",
                         "{config_str}"
                     }
                 }
 
                 // Nix packages section
                 div {
-                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-server-nix-deps")} }
-                    form {
-                        class: "flex gap-2 mb-4",
+                    SectionHeading { {t!("mcp-server-nix-deps")} }
+                    form { class: "flex gap-2 mb-4",
                         onsubmit: move |evt: FormEvent| {
                             evt.prevent_default();
                             let id = sid_pkg.clone();
                             let pkg = new_pkg.read().clone();
                             spawn(async move {
-                                if !pkg.trim().is_empty() {
-                                    if add_nix_package(id, pkg).await.is_ok() {
-                                        new_pkg.set(String::new());
-                                        server.restart();
-                                    }
+                                if !pkg.trim().is_empty()
+                                    && add_nix_package(id, pkg).await.is_ok()
+                                {
+                                    new_pkg.set(String::new());
+                                    server.restart();
                                 }
                             });
                         },
-                        input {
-                            class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm font-mono dark:bg-gray-700 dark:text-white",
+                        input { class: "input flex-1 w-auto py-1 text-sm font-mono",
                             r#type: "text",
                             placeholder: t!("mcp-server-nix-placeholder"),
                             value: "{new_pkg}",
                             oninput: move |e| new_pkg.set(e.value()),
                         }
-                        button {
-                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                            r#type: "submit",
+                        Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                             {t!("add")}
                         }
                     }
                     if packages.is_empty() {
-                        p { class: "text-sm text-gray-400 dark:text-gray-500", {t!("mcp-server-no-nix-deps")} }
+                        HelpText { {t!("mcp-server-no-nix-deps")} }
                     } else {
-                        ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                        ul { class: "divide-y divide-line-soft",
                             for pkg in &packages {
                                 {
                                     let pkg_display = pkg.clone();
@@ -365,8 +355,7 @@ pub fn McpServerDetail(id: String) -> Element {
                                     rsx! {
                                         li { class: "py-2 flex justify-between items-center",
                                             span { class: "text-sm font-mono", "{pkg_display}" }
-                                            button {
-                                                class: "text-xs text-red-600 dark:text-red-400 hover:underline",
+                                            button { class: "link-danger text-xs",
                                                 onclick: move |_| {
                                                     let id = id_rm.clone();
                                                     let pkg = pkg_remove.clone();
@@ -388,13 +377,13 @@ pub fn McpServerDetail(id: String) -> Element {
 
                 // Required by Skills section
                 div { class: "mt-6",
-                    h3 { class: "text-lg font-semibold mb-3", {t!("mcp-server-required-by")} }
+                    SectionHeading { {t!("mcp-server-required-by")} }
                     {match &*dep_skills.read() {
                         Some(Ok(list)) if list.is_empty() => rsx! {
-                            p { class: "text-sm text-gray-400 dark:text-gray-500", {t!("mcp-server-no-skills-depend")} }
+                            HelpText { {t!("mcp-server-no-skills-depend")} }
                         },
                         Some(Ok(list)) => rsx! {
-                            ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                            ul { class: "divide-y divide-line-soft",
                                 for dep in list {
                                     {
                                         let skill_slug = dep.skill_slug.clone();
@@ -402,26 +391,24 @@ pub fn McpServerDetail(id: String) -> Element {
                                         let skill_id = dep.skill_id.clone();
                                         rsx! {
                                             li { class: "py-2",
-                                                Link {
-                                                    to: Route::SkillDetail { id: skill_id },
-                                                    class: "text-sm text-blue-600 dark:text-blue-400 hover:underline font-mono",
+                                                Link { to: Route::SkillDetail { id: skill_id }, class: "link text-sm font-mono",
                                                     "{skill_slug}"
                                                 }
-                                                span { class: "text-xs text-gray-400 dark:text-gray-500 ml-2", "({channel})" }
+                                                span { class: "text-xs text-fg-faint ml-2", "({channel})" }
                                             }
                                         }
                                     }
                                 }
                             }
                         },
-                        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-                        None => rsx! { p { class: "text-sm", {t!("loading")} } },
+                        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+                        None => rsx! { HelpText { {t!("loading")} } },
                     }}
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { {t!("loading")} } },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
 
@@ -438,14 +425,14 @@ pub fn McpServerForm() -> Element {
     let mut error = use_signal(|| None::<String>);
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("mcp-server-new-title")} }
+        PageHeader { {t!("mcp-server-new-title")} }
         if let Some(err) = &*error.read() {
-            p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
+            ErrorText { class: "mb-4", "{err}" }
         }
         form {
             onsubmit: move |evt: FormEvent| {
                 evt.prevent_default();
-                let nav = navigator.clone();
+                let nav = navigator;
                 let s = slug.read().clone();
                 let n = name.read().clone();
                 let d = description.read().clone();
@@ -459,19 +446,11 @@ pub fn McpServerForm() -> Element {
                 });
             },
             McpServerFormFields {
-                slug,
-                name,
-                description,
-                config_json,
-                hide_from_public_catalog,
+                slug, name, description, config_json, hide_from_public_catalog,
                 slug_readonly: false,
             }
             div { class: "flex gap-3 items-center",
-                button {
-                    class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                    r#type: "submit",
-                    {t!("create")}
-                }
+                Button { kind: ButtonKind::Submit, {t!("create")} }
                 GenerateButton {
                     context: GenerateContext::McpServer { slug: slug.read().clone(), config_json: config_json.read().clone() },
                     current_name: name.read().clone(),
@@ -505,7 +484,6 @@ pub fn McpServerEdit(id: String) -> Element {
     let mut error = use_signal(|| None::<String>);
     let mut loaded = use_signal(|| false);
 
-    // Pre-fill signals once when data arrives
     if let Some(Ok(s)) = &*existing.read() {
         if !*loaded.read() {
             slug.set(s.slug.clone());
@@ -522,14 +500,14 @@ pub fn McpServerEdit(id: String) -> Element {
             let edit_id = id.clone();
             let nav_id = id.clone();
             rsx! {
-                h2 { class: "text-2xl font-bold mb-4", {t!("mcp-server-edit-title")} }
+                PageHeader { {t!("mcp-server-edit-title")} }
                 if let Some(err) = &*error.read() {
-                    p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
+                    ErrorText { class: "mb-4", "{err}" }
                 }
                 form {
                     onsubmit: move |evt: FormEvent| {
                         evt.prevent_default();
-                        let nav = navigator.clone();
+                        let nav = navigator;
                         let eid = edit_id.clone();
                         let nid = nav_id.clone();
                         let s = slug.read().clone();
@@ -545,22 +523,13 @@ pub fn McpServerEdit(id: String) -> Element {
                         });
                     },
                     McpServerFormFields {
-                        slug,
-                        name,
-                        description,
-                        config_json,
-                        hide_from_public_catalog,
+                        slug, name, description, config_json, hide_from_public_catalog,
                         slug_readonly: true,
                     }
                     div { class: "flex gap-3 items-center",
-                        button {
-                            class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
-                            r#type: "submit",
-                            {t!("save")}
-                        }
-                        Link {
-                            to: Route::McpServerDetail { id: id.clone() },
-                            class: "px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white",
+                        Button { kind: ButtonKind::Submit, {t!("save")} }
+                        Link { to: Route::McpServerDetail { id: id.clone() },
+                            class: "px-4 py-2 text-fg-muted hover:text-fg-strong",
                             {t!("cancel")}
                         }
                         GenerateButton {
@@ -576,7 +545,7 @@ pub fn McpServerEdit(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { {t!("loading")} } },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }

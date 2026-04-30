@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use super::mcp_bundle_detail::McpServerOption;
+use crate::web::components::ui::{Button, ButtonKind, ButtonSize, ErrorText, HelpText};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -735,7 +736,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
     rsx! {
         // Direct MCP server assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-mcp-direct")} }
+            h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("cluster-mcp-direct")} }
             if !read_only {
                 form {
                     class: "flex gap-2 mb-3",
@@ -771,8 +772,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                             }
                         });
                     },
-                    select {
-                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                    select { class: "input flex-1 w-auto py-1 text-sm",
                         value: "{selected_server}",
                         onchange: move |evt| selected_server.set(evt.value()),
                         option { value: "", {t!("cluster-mcp-select")} }
@@ -817,19 +817,17 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                             _ => rsx! {},
                         }}
                     }
-                    button {
-                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                        r#type: "submit",
+                    Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                         {t!("add")}
                     }
                 }
             }
             {match &*servers.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-direct")} }
+                    HelpText { {t!("cluster-mcp-no-direct")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for cs in list {
                             {
                                 let csid = cs.cluster_mcp_server_id.to_string();
@@ -840,16 +838,15 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "flex items-center gap-2",
                                             span {
-                                                class: if is_remote { "text-sm font-mono text-purple-700 dark:text-purple-400" } else { "text-sm font-mono" },
+                                                class: if is_remote { "text-sm font-mono text-accent-strong" } else { "text-sm font-mono" },
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-mcp-via", source: via.clone())} }
+                                                span { class: "text-xs text-accent", {t!("cluster-mcp-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
-                                            button {
-                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                            button { class: "link-danger text-sm",
                                                 onclick: move |_| {
                                                     let csid = csid.clone();
                                                     spawn(async move {
@@ -867,20 +864,20 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
+                None => rsx! { HelpText { "Loading..." } },
             }}
         }
 
         // MCP servers from bundles (read-only, blue)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2", {t!("cluster-mcp-from-bundles")} }
+            h4 { class: "text-sm font-semibold text-info mb-2", {t!("cluster-mcp-from-bundles")} }
             {match &*bundle_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-bundle-mcp")} }
+                    HelpText { {t!("cluster-mcp-no-bundle-mcp")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for bm in list {
                             {
                                 let label = format!("{} ({})", bm.server_name, bm.server_slug);
@@ -889,12 +886,12 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                 rsx! {
                                     li { class: "py-2 flex items-center gap-2",
                                         span {
-                                            class: if overwritten { "text-sm font-mono text-blue-400 dark:text-blue-600 line-through" } else { "text-sm font-mono text-blue-700 dark:text-blue-400" },
+                                            class: if overwritten { "text-sm font-mono text-info opacity-50 line-through" } else { "text-sm font-mono text-info" },
                                             "{label}"
                                         }
-                                        span { class: if overwritten { "text-xs text-blue-300" } else { "text-xs text-blue-500" }, {t!("cluster-mcp-via", source: via.clone())} }
+                                        span { class: if overwritten { "text-xs text-info opacity-50" } else { "text-xs text-info" }, {t!("cluster-mcp-via", source: via.clone())} }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", {t!("cluster-mcp-overwritten")} }
+                                            span { class: "text-xs text-fg-faint italic", {t!("cluster-mcp-overwritten")} }
                                         }
                                     }
                                 }
@@ -902,20 +899,20 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
+                None => rsx! { HelpText { "Loading..." } },
             }}
         }
 
         // MCP servers from skills (transitive, read-only, grey)
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2", {t!("cluster-mcp-from-skills")} }
+            h4 { class: "text-sm font-semibold text-fg-muted mb-2", {t!("cluster-mcp-from-skills")} }
             {match &*transitive_mcps.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-transitive")} }
+                    HelpText { {t!("cluster-mcp-no-transitive")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for tm in list {
                             {
                                 let label = format!("{} ({})", tm.server_name, tm.server_slug);
@@ -924,12 +921,12 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                 rsx! {
                                     li { class: "py-2 flex items-center gap-2",
                                         span {
-                                            class: if overwritten { "text-sm font-mono text-gray-400 dark:text-gray-500 line-through" } else { "text-sm font-mono text-gray-500 dark:text-gray-400" },
+                                            class: if overwritten { "text-sm font-mono text-fg-muted opacity-50 line-through" } else { "text-sm font-mono text-fg-muted" },
                                             "{label}"
                                         }
-                                        span { class: if overwritten { "text-xs text-gray-300 dark:text-gray-600" } else { "text-xs text-gray-400 dark:text-gray-500" }, {t!("cluster-mcp-via", source: via.clone())} }
+                                        span { class: if overwritten { "text-xs text-fg-faint opacity-50" } else { "text-xs text-fg-faint" }, {t!("cluster-mcp-via", source: via.clone())} }
                                         if overwritten {
-                                            span { class: "text-xs text-gray-400 dark:text-gray-500 italic", {t!("cluster-mcp-overwritten")} }
+                                            span { class: "text-xs text-fg-faint italic", {t!("cluster-mcp-overwritten")} }
                                         }
                                     }
                                 }
@@ -937,17 +934,17 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
+                None => rsx! { HelpText { "Loading..." } },
             }}
         }
 
         // MCP bundle assignments
         div { class: "mb-4",
-            h4 { class: "text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2", {t!("cluster-mcp-bundles-title")} }
+            h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("cluster-mcp-bundles-title")} }
             if !read_only {
                 if let Some(err) = &*bundle_error.read() {
-                    p { class: "text-red-600 dark:text-red-400 text-sm mb-2", "{err}" }
+                    ErrorText { class: "mb-2", "{err}" }
                 }
                 form {
                     class: "flex gap-2 mb-3",
@@ -996,8 +993,7 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                             }
                         });
                     },
-                    select {
-                        class: "flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                    select { class: "input flex-1 w-auto py-1 text-sm",
                         value: "{selected_bundle}",
                         onchange: move |evt| selected_bundle.set(evt.value()),
                         option { value: "", {t!("cluster-mcp-select-bundle")} }
@@ -1042,19 +1038,17 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                             _ => rsx! {},
                         }}
                     }
-                    button {
-                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
-                        r#type: "submit",
+                    Button { kind: ButtonKind::Submit, size: ButtonSize::Sm,
                         {t!("add")}
                     }
                 }
             }
             {match &*bundles.read() {
                 Some(Ok(list)) if list.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("cluster-mcp-no-bundle-assign")} }
+                    HelpText { {t!("cluster-mcp-no-bundle-assign")} }
                 },
                 Some(Ok(list)) => rsx! {
-                    ul { class: "divide-y divide-gray-200 dark:divide-gray-700",
+                    ul { class: "divide-y divide-line-soft",
                         for cb in list {
                             {
                                 let cbid = cb.cluster_mcp_bundle_id.to_string();
@@ -1065,16 +1059,15 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "flex items-center gap-2",
                                             span {
-                                                class: if is_remote { "text-sm text-purple-700 dark:text-purple-400" } else { "text-sm" },
+                                                class: if is_remote { "text-sm text-accent-strong" } else { "text-sm" },
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-purple-500 dark:text-purple-500", {t!("cluster-mcp-via", source: via.clone())} }
+                                                span { class: "text-xs text-accent", {t!("cluster-mcp-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
-                                            button {
-                                                class: "text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm",
+                                            button { class: "link-danger text-sm",
                                                 onclick: move |_| {
                                                     let cbid = cbid.clone();
                                                     spawn(async move {
@@ -1092,8 +1085,8 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                         }
                     }
                 },
-                Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400 text-sm", "Error: {e}" } },
-                None => rsx! { p { class: "text-gray-500 dark:text-gray-400 text-sm", "Loading..." } },
+                Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
+                None => rsx! { HelpText { "Loading..." } },
             }}
         }
     }

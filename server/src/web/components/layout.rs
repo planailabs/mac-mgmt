@@ -47,7 +47,7 @@ fn LoadingSpinner() -> Element {
         div { class: "flex items-center justify-center py-20 w-full h-full",
             div { class: "flex flex-col items-center gap-3",
                 svg {
-                    class: "animate-spin h-8 w-8 text-blue-600 dark:text-blue-400",
+                    class: "animate-spin h-8 w-8 text-brand",
                     fill: "none",
                     view_box: "0 0 24 24",
                     circle {
@@ -64,7 +64,7 @@ fn LoadingSpinner() -> Element {
                         d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z",
                     }
                 }
-                span { class: "text-sm text-gray-500 dark:text-gray-400", {t!("loading")} }
+                span { class: "text-sm text-fg-muted", {t!("loading")} }
             }
         }
     }
@@ -90,10 +90,9 @@ pub fn Layout() -> Element {
 
             // Impersonation banner
             if let Some(email) = &impersonating_email {
-                div { class: "shrink-0 bg-yellow-500 text-yellow-900 text-center text-sm py-1.5 px-4 flex items-center justify-center gap-3 relative z-10",
+                div { class: "shrink-0 bg-warn text-warn-strong text-center text-sm py-1.5 px-4 flex items-center justify-center gap-3 relative z-10",
                     span { {t!("impersonating", email: email.clone())} }
-                    button {
-                        class: "bg-yellow-700 text-yellow-100 px-2 py-0.5 rounded text-xs hover:bg-yellow-800",
+                    button { class: "btn btn-xs btn-warn",
                         onclick: move |_| {
                             document::eval(
                                 "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
