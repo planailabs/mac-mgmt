@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::components::ui::{Badge, BadgeVariant};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -588,8 +589,8 @@ pub fn FleetHealer(instance_id: String) -> Element {
 
     match &*ctx.read() {
         Some(Ok(c)) => render_healer(c),
-        Some(Err(e)) => rsx! { p { class: "text-red-600 text-sm", {t!("error-message", message: e.to_string())} } },
-        None => rsx! { p { class: "text-gray-500 text-sm", {t!("loading")} } },
+        Some(Err(e)) => rsx! { p { class: "text-danger text-sm", {t!("error-message", message: e.to_string())} } },
+        None => rsx! { p { class: "text-fg-muted text-sm", {t!("loading")} } },
     }
 }
 
@@ -622,14 +623,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let sessions = ctx.sessions.clone();
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4", {t!("healer-title")} }
-        p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
+        h2 { class: "h-page", {t!("healer-title")} }
+        p { class: "text-sm text-fg-muted mb-4",
             {t!("healer-instance", instance_id: ctx.instance_id.clone(), hostname: ctx.hostname.clone())}
         }
 
         if !unhealthy.is_empty() {
-            div { class: "mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded",
-                p { class: "text-sm font-medium text-red-800 dark:text-red-300",
+            div { class: "alert alert-danger mb-4",
+                p { class: "text-sm font-medium text-danger-strong",
                     {t!("healer-unhealthy", services: unhealthy.join(", "))}
                 }
             }
@@ -641,13 +642,13 @@ fn render_healer(ctx: &HealerContext) -> Element {
             rsx! {
                 div { class: "mb-4",
                     button {
-                        class: "text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1",
+                        class: "text-sm text-fg-muted hover:text-fg-strong flex items-center gap-1",
                         onclick: move |_| { let v = *settings_open.read(); settings_open.set(!v); },
                         {t!("healer-settings")}
                         span { class: "text-xs", if *settings_open.read() { "\u{25BC}" } else { "\u{25B6}" } }
                     }
                     if *settings_open.read() {
-                        div { class: "mt-2 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 border border-gray-200 dark:border-gray-700",
+                        div { class: "mt-2 p-4 bg-surface rounded shadow border border-line-soft",
                             super::cluster_healer_settings::ClusterHealerSettings {
                                 cluster_id: cluster_id,
                                 read_only: false,
@@ -667,14 +668,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 // Build option values as "provider:model"
                 let first_key = models.first().map(|m| format!("{}:{}", m.provider, m.model)).unwrap_or_default();
                 rsx! {
-                    div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                    div { class: "mb-6 p-4 bg-surface rounded shadow",
                         h3 { class: "text-lg font-semibold mb-3", {t!("healer-new-session")} }
 
                         // Model selector
                         div { class: "mb-3",
-                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("healer-model")} }
+                            label { class: "block text-sm font-medium text-fg mb-1", {t!("healer-model")} }
                             select {
-                                class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                class: "w-full px-3 py-2 text-sm border rounded ",
                                 value: "{selected_model_key}",
                                 onchange: move |e| selected_model_key.set(e.value()),
                                 if !ollama_models.is_empty() {
@@ -711,19 +712,19 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 let is_ollama = key.starts_with("ollama:");
                                 if is_ollama {
                                     rsx! {
-                                        p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                                        p { class: "mt-1 text-xs text-fg-muted",
                                             {t!("healer-ollama-hint")}
                                         }
                                     }
                                 } else if key.starts_with("openrouter:") {
                                     rsx! {
-                                        p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                                        p { class: "mt-1 text-xs text-fg-muted",
                                             {t!("healer-openrouter-hint")}
                                         }
                                     }
                                 } else {
                                     rsx! {
-                                        p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                                        p { class: "mt-1 text-xs text-fg-muted",
                                             {t!("healer-anthropic-hint")}
                                         }
                                     }
@@ -733,9 +734,9 @@ fn render_healer(ctx: &HealerContext) -> Element {
 
                         // Fix-model selector (optional, for remediation phase)
                         div { class: "mb-3",
-                            label { class: "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1", {t!("healer-fix-model")} }
+                            label { class: "block text-sm font-medium text-fg mb-1", {t!("healer-fix-model")} }
                             select {
-                                class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                class: "w-full px-3 py-2 text-sm border rounded ",
                                 value: "{selected_fix_model_key}",
                                 onchange: move |e| selected_fix_model_key.set(e.value()),
                                 option { value: "none", {t!("healer-same-as-diagnosis")} }
@@ -767,14 +768,14 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                     }
                                 }
                             }
-                            p { class: "mt-1 text-xs text-gray-500 dark:text-gray-400",
+                            p { class: "mt-1 text-xs text-fg-muted",
                                 {t!("healer-fix-model-hint")}
                             }
                         }
 
                         div { class: "mb-3",
                             textarea {
-                                class: "w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200",
+                                class: "w-full px-3 py-2 text-sm border rounded ",
                                 rows: "2",
                                 placeholder: t!("healer-instructions-placeholder"),
                                 value: "{user_input}",
@@ -785,21 +786,21 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             input {
                                 r#type: "checkbox",
                                 id: "auto-approve",
-                                class: "rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700",
+                                class: "rounded border-line",
                                 checked: *auto_approve.read(),
                                 onchange: move |e| auto_approve.set(e.checked()),
                             }
                             label {
                                 r#for: "auto-approve",
-                                class: "text-sm text-gray-700 dark:text-gray-300",
+                                class: "text-sm text-fg",
                                 {t!("healer-auto-approve")}
                             }
-                            p { class: "text-xs text-gray-500 dark:text-gray-400",
+                            p { class: "text-xs text-fg-muted",
                                 {t!("healer-skip-approval")}
                             }
                         }
                         button {
-                            class: "px-4 py-2 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700",
+                            class: "btn btn-md btn-primary",
                             onclick: {
                                 let instance_id = instance_id.clone();
                                 let first_key = first_key.clone();
@@ -850,12 +851,12 @@ fn render_healer(ctx: &HealerContext) -> Element {
                 div { class: "mb-3 flex items-center gap-3 flex-wrap",
                     {
                         let st = state.read().clone();
-                        let (badge_class, label) = state_badge(&st);
+                        let (badge_variant, label) = state_badge(&st);
                         let reason = state_reason.read().clone();
                         rsx! {
-                            span { class: "inline-block px-2 py-1 text-xs font-medium rounded {badge_class}", "{label}" }
+                            Badge { variant: badge_variant, "{label}" }
                             if let Some(reason) = reason {
-                                span { class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                                span { class: "text-xs text-fg-muted italic",
                                     "({reason_display(&reason)})"
                                 }
                             }
@@ -864,7 +865,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
 
                     if *running.read() {
                         button {
-                            class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                            class: "btn btn-xs btn-warn",
                             onclick: move |_| {
                                 let sid = session_id.read().clone();
                                 async move {
@@ -874,7 +875,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             {t!("healer-pause")}
                         }
                         button {
-                            class: "px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700",
+                            class: "btn btn-xs btn-danger",
                             onclick: move |_| {
                                 let sid = session_id.read().clone();
                                 async move {
@@ -890,7 +891,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                         if st == "paused" {
                             rsx! {
                                 button {
-                                    class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                                    class: "btn btn-xs btn-warn",
                                     onclick: move |_| {
                                         let sid = session_id.read().clone();
                                         async move {
@@ -907,7 +908,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
 
                     if !*running.read() {
                         button {
-                            class: "px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300",
+                            class: "btn btn-xs btn-secondary",
                             onclick: move |_| {
                                 session_id.set(None);
                                 messages.set(Vec::new());
@@ -945,11 +946,11 @@ fn render_healer(ctx: &HealerContext) -> Element {
                                 .unwrap_or_default();
                             let has_args = !args_short.is_empty();
                             rsx! {
-                                div { class: "px-3 py-2 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2",
-                                    span { class: "inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" }
-                                    span { class: "text-xs font-mono font-semibold text-indigo-700 dark:text-indigo-300", "{name}" }
+                                div { class: "px-3 py-2 rounded bg-accent-soft border border-accent flex items-center gap-2",
+                                    span { class: "inline-block w-2 h-2 rounded-full bg-accent animate-pulse" }
+                                    span { class: "text-xs font-mono font-semibold text-accent", "{name}" }
                                     if has_args {
-                                        span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
+                                        span { class: "text-xs text-fg-muted truncate", "{args_short}" }
                                     }
                                 }
                             }
@@ -958,13 +959,13 @@ fn render_healer(ctx: &HealerContext) -> Element {
 
                     // Ephemeral status (e.g. "Waiting for daemon reconnect...")
                     if let Some(msg) = &*status_msg.read() {
-                        div { class: "px-3 py-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300 animate-pulse",
+                        div { class: "px-3 py-2 rounded bg-warn-soft border border-warn text-sm text-warn-strong animate-pulse",
                             "{msg}"
                         }
                     }
 
                     if *running.read() && active_tools.read().is_empty() && status_msg.read().is_none() {
-                        div { class: "p-3 text-sm text-gray-400 animate-pulse", {t!("healer-thinking")} }
+                        div { class: "p-3 text-sm text-fg-faint animate-pulse", {t!("healer-thinking")} }
                     }
                 }
             }
@@ -988,43 +989,43 @@ fn render_healer(ctx: &HealerContext) -> Element {
                             let is_awaiting_approval = sess_state == "awaiting_approval";
                             let has_auto_approve = sess.auto_approve;
                             let fix_model_label = sess.fix_model.clone().unwrap_or_default();
-                            let (badge_class, badge_label) = state_badge(&sess_state);
+                            let (badge_variant, badge_label) = state_badge(&sess_state);
                             let url = format!("/fleet/{}/healer/{}", instance_id, sid);
 
                             rsx! {
                                 Link {
                                     to: url,
-                                    class: "flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30 hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer",
+                                    class: "flex items-center justify-between p-3 bg-surface rounded shadow hover:bg-surface-2 cursor-pointer",
                                     div { class: "flex items-center gap-3 flex-wrap",
-                                        span { class: "inline-block px-2 py-0.5 text-xs font-medium rounded {badge_class}", "{badge_label}" }
+                                        Badge { variant: badge_variant, "{badge_label}" }
                                         if is_awaiting_approval {
-                                            span { class: "px-1.5 py-0.5 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300 rounded animate-pulse", {t!("healer-approval-pending")} }
+                                            span { class: "badge badge-warn animate-pulse", {t!("healer-approval-pending")} }
                                         }
                                         if is_auto {
-                                            span { class: "px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded", {t!("healer-auto")} }
+                                            span { class: "badge badge-warn", {t!("healer-auto")} }
                                         }
                                         if has_auto_approve {
-                                            span { class: "px-1.5 py-0.5 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded", {t!("healer-auto-approve-label")} }
+                                            span { class: "badge badge-success", {t!("healer-auto-approve-label")} }
                                         }
                                         if !session_label.is_empty() {
-                                            span { class: "text-sm font-medium text-gray-700 dark:text-gray-300 truncate max-w-xs", "{session_label}" }
+                                            span { class: "text-sm font-medium text-fg truncate max-w-xs", "{session_label}" }
                                         }
-                                        span { class: "text-sm text-gray-700 dark:text-gray-300", "{created_at}" }
+                                        span { class: "text-sm text-fg", "{created_at}" }
                                         if !model_label.is_empty() {
-                                            span { class: "px-1.5 py-0.5 text-xs font-mono bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded", "{model_label}" }
+                                            Badge { variant: BadgeVariant::Neutral, class: "font-mono", "{model_label}" }
                                         }
                                         if !fix_model_label.is_empty() {
-                                            span { class: "px-1.5 py-0.5 text-xs font-mono bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-300 rounded", "fix: {fix_model_label}" }
+                                            span { class: "badge badge-accent font-mono", "fix: {fix_model_label}" }
                                         }
                                         if !is_auto {
-                                            span { class: "text-xs text-gray-500 dark:text-gray-400", "{created_by}" }
+                                            span { class: "text-xs text-fg-muted", "{created_by}" }
                                         }
                                     }
                                     div { class: "flex items-center gap-2",
                                         if let Some(err) = &error_msg {
-                                            span { class: "text-xs text-red-500 max-w-xs truncate", "{err}" }
+                                            span { class: "text-xs text-danger max-w-xs truncate", "{err}" }
                                         }
-                                        span { class: "text-xs text-gray-400", {t!("healer-view")} }
+                                        span { class: "text-xs text-fg-faint", {t!("healer-view")} }
                                     }
                                 }
                             }
@@ -1171,35 +1172,31 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
     let is_auto = meta.as_ref().map(|m| m.created_by.starts_with("auto:")).unwrap_or(false);
 
     rsx! {
-        h2 { class: "text-2xl font-bold mb-4",
+        h2 { class: "h-page",
             {t!("healer-session-title")}
             if !session_label.is_empty() {
-                span { class: "ml-2 text-lg font-normal text-gray-500 dark:text-gray-400", "— {session_label}" }
+                span { class: "ml-2 text-lg font-normal text-fg-muted", "— {session_label}" }
             }
         }
-        p { class: "text-sm text-gray-500 dark:text-gray-400 mb-4",
+        p { class: "text-sm text-fg-muted mb-4",
             {t!("healer-session-subtitle", instance_id: iid.clone(), session_id: session_id.clone())}
             if is_auto {
-                span { class: "ml-2 px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded",
-                    {t!("healer-auto-triggered")}
-                }
+                Badge { variant: BadgeVariant::Warn, class: "ml-2", {t!("healer-auto-triggered")} }
             }
             if !model_label.is_empty() {
-                span { class: "ml-2 px-1.5 py-0.5 text-xs font-mono bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded",
-                    "{model_label}"
-                }
+                Badge { variant: BadgeVariant::Neutral, class: "ml-2 font-mono", "{model_label}" }
             }
         }
 
         div { class: "mb-3 flex items-center gap-3 flex-wrap",
             {
                 let st = state.read().clone();
-                let (badge_class, label) = state_badge(&st);
+                let (badge_variant, label) = state_badge(&st);
                 let reason = state_reason.read().clone();
                 rsx! {
-                    span { class: "inline-block px-2 py-1 text-xs font-medium rounded {badge_class}", "{label}" }
+                    Badge { variant: badge_variant, "{label}" }
                     if let Some(reason) = reason {
-                        span { class: "text-xs text-gray-500 dark:text-gray-400 italic",
+                        span { class: "text-xs text-fg-muted italic",
                             "({reason_display(&reason)})"
                         }
                     }
@@ -1208,7 +1205,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 
             if *running.read() {
                 button {
-                    class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                    class: "btn btn-xs btn-warn",
                     onclick: {
                         let sid = session_id.clone();
                         move |_| {
@@ -1219,7 +1216,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                     {t!("healer-pause")}
                 }
                 button {
-                    class: "px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700",
+                    class: "btn btn-xs btn-danger",
                     onclick: {
                         let sid = session_id.clone();
                         move |_| {
@@ -1238,7 +1235,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                     let is_budget = reason.as_deref() == Some("token_budget_exceeded");
                     rsx! {
                         button {
-                            class: "px-3 py-1 text-xs font-medium bg-yellow-600 text-white rounded hover:bg-yellow-700",
+                            class: "btn btn-xs btn-warn",
                             onclick: {
                                 let sid = session_id.clone();
                                 move |_| {
@@ -1250,7 +1247,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                         }
                         if is_budget {
                             button {
-                                class: "px-3 py-1 text-xs font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700",
+                                class: "btn btn-xs btn-primary",
                                 onclick: {
                                     let sid = session_id.clone();
                                     move |_| {
@@ -1272,7 +1269,7 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 
             Link {
                 to: back_url,
-                class: "px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300",
+                class: "btn btn-xs btn-secondary",
                 {t!("healer-back-to-sessions")}
             }
         }
@@ -1296,11 +1293,11 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
                         .unwrap_or_default();
                     let has_args = !args_short.is_empty();
                     rsx! {
-                        div { class: "px-3 py-2 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2",
-                            span { class: "inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" }
-                            span { class: "text-xs font-mono font-semibold text-indigo-700 dark:text-indigo-300", "{name}" }
+                        div { class: "px-3 py-2 rounded bg-accent-soft border border-accent flex items-center gap-2",
+                            span { class: "inline-block w-2 h-2 rounded-full bg-accent animate-pulse" }
+                            span { class: "text-xs font-mono font-semibold text-accent", "{name}" }
                             if has_args {
-                                span { class: "text-xs text-gray-500 dark:text-gray-400 truncate", "{args_short}" }
+                                span { class: "text-xs text-fg-muted truncate", "{args_short}" }
                             }
                         }
                     }
@@ -1309,13 +1306,13 @@ pub fn FleetHealerSession(instance_id: String, session_id: String) -> Element {
 
             // Ephemeral status
             if let Some(msg) = &*status_msg.read() {
-                div { class: "px-3 py-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300 animate-pulse",
+                div { class: "px-3 py-2 rounded bg-warn-soft border border-warn text-sm text-warn-strong animate-pulse",
                     "{msg}"
                 }
             }
 
             if *running.read() && active_tools.read().is_empty() && status_msg.read().is_none() {
-                div { class: "p-3 text-sm text-gray-400 animate-pulse", "Agent is thinking..." }
+                div { class: "p-3 text-sm text-fg-faint animate-pulse", "Agent is thinking..." }
             }
         }
     }
@@ -1342,87 +1339,44 @@ fn reason_display(reason: &str) -> String {
     }
 }
 
-fn state_badge(st: &str) -> (&'static str, String) {
+fn state_badge(st: &str) -> (BadgeVariant, String) {
     match st {
-        "starting" | "loading" | "created" | "initializing" => (
-            "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-            t!("healer-state-initializing"),
-        ),
-        "diagnosing" => (
-            "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-            t!("healer-state-diagnosing"),
-        ),
-        "remediating" => (
-            "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
-            t!("healer-state-remediating"),
-        ),
-        "verifying" => (
-            "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
-            t!("healer-state-verifying"),
-        ),
-        "completed" | "done" => (
-            "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
-            t!("healer-state-done"),
-        ),
-        "failed" => (
-            "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-            t!("healer-state-failed"),
-        ),
-        "cancelled" => (
-            "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
-            t!("healer-state-cancelled"),
-        ),
-        "paused" => (
-            "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-            t!("healer-state-paused"),
-        ),
-        "awaiting_approval" => (
-            "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-            t!("healer-state-awaiting-approval"),
-        ),
-        "awaiting_retry" => (
-            "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-            t!("healer-state-awaiting-retry"),
-        ),
-        "needs_human_attention" => (
-            "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-            t!("healer-state-needs-human"),
-        ),
-        _ => (
-            "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
-            t!("healer-state-unknown"),
-        ),
+        "starting" | "loading" | "created" | "initializing" => {
+            (BadgeVariant::Info, t!("healer-state-initializing"))
+        }
+        "diagnosing" => (BadgeVariant::Warn, t!("healer-state-diagnosing")),
+        "remediating" => (BadgeVariant::Warn, t!("healer-state-remediating")),
+        "verifying" => (BadgeVariant::Accent, t!("healer-state-verifying")),
+        "completed" | "done" => (BadgeVariant::Success, t!("healer-state-done")),
+        "failed" => (BadgeVariant::Danger, t!("healer-state-failed")),
+        "cancelled" => (BadgeVariant::Neutral, t!("healer-state-cancelled")),
+        "paused" => (BadgeVariant::Warn, t!("healer-state-paused")),
+        "awaiting_approval" => (BadgeVariant::Warn, t!("healer-state-awaiting-approval")),
+        "awaiting_retry" => (BadgeVariant::Info, t!("healer-state-awaiting-retry")),
+        "needs_human_attention" => (BadgeVariant::Danger, t!("healer-state-needs-human")),
+        _ => (BadgeVariant::Neutral, t!("healer-state-unknown")),
     }
 }
 
-fn category_badge(cat: &str) -> &'static str {
+fn category_badge_variant(cat: &str) -> BadgeVariant {
     match cat {
-        "hardware" => "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-        "network" => "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-        "disk_space" => "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
-        "config_error" => "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-        "service_crash" => "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-        "model_issue" => "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
-        "permission" => "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-300",
-        "dependency" => "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300",
-        "security" => "bg-red-200 text-red-900 dark:bg-red-800 dark:text-red-200",
-        "performance" => "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
-        _ => "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
+        "hardware" | "service_crash" | "security" => BadgeVariant::Danger,
+        "network" | "performance" => BadgeVariant::Info,
+        "disk_space" | "config_error" => BadgeVariant::Warn,
+        "model_issue" | "permission" | "dependency" => BadgeVariant::Accent,
+        _ => BadgeVariant::Neutral,
     }
 }
 
 /// Derive a left-border color class from a state name, matching `state_badge` hues.
 fn state_border(st: &str) -> &'static str {
     match st {
-        "starting" | "loading" | "created" | "initializing" | "awaiting_retry" => {
-            "border-blue-300 dark:border-blue-700"
-        }
-        "diagnosing" | "paused" => "border-yellow-300 dark:border-yellow-700",
-        "remediating" => "border-orange-300 dark:border-orange-700",
-        "verifying" => "border-purple-300 dark:border-purple-700",
-        "completed" | "done" => "border-green-300 dark:border-green-700",
-        "failed" | "needs_human_attention" => "border-red-300 dark:border-red-700",
-        "cancelled" | _ => "border-gray-300 dark:border-gray-700",
+        "starting" | "loading" | "created" | "initializing" | "awaiting_retry" => "border-info",
+        "diagnosing" | "paused" | "remediating" => "border-warn",
+        "verifying" => "border-accent",
+        "completed" | "done" => "border-success",
+        "failed" | "needs_human_attention" => "border-danger",
+        "cancelled" | _ => "border-line",
     }
 }
 
@@ -1437,20 +1391,20 @@ fn render_state_change(msg: &ChatMsg) -> Element {
         ("unknown".to_string(), String::new())
     };
 
-    let (badge_bg, label) = state_badge(&state);
+    let (badge_variant, label) = state_badge(&state);
     let border = state_border(&state);
     let reason_text = reason_display(&reason);
 
     rsx! {
-        div { class: "p-3 rounded bg-gray-50/50 dark:bg-gray-800/50 border-l-4 {border}",
+        div { class: "p-3 rounded bg-surface-2 border-l-4 {border}",
             div { class: "flex items-center gap-1.5 mb-1",
-                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300", "S" }
-                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", {t!("healer-event-state-change")} }
+                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-surface-3 text-xs font-bold text-fg", "S" }
+                span { class: "text-xs font-semibold text-fg-muted uppercase tracking-wider", {t!("healer-event-state-change")} }
             }
             div { class: "flex items-center gap-2",
-                span { class: "text-xs font-semibold px-2 py-0.5 rounded-full {badge_bg}", "{label}" }
+                Badge { variant: badge_variant, "{label}" }
                 if !reason.is_empty() {
-                    span { class: "text-sm text-gray-600 dark:text-gray-300", "{reason_text}" }
+                    span { class: "text-sm text-fg", "{reason_text}" }
                 }
             }
         }
@@ -1470,27 +1424,27 @@ fn render_message(msg: &ChatMsg) -> Element {
 
     let (bg, icon, label) = match msg.role.as_str() {
         "system" => (
-            "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-400",
+            "bg-surface-2 border-l-4 border-line",
             "S",
             t!("healer-event-system"),
         ),
         "assistant" => (
-            "bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400",
+            "bg-info-soft border-l-4 border-info",
             "A",
             t!("healer-event-agent"),
         ),
         "user" => (
-            "bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400",
+            "bg-success-soft border-l-4 border-success",
             "U",
             t!("healer-event-user"),
         ),
         "summary" => (
-            "bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-400",
+            "bg-accent-soft border-l-4 border-accent",
             "S",
             t!("healer-event-summary"),
         ),
         _ => (
-            "bg-gray-50 dark:bg-gray-800 border-l-4 border-gray-300",
+            "bg-surface-2 border-l-4 border-line-soft",
             "-",
             t!("healer-event-other"),
         ),
@@ -1501,11 +1455,11 @@ fn render_message(msg: &ChatMsg) -> Element {
     rsx! {
         div { class: "p-3 rounded {bg}",
             div { class: "flex items-center gap-1.5 mb-1",
-                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300", "{icon}" }
-                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "{label}" }
+                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-surface-2 text-xs font-bold text-fg", "{icon}" }
+                span { class: "text-xs font-semibold text-fg-muted uppercase tracking-wider", "{label}" }
             }
             div {
-                class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
+                class: "text-sm text-fg-strong prose prose-sm dark:prose-invert max-w-none",
                 dangerous_inner_html: "{html}",
             }
         }
@@ -1521,9 +1475,9 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     let truncated = result.len() > 500;
     let preview = if truncated { &result[..500] } else { result };
     let tool_badge = if is_error {
-        "text-xs px-1.5 py-0.5 rounded font-mono bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+        "badge badge-danger font-mono"
     } else {
-        "text-xs px-1.5 py-0.5 rounded font-mono bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+        "badge badge-neutral font-mono"
     };
     let display = if truncated {
         format!("{preview}\n... (output truncated)")
@@ -1545,23 +1499,23 @@ fn render_tool_result(msg: &ChatMsg) -> Element {
     let has_args = !args.is_empty();
 
     rsx! {
-        div { class: "p-2 rounded bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700",
+        div { class: "p-2 rounded bg-surface-2 border border-line-soft",
             details { class: "group",
                 summary { class: "flex items-center gap-2 cursor-pointer select-none",
                     span { class: "{tool_badge}", "{tool_name}" }
                     if has_args {
-                        span { class: "text-xs text-gray-500 dark:text-gray-400 truncate max-w-md", "{args_short}" }
+                        span { class: "text-xs text-fg-muted truncate max-w-md", "{args_short}" }
                     }
                     if is_error {
-                        span { class: "text-xs text-red-500", {t!("healer-event-error")} }
+                        span { class: "text-xs text-danger", {t!("healer-event-error")} }
                     }
                 }
                 if has_args {
-                    pre { class: "mt-2 p-2 text-xs font-mono bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-400 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap",
+                    pre { class: "mt-2 p-2 text-xs font-mono bg-surface-3 text-fg-muted rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap",
                         "{args}"
                     }
                 }
-                pre { class: "mt-1 p-2 text-xs font-mono bg-gray-900 text-green-400 rounded overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap",
+                pre { class: "log-output mt-1 max-h-64 min-h-0",
                     "{display}"
                 }
             }
@@ -1578,27 +1532,27 @@ fn render_pinned_slots_from_signal(pins: &[PinInfo]) -> Element {
             for pin in pins.iter() {
                 {
                     let (icon, label, border) = match pin.slot.as_str() {
-                        "diagnosis" => (t!("healer-phase-d"), t!("healer-phase-diagnosis"), "border-yellow-400 dark:border-yellow-600".to_string()),
-                        "remediation" => (t!("healer-phase-r"), t!("healer-phase-remediation"), "border-orange-400 dark:border-orange-600".to_string()),
-                        "final_report" => (t!("healer-phase-f"), t!("healer-phase-final-report"), "border-green-400 dark:border-green-600".to_string()),
-                        _ => ("P".to_string(), pin.slot.clone(), "border-gray-400".to_string()),
+                        "diagnosis" => (t!("healer-phase-d"), t!("healer-phase-diagnosis"), "border-warn".to_string()),
+                        "remediation" => (t!("healer-phase-r"), t!("healer-phase-remediation"), "border-warn".to_string()),
+                        "final_report" => (t!("healer-phase-f"), t!("healer-phase-final-report"), "border-success".to_string()),
+                        _ => ("P".to_string(), pin.slot.clone(), "border-line".to_string()),
                     };
                     let html = simple_md_to_html(&pin.summary);
                     let services = pin.affected_services.clone();
                     rsx! {
-                        div { class: "p-3 bg-white dark:bg-gray-800 rounded border-l-4 {border} shadow-sm",
+                        div { class: "p-3 bg-surface rounded border-l-4 {border} shadow-sm",
                             div { class: "flex items-center gap-1.5 mb-1",
-                                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-bold text-gray-600 dark:text-gray-300", "{icon}" }
-                                span { class: "text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider", "{label}" }
+                                span { class: "w-5 h-5 flex items-center justify-center rounded-full bg-surface-2 text-xs font-bold text-fg", "{icon}" }
+                                span { class: "text-xs font-semibold text-fg-muted uppercase tracking-wider", "{label}" }
                             }
                             div {
-                                class: "text-sm text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none",
+                                class: "text-sm text-fg-strong prose prose-sm dark:prose-invert max-w-none",
                                 dangerous_inner_html: "{html}",
                             }
                             if !services.is_empty() {
                                 div { class: "mt-2 flex flex-wrap gap-1",
                                     for svc in services.iter() {
-                                        span { class: "px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded", "{svc}" }
+                                        Badge { variant: BadgeVariant::Neutral, "{svc}" }
                                     }
                                 }
                             }
@@ -1615,22 +1569,22 @@ fn render_staff_pings_inline(pings: &[StaffPingSummary]) -> Element {
         return rsx! {};
     }
     rsx! {
-        div { class: "mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded",
-            h4 { class: "text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2", {t!("nav-staff-pings")} }
+        div { class: "alert alert-warn mb-4",
+            h4 { class: "text-sm font-semibold text-warn-strong mb-2", {t!("nav-staff-pings")} }
             div { class: "space-y-2",
                 for ping in pings.iter() {
                     {
-                        let cat_badge = category_badge(&ping.category);
+                        let cat_variant = category_badge_variant(&ping.category);
                         rsx! {
                             div { class: "flex items-start gap-2 text-sm",
                                 div { class: "flex-1",
-                                    span { class: "inline-block px-1.5 py-0.5 text-xs font-medium rounded mr-2 {cat_badge}", "{ping.category}" }
+                                    Badge { variant: cat_variant, class: "mr-2", "{ping.category}" }
                                     if ping.resolved {
-                                        span { class: "text-green-600 dark:text-green-400 line-through", "{ping.message}" }
+                                        span { class: "text-success line-through", "{ping.message}" }
                                     } else {
-                                        span { class: "text-gray-800 dark:text-gray-200", "{ping.message}" }
+                                        span { class: "text-fg-strong", "{ping.message}" }
                                     }
-                                    span { class: "text-xs text-gray-400 ml-2", "{ping.created_at}" }
+                                    span { class: "text-xs text-fg-faint ml-2", "{ping.created_at}" }
                                 }
                             }
                         }

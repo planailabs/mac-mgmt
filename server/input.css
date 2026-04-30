@@ -229,4 +229,12 @@
   .td          { @apply px-6 py-4 text-fg; }
   .td-mono     { @apply td font-mono text-sm; }
   .td-muted    { @apply px-6 py-4 text-fg-muted; }
+
+  /* ── Log viewer ───────────────────────────────────────────────── */
+  .log-output {
+    @apply p-3 rounded text-xs font-mono whitespace-pre-wrap
+           overflow-x-auto overflow-y-auto min-h-[200px] max-h-[600px];
+    background-color: rgb(15 23 42);   /* near-black, theme-agnostic */
+    color: rgb(74 222 128);            /* terminal green */
+  }
 }
