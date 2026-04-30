@@ -1,10 +1,10 @@
 //! Unified config file validation.
 //!
 //! [`Validator`] provides format-aware syntax checking (JSON / TOML / YAML),
-//! JSON Schema validation (from a URL or local file), and external command
-//! validation.  It is the single validation primitive shared by the config
-//! merge pipeline ([`Validator::merge_validate_and_write`]) and the relay
-//! file-tunnel write path.
+//! JSON Schema validation (from a URL, local file, or command output), and
+//! external command validation.  It is the single validation primitive shared
+//! by the config merge pipeline ([`Validator::merge_validate_and_write`]) and
+//! the relay file-tunnel write path.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,13 +30,16 @@ pub enum ConfigFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SchemaSource {
-    /// JSON Schema fetched from a URL (cached globally at startup).
+    /// JSON Schema fetched from a URL (cached globally, periodically refreshed).
     Url { url: String },
     /// JSON Schema loaded from a local file.
     File { path: String },
     /// External command that exits 0 when the file is valid.
     /// `{}` in any arg is replaced with the file's absolute path.
     Command { command: Vec<String> },
+    /// External command whose stdout is a JSON Schema (cached globally,
+    /// periodically refreshed).  E.g. `["openclaw", "config", "schema"]`.
+    Exec { command: Vec<String> },
 }
 
 /// Unified config-file validator.
@@ -99,6 +102,11 @@ impl Validator {
         self.schema = Some(SchemaSource::Command { command });
         self
     }
+    /// Add a command whose stdout is a JSON Schema.
+    pub fn with_exec(mut self, command: Vec<String>) -> Self {
+        self.schema = Some(SchemaSource::Exec { command });
+        self
+    }
 }
 
 // ── Core validation ────────────────────────────────────────────────────
@@ -142,8 +150,12 @@ impl Validator {
     /// require a file on disk — use [`validate_file`] for those.
     pub fn validate_value(&self, value: &serde_json::Value) -> Result<(), String> {
         match &self.schema {
-            Some(SchemaSource::Url { url }) => validate_with_url_schema(url, value),
+            Some(SchemaSource::Url { url }) => validate_with_cached_schema(url, value),
             Some(SchemaSource::File { path }) => validate_with_file_schema(path, value),
+            Some(SchemaSource::Exec { command }) => {
+                let key = exec_cache_key(command);
+                validate_with_cached_schema(&key, value)
+            }
             Some(SchemaSource::Command { .. }) | None => Ok(()),
         }
     }
@@ -197,7 +209,7 @@ impl Validator {
     ///
     /// 1. Read existing file (or empty doc if missing, creating parent dirs).
     /// 2. Deep-merge `patch` into the existing value.
-    /// 3. Validate merged value against URL/file schema (pre-write).
+    /// 3. Validate merged value against URL/file/exec schema (pre-write).
     /// 4. Serialize and write.
     /// 5. Run command validator if configured; rollback on failure.
     pub fn merge_validate_and_write(
@@ -235,7 +247,7 @@ impl Validator {
 
         merge_json(&mut existing, patch);
 
-        // Pre-write validation (URL / file schemas).
+        // Pre-write validation (URL / file / exec schemas).
         self.validate_value(&existing)
             .map_err(|e| anyhow::anyhow!("schema validation failed: {e}"))?;
 
@@ -258,21 +270,36 @@ impl Validator {
     }
 }
 
-// ── Prefetch ───────────────────────────────────────────────────────────
+// ── Prefetch & refresh ─────────────────────────────────────────────────
 
 impl Validator {
-    /// If this validator uses a URL schema, pre-fetch and cache it.
+    /// If this validator uses a URL or Exec schema, fetch and cache it.
     pub async fn prefetch(&self) {
-        if let Some(SchemaSource::Url { url }) = &self.schema {
-            prefetch_schema(url).await;
+        match &self.schema {
+            Some(SchemaSource::Url { url }) => cache_store_url(url).await,
+            Some(SchemaSource::Exec { command }) => cache_store_exec(command),
+            _ => {}
         }
     }
 }
 
-/// Pre-fetch schemas for a set of validators (e.g. collected from all services).
+/// Pre-fetch schemas for a set of validators.
 pub async fn prefetch_all(validators: &[Validator]) {
     for v in validators {
         v.prefetch().await;
+    }
+}
+
+/// Re-fetch all cached URL and Exec schemas.  Call periodically (e.g.
+/// on the update tick) so schema changes are picked up without a
+/// daemon restart.
+pub async fn refresh_all(validators: &[Validator]) {
+    for v in validators {
+        match &v.schema {
+            Some(SchemaSource::Url { url }) => cache_store_url(url).await,
+            Some(SchemaSource::Exec { command }) => cache_store_exec(command),
+            _ => {}
+        }
     }
 }
 
@@ -326,20 +353,26 @@ pub fn merge_json(target: &mut serde_json::Value, source: &serde_json::Value) {
 
 // ── Schema cache (private) ─────────────────────────────────────────────
 
+/// Cache key for Exec schemas: "exec:<program> <args...>"
+fn exec_cache_key(command: &[String]) -> String {
+    format!("exec:{}", command.join(" "))
+}
+
 static SCHEMA_CACHE: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();
 
 fn cache() -> &'static Mutex<HashMap<String, serde_json::Value>> {
     SCHEMA_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-async fn prefetch_schema(url: &str) {
-    tracing::info!("prefetching JSON schema from {url}");
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(15))
-        .build();
+/// Fetch a URL schema and store it in the cache.
+async fn cache_store_url(url: &str) {
+    tracing::info!("fetching JSON schema from {url}");
     let result = async {
-        let resp = client?
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(15))
+            .build()?;
+        let resp = client
             .get(url)
             .send()
             .await
@@ -355,43 +388,93 @@ async fn prefetch_schema(url: &str) {
             tracing::info!("cached JSON schema from {url}");
         }
         Err(e) => {
-            tracing::warn!("failed to prefetch JSON schema from {url}: {e}");
+            tracing::warn!("failed to fetch JSON schema from {url}: {e}");
         }
     }
 }
 
-fn get_or_fetch_schema(url: &str) -> Option<serde_json::Value> {
+/// Run a command, parse its stdout as a JSON Schema, and cache it.
+fn cache_store_exec(command: &[String]) {
+    if command.is_empty() {
+        return;
+    }
+    let key = exec_cache_key(command);
+    tracing::info!("fetching JSON schema via command: {}", command.join(" "));
+    match crate::cmd::output_with_timeout(
+        std::process::Command::new(&command[0]).args(&command[1..]),
+        crate::cmd::DEFAULT_TIMEOUT,
+    ) {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            match serde_json::from_str::<serde_json::Value>(&stdout) {
+                Ok(schema) => {
+                    cache().lock().unwrap().insert(key, schema);
+                    tracing::info!("cached JSON schema from command: {}", command.join(" "));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "command {} produced invalid JSON schema: {e}",
+                        command.join(" ")
+                    );
+                }
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!(
+                "schema command {} failed: {}",
+                command.join(" "),
+                stderr.trim()
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                "schema command {} failed to run: {e}",
+                command.join(" ")
+            );
+        }
+    }
+}
+
+/// Look up a cached schema by key (URL or exec key).  If not cached,
+/// attempt a blocking URL fetch (for URL keys only).
+fn get_cached_schema(key: &str) -> Option<serde_json::Value> {
     {
         let c = cache().lock().unwrap();
-        if let Some(schema) = c.get(url) {
+        if let Some(schema) = c.get(key) {
             return Some(schema.clone());
         }
     }
-    tracing::info!("schema not cached, fetching {url} at runtime");
+    // For URL keys, try a blocking runtime fetch as fallback.
+    if key.starts_with("exec:") {
+        tracing::warn!("exec schema not cached for {key}, skipping validation");
+        return None;
+    }
+    tracing::info!("schema not cached, fetching {key} at runtime");
     match reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(15))
         .build()
-        .and_then(|c| c.get(url).send())
+        .and_then(|c| c.get(key).send())
         .and_then(|r| r.json::<serde_json::Value>())
     {
         Ok(schema) => {
             cache()
                 .lock()
                 .unwrap()
-                .insert(url.to_string(), schema.clone());
-            tracing::info!("fetched and cached JSON schema from {url}");
+                .insert(key.to_string(), schema.clone());
+            tracing::info!("fetched and cached JSON schema from {key}");
             Some(schema)
         }
         Err(e) => {
-            tracing::warn!("failed to fetch JSON schema from {url}: {e}");
+            tracing::warn!("failed to fetch JSON schema from {key}: {e}");
             None
         }
     }
 }
 
-fn validate_with_url_schema(url: &str, value: &serde_json::Value) -> Result<(), String> {
-    let Some(schema) = get_or_fetch_schema(url) else {
+fn validate_with_cached_schema(key: &str, value: &serde_json::Value) -> Result<(), String> {
+    let Some(schema) = get_cached_schema(key) else {
         return Ok(());
     };
     run_jsonschema(&schema, value)

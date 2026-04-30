@@ -11,10 +11,10 @@ pub use mac_mgmt_common::OpenClawConfig;
 
 /// Validator for openclaw JSON config files.
 pub static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
-    Validator::json("openclaw.json").with_command(vec![
+    Validator::json("openclaw.json").with_exec(vec![
         "openclaw".into(),
         "config".into(),
-        "validate".into(),
+        "schema".into(),
     ])
 });
 

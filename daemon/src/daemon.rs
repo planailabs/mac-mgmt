@@ -119,6 +119,11 @@ impl Daemon {
 
         self.spawn_sync_skills_and_mcp();
 
+        // Refresh cached JSON schemas so updated schemas are picked up
+        // without a daemon restart.
+        #[cfg(feature = "services")]
+        self.refresh_schemas().await;
+
         if self.in_upgrade_window() {
             #[cfg(all(feature = "services", not(feature = "sim")))]
             self.svc_mgr.check_upgrades();
@@ -769,6 +774,19 @@ impl Daemon {
         }
     }
 
+    #[cfg(feature = "services")]
+    async fn refresh_schemas(&self) {
+        let mut validators = Vec::new();
+        if self.current_cfg.opencode.enabled {
+            validators.push(crate::services::opencode::VALIDATOR.clone());
+        }
+        if self.current_cfg.openclaw.enabled {
+            validators.push(crate::services::openclaw::VALIDATOR.clone());
+        }
+        validators.push(crate::services::mcporter::VALIDATOR.clone());
+        crate::validator::refresh_all(&validators).await;
+    }
+
     fn handle_local_sync(&self) {
         tracing::info!("local sync requested");
         self.spawn_sync_skills_and_mcp();
@@ -925,6 +943,9 @@ pub async fn run(
     {
         if cfg.opencode.enabled {
             crate::services::opencode::VALIDATOR.prefetch().await;
+        }
+        if cfg.openclaw.enabled {
+            crate::services::openclaw::VALIDATOR.prefetch().await;
         }
         crate::services::mcporter::VALIDATOR.prefetch().await;
     }
