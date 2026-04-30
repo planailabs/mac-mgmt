@@ -1,12 +1,18 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+use std::sync::LazyLock;
+
 use crate::managed_service::{DataPath, FileTunnelDef, ManagedService, TunnelDef};
 use crate::sentry_ext;
 use crate::validator::{Validator, merge_json};
 pub use mac_mgmt_common::OpencodeConfig;
 
 pub const SCHEMA_URL: &str = "https://opencode.ai/config.json";
+
+/// Validator for opencode JSON config files.
+pub static VALIDATOR: LazyLock<Validator> =
+    LazyLock::new(|| Validator::json("*.json").with_schema_url(SCHEMA_URL));
 
 /// Returns the path to ~/.config/opencode/config.json
 pub fn config_path() -> Result<PathBuf> {
@@ -15,14 +21,9 @@ pub fn config_path() -> Result<PathBuf> {
         .join(".config/opencode/config.json"))
 }
 
-/// Validator for opencode JSON config files.
-pub fn validator() -> Validator {
-    Validator::json("*.json").with_schema_url(SCHEMA_URL)
-}
-
 /// Atomically merge a JSON patch into the opencode config with JSON schema validation.
 pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
-    validator().merge_validate_and_write(config_path, patch)
+    VALIDATOR.merge_validate_and_write(config_path, patch)
 }
 
 pub struct Opencode {
@@ -202,7 +203,7 @@ impl ManagedService for Opencode {
             writable: true,
             allow_write: Vec::new(),
             include: Some(vec!["config.json".into()]),
-            validators: vec![validator()],
+            validators: vec![VALIDATOR.clone()],
             description: "OpenCode configuration".into(),
         }]
     }

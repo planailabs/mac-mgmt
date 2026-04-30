@@ -923,12 +923,10 @@ pub async fn run(
     // available without network delay during service setup.
     #[cfg(feature = "services")]
     {
-        let mut validators = Vec::new();
         if cfg.opencode.enabled {
-            validators.push(crate::services::opencode::validator());
+            crate::services::opencode::VALIDATOR.prefetch().await;
         }
-        validators.push(crate::services::mcporter::validator());
-        crate::validator::prefetch_all(&validators).await;
+        crate::services::mcporter::VALIDATOR.prefetch().await;
     }
 
     // When the unmanaged marker exists, services are run by

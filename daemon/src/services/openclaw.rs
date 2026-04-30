@@ -2,10 +2,21 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use std::sync::LazyLock;
+
 use crate::managed_service::{DataPath, FileTunnelDef, ManagedService, TunnelDef};
 use crate::sentry_ext;
 use crate::validator::{Validator, merge_json};
 pub use mac_mgmt_common::OpenClawConfig;
+
+/// Validator for openclaw JSON config files.
+pub static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
+    Validator::json("*.json").with_command(vec![
+        "openclaw".into(),
+        "config".into(),
+        "validate".into(),
+    ])
+});
 
 /// Returns the path to ~/.openclaw/openclaw.json
 pub fn config_path() -> Result<PathBuf> {
@@ -14,21 +25,12 @@ pub fn config_path() -> Result<PathBuf> {
         .join(".openclaw/openclaw.json"))
 }
 
-/// Validator for openclaw JSON config files.
-pub fn validator() -> Validator {
-    Validator::json("*.json").with_command(vec![
-        "openclaw".into(),
-        "config".into(),
-        "validate".into(),
-    ])
-}
-
 /// Atomically merge a JSON patch into openclaw.json with validation and rollback.
 pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
     if !config_path.exists() {
         anyhow::bail!("openclaw config not found at {}", config_path.display());
     }
-    validator().merge_validate_and_write(config_path, patch)
+    VALIDATOR.merge_validate_and_write(config_path, patch)
 }
 
 pub struct OpenClaw {
@@ -450,7 +452,7 @@ impl ManagedService for OpenClaw {
             writable: true,
             allow_write: Vec::new(),
             include: Some(vec!["openclaw.json".into()]),
-            validators: vec![validator()],
+            validators: vec![VALIDATOR.clone()],
             description: "OpenClaw gateway configuration".into(),
         }];
         let skills_dir = home.join(".plan-ai-skills");

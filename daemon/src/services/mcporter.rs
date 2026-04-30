@@ -1,6 +1,8 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+use std::sync::LazyLock;
+
 use crate::managed_service::{FileTunnelDef, ManagedService, ServiceMode};
 use crate::sentry_ext;
 use crate::validator::Validator;
@@ -10,9 +12,8 @@ pub const SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/steipete/mcporter/main/mcporter.schema.json";
 
 /// Validator for mcporter JSON config files.
-pub fn validator() -> Validator {
-    Validator::json("*.json").with_schema_url(SCHEMA_URL)
-}
+pub static VALIDATOR: LazyLock<Validator> =
+    LazyLock::new(|| Validator::json("*.json").with_schema_url(SCHEMA_URL));
 
 pub struct McPorter;
 
@@ -88,7 +89,7 @@ impl ManagedService for McPorter {
             writable: false,
             allow_write: Vec::new(),
             include: Some(vec!["*.json".into()]),
-            validators: vec![validator()],
+            validators: vec![VALIDATOR.clone()],
             description: "McPorter MCP server configuration (managed by daemon)".into(),
         }]
     }
