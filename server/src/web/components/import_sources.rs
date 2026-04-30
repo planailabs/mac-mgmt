@@ -265,15 +265,15 @@ pub fn ImportSources(
     rsx! {
         div { class: "px-6 py-8 max-w-5xl mx-auto",
             div { class: "flex items-center justify-between mb-6",
-                h1 { class: "text-2xl font-bold dark:text-white", {t!("import-title")} }
+                h1 { class: "h-page text-fg-strong", {t!("import-title")} }
                 div { class: "flex items-center gap-2",
                     Link {
                         to: Route::ImportSourcesSearch {},
-                        class: "bg-purple-600 text-white px-4 py-2 rounded text-sm hover:bg-purple-700",
+                        class: "btn btn-md btn-accent",
                         {t!("import-search-clawhub")}
                     }
                     button {
-                        class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700",
+                        class: "btn btn-md btn-primary",
                         onclick: move |_| {
                             if show_form() {
                                 reset_form();
@@ -290,14 +290,14 @@ pub fn ImportSources(
             }
 
             if show_form() {
-                div { class: "bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6 border dark:border-gray-700",
-                    h2 { class: "text-lg font-semibold mb-4 dark:text-white", {t!("import-new-source")} }
+                div { class: "bg-surface rounded-lg shadow p-6 mb-6 border border-line-soft",
+                    h2 { class: "h-section text-fg-strong", {t!("import-new-source")} }
                     if let Some(err) = form_error() {
-                        p { class: "text-red-500 text-sm mb-3", "{err}" }
+                        p { class: "err mb-3", "{err}" }
                     }
                     { render_source_form(&form_name, &form_type, &form_repo_url, &form_branch, &form_glob, &form_clawhub_slug, &form_channel, &form_auto_sync, false) }
                     button {
-                        class: "bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 mt-4",
+                        class: "btn btn-md btn-primary mt-4",
                         onclick: move |_| {
                             let name = form_name();
                             let source_type = form_type();
@@ -329,7 +329,7 @@ pub fn ImportSources(
                 match snapshot {
                     Some(Ok(list)) => rsx! {
                         if list.is_empty() {
-                            p { class: "text-gray-500 dark:text-gray-400", {t!("import-no-sources")} }
+                            p { class: "text-fg-muted", {t!("import-no-sources")} }
                         } else {
                             div { class: "space-y-3",
                                 for source in list {
@@ -343,23 +343,23 @@ pub fn ImportSources(
                                         rsx! {
                                             Link {
                                                 to: Route::ImportSourceDetail { id: sid },
-                                                class: "block bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700 p-4 hover:border-blue-400 dark:hover:border-blue-500 transition-colors",
+                                                class: "block bg-surface rounded-lg shadow border border-line-soft p-4 hover:border-info transition-colors",
                                                 div { class: "flex items-center gap-2 mb-1",
-                                                    h3 { class: "font-semibold dark:text-white", "{source_name}" }
-                                                    span { class: "text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400",
+                                                    h3 { class: "font-semibold text-fg-strong", "{source_name}" }
+                                                    span { class: "badge badge-neutral",
                                                         "{source.source_type}"
                                                     }
-                                                    span { class: "text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                                                    span { class: "badge badge-info",
                                                         "{source.channel}"
                                                     }
                                                     if source.auto_sync {
-                                                        span { class: "text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
+                                                        span { class: "badge badge-success",
                                                             {t!("import-badge-auto")}
                                                         }
                                                     }
                                                 }
-                                                p { class: "text-sm text-gray-500 dark:text-gray-400 font-mono", "{desc}" }
-                                                p { class: "text-xs text-gray-400 dark:text-gray-500 mt-0.5",
+                                                p { class: "text-sm text-fg-muted font-mono", "{desc}" }
+                                                p { class: "text-xs text-fg-faint mt-0.5",
                                                     {t!("import-last-synced", time: synced_label)}
                                                 }
                                             }
@@ -369,8 +369,8 @@ pub fn ImportSources(
                             }
                         }
                     },
-                    Some(Err(e)) => rsx! { p { class: "text-red-500", {t!("error-message", message: e.to_string())} } },
-                    None => rsx! { p { class: "text-gray-500", {t!("loading")} } },
+                    Some(Err(e)) => rsx! { p { class: "text-danger", {t!("error-message", message: e.to_string())} } },
+                    None => rsx! { p { class: "text-fg-muted", {t!("loading")} } },
                 }
             }
         }
@@ -422,24 +422,24 @@ pub fn ImportSourceDetail(id: String) -> Element {
             rsx! {
                 div { class: "flex items-center gap-3 mb-1",
                     h2 { class: "text-2xl font-bold", "{source_name}" }
-                    span { class: "text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400",
+                    span { class: "badge badge-neutral",
                         "{source_type}"
                     }
-                    span { class: "text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                    span { class: "badge badge-info",
                         "{s.channel}"
                     }
                     if s.auto_sync {
-                        span { class: "text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
+                        span { class: "badge badge-success",
                             {t!("import-badge-auto")}
                         }
                     }
                     Link {
                         to: Route::ImportSourceEdit { id: source_id.clone() },
-                        class: "text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300",
+                        class: "text-fg-faint hover:text-fg-strong",
                         {t!("edit")}
                     }
                     button {
-                        class: "text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400",
+                        class: "text-danger hover:opacity-80",
                         onclick: move |_| {
                             let sid = sid_del.clone();
                             let nav = navigator.clone();
@@ -452,7 +452,7 @@ pub fn ImportSourceDetail(id: String) -> Element {
                         {t!("delete")}
                     }
                     button {
-                        class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                        class: "btn btn-sm btn-primary",
                         disabled: syncing(),
                         onclick: move |_| {
                             let sid = sid_sync.clone();
@@ -474,14 +474,14 @@ pub fn ImportSourceDetail(id: String) -> Element {
                         if syncing() { {t!("import-syncing")} } else { {t!("import-sync-now")} }
                     }
                 }
-                p { class: "text-gray-500 dark:text-gray-400 text-sm mb-6",
+                p { class: "text-fg-muted text-sm mb-6",
                     {t!("cluster-detail-created", date: created)}
                     " · "
                     {t!("import-last-synced", time: synced_label)}
                 }
 
                 if let Some(err) = error() {
-                    p { class: "text-red-500 text-sm mb-4", "{err}" }
+                    p { class: "err mb-4", "{err}" }
                 }
 
                 // Source configuration
@@ -500,7 +500,7 @@ pub fn ImportSourceDetail(id: String) -> Element {
                         }
                         { render_detail_field(t!("import-field-channel"), &channel) }
                         div {
-                            span { class: "block text-sm font-medium text-gray-500 dark:text-gray-400", {t!("import-auto-sync")} }
+                            span { class: "block text-sm font-medium text-fg-muted", {t!("import-auto-sync")} }
                             span { class: "text-sm",
                                 if auto_sync { {t!("yes")} } else { {t!("no")} }
                             }
@@ -515,7 +515,7 @@ pub fn ImportSourceDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => rsx! { p { class: "text-danger", {t!("error-message", message: e.to_string())} } },
         None => rsx! { p { {t!("loading")} } },
     }
 }
@@ -573,12 +573,12 @@ pub fn ImportSourceEdit(id: String) -> Element {
             rsx! {
                 h2 { class: "text-2xl font-bold mb-4", {t!("import-edit-source")} }
                 if let Some(err) = &*error.read() {
-                    p { class: "text-red-600 dark:text-red-400 mb-4", "{err}" }
+                    p { class: "text-danger mb-4", "{err}" }
                 }
                 { render_source_form(&form_name, &form_type, &form_repo_url, &form_branch, &form_glob, &form_clawhub_slug, &form_channel, &form_auto_sync, true) }
                 div { class: "flex gap-3 items-center mt-4",
                     button {
-                        class: "bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700",
+                        class: "btn btn-md btn-primary",
                         onclick: move |_| {
                             let sid = edit_id.clone();
                             let nid = nav_id.clone();
@@ -599,13 +599,13 @@ pub fn ImportSourceEdit(id: String) -> Element {
                     }
                     Link {
                         to: Route::ImportSourceDetail { id: id.clone() },
-                        class: "px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white",
+                        class: "btn btn-md btn-secondary",
                         {t!("cancel")}
                     }
                 }
             }
         }
-        Some(Err(e)) => rsx! { p { class: "text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => rsx! { p { class: "text-danger", {t!("error-message", message: e.to_string())} } },
         None => rsx! { p { {t!("loading")} } },
     }
 }
@@ -626,10 +626,10 @@ pub fn ImportSourcesSearch() -> Element {
             div { class: "mb-6",
                 Link {
                     to: Route::ImportSources { prefill_slug: None, prefill_name: None },
-                    class: "text-blue-600 dark:text-blue-400 hover:underline text-sm",
+                    class: "link text-sm",
                     "← {t!(\"import-title\")}"
                 }
-                h1 { class: "text-2xl font-bold dark:text-white mt-1", {t!("import-search-clawhub")} }
+                h1 { class: "h-page text-fg-strong mt-1", {t!("import-search-clawhub")} }
             }
 
             form {
@@ -648,14 +648,14 @@ pub fn ImportSourcesSearch() -> Element {
                     });
                 },
                 input {
-                    class: "flex-1 border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                    class: "input flex-1",
                     r#type: "text",
                     value: "{query}",
                     oninput: move |e| query.set(e.value()),
                     placeholder: t!("import-search-placeholder"),
                 }
                 button {
-                    class: "bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50",
+                    class: "btn btn-md btn-primary",
                     r#type: "submit",
                     disabled: searching(),
                     if searching() { {t!("import-searching")} } else { {t!("import-search-button")} }
@@ -663,12 +663,12 @@ pub fn ImportSourcesSearch() -> Element {
             }
 
             if let Some(err) = error() {
-                p { class: "text-red-500 text-sm mb-4", "{err}" }
+                p { class: "err mb-4", "{err}" }
             }
 
             match results() {
                 Some(hits) if hits.is_empty() => rsx! {
-                    p { class: "text-gray-500 dark:text-gray-400", {t!("import-search-no-results")} }
+                    p { class: "text-fg-muted", {t!("import-search-no-results")} }
                 },
                 Some(hits) => rsx! {
                     div { class: "space-y-3",
@@ -679,24 +679,24 @@ pub fn ImportSourcesSearch() -> Element {
                                 let slug_link = slug.clone();
                                 let name_link = name.clone();
                                 rsx! {
-                                    div { class: "bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700 p-4 flex items-center justify-between",
+                                    div { class: "bg-surface rounded-lg shadow border border-line-soft p-4 flex items-center justify-between",
                                         div {
                                             div { class: "flex items-center gap-2",
-                                                h3 { class: "font-semibold dark:text-white", "{name}" }
-                                                span { class: "text-xs font-mono text-gray-500 dark:text-gray-400", "{slug}" }
+                                                h3 { class: "font-semibold text-fg-strong", "{name}" }
+                                                span { class: "text-xs font-mono text-fg-muted", "{slug}" }
                                                 if let Some(v) = &hit.version {
-                                                    span { class: "text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
+                                                    span { class: "badge badge-info",
                                                         "v{v}"
                                                     }
                                                 }
                                             }
                                             if !hit.summary.is_empty() {
-                                                p { class: "text-sm text-gray-500 dark:text-gray-400 mt-1", "{hit.summary}" }
+                                                p { class: "text-sm text-fg-muted mt-1", "{hit.summary}" }
                                             }
                                         }
                                         Link {
                                             to: Route::ImportSources { prefill_slug: Some(slug_link), prefill_name: Some(name_link) },
-                                            class: "bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 whitespace-nowrap",
+                                            class: "btn btn-sm btn-primary whitespace-nowrap",
                                             {t!("import-search-import")}
                                         }
                                     }
@@ -718,7 +718,7 @@ fn render_detail_field(label: impl std::fmt::Display, value: &str) -> Element {
     let value = value.to_string();
     rsx! {
         div {
-            span { class: "block text-sm font-medium text-gray-500 dark:text-gray-400", "{label}" }
+            span { class: "block text-sm font-medium text-fg-muted", "{label}" }
             span { class: "text-sm font-mono", "{value}" }
         }
     }
@@ -778,9 +778,9 @@ fn render_source_form(
     rsx! {
         div { class: "space-y-4",
             div {
-                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-name")} }
+                label { class: "label", {t!("import-field-name")} }
                 input {
-                    class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                    class: "input",
                     value: "{form_name}",
                     oninput: move |e| form_name.set(e.value()),
                     placeholder: t!("import-name-placeholder"),
@@ -788,9 +788,9 @@ fn render_source_form(
             }
             if !is_edit {
                 div {
-                    label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-type")} }
+                    label { class: "label", {t!("import-field-type")} }
                     select {
-                        class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                        class: "input",
                         value: "{form_type}",
                         onchange: move |e| form_type.set(e.value()),
                         option { value: "git", {t!("import-type-git")} }
@@ -800,27 +800,27 @@ fn render_source_form(
             }
             if form_type() == "git" {
                 div {
-                    label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-repo-url")} }
+                    label { class: "label", {t!("import-field-repo-url")} }
                     input {
-                        class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                        class: "input",
                         value: "{form_repo_url}",
                         oninput: move |e| form_repo_url.set(e.value()),
                         placeholder: "https://github.com/org/skills.git",
                     }
                 }
                 div {
-                    label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-branch")} }
+                    label { class: "label", {t!("import-field-branch")} }
                     input {
-                        class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                        class: "input",
                         value: "{form_branch}",
                         oninput: move |e| form_branch.set(e.value()),
                         placeholder: "main",
                     }
                 }
                 div {
-                    label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-glob")} }
+                    label { class: "label", {t!("import-field-glob")} }
                     input {
-                        class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                        class: "input",
                         value: "{form_glob}",
                         oninput: move |e| form_glob.set(e.value()),
                         placeholder: "skills/*",
@@ -828,9 +828,9 @@ fn render_source_form(
                 }
             } else {
                 div {
-                    label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-clawhub-slug")} }
+                    label { class: "label", {t!("import-field-clawhub-slug")} }
                     input {
-                        class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                        class: "input",
                         value: "{form_clawhub_slug}",
                         oninput: move |e| form_clawhub_slug.set(e.value()),
                         placeholder: "my-skill",
@@ -838,9 +838,9 @@ fn render_source_form(
                 }
             }
             div {
-                label { class: "block text-sm font-medium dark:text-gray-300 mb-1", {t!("import-field-channel")} }
+                label { class: "label", {t!("import-field-channel")} }
                 input {
-                    class: "w-full border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white",
+                    class: "input",
                     value: "{form_channel}",
                     oninput: move |e| form_channel.set(e.value()),
                     placeholder: "stable",
@@ -852,7 +852,7 @@ fn render_source_form(
                     checked: form_auto_sync(),
                     onchange: move |e| form_auto_sync.set(e.checked()),
                 }
-                label { class: "text-sm dark:text-gray-300", {t!("import-auto-sync")} }
+                label { class: "text-sm text-fg", {t!("import-auto-sync")} }
             }
         }
     }
@@ -861,36 +861,36 @@ fn render_source_form(
 fn render_jobs(jobs: &Resource<Result<Vec<ImportJobRow>, ServerFnError>>) -> Element {
     match &*jobs.read() {
         Some(Ok(list)) if list.is_empty() => rsx! {
-            p { class: "text-sm text-gray-400 dark:text-gray-500", {t!("import-no-jobs")} }
+            p { class: "text-sm text-fg-faint", {t!("import-no-jobs")} }
         },
         Some(Ok(list)) => rsx! {
             div { class: "space-y-3",
                 for job in list {
-                    div { class: "text-sm border dark:border-gray-700 rounded-lg p-4",
+                    div { class: "text-sm border border-line-soft rounded-lg p-4",
                         div { class: "flex items-center gap-2 mb-1",
                             {
                                 let ts = job.created_at.format("%Y-%m-%d %H:%M").to_string();
                                 rsx! {
-                                    span { class: "font-mono text-xs text-gray-500 dark:text-gray-400", "{ts}" }
+                                    span { class: "font-mono text-xs text-fg-muted", "{ts}" }
                                 }
                             }
                             span {
                                 class: match job.status.as_str() {
-                                    "done" => "text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
-                                    "failed" => "text-xs px-2 py-0.5 rounded bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300",
-                                    "running" => "text-xs px-2 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300",
-                                    _ => "text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400",
+                                    "done" => "badge badge-success",
+                                    "failed" => "badge badge-danger",
+                                    "running" => "badge badge-warn",
+                                    _ => "badge badge-neutral",
                                 },
                                 "{job.status}"
                             }
                             if job.skills_imported > 0 {
-                                span { class: "text-xs text-gray-600 dark:text-gray-400",
+                                span { class: "text-xs text-fg-muted",
                                     {t!("import-skills-imported", count: job.skills_imported)}
                                 }
                             }
                         }
                         if !job.log.is_empty() {
-                            pre { class: "text-xs mt-1 p-2 bg-gray-100 dark:bg-gray-700 rounded overflow-x-auto max-h-40 text-gray-700 dark:text-gray-300",
+                            pre { class: "text-xs mt-1 p-2 bg-surface-2 rounded overflow-x-auto max-h-40 text-fg",
                                 "{job.log}"
                             }
                         }
@@ -898,7 +898,7 @@ fn render_jobs(jobs: &Resource<Result<Vec<ImportJobRow>, ServerFnError>>) -> Ele
                 }
             }
         },
-        Some(Err(e)) => rsx! { p { class: "text-sm text-red-600 dark:text-red-400", {t!("error-message", message: e.to_string())} } },
+        Some(Err(e)) => rsx! { p { class: "text-sm text-danger", {t!("error-message", message: e.to_string())} } },
         None => rsx! { p { class: "text-sm", {t!("loading")} } },
     }
 }
