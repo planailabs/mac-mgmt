@@ -6,6 +6,7 @@ use crate::models::Bundle;
 use crate::web::app::Route;
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
 };
@@ -180,6 +181,7 @@ async fn remove_bundle_item(bundle_item_id: String) -> Result<(), ServerFnError>
 
 #[component]
 pub fn BundleDetail(id: String) -> Element {
+    use_topbar(t!("nav-bundles"), None);
     let navigator = navigator();
     let id_clone = id.clone();
     let mut bundle = use_server_future(move || {

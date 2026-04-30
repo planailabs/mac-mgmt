@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
     SectionHeading,
@@ -246,6 +247,7 @@ fn role_variant(role: &str) -> BadgeVariant {
 
 #[component]
 pub fn UserDetail(id: String) -> Element {
+    use_topbar(t!("nav-users"), None);
     let id_for_user = id.clone();
     let mut user_future = use_server_future(move || {
         let id = id_for_user.clone();

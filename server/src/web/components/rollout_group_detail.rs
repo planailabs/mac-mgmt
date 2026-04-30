@@ -3,6 +3,7 @@ use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonSize, ButtonVariant, DataTable, ErrorText, HelpText, SectionHeading, SortState,
     SortableTh, Td, Th,
@@ -223,6 +224,7 @@ async fn delete_group(id: String) -> Result<(), ServerFnError> {
 
 #[component]
 pub fn RolloutGroupDetail(id: String) -> Element {
+    use_topbar(t!("nav-rollouts"), None);
     let id_clone = id.clone();
     let mut detail = use_server_future(move || {
         let id = id_clone.clone();

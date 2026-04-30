@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::web::app::Route;
 use crate::web::components::table_utils::Searchable;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonVariant, Card, DataTable, ErrorText, HelpText, PageHeader, SectionHeading,
     SortState, SortableTh, Td, TdMuted,
@@ -77,6 +78,7 @@ async fn create_group(name: String, description: String) -> Result<(), ServerFnE
 
 #[component]
 pub fn RolloutGroupList() -> Element {
+    use_topbar(t!("nav-rollouts"), None);
     let groups = use_server_future(move || async move { get_rollout_groups().await })?;
 
     rsx! {

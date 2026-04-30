@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::web::app::Route;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ErrorText, FormField, HelpText, PageHeader,
 };
@@ -59,6 +60,7 @@ async fn create_skill_center(
 
 #[component]
 pub fn SkillCenterForm() -> Element {
+    use_topbar(t!("nav-skill-centers"), None);
     let mut name = use_signal(String::new);
     let mut url = use_signal(String::new);
     let mut federation_token = use_signal(String::new);

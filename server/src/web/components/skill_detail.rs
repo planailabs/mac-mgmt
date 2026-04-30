@@ -8,6 +8,7 @@ use crate::anthropic::{GenerateContext, GeneratedNameDesc};
 use crate::models::{Skill, SkillChannel};
 use crate::web::components::generate_button::GenerateButton;
 use crate::web::components::hidden_badge::HiddenBadge;
+use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     Button, ButtonKind, ButtonSize, ErrorText, HelpText, SectionHeading,
 };
@@ -259,6 +260,7 @@ async fn remove_channel_mcp_dep(dep_id: String) -> Result<(), ServerFnError> {
 
 #[component]
 pub fn SkillDetail(id: String) -> Element {
+    use_topbar(t!("nav-skills"), None);
     let id_clone = id.clone();
     let mut skill = use_server_future(move || {
         let id = id_clone.clone();
