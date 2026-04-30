@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
-use crate::web::components::ui::{Badge, BadgeVariant};
+use crate::web::components::topbar::use_topbar;
+use crate::web::components::ui::{Badge, BadgeVariant, Kicker, Pill, PillVariant};
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
 
@@ -587,6 +588,16 @@ pub fn FleetHealer(instance_id: String) -> Element {
         async move { get_healer_context(iid).await }
     })?;
 
+    // Title shows the hostname (the recognizable handle) and the
+    // subtitle disambiguates with the page label, mirroring the
+    // design's "Healer Agent · autonomous remediation" pattern.
+    let topbar_title = match &*ctx.read() {
+        Some(Ok(c)) if !c.hostname.is_empty() => c.hostname.clone(),
+        Some(Ok(c)) => c.instance_id.clone(),
+        _ => String::new(),
+    };
+    use_topbar(topbar_title, Some(t!("healer-title").to_string()));
+
     match &*ctx.read() {
         Some(Ok(c)) => render_healer(c),
         Some(Err(e)) => rsx! { p { class: "text-danger text-sm", {t!("error-message", message: e.to_string())} } },
@@ -622,10 +633,41 @@ fn render_healer(ctx: &HealerContext) -> Element {
     let instance_id = ctx.instance_id.clone();
     let sessions = ctx.sessions.clone();
 
+    // ── Page hero ─────────────────────────────────────────────────
+    // Design language reference shows the healer hero as
+    //   "HEALER AGENT · LAST 24H"
+    //   "<accent>128</accent> sessions · <ok>97%</ok> auto-resolved"
+    // We don't yet aggregate session counts here — that lives in the
+    // global healer summary endpoint — so this hero just identifies the
+    // instance and lets the running session card carry the live signal.
+    let session_count = ctx.sessions.len();
     rsx! {
-        h2 { class: "h-page", {t!("healer-title")} }
-        p { class: "text-sm text-fg-muted mb-4",
-            {t!("healer-instance", instance_id: ctx.instance_id.clone(), hostname: ctx.hostname.clone())}
+        div { class: "flex flex-col xl:flex-row xl:items-end xl:justify-between gap-3 mb-5",
+            div {
+                Kicker { class: "mb-2", {t!("healer-title")} }
+                h1 { class: "h-display",
+                    {t!("healer-title")}
+                    " "
+                    span { class: "text-fg-muted", "·" }
+                    " "
+                    span { class: "text-brand", "{ctx.hostname}" }
+                }
+                div { class: "mt-2 text-fg-muted text-sm",
+                    {t!("healer-instance", instance_id: ctx.instance_id.clone(), hostname: ctx.hostname.clone())}
+                }
+            }
+            div { class: "flex items-center gap-2 shrink-0",
+                Pill { variant: PillVariant::Muted, mono: true,
+                    "{session_count} sessions"
+                }
+                if unhealthy.is_empty() {
+                    Pill { variant: PillVariant::Ok, "all healthy" }
+                } else {
+                    Pill { variant: PillVariant::Bad,
+                        "{unhealthy.len()} unhealthy"
+                    }
+                }
+            }
         }
 
         if !unhealthy.is_empty() {
