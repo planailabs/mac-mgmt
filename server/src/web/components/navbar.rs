@@ -101,7 +101,7 @@ fn LanguagePicker() -> Element {
             label { class: "sr-only", r#for: "lang-picker", {t!("language-picker-label")} }
             select {
                 id: "lang-picker",
-                class: "appearance-none bg-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm rounded-md px-2 py-2 pr-6 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors",
+                class: "appearance-none bg-transparent text-fg-muted hover:text-fg-strong text-sm rounded-md px-2 py-2 pr-6 cursor-pointer focus:outline-none focus:ring-2 focus:ring-info transition-colors",
                 value: "{current_tag}",
                 onchange: on_change,
                 for &(tag, label) in LOCALES.iter() {
@@ -115,7 +115,7 @@ fn LanguagePicker() -> Element {
             }
             // Dropdown chevron
             svg {
-                class: "pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 h-3 w-3 text-gray-400",
+                class: "pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 h-3 w-3 text-fg-faint",
                 fill: "none",
                 stroke: "currentColor",
                 stroke_width: "2",
@@ -222,11 +222,11 @@ pub fn Sidebar(is_admin: bool) -> Element {
     let groups = get_nav_groups(is_admin, swagger_url);
 
     rsx! {
-        aside { class: "hidden xl:flex xl:flex-col w-64 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 overflow-y-auto",
+        aside { class: "nav-side",
             nav { class: "flex-1 px-4 py-6 space-y-8",
                 for group in groups {
                     div { key: "{group.title}",
-                        h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", {t!(&group.title)} }
+                        h3 { class: "nav-group-head", {t!(&group.title)} }
                         div { class: "mt-2 space-y-1",
                             for link in group.links {
                                 match link {
@@ -234,8 +234,8 @@ pub fn Sidebar(is_admin: bool) -> Element {
                                         Link {
                                             key: "{label}",
                                             to: route.clone(),
-                                            class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
-                                            active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                                            class: "nav-link",
+                                            active_class: "!bg-surface-2 !text-fg-strong",
                                             {t!(&label)}
                                         }
                                     },
@@ -244,7 +244,7 @@ pub fn Sidebar(is_admin: bool) -> Element {
                                             key: "{label}",
                                             href: "{url}",
                                             target: "_blank",
-                                            class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
+                                            class: "nav-link",
                                             {t!(&label)}
                                         }
                                     }
@@ -329,12 +329,12 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
     let current_theme = theme();
 
     rsx! {
-        nav { class: "bg-white dark:bg-gray-800 shadow dark:shadow-gray-900/30 shrink-0",
+        nav { class: "nav-shell",
             div { class: "w-full mx-auto px-4 sm:px-6 lg:px-8",
                 div { class: "flex justify-between h-16 items-center",
                     // Left side: Logo
                     Link { to: Route::ClusterList {},
-                        h1 { class: "text-xl font-bold text-gray-900 dark:text-white", {t!("nav-logo")} }
+                        h1 { class: "text-xl font-bold text-fg-strong", {t!("nav-logo")} }
                     }
 
                     // Right side: Profile & Theme (Desktop & Mobile share some parts)
@@ -343,10 +343,9 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                         // Desktop user icon + logout
                         if !display_name.is_empty() {
                             div { class: "hidden xl:flex items-center",
-                                Link {
-                                    to: Route::Profile {},
-                                    class: "ml-3 flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
-                                    active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                                Link { to: Route::Profile {},
+                                    class: "nav-link ml-3",
+                                    active_class: "!bg-surface-2 !text-fg-strong",
                                     svg {
                                         class: "h-5 w-5 shrink-0",
                                         fill: "none",
@@ -361,9 +360,8 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                     }
                                     "{display_name}"
                                 }
-                                a {
-                                    href: "/auth/logout",
-                                    class: "ml-1 p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors",
+                                a { href: "/auth/logout",
+                                    class: "nav-icon-btn hover:!text-danger",
                                     title: t!("nav-sign-out"),
                                     svg {
                                         class: "h-5 w-5",
@@ -387,7 +385,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                         // Theme Toggle
                         button {
                             onclick: toggle_theme,
-                            class: "ml-1 p-2 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors",
+                            class: "nav-icon-btn",
                             "aria-label": current_aria.clone(),
                             title: current_aria,
                             ThemeIcon { mode: current_theme }
@@ -396,7 +394,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                         // Hamburger button (Mobile)
                         button {
                             onclick: move |_| is_open.set(!is_open()),
-                            class: "xl:hidden ml-1 inline-flex items-center justify-center p-2 rounded-md text-gray-400 dark:text-gray-300 hover:text-gray-500 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500",
+                            class: "nav-icon-btn xl:hidden inline-flex items-center justify-center",
                             "aria-expanded": "{is_open}",
                             "aria-controls": "mobile-drawer",
                             span { class: "sr-only", {t!("nav-open-main-menu")} }
@@ -424,9 +422,9 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                 // Backdrop
                 div {
                     class: if *is_open.read() {
-                        "fixed inset-0 bg-gray-900/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
+                        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
                     } else {
-                        "fixed inset-0 bg-gray-900/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
+                        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
                     },
                     "aria-hidden": "true",
                     onclick: move |_| is_open.set(false),
@@ -435,33 +433,31 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                 // Drawer
                 div {
                     class: if *is_open.read() {
-                        "fixed inset-y-0 right-0 max-w-xs w-full bg-white dark:bg-gray-800 shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 translate-x-0 pointer-events-auto"
+                        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-line-soft translate-x-0 pointer-events-auto"
                     } else {
-                        "fixed inset-y-0 right-0 max-w-xs w-full bg-white dark:bg-gray-800 shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 translate-x-full pointer-events-none"
+                        "fixed inset-y-0 right-0 max-w-xs w-full bg-surface shadow-xl overflow-y-auto flex flex-col z-50 transform transition-transform duration-300 ease-in-out border-l border-line-soft translate-x-full pointer-events-none"
                     },
 
                     // Header Area with User & Close Button
-                    div { class: "p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-between items-center",
+                    div { class: "p-4 border-b border-line-soft bg-surface-2 flex justify-between items-center",
                         div { class: "flex-1 mr-4 overflow-hidden",
                             if !display_name.is_empty() {
                                 div { class: "flex items-center gap-3",
                                     div { class: "flex-shrink-0",
-                                        svg { class: "h-10 w-10 text-gray-400 bg-white dark:bg-gray-700 rounded-full p-2 border border-gray-200 dark:border-gray-600", fill: "none", stroke: "currentColor", view_box: "0 0 24 24", stroke_width: "1.5",
+                                        svg { class: "h-10 w-10 text-fg-faint bg-surface rounded-full p-2 border border-line", fill: "none", stroke: "currentColor", view_box: "0 0 24 24", stroke_width: "1.5",
                                             path { stroke_linecap: "round", stroke_linejoin: "round", d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" }
                                         }
                                     }
                                     div { class: "flex flex-col overflow-hidden",
-                                        span { class: "text-sm font-medium text-gray-900 dark:text-white truncate block", "{display_name}" }
+                                        span { class: "text-sm font-medium text-fg-strong truncate block", "{display_name}" }
                                         div { class: "flex gap-3",
-                                            Link {
-                                                to: Route::Profile {},
-                                                class: "text-xs text-blue-600 dark:text-blue-400 hover:underline block",
+                                            Link { to: Route::Profile {},
+                                                class: "link text-xs block",
                                                 onclick: move |_| is_open.set(false),
                                                 {t!("nav-view-profile")}
                                             }
-                                            a {
-                                                href: "/auth/logout",
-                                                class: "text-xs text-red-600 dark:text-red-400 hover:underline block",
+                                            a { href: "/auth/logout",
+                                                class: "link-danger text-xs block",
                                                 {t!("nav-sign-out")}
                                             }
                                         }
@@ -473,7 +469,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
 
                         button {
                             onclick: move |_| is_open.set(false),
-                            class: "flex-shrink-0 p-2 -mr-2 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none transition-colors",
+                            class: "nav-icon-btn flex-shrink-0 -mr-2",
                             "aria-label": t!("nav-close-menu"),
                             svg {
                                 class: "h-6 w-6",
@@ -489,7 +485,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                     nav { class: "flex-1 px-4 py-6 space-y-8",
                         for group in get_nav_groups(is_admin, swagger_url.clone()) {
                             div { key: "{group.title}",
-                                h3 { class: "px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider", {t!(&group.title)} }
+                                h3 { class: "nav-group-head", {t!(&group.title)} }
                                 div { class: "mt-2 space-y-1",
                                     for link in group.links {
                                         match link {
@@ -497,8 +493,8 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                                 Link {
                                                     key: "{label}",
                                                     to: route.clone(),
-                                                    class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
-                                                    active_class: "!bg-gray-100 dark:!bg-gray-700 !text-gray-900 dark:!text-white",
+                                                    class: "nav-link",
+                                                    active_class: "!bg-surface-2 !text-fg-strong",
                                                     onclick: move |_| is_open.set(false),
                                                     {t!(&label)}
                                                 }
@@ -508,7 +504,7 @@ pub fn Navbar(is_admin: bool, display_name: String) -> Element {
                                                     key: "{label}",
                                                     href: "{url}",
                                                     target: "_blank",
-                                                    class: "group flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors",
+                                                    class: "nav-link",
                                                     onclick: move |_| is_open.set(false),
                                                     {t!(&label)}
                                                 }
