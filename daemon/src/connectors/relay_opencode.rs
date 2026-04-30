@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::Connector;
-use crate::services::opencode::{config_path, merge_and_write};
+use crate::services::opencode::{config_path, merge_and_validate};
 
 /// Adds relay CORS origins to OpenCode's server config.
 pub struct RelayOpencode;
@@ -79,7 +79,7 @@ impl Connector for RelayOpencode {
             }
         });
 
-        merge_and_write(&path, &patch)?;
+        merge_and_validate(&path, &patch)?;
         tracing::info!(
             "relay→opencode: added {} to CORS origins",
             origins_to_add.join(", ")

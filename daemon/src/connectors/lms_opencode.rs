@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
-use crate::services::opencode::{config_path, merge_and_write};
+use crate::services::opencode::{config_path, merge_and_validate};
 
 /// Registers LM Studio as an LLM provider in OpenCode.
 pub struct LmsOpencode {
@@ -57,7 +57,7 @@ impl Connector for LmsOpencode {
             patch["model"] = serde_json::json!(format!("lmstudio/{model_id}"));
         }
 
-        merge_and_write(&path, &patch)?;
+        merge_and_validate(&path, &patch)?;
         tracing::info!("lms→opencode connected");
         Ok(())
     }

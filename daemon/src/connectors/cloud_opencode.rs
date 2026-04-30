@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::{enabled_cloud_configs, non_empty_secret, resolve_model, Connector, ConnectorPhase};
 use crate::sentry_ext;
-use crate::services::opencode::{config_path, merge_and_write};
+use crate::services::opencode::{config_path, merge_and_validate};
 
 /// Registers all enabled cloud LLM providers in OpenCode.
 pub struct CloudOpencode {
@@ -73,7 +73,7 @@ impl Connector for CloudOpencode {
             patch["model"] = serde_json::json!(primary_model);
         }
 
-        merge_and_write(&path, &patch)?;
+        merge_and_validate(&path, &patch)?;
         tracing::info!(
             "cloud→opencode connected: {} provider(s) configured",
             enabled.len()

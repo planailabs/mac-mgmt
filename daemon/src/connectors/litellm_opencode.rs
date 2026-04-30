@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::{non_empty_secret, Connector, ConnectorPhase};
 use crate::sentry_ext;
-use crate::services::opencode::{config_path, merge_and_write};
+use crate::services::opencode::{config_path, merge_and_validate};
 
 /// Configures OpenCode to use LiteLLM as a single cloud provider.
 ///
@@ -76,7 +76,7 @@ impl Connector for LitellmOpencode {
             }
         }
 
-        merge_and_write(&path, &patch)?;
+        merge_and_validate(&path, &patch)?;
         tracing::info!("litellm→opencode connected");
         Ok(())
     }

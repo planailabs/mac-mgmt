@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
-use crate::services::opencode::{config_path, merge_and_write};
+use crate::services::opencode::{config_path, merge_and_validate};
 
 /// Registers Ollama as an LLM provider in OpenCode.
 pub struct OllamaOpencode {
@@ -54,7 +54,7 @@ impl Connector for OllamaOpencode {
             patch["model"] = serde_json::json!(format!("ollama/{model}"));
         }
 
-        merge_and_write(&path, &patch)?;
+        merge_and_validate(&path, &patch)?;
         tracing::info!("ollama→opencode connected");
         Ok(())
     }

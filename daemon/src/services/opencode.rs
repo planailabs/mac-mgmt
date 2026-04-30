@@ -13,8 +13,8 @@ pub fn config_path() -> Result<PathBuf> {
         .join(".config/opencode/config.json"))
 }
 
-/// Atomically merge a JSON patch into the opencode config.
-pub fn merge_and_write(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
+/// Atomically merge a JSON patch into the opencode config with JSON validation.
+pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
     super::merge_json_config(config_path, patch, None)
 }
 
@@ -44,7 +44,7 @@ impl Opencode {
         }
 
         if patch.as_object().is_some_and(|o| !o.is_empty()) {
-            match merge_and_write(&path, &patch) {
+            match merge_and_validate(&path, &patch) {
                 Ok(()) => tracing::info!("opencode config updated"),
                 Err(e) => tracing::warn!("opencode config merge failed: {e}"),
             }

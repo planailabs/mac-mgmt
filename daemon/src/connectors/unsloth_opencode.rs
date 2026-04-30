@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::{Connector, ConnectorPhase};
 use crate::sentry_ext;
-use crate::services::opencode::{config_path, merge_and_write};
+use crate::services::opencode::{config_path, merge_and_validate};
 
 /// Registers Unsloth as an LLM provider in OpenCode.
 pub struct UnslothOpencode {
@@ -57,7 +57,7 @@ impl Connector for UnslothOpencode {
             patch["model"] = serde_json::json!(format!("unsloth/{model_id}"));
         }
 
-        merge_and_write(&path, &patch)?;
+        merge_and_validate(&path, &patch)?;
         tracing::info!("unsloth\u{2192}opencode connected");
         Ok(())
     }
