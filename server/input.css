@@ -192,9 +192,11 @@
  * `<Button>`, `<TextInput>`, etc. instead.
  */
 @layer components {
-  /* ── Buttons ─────────────────────────────────────────────────── */
+  /* ── Buttons ───────────────────────────────────────────────────
+     Slightly more rounded (`rounded-md` ≈ 6px) than the previous
+     `rounded` (4px) — matches the design language's 7px radius. */
   .btn {
-    @apply inline-flex items-center justify-center font-medium rounded
+    @apply inline-flex items-center justify-center font-medium rounded-md
            focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface
            disabled:opacity-50 disabled:cursor-not-allowed
            transition-colors;
@@ -236,21 +238,70 @@
   /* ── Typography ──────────────────────────────────────────────── */
   .h-page    { @apply text-2xl font-bold mb-4; }
   .h-section { @apply text-lg font-semibold mb-3; }
+
+  /* New design-language scale. `.h-display` is the standard page hero
+     (Fleet, Cluster Detail, Healer); `.h-hero` is the giant numeric
+     used for KPIs (e.g. 99.94%); `.h-card` is the card title; `.kicker`
+     is the uppercase tertiary label that sits above titles. */
+  .h-display { @apply text-[36px] font-semibold leading-[1.05] tracking-[-0.02em] text-fg-strong; }
+  .h-hero    { font-size: 64px; font-weight: 600; line-height: 1; letter-spacing: -0.04em;
+               color: rgb(var(--c-fg-strong)); font-feature-settings: "tnum"; }
+  .h-card    { @apply text-sm font-semibold tracking-tight text-fg-strong; }
+  .kicker    { @apply text-[11px] font-semibold tracking-[0.12em] uppercase text-fg-faint; }
+
   .link        { @apply text-brand hover:underline; }
   .link-mono   { @apply text-brand hover:underline font-mono text-sm; }
   .link-danger { @apply text-danger hover:text-danger-strong; }
 
-  /* ── Surfaces ────────────────────────────────────────────────── */
-  .card { @apply bg-surface rounded border border-line shadow-card overflow-hidden; }
+  /* ── Surfaces ──────────────────────────────────────────────────
+     Cards rely on a hairline border (no drop shadow — principle 5).
+     `.card-pad` is a sibling helper for callers that want the design's
+     22px breathing room without writing `p-[22px]`. */
+  .card     { @apply bg-surface rounded-xl border border-line shadow-card overflow-hidden; }
+  .card-pad { @apply p-5 sm:p-[22px]; }
 
-  /* ── Badges (small status pills) ─────────────────────────────── */
-  .badge         { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium; }
+  /* ── Pills (status-bearing rounded-full chips) ───────────────────
+     The design language calls these "pills, not badges" (principle 8).
+     The `.badge` family below is now a thin alias so existing callers
+     pick up the pill shape automatically; new code should reach for
+     `.pill` directly via the `<Pill>` component. */
+  .pill        { @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full
+                        text-[11px] font-medium whitespace-nowrap; letter-spacing: 0.01em; }
+  .pill-ok     { @apply bg-success-soft text-success; }
+  .pill-warn   { @apply bg-warn-soft text-warn-strong; }
+  .pill-bad    { @apply bg-danger-soft text-danger; }
+  .pill-info   { @apply bg-info-soft text-info; }
+  .pill-accent { @apply bg-brand-soft text-brand; }
+  .pill-muted  { @apply text-fg-muted border border-line bg-transparent; }
+  /* Modifier — apply alongside a color variant to render the pill in
+     mono with slightly tighter type. Used for identifiers (versions,
+     hashes, model names) so they read as "facts" per principle 4. */
+  .pill-mono   { @apply font-mono text-[10.5px]; letter-spacing: 0; }
+
+  /* ── Badges (legacy alias) ────────────────────────────────────
+     Kept so the 60+ existing `Badge` callsites pick up the new pill
+     shape without code changes. New code should use `.pill` /
+     `<Pill>` directly. */
+  .badge         { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium; }
   .badge-neutral { @apply bg-surface-2 text-fg-muted border border-line-soft; }
   .badge-info    { @apply bg-info-soft text-info; }
   .badge-warn    { @apply bg-warn-soft text-warn-strong; }
   .badge-success { @apply bg-success-soft text-success; }
   .badge-danger  { @apply bg-danger-soft text-danger; }
   .badge-accent  { @apply bg-accent-soft text-accent; }
+
+  /* ── Status dots ──────────────────────────────────────────────
+     6×6 colored disc with a 3px soft ring — used inside pills and as
+     leading bullets in activity feeds. Each variant pairs the solid
+     status color with the matching `*-soft` ring so the dot reads at
+     small sizes without becoming heavy. */
+  .dot        { @apply inline-block w-1.5 h-1.5 rounded-full; }
+  .dot-ok     { background-color: rgb(var(--c-success));     box-shadow: 0 0 0 3px rgb(var(--c-success-soft)); }
+  .dot-warn   { background-color: rgb(var(--c-warn));        box-shadow: 0 0 0 3px rgb(var(--c-warn-soft)); }
+  .dot-bad    { background-color: rgb(var(--c-danger));      box-shadow: 0 0 0 3px rgb(var(--c-danger-soft)); }
+  .dot-info   { background-color: rgb(var(--c-info));        box-shadow: 0 0 0 3px rgb(var(--c-info-soft)); }
+  .dot-accent { background-color: rgb(var(--c-brand));       box-shadow: 0 0 0 3px rgb(var(--c-brand-soft)); }
+  .dot-muted  { background-color: rgb(var(--c-fg-faint)); }
 
   /* ── Banners (full-width inline notices) ─────────────────────── */
   .banner        { @apply px-4 py-1.5 text-sm text-center; }
@@ -281,10 +332,18 @@
                             border-line-soft overflow-y-auto; }
   .nav-group-head { @apply px-3 text-xs font-semibold text-fg-muted
                             uppercase tracking-wider; }
-  .nav-link       { @apply flex items-center px-3 py-2 text-sm
+  .nav-link       { @apply relative flex items-center px-3 py-2 text-sm
                             font-medium rounded-md text-fg
                             hover:bg-surface-2 hover:text-fg-strong
                             transition-colors; }
+  /* Active-state helper. Adds the design's 3px accent rule on the left
+     edge plus the brand-soft background and orange text. Used in
+     `Link active_class="nav-link-active"`. */
+  .nav-link-active {
+    @apply !bg-brand-soft !text-brand font-semibold
+           before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2
+           before:h-3.5 before:w-[3px] before:rounded-sm before:bg-brand;
+  }
   .nav-icon-btn   { @apply ml-1 p-2 rounded-md text-fg-muted
                             hover:text-fg-strong hover:bg-surface-2
                             focus:outline-none focus:ring-2 focus:ring-info
