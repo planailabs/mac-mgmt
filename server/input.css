@@ -167,6 +167,12 @@
   .btn-ghost     { @apply text-fg-muted hover:text-fg-strong hover:bg-surface-2; }
   .btn-accent    { @apply bg-accent-soft text-accent hover:opacity-80; }
 
+  /* Soft tinted variants for low-emphasis tertiary actions. */
+  .btn-info-soft    { @apply bg-info-soft text-info hover:opacity-80; }
+  .btn-warn-soft    { @apply bg-warn-soft text-warn-strong hover:opacity-80; }
+  .btn-success-soft { @apply bg-success-soft text-success hover:opacity-80; }
+  .btn-danger-soft  { @apply bg-danger-soft text-danger hover:opacity-80; }
+
   /* ── Form inputs ─────────────────────────────────────────────── */
   .input {
     @apply w-full rounded border border-line bg-surface text-fg

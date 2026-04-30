@@ -5,9 +5,32 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::web::app::Route;
+use crate::web::components::ui::{
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
+    SectionHeading,
+};
 use crate::web::gate_input::HealthGateInput;
 #[cfg(feature = "server")]
 use crate::web::user::current_user;
+
+fn status_variant(status: &str) -> BadgeVariant {
+    match status {
+        "rolling" => BadgeVariant::Info,
+        "completed" => BadgeVariant::Success,
+        "paused" | "rolled_back" => BadgeVariant::Warn,
+        "failed" => BadgeVariant::Danger,
+        _ => BadgeVariant::Neutral,
+    }
+}
+
+fn health_state_variant(state: &str) -> BadgeVariant {
+    match state {
+        "pass" => BadgeVariant::Success,
+        "fail" => BadgeVariant::Danger,
+        "grace" => BadgeVariant::Warn,
+        _ => BadgeVariant::Neutral,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RolloutInfo {
@@ -351,23 +374,12 @@ fn parse_eval_report(v: serde_json::Value, at: DateTime<Utc>) -> Option<StageHea
 /// with extra detail (heartbeat-freshness avg, per-service probe %)
 /// surfaced as inline metrics.
 fn render_health_summary_card(hs: &RolloutHealthSummary) -> Element {
-    let (cls, label) = match hs.state.as_str() {
-        "pass" => (
-            "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-            t!("rollout-health-pass"),
-        ),
-        "fail" => (
-            "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-            t!("rollout-health-fail"),
-        ),
-        "grace" => (
-            "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-            t!("rollout-health-grace"),
-        ),
-        _ => (
-            "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-            t!("rollout-health-no-data"),
-        ),
+    let variant = health_state_variant(&hs.state);
+    let label = match hs.state.as_str() {
+        "pass" => t!("rollout-health-pass"),
+        "fail" => t!("rollout-health-fail"),
+        "grace" => t!("rollout-health-grace"),
+        _ => t!("rollout-health-no-data"),
     };
     let hb = hs
         .avg_heartbeat_fresh_pct
@@ -375,25 +387,23 @@ fn render_health_summary_card(hs: &RolloutHealthSummary) -> Element {
         .unwrap_or_else(|| t!("em-dash"));
 
     rsx! {
-        div { class: "mb-6 p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+        div { class: "mb-6 p-4 card",
             div { class: "flex items-center gap-3 mb-2",
-                span { class: "text-lg font-semibold text-gray-700 dark:text-gray-200",
+                span { class: "text-lg font-semibold text-fg-strong",
                     {t!("rollout-detail-health")}
                 }
-                span { class: "px-2 py-0.5 rounded text-xs font-medium {cls}",
-                    "{label}"
-                }
+                Badge { variant, "{label}" }
                 if hs.failing_stages > 0 {
-                    span { class: "text-xs font-mono text-red-700 dark:text-red-300",
+                    span { class: "text-xs font-mono text-danger-strong",
                         {t!("rollout-detail-stages-failing", failing: hs.failing_stages, total: hs.evaluated_stages)}
                     }
                 } else if hs.evaluated_stages > 0 {
-                    span { class: "text-xs font-mono text-gray-500 dark:text-gray-400",
+                    span { class: "text-xs font-mono text-fg-muted",
                         {t!("rollout-detail-stages-passing", evaluated: hs.evaluated_stages, total: hs.evaluated_stages)}
                     }
                 }
             }
-            div { class: "flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-300",
+            div { class: "flex flex-wrap gap-4 text-xs text-fg",
                 span {
                     span { class: "font-medium", {t!("rollout-detail-cohort")} }
                     "{hs.total_cohort}"
@@ -416,7 +426,7 @@ fn render_health_summary_card(hs: &RolloutHealthSummary) -> Element {
                 }
             }
             if !hs.top_reason.is_empty() {
-                p { class: "mt-2 text-xs text-red-700 dark:text-red-300",
+                p { class: "mt-2 text-xs text-danger-strong",
                     {t!("rollout-detail-top-reason", reason: hs.top_reason.clone())}
                 }
             }
@@ -1230,33 +1240,21 @@ pub fn RolloutDetail(id: String) -> Element {
             let has_version_update = info.target_version.is_some();
             let has_nixpkgs_update = info.nixpkgs_commit.is_some();
 
-            let status_badge = match info.status.as_str() {
-                "rolling" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
-                "completed" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-                "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-                "failed" => "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-                "rolled_back" => {
-                    "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200"
-                }
-                _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
-            };
+            let badge_variant = status_variant(&info.status);
 
             let display_name = info.name.clone().unwrap_or_else(|| t!("rollout-detail-rollout-prefix", id: &rid[..8]));
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
                     div {
-                        h2 { class: "text-2xl font-bold mb-1", "{display_name}" }
+                        h2 { class: "h-page mb-1", "{display_name}" }
                         div { class: "flex items-center gap-2",
-                            span { class: "px-2 py-0.5 rounded text-xs font-medium {status_badge}",
-                                "{status}"
-                            }
-                            span { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("rollout-detail-created-label", date: created.clone())} }
+                            Badge { variant: badge_variant, "{status}" }
+                            span { class: "help", {t!("rollout-detail-created-label", date: created.clone())} }
                         }
                     }
                     div { class: "flex gap-2",
                         if matches!(info.status.as_str(), "rolling" | "paused" | "completed") {
-                            button {
-                                class: "bg-orange-600 text-white px-3 py-1 rounded text-sm hover:bg-orange-700",
+                            Button { variant: ButtonVariant::Warn, size: ButtonSize::Sm,
                                 title: "Mark rollout as rolled-back and rewind cluster pins to the baseline captured at start time",
                                 onclick: {
                                     let rid = rid.clone();
@@ -1275,8 +1273,7 @@ pub fn RolloutDetail(id: String) -> Element {
                             }
                         }
                         if matches!(info.status.as_str(), "pending" | "completed" | "failed" | "rolled_back") {
-                            button {
-                                class: "bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700",
+                            Button { variant: ButtonVariant::Danger, size: ButtonSize::Sm,
                                 onclick: {
                                     let rid = rid.clone();
                                     move |_| {
@@ -1307,8 +1304,7 @@ pub fn RolloutDetail(id: String) -> Element {
                 // Action buttons
                 div { class: "flex gap-2 mb-6",
                     if info.status == "pending" {
-                        button {
-                            class: "bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700",
+                        Button { size: ButtonSize::Sm,
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -1323,8 +1319,7 @@ pub fn RolloutDetail(id: String) -> Element {
                         }
                     }
                     if info.status == "rolling" {
-                        button {
-                            class: "bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700",
+                        Button { size: ButtonSize::Sm,
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -1337,8 +1332,7 @@ pub fn RolloutDetail(id: String) -> Element {
                             },
                             {t!("rollout-detail-advance")}
                         }
-                        button {
-                            class: "bg-yellow-500 text-white px-3 py-1 rounded text-sm hover:bg-yellow-600",
+                        Button { variant: ButtonVariant::Warn, size: ButtonSize::Sm,
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -1353,8 +1347,7 @@ pub fn RolloutDetail(id: String) -> Element {
                         }
                     }
                     if info.status == "paused" {
-                        button {
-                            class: "bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700",
+                        Button { size: ButtonSize::Sm,
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -1369,8 +1362,7 @@ pub fn RolloutDetail(id: String) -> Element {
                         }
                     }
                     if info.status != "completed" {
-                        button {
-                            class: "bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700",
+                        Button { variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
                             onclick: {
                                 let rid = rid.clone();
                                 move |_| {
@@ -1390,17 +1382,11 @@ pub fn RolloutDetail(id: String) -> Element {
                 }
 
                 // Stages
-                h3 { class: "text-lg font-semibold mb-3", {t!("rollout-detail-stages")} }
+                SectionHeading { {t!("rollout-detail-stages")} }
                 div { class: "space-y-3 mb-6",
                     for stage in &info.stages {
                         {
-                            let badge_class = match stage.status.as_str() {
-                                "rolling" => "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200",
-                                "completed" => "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-                                "paused" => "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-                                "rolled_back" => "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200",
-                                _ => "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200",
-                            };
+                            let stage_badge_variant = status_variant(&stage.status);
                             let started = stage
                                 .started_at
                                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
@@ -1415,11 +1401,11 @@ pub fn RolloutDetail(id: String) -> Element {
                                 t!("rollout-detail-no-heartbeats")
                             };
                             let health_color = if stage.total_count == 0 {
-                                "text-gray-400 dark:text-gray-500"
+                                "text-fg-faint"
                             } else if stage.healthy_count == stage.total_count {
-                                "text-green-600 dark:text-green-400"
+                                "text-success"
                             } else {
-                                "text-red-600 dark:text-red-400"
+                                "text-danger"
                             };
                             let version_upgrade_text = if stage.total_count > 0 {
                                 t!("rollout-detail-version-progress", upgraded: stage.upgraded_count, total: stage.total_count)
@@ -1427,13 +1413,13 @@ pub fn RolloutDetail(id: String) -> Element {
                                 String::new()
                             };
                             let version_upgrade_color = if stage.total_count == 0 {
-                                "text-gray-400 dark:text-gray-500"
+                                "text-fg-faint"
                             } else if stage.upgraded_count == stage.total_count {
-                                "text-green-600 dark:text-green-400"
+                                "text-success"
                             } else if stage.upgraded_count > 0 {
-                                "text-blue-600 dark:text-blue-400"
+                                "text-info"
                             } else {
-                                "text-gray-400 dark:text-gray-500"
+                                "text-fg-faint"
                             };
                             let nixpkgs_upgrade_text = if stage.total_count > 0 {
                                 t!("rollout-detail-nixpkgs-progress", upgraded: stage.nixpkgs_upgraded_count, total: stage.total_count)
@@ -1441,29 +1427,27 @@ pub fn RolloutDetail(id: String) -> Element {
                                 String::new()
                             };
                             let nixpkgs_upgrade_color = if stage.total_count == 0 {
-                                "text-gray-400 dark:text-gray-500"
+                                "text-fg-faint"
                             } else if stage.nixpkgs_upgraded_count == stage.total_count {
-                                "text-green-600 dark:text-green-400"
+                                "text-success"
                             } else if stage.nixpkgs_upgraded_count > 0 {
-                                "text-blue-600 dark:text-blue-400"
+                                "text-info"
                             } else {
-                                "text-gray-400 dark:text-gray-500"
+                                "text-fg-faint"
                             };
 
                             let stage_id_str = stage.id.to_string();
                             let rid_clone = rid.clone();
 
                             rsx! {
-                                div { class: "p-4 bg-white dark:bg-gray-800 rounded shadow dark:shadow-gray-900/30",
+                                Card { class: "p-4",
                                     div { class: "flex justify-between items-center mb-2",
                                         div { class: "flex items-center gap-2",
                                             span { class: "font-medium text-sm",
                                                 {t!("rollout-detail-stage-num", num: stage.stage_order)}
                                             }
-                                            span { class: "text-gray-600 dark:text-gray-300", "{stage.group_name}" }
-                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {badge_class}",
-                                                "{stage.status}"
-                                            }
+                                            span { class: "text-fg", "{stage.group_name}" }
+                                            Badge { variant: stage_badge_variant, "{stage.status}" }
                                         }
                                         div { class: "flex gap-3",
                                             if !version_upgrade_text.is_empty() {
@@ -1481,7 +1465,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                             }
                                         }
                                     }
-                                    div { class: "text-xs text-gray-400 dark:text-gray-500 flex gap-4",
+                                    div { class: "text-xs text-fg-faint flex gap-4",
                                         span { {t!("rollout-detail-started", date: started.clone())} }
                                         span { {t!("rollout-detail-completed", date: completed.clone())} }
                                     }
@@ -1491,19 +1475,18 @@ pub fn RolloutDetail(id: String) -> Element {
                                     // panel would have sat, so the card layout
                                     // stays consistent across stages.
                                     if !stage.has_gate {
-                                        div { class: "mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between",
-                                            span { class: "text-xs text-gray-500 dark:text-gray-400",
+                                        div { class: "mt-3 pt-3 border-t border-line-soft flex items-center justify-between",
+                                            span { class: "text-xs text-fg-muted",
                                                 {t!("rollout-detail-no-gate")}
                                             }
                                             div { class: "flex gap-2",
                                                 Link {
                                                     to: Route::FleetDashboard { stage_id: Some(stage_id_str.clone()) },
-                                                    class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 inline-flex items-center",
+                                                    class: "btn btn-xs btn-secondary",
                                                     title: "Open the fleet dashboard filtered to this stage's cohort",
                                                     {t!("rollout-detail-view-fleet")}
                                                 }
-                                                button {
-                                                    class: "px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-800 dark:text-blue-200",
+                                                button { class: "btn btn-xs btn-info-soft",
                                                     onclick: {
                                                         let sid = stage_id_str.clone();
                                                         move |_| {
@@ -1527,43 +1510,32 @@ pub fn RolloutDetail(id: String) -> Element {
                                             // but they're being shielded. A clean pass during grace renders
                                             // as a normal pass, since there's nothing for the grace period
                                             // to actually shield.
-                                            let (gate_badge_class, gate_text) = match stage.health.as_ref() {
-                                                Some(h) if h.passed && h.in_grace_period && !h.reasons.is_empty() => (
-                                                    "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200",
-                                                    t!("rollout-detail-gate-grace"),
-                                                ),
-                                                Some(h) if h.passed => (
-                                                    "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200",
-                                                    t!("rollout-detail-gate-pass"),
-                                                ),
-                                                Some(_) => (
-                                                    "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200",
-                                                    t!("rollout-detail-gate-fail"),
-                                                ),
-                                                None => (
-                                                    "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
-                                                    t!("rollout-detail-gate-no-data"),
-                                                ),
+                                            let (gate_variant, gate_text) = match stage.health.as_ref() {
+                                                Some(h) if h.passed && h.in_grace_period && !h.reasons.is_empty() =>
+                                                    (BadgeVariant::Warn, t!("rollout-detail-gate-grace")),
+                                                Some(h) if h.passed =>
+                                                    (BadgeVariant::Success, t!("rollout-detail-gate-pass")),
+                                                Some(_) =>
+                                                    (BadgeVariant::Danger, t!("rollout-detail-gate-fail")),
+                                                None =>
+                                                    (BadgeVariant::Neutral, t!("rollout-detail-gate-no-data")),
                                             };
                                             rsx! {
-                                                div { class: "mt-3 pt-3 border-t border-gray-200 dark:border-gray-700",
+                                                div { class: "mt-3 pt-3 border-t border-line-soft",
                                                     div { class: "flex justify-between items-center mb-2",
                                                         div { class: "flex items-center gap-2",
-                                                            span { class: "text-sm font-semibold text-gray-700 dark:text-gray-200",
+                                                            span { class: "text-sm font-semibold text-fg-strong",
                                                                 {t!("rollout-detail-assessment-gate")}
                                                             }
-                                                            span { class: "px-2 py-0.5 rounded text-xs font-medium {gate_badge_class}",
-                                                                "{gate_text}"
-                                                            }
+                                                            Badge { variant: gate_variant, "{gate_text}" }
                                                             if let Some(ts) = evaluated_at_text.as_ref() {
-                                                                span { class: "text-xs text-gray-500 dark:text-gray-400",
+                                                                span { class: "text-xs text-fg-muted",
                                                                     {t!("rollout-detail-evaluated", ts: ts.clone())}
                                                                 }
                                                             }
                                                         }
                                                         div { class: "flex gap-2",
-                                                            button {
-                                                                class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200",
+                                                            button { class: "btn btn-xs btn-secondary",
                                                                 title: "Change thresholds, add/remove probed services, or disable the gate entirely",
                                                                 onclick: {
                                                                     let sid = stage_id_str.clone();
@@ -1593,15 +1565,9 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                     .as_ref()
                                                                     .map(|s| s == &stage_id_str)
                                                                     .unwrap_or(false);
-                                                                let cls = if busy {
-                                                                    "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
-                                                                } else {
-                                                                    "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200"
-                                                                };
                                                                 let label = if busy { t!("rollout-detail-reevaluating") } else { t!("rollout-detail-reevaluate-now") };
                                                                 rsx! {
-                                                                    button {
-                                                                        class: "{cls}",
+                                                                    button { class: "btn btn-xs btn-secondary",
                                                                         disabled: busy,
                                                                         onclick: {
                                                                             let sid = stage_id_str.clone();
@@ -1625,8 +1591,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                     }
                                                                 }
                                                             }
-                                                            button {
-                                                                class: "px-2 py-1 text-xs rounded bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-800 dark:text-blue-200",
+                                                            button { class: "btn btn-xs btn-info-soft",
                                                                 onclick: {
                                                                     let rid = rid_clone.clone();
                                                                     let sid = stage_id_str.clone();
@@ -1659,8 +1624,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 {t!("rollout-detail-request-assessment")}
                                                             }
                                                             if has_version_update {
-                                                                button {
-                                                                    class: "px-2 py-1 text-xs rounded bg-orange-100 dark:bg-orange-900 hover:bg-orange-200 dark:hover:bg-orange-800 text-orange-800 dark:text-orange-200",
+                                                                button { class: "btn btn-xs btn-warn-soft",
                                                                     onclick: {
                                                                         let rid = rid_clone.clone();
                                                                         let sid = stage_id_str.clone();
@@ -1689,8 +1653,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 }
                                                             }
                                                             if has_nixpkgs_update {
-                                                                button {
-                                                                    class: "px-2 py-1 text-xs rounded bg-purple-100 dark:bg-purple-900 hover:bg-purple-200 dark:hover:bg-purple-800 text-purple-800 dark:text-purple-200",
+                                                                button { class: "btn btn-xs btn-accent",
                                                                     onclick: {
                                                                         let rid = rid_clone.clone();
                                                                         let sid = stage_id_str.clone();
@@ -1720,7 +1683,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                             }
                                                             Link {
                                                                 to: Route::FleetDashboard { stage_id: Some(stage_id_str.clone()) },
-                                                                class: "px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 inline-flex items-center",
+                                                                class: "btn btn-xs btn-secondary",
                                                                 title: "Open the fleet dashboard filtered to this stage's cohort",
                                                                 {t!("rollout-detail-view-fleet")}
                                                             }
@@ -1739,9 +1702,9 @@ pub fn RolloutDetail(id: String) -> Element {
                                                             if let Some((msg, is_err)) = status_for_this_stage {
                                                                 {
                                                                     let cls = if is_err {
-                                                                        "mt-2 text-xs text-red-700 dark:text-red-300"
+                                                                        "mt-2 text-xs text-danger-strong"
                                                                     } else {
-                                                                        "mt-2 text-xs text-gray-600 dark:text-gray-300"
+                                                                        "mt-2 text-xs text-fg"
                                                                     };
                                                                     rsx! {
                                                                         p { class: "{cls}", "{msg}" }
@@ -1751,7 +1714,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                         }
                                                     }
                                                     if let Some(h) = stage.health.as_ref() {
-                                                        div { class: "flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-300",
+                                                        div { class: "flex flex-wrap gap-4 text-xs text-fg",
                                                             span {
                                                                 span { class: "font-medium", {t!("rollout-detail-cohort")} }
                                                                 "{h.cohort_size}"
@@ -1774,7 +1737,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                             }
                                                         }
                                                         if !h.reasons.is_empty() {
-                                                            ul { class: "mt-2 text-xs text-red-700 dark:text-red-300 list-disc list-inside",
+                                                            ul { class: "mt-2 text-xs text-danger-strong list-disc list-inside",
                                                                 for reason in h.reasons.iter() {
                                                                     li { "{reason}" }
                                                                 }
@@ -1785,7 +1748,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                             div { class: "mt-3 overflow-x-auto",
                                                                 table { class: "min-w-full text-xs",
                                                                     thead {
-                                                                        tr { class: "text-left text-gray-500 dark:text-gray-400",
+                                                                        tr { class: "text-left text-fg-muted",
                                                                             th { class: "py-1 pr-3 font-medium", {t!("rollout-detail-col-service")} }
                                                                             th { class: "py-1 pr-3 font-medium", {t!("rollout-detail-col-ok-total")} }
                                                                             th { class: "py-1 pr-3 font-medium", {t!("rollout-detail-col-avg-ms")} }
@@ -1794,7 +1757,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                             th { class: "py-1 font-medium", {t!("rollout-detail-col-last-failure")} }
                                                                         }
                                                                     }
-                                                                    tbody { class: "text-gray-700 dark:text-gray-300 font-mono",
+                                                                    tbody { class: "text-fg font-mono",
                                                                         {
                                                                             let mut stat_pairs: Vec<(&String, &ProbeStatsView)> = h.probe_stats.iter().collect();
                                                                             stat_pairs.sort_by(|a, b| a.0.cmp(b.0));
@@ -1816,7 +1779,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                                                 td { class: "py-1 pr-3", "{dur}" }
                                                                                                 td { class: "py-1 pr-3", "{ttft}" }
                                                                                                 td { class: "py-1 pr-3", "{tokens}" }
-                                                                                                td { class: "py-1 text-gray-500 dark:text-gray-400 font-sans", "{failure}" }
+                                                                                                td { class: "py-1 text-fg-muted font-sans", "{failure}" }
                                                                                             }
                                                                                         }
                                                                                     }
@@ -1835,7 +1798,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 let gpu = s.gpu_avg_util_pct.map(|v| format!("{v}%")).unwrap_or_else(|| t!("em-dash"));
                                                                 let cpu = format!("{:.2}", s.avg_cpu_load_1m);
                                                                 rsx! {
-                                                                    div { class: "mt-3 flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-300",
+                                                                    div { class: "mt-3 flex flex-wrap gap-4 text-xs text-fg",
                                                                         span {
                                                                             span { class: "font-medium", {t!("rollout-detail-samples")} }
                                                                             "{s.reporting_instances}"
@@ -1857,7 +1820,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                             "{gpu}"
                                                                         }
                                                                         if s.thermal_alerts > 0 {
-                                                                            span { class: "text-orange-700 dark:text-orange-300 font-medium",
+                                                                            span { class: "text-warn-strong font-medium",
                                                                                 {t!("rollout-detail-thermal-alerts", count: s.thermal_alerts)}
                                                                             }
                                                                         }
@@ -1889,13 +1852,12 @@ pub fn RolloutDetail(id: String) -> Element {
                                         };
                                         rsx! {
                                             if editing_here {
-                                                div { class: "mt-3 pt-3 border-t border-gray-200 dark:border-gray-700",
+                                                div { class: "mt-3 pt-3 border-t border-line-soft",
                                                     div { class: "flex items-center justify-between mb-2",
-                                                        span { class: "text-sm font-semibold text-gray-700 dark:text-gray-200",
+                                                        span { class: "text-sm font-semibold text-fg-strong",
                                                             {t!("rollout-detail-gate-config")}
                                                         }
-                                                        button {
-                                                            class: "text-xs text-gray-500 dark:text-gray-400 hover:underline",
+                                                        button { class: "text-xs text-fg-muted hover:underline",
                                                             onclick: move |_| {
                                                                 edit_gate.set(None);
                                                                 edit_gate_error.set(None);
@@ -1918,6 +1880,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 input {
                                                                     r#type: "checkbox",
                                                                     checked: g.enabled,
+                                                                    class: "rounded border-line text-brand focus:ring-brand",
                                                                     onchange: move |e| {
                                                                         let mut w = edit_gate.write();
                                                                         if let Some(t) = w.as_mut() {
@@ -1925,7 +1888,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                         }
                                                                     },
                                                                 }
-                                                                label { class: "text-xs text-gray-700 dark:text-gray-200",
+                                                                label { class: "text-xs text-fg-strong",
                                                                     {t!("rollout-detail-gate-enabled")}
                                                                 }
                                                             }
@@ -1933,12 +1896,12 @@ pub fn RolloutDetail(id: String) -> Element {
                                                             if g.enabled {
                                                                 div { class: "grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3",
                                                                     div {
-                                                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                        label { class: "block text-xs font-medium text-fg mb-1",
                                                                             {t!("rollout-form-heartbeat-pct")}
                                                                         }
                                                                         input {
                                                                             r#type: "number", min: "0", max: "100",
-                                                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                                                            class: "input input-sm",
                                                                             value: "{g.min_heartbeat_fresh_pct}",
                                                                             oninput: move |e| {
                                                                                 if let Ok(v) = e.value().parse::<u8>() {
@@ -1951,12 +1914,12 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                         }
                                                                     }
                                                                     div {
-                                                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                        label { class: "block text-xs font-medium text-fg mb-1",
                                                                             {t!("rollout-detail-freshness-window")}
                                                                         }
                                                                         input {
                                                                             r#type: "number", min: "10",
-                                                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                                                            class: "input input-sm",
                                                                             value: "{g.heartbeat_freshness_secs}",
                                                                             oninput: move |e| {
                                                                                 if let Ok(v) = e.value().parse::<u32>() {
@@ -1969,12 +1932,12 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                         }
                                                                     }
                                                                     div {
-                                                                        label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                        label { class: "block text-xs font-medium text-fg mb-1",
                                                                             {t!("rollout-detail-grace-period")}
                                                                         }
                                                                         input {
                                                                             r#type: "number", min: "0",
-                                                                            class: "w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white",
+                                                                            class: "input input-sm",
                                                                             value: "{g.grace_period_secs}",
                                                                             oninput: move |e| {
                                                                                 if let Ok(v) = e.value().parse::<u32>() {
@@ -1989,7 +1952,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 }
 
                                                                 div { class: "mb-3",
-                                                                    label { class: "block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1",
+                                                                    label { class: "block text-xs font-medium text-fg mb-1",
                                                                         {t!("rollout-form-probe-thresholds")}
                                                                     }
                                                                     {
@@ -2002,8 +1965,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                         rsx! {
                                                                             for (idx, svc, pct) in rows {
                                                                                 div { class: "flex items-center gap-2 mb-1",
-                                                                                    input {
-                                                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white flex-1",
+                                                                                    input { class: "input input-sm flex-1 w-auto",
                                                                                         placeholder: t!("rollout-form-service-placeholder"),
                                                                                         value: "{svc}",
                                                                                         oninput: move |e| {
@@ -2017,7 +1979,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                                     }
                                                                                     input {
                                                                                         r#type: "number", min: "0", max: "100",
-                                                                                        class: "border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm w-20 dark:bg-gray-700 dark:text-white",
+                                                                                        class: "input input-sm w-20",
                                                                                         value: "{pct}",
                                                                                         oninput: move |e| {
                                                                                             if let Ok(v) = e.value().parse::<u8>() {
@@ -2030,9 +1992,8 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                                             }
                                                                                         },
                                                                                     }
-                                                                                    span { class: "text-xs text-gray-500 dark:text-gray-400", {t!("rollout-form-pct-symbol")} }
-                                                                                    button {
-                                                                                        class: "text-red-600 dark:text-red-400 text-xs hover:underline",
+                                                                                    span { class: "text-xs text-fg-muted", {t!("rollout-form-pct-symbol")} }
+                                                                                    button { class: "link-danger text-xs",
                                                                                         onclick: move |_| {
                                                                                             let mut w = edit_gate.write();
                                                                                             if let Some(t) = w.as_mut() {
@@ -2047,8 +2008,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                             }
                                                                         }
                                                                     }
-                                                                    button {
-                                                                        class: "text-blue-600 dark:text-blue-400 text-xs hover:underline mt-1",
+                                                                    button { class: "link text-xs mt-1",
                                                                         onclick: move |_| {
                                                                             let mut w = edit_gate.write();
                                                                             if let Some(t) = w.as_mut() {
@@ -2066,6 +2026,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                     input {
                                                                         r#type: "checkbox",
                                                                         checked: apply_all,
+                                                                        class: "rounded border-line text-brand focus:ring-brand",
                                                                         onchange: move |e| {
                                                                             let mut w = edit_gate.write();
                                                                             if let Some(t) = w.as_mut() {
@@ -2073,12 +2034,11 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                             }
                                                                         },
                                                                     }
-                                                                    label { class: "text-xs text-gray-600 dark:text-gray-300",
+                                                                    label { class: "text-xs text-fg",
                                                                         {t!("rollout-detail-apply-all")}
                                                                     }
                                                                 }
-                                                                button {
-                                                                    class: "ml-auto px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700",
+                                                                button { class: "ml-auto btn btn-xs btn-primary",
                                                                     onclick: move |_| {
                                                                         let snap = edit_gate
                                                                             .read()
@@ -2102,7 +2062,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                                                 }
                                                             }
                                                             if let Some(msg) = err.as_ref() {
-                                                                p { class: "mt-2 text-xs text-red-700 dark:text-red-300",
+                                                                p { class: "mt-2 text-xs text-danger-strong",
                                                                     "{msg}"
                                                                 }
                                                             }
@@ -2119,8 +2079,8 @@ pub fn RolloutDetail(id: String) -> Element {
                 }
 
                 // Target
-                h3 { class: "text-lg font-semibold mb-2", {t!("rollout-detail-target")} }
-                div { class: "bg-gray-100 dark:bg-gray-700 p-4 rounded text-sm space-y-1",
+                SectionHeading { class: "mb-2", {t!("rollout-detail-target")} }
+                div { class: "bg-surface-2 p-4 rounded text-sm space-y-1",
                     if let Some(ver) = &info.target_version {
                         p { span { class: "font-medium", {t!("rollout-detail-version-label")} } "{ver}" }
                     }
@@ -2140,8 +2100,7 @@ pub fn RolloutDetail(id: String) -> Element {
                             rsx! {
                                 p {
                                     span { class: "font-medium", {t!("rollout-detail-nixpkgs-label")} }
-                                    a {
-                                        class: "font-mono text-sm hover:text-blue-600 dark:hover:text-blue-400",
+                                    a { class: "font-mono text-sm hover:text-brand",
                                         href: "{url}",
                                         target: "_blank",
                                         title: "{commit}",
@@ -2157,8 +2116,8 @@ pub fn RolloutDetail(id: String) -> Element {
                 // can see exactly what a rollback would restore. Hidden for
                 // pending rollouts where nothing's been captured yet.
                 if info.baseline_version.is_some() || info.baseline_nixpkgs_commit.is_some() {
-                    h3 { class: "text-lg font-semibold mb-2 mt-4", {t!("rollout-detail-rollback-baseline")} }
-                    div { class: "bg-gray-100 dark:bg-gray-700 p-4 rounded text-sm space-y-1",
+                    SectionHeading { class: "mb-2 mt-4", {t!("rollout-detail-rollback-baseline")} }
+                    div { class: "bg-surface-2 p-4 rounded text-sm space-y-1",
                         if let Some(ver) = &info.baseline_version {
                             p { span { class: "font-medium", {t!("rollout-detail-version-label")} } "{ver}" }
                         }
@@ -2178,8 +2137,7 @@ pub fn RolloutDetail(id: String) -> Element {
                                 rsx! {
                                     p {
                                         span { class: "font-medium", {t!("rollout-detail-nixpkgs-label")} }
-                                        a {
-                                            class: "font-mono text-sm hover:text-blue-600 dark:hover:text-blue-400",
+                                        a { class: "font-mono text-sm hover:text-brand",
                                             href: "{url}",
                                             target: "_blank",
                                             title: "{commit}",
@@ -2193,11 +2151,7 @@ pub fn RolloutDetail(id: String) -> Element {
                 }
             }
         }
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-600 dark:text-red-400 text-sm", {t!("error-message", message: e.to_string())} }
-        },
-        None => rsx! {
-            p { class: "text-gray-500 dark:text-gray-400 text-sm", {t!("loading")} }
-        },
+        Some(Err(e)) => rsx! { ErrorText { {t!("error-message", message: e.to_string())} } },
+        None => rsx! { HelpText { {t!("loading")} } },
     }
 }
