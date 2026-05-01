@@ -47,6 +47,8 @@ struct Daemon {
     healer: Arc<mac_mgmt_healer::HealerState>,
     #[cfg(feature = "healer")]
     healer_unhealthy_counter: u32,
+    #[cfg(feature = "memvault")]
+    memvault: Option<crate::memvault::MemvaultHandle>,
     /// Skip sending update-self to the supervisor on the first update tick.
     /// The daemon already ran check_and_apply during startup; telling the
     /// supervisor to reexec before the daemon itself has restarted is
@@ -1221,6 +1223,23 @@ pub async fn run(
         ))
     };
 
+    // Initialize memvault if enabled.
+    #[cfg(feature = "memvault")]
+    let memvault_handle = if cfg.memvault.enabled {
+        match crate::memvault::MemvaultHandle::init(&cfg.memvault).await {
+            Ok(h) => {
+                tracing::info!("memvault subsystem active");
+                Some(h)
+            }
+            Err(e) => {
+                tracing::error!("failed to initialize memvault: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Build the Daemon struct with all long-lived state.
     let mut daemon = Daemon {
         server_url,
@@ -1242,6 +1261,8 @@ pub async fn run(
         healer,
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
+        #[cfg(feature = "memvault")]
+        memvault: memvault_handle,
         first_update: true,
         heartbeat_lock: Arc::new(tokio::sync::Mutex::new(())),
     };
@@ -1349,6 +1370,10 @@ pub async fn run(
                 daemon.send_heartbeat(relay_proxy_hostname!(), relay_proxy_url!()).await;
                 #[cfg(feature = "services")]
                 tokio::task::block_in_place(|| daemon.svc_mgr.run_connectors_tick());
+                #[cfg(feature = "memvault")]
+                if let Some(ref mv) = daemon.memvault {
+                    mv.tick().await;
+                }
             }
 
             _ = heartbeat_tick.tick() => {
@@ -1793,6 +1818,8 @@ pub async fn run_sim(
         healer: healer_sim,
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
+        #[cfg(feature = "memvault")]
+        memvault: None,
         first_update: true,
         heartbeat_lock: Arc::new(tokio::sync::Mutex::new(())),
     };
@@ -2068,6 +2095,8 @@ pub async fn run_sim_with_services(
         healer,
         #[cfg(feature = "healer")]
         healer_unhealthy_counter: 0,
+        #[cfg(feature = "memvault")]
+        memvault: None,
         first_update: true,
         heartbeat_lock: Arc::new(tokio::sync::Mutex::new(())),
     };

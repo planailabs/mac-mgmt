@@ -16,7 +16,7 @@ default = ["services", "relay", "memvault"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:libp2p", "dep:libp2p-stream"]
-memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "relay"]
+memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "dep:memvault-query", "dep:axum", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
 sim = []
 
@@ -82,3 +82,6 @@ memvault-core = { path = "../memvault/crates/memvault-core", optional = true }
 memvault-auth = { path = "../memvault/crates/memvault-auth", optional = true }
 memvault-store = { path = "../memvault/crates/memvault-store", optional = true }
 memvault-net = { path = "../memvault/crates/memvault-net", optional = true }
+memvault-web = { path = "../memvault/crates/memvault-web", optional = true }
+memvault-query = { path = "../memvault/crates/memvault-query", optional = true }
+axum = { version = "0.8", optional = true }

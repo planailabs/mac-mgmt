@@ -1578,6 +1578,9 @@ pub struct MemvaultConfig {
     #[schemars(description = "Port for the memvault web UI (0 = disabled)")]
     #[serde(default)]
     pub web_port: u16,
+    #[schemars(description = "Bearer token for the memvault web API (empty = no auth)")]
+    #[serde(default)]
+    pub auth_token: Option<String>,
 }
 
 // ── Cluster Config (what the server manages per-cluster) ──────────────
