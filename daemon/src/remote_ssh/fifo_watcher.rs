@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use std::ffi::CString;
+use std::io::Read;
+use std::os::unix::io::FromRawFd;
 use std::path::PathBuf;
-use tokio::io::AsyncBufReadExt;
+use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
 
 use super::RemoteSshCommand;
@@ -44,46 +46,65 @@ pub async fn watch(tx: mpsc::Sender<RemoteSshCommand>) -> Result<()> {
     create_fifo(&path)?;
     tracing::info!("FIFO created at {}", path.display());
 
+    // Open with O_RDWR | O_NONBLOCK so open() doesn't block waiting for a writer,
+    // and wrap in AsyncFd so reads park on epoll instead of busy-looping.
+    let fd = {
+        let c_path = CString::new(path.to_str().unwrap()).unwrap();
+        unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_NONBLOCK) }
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error()).context("failed to open FIFO");
+    }
+
+    let std_file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let async_fd = AsyncFd::new(std_file).context("failed to register FIFO with epoll")?;
+
+    let mut buf = vec![0u8; 4096];
+    let mut line_buf = String::new();
+
     loop {
-        // Open with O_RDWR to avoid blocking (standard FIFO trick)
-        let fd = {
-            let c_path = CString::new(path.to_str().unwrap()).unwrap();
-            unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_NONBLOCK) }
-        };
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error()).context("failed to open FIFO");
-        }
+        let mut guard = async_fd.readable().await?;
 
-        let std_file = unsafe { std::fs::File::from_raw_fd(fd) };
-        let file = tokio::fs::File::from_std(std_file);
-        let reader = tokio::io::BufReader::new(file);
-        let mut lines = reader.lines();
-
-        while let Ok(Some(line)) = lines.next_line().await {
-            let line = line.trim().to_lowercase();
-            match line.as_str() {
-                "enable" => {
-                    tracing::info!("received remote-ssh enable command");
-                    let _ = tx.send(RemoteSshCommand::Enable).await;
+        match guard.try_io(|inner| inner.get_ref().read(&mut buf)) {
+            Ok(Ok(0)) => {
+                // Shouldn't happen with O_RDWR (we hold a write end), but
+                // if it does just wait for the next readability notification.
+                continue;
+            }
+            Ok(Ok(n)) => {
+                line_buf.push_str(&String::from_utf8_lossy(&buf[..n]));
+                while let Some(pos) = line_buf.find('\n') {
+                    let line = line_buf[..pos].trim().to_lowercase();
+                    line_buf.drain(..=pos);
+                    dispatch(&line, &tx).await;
                 }
-                "disable" => {
-                    tracing::info!("received remote-ssh disable command");
-                    let _ = tx.send(RemoteSshCommand::Disable).await;
-                }
-                other if !other.is_empty() => {
-                    tracing::warn!("unknown remote-ssh command: {other}");
-                }
-                _ => {}
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("FIFO read error: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(_would_block) => {
+                // Spurious wake — epoll said readable but read returned EAGAIN.
+                // guard is cleared, loop back to readable().await.
+                continue;
             }
         }
-
-        // lines returned None — FIFO closed by all writers, re-open.
-        // Sleep to avoid busy-looping: tokio::fs::File uses a thread-pool,
-        // so non-blocking reads on an empty FIFO return 0 immediately
-        // rather than parking on epoll.
-        tracing::trace!("FIFO EOF, re-opening");
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }
 
-use std::os::unix::io::FromRawFd;
+async fn dispatch(line: &str, tx: &mpsc::Sender<RemoteSshCommand>) {
+    match line {
+        "enable" => {
+            tracing::info!("received remote-ssh enable command");
+            let _ = tx.send(RemoteSshCommand::Enable).await;
+        }
+        "disable" => {
+            tracing::info!("received remote-ssh disable command");
+            let _ = tx.send(RemoteSshCommand::Disable).await;
+        }
+        other if !other.is_empty() => {
+            tracing::warn!("unknown remote-ssh command: {other}");
+        }
+        _ => {}
+    }
+}
