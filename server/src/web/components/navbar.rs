@@ -292,7 +292,7 @@ fn NavGroupList(
         // would never trigger and the sidebar would clip its bottom
         // links on short viewports. Extra bottom padding leaves room
         // below the last group so it doesn't kiss the viewport edge.
-        nav { class: "flex-1 min-h-0 overflow-y-auto px-3 py-5 pb-8 space-y-2",
+        nav { class: "flex-1 min-h-0 overflow-y-auto pl-2 pr-3 py-5 pb-8 space-y-2",
             for group in groups {
                 NavGroupItem {
                     key: "{group.title}",
