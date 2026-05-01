@@ -1,0 +1,7 @@
+{
+  "name": "@plan-ai/memvault-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Memvault memory plugin for openclaw",
+  "main": "index.ts"
+}

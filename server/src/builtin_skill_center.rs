@@ -40,6 +40,12 @@ const MCP_BUNDLE_ID: Uuid = Uuid::from_bytes([
     0x04,
 ]);
 
+/// Well-known UUID for the plan-ai-memvault MCP server.
+const MEMVAULT_ID: Uuid = Uuid::from_bytes([
+    0x00, 0xb1, 0x71, 0x00, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x05,
+]);
+
 /// Well-known UUID for the built-in skills bundle.
 const SKILLS_BUNDLE_ID: Uuid = Uuid::from_bytes([
     0x00, 0xb1, 0x71, 0x00, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -220,6 +226,16 @@ pub fn builtin_catalog() -> FederationCatalog {
                 config: cloud_config(),
                 nix_packages: vec![],
             },
+            FederationMcpServer {
+                id: MEMVAULT_ID,
+                slug: "plan-ai-memvault".into(),
+                name: "Memvault Memory".into(),
+                description: "P2P collaborative memory store with knowledge graph, full-text search, and file attachments"
+                    .into(),
+                hidden: false,
+                config: memvault_config(),
+                nix_packages: vec![],
+            },
         ],
         mcp_bundles: vec![FederationMcpBundle {
             id: MCP_BUNDLE_ID,
@@ -235,6 +251,10 @@ pub fn builtin_catalog() -> FederationCatalog {
                 FederationMcpBundleServer {
                     mcp_server_id: CLOUD_ID,
                     slug: "plan-ai-cloud".into(),
+                },
+                FederationMcpBundleServer {
+                    mcp_server_id: MEMVAULT_ID,
+                    slug: "plan-ai-memvault".into(),
                 },
             ],
         }],
@@ -252,6 +272,10 @@ pub fn resolve_builtin_mcp_servers(slugs: &[String]) -> HashMap<String, McpServe
             }),
             "plan-ai-cloud" => Some(McpServerEntry {
                 config: cloud_config(),
+                nix_packages: vec![],
+            }),
+            "plan-ai-memvault" => Some(McpServerEntry {
+                config: memvault_config(),
                 nix_packages: vec![],
             }),
             _ => None,
@@ -288,5 +312,12 @@ fn cloud_config() -> serde_json::Value {
     serde_json::json!({
         "command": "mac-mgmt",
         "args": ["mcp-cloud"]
+    })
+}
+
+fn memvault_config() -> serde_json::Value {
+    serde_json::json!({
+        "command": "mac-mgmt",
+        "args": ["mcp-memvault"]
     })
 }

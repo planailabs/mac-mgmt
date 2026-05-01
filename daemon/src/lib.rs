@@ -3,6 +3,7 @@ pub mod ai_proxy;
 pub mod assessment;
 pub mod cmd;
 pub mod config;
+pub mod embed_write;
 #[cfg(feature = "services")]
 pub mod config_providers;
 pub mod config_watch;

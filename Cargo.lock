@@ -7063,6 +7063,7 @@ dependencies = [
  "notify",
  "plan-ai-cleaner",
  "plan-ai-cloud",
+ "plan-ai-memvault",
  "prometheus",
  "ramhorns",
  "rand 0.8.6",
@@ -7641,6 +7642,7 @@ dependencies = [
  "memvault-core",
  "memvault-doc",
  "memvault-query",
+ "plan-ai-design",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -9105,6 +9107,36 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "plan-ai-design"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+]
+
+[[package]]
+name = "plan-ai-memvault"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "dirs 6.0.0",
+ "hex",
+ "memvault-api",
+ "memvault-core",
+ "memvault-doc",
+ "memvault-query",
+ "memvault-store",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

@@ -118,6 +118,8 @@ enum Commands {
     McpCleaner(plan_ai_cleaner::Cli),
     /// Run the multi-AI cloud MCP server (stdio transport)
     McpCloud(plan_ai_cloud::Cli),
+    /// Run the memvault memory MCP server (stdio transport)
+    McpMemvault(plan_ai_memvault::Cli),
 }
 
 #[derive(Subcommand)]
@@ -506,6 +508,9 @@ async fn main() -> Result<()> {
         }
         Commands::McpCloud(cli) => {
             plan_ai_cloud::run(cli).await?;
+        }
+        Commands::McpMemvault(cli) => {
+            plan_ai_memvault::run(cli).await?;
         }
     }
 

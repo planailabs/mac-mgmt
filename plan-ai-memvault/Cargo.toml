@@ -1,0 +1,31 @@
+[package]
+name = "plan-ai-memvault"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "plan_ai_memvault"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plan-ai-memvault"
+path = "src/main.rs"
+
+[dependencies]
+memvault-core = { path = "../memvault/crates/memvault-core" }
+memvault-api = { path = "../memvault/crates/memvault-api" }
+memvault-store = { path = "../memvault/crates/memvault-store" }
+memvault-doc = { path = "../memvault/crates/memvault-doc" }
+memvault-query = { path = "../memvault/crates/memvault-query" }
+rmcp = { version = "0.17", features = ["server", "transport-io", "macros"], default-features = false }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "6"
+base64 = "0.22"
+hex = "0.4"
