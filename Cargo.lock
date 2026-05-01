@@ -7524,6 +7524,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "memvault-doc"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "memvault-core",
+ "serde",
+ "serde_ipld_dagcbor",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "memvault-net"
 version = "0.1.0"
 dependencies = [
