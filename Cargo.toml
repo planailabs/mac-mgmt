@@ -1,5 +1,5 @@
 [workspace]
-members = ["common", "daemon", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "memvault/crates/memvault-api", "memvault/crates/memvault-auth", "memvault/crates/memvault-core", "memvault/crates/memvault-doc", "memvault/crates/memvault-net", "memvault/crates/memvault-query", "memvault/crates/memvault-store", "plan-ai-cleaner", "plan-ai-cloud", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
+members = ["common", "daemon", "mac-mgmt-executor", "mac-mgmt-healer", "mac-mgmt-services", "mac-mgmt-ws", "memvault/crates/memvault-api", "memvault/crates/memvault-auth", "memvault/crates/memvault-core", "memvault/crates/memvault-doc", "memvault/crates/memvault-net", "memvault/crates/memvault-query", "memvault/crates/memvault-store", "memvault/crates/memvault-summarize", "plan-ai-cleaner", "plan-ai-cloud", "runner", "server", "relay", "relay-ssh", "sim-tests", "trainer"]
 resolver = "3"
 
 [workspace.dependencies]

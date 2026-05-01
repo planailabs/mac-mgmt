@@ -7595,6 +7595,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "memvault-summarize"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "memvault-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "metal"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
