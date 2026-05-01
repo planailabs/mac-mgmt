@@ -647,7 +647,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
         div { class: "flex flex-col xl:flex-row xl:items-end xl:justify-between gap-3 mb-5",
             div {
                 Kicker { class: "mb-2", {t!("healer-title")} }
-                h1 { class: "h-display",
+                h1 { class: "h-page mb-0",
                     {t!("healer-title")}
                     " "
                     span { class: "text-fg-muted", "·" }

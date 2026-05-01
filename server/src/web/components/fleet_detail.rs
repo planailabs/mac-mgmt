@@ -410,7 +410,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                     }
                 }
                 Kicker { class: "mb-1", "{d.cluster_name}" }
-                h1 { class: "h-display", "{d.hostname}" }
+                h1 { class: "h-page mb-0", "{d.hostname}" }
                 div { class: "mt-2 text-fg-muted text-sm font-mono truncate",
                     "{instance_short}"
                 }

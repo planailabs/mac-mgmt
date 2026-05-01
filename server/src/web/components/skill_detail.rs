@@ -353,7 +353,7 @@ pub fn SkillDetail(id: String) -> Element {
                             }
                         }
                     } else {
-                        h1 { class: "h-display", "{name}" }
+                        h1 { class: "h-page mb-0", "{name}" }
                         span { class: "text-fg-faint font-mono text-sm", "({slug})" }
                         HiddenBadge { hidden: hide_flag }
                         button { class: "text-fg-faint hover:text-fg-muted",
