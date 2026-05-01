@@ -838,11 +838,11 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "flex items-center gap-2",
                                             span {
-                                                class: if is_remote { "text-sm font-mono text-accent-strong" } else { "text-sm font-mono" },
+                                                class: if is_remote { "text-sm font-mono text-fg-muted" } else { "text-sm font-mono" },
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-accent", {t!("cluster-mcp-via", source: via.clone())} }
+                                                span { class: "text-xs text-fg-faint", {t!("cluster-mcp-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {
@@ -1059,11 +1059,11 @@ pub fn ClusterMcpServers(cluster_id: String, read_only: bool) -> Element {
                                     li { class: "py-2 flex justify-between items-center",
                                         span { class: "flex items-center gap-2",
                                             span {
-                                                class: if is_remote { "text-sm text-accent-strong" } else { "text-sm" },
+                                                class: if is_remote { "text-sm text-fg-muted" } else { "text-sm" },
                                                 "{label}"
                                             }
                                             if is_remote {
-                                                span { class: "text-xs text-accent", {t!("cluster-mcp-via", source: via.clone())} }
+                                                span { class: "text-xs text-fg-faint", {t!("cluster-mcp-via", source: via.clone())} }
                                             }
                                         }
                                         if !read_only {

@@ -255,9 +255,12 @@
   .btn-success-soft { @apply bg-success-soft text-success hover:opacity-80; }
   .btn-danger-soft  { @apply bg-danger-soft text-danger hover:opacity-80; }
 
-  /* ── Form inputs ─────────────────────────────────────────────── */
+  /* ── Form inputs ───────────────────────────────────────────────
+     Text inputs, selects and textareas share the button radius
+     (`rounded-md` ≈ 6px) so form chrome reads as one family — see
+     `.btn` above. */
   .input {
-    @apply w-full rounded border border-line bg-surface text-fg
+    @apply w-full rounded-md border border-line bg-surface text-fg
            px-3 py-2 placeholder:text-fg-faint
            focus:outline-none focus:ring-2 focus:ring-brand focus:border-brand
            disabled:opacity-50;

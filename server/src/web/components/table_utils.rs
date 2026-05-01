@@ -100,13 +100,25 @@ impl Row for McpServerBundle {
 
 // ── Shared data types ───────────────────────────────────────────────
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ViaKind {
+    SkillCenter,
+    McpCenter,
+}
+
 #[derive(Clone, PartialEq)]
 pub struct LinkData {
     pub label: String,
     pub route: Route,
     pub mono: bool,
-    /// When set, renders purple text with "via X" instead of a link.
+    /// When set, renders gray text with a "via { source } { kind }" suffix
+    /// instead of a clickable link — federated rows are intentionally not
+    /// interactive, so the gray signals "informational, not actionable".
     pub remote_source: Option<String>,
+    /// Discriminates the suffix label rendered next to `remote_source`
+    /// (Skill Center vs MCP Center). Should be `Some` whenever
+    /// `remote_source` is.
+    pub via_kind: Option<ViaKind>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -126,6 +138,7 @@ impl GetRowData<LinkData> for Cluster {
             },
             mono: false,
             remote_source: None,
+            via_kind: None,
         }
     }
 }
@@ -159,6 +172,7 @@ impl GetRowData<LinkData> for Skill {
             },
             mono: true,
             remote_source: None,
+            via_kind: None,
         }
     }
 }
@@ -186,6 +200,7 @@ impl GetRowData<LinkData> for Bundle {
             },
             mono: true,
             remote_source: None,
+            via_kind: None,
         }
     }
 }
@@ -213,6 +228,7 @@ impl GetRowData<LinkData> for McpServer {
             },
             mono: true,
             remote_source: None,
+            via_kind: None,
         }
     }
 }
@@ -240,6 +256,7 @@ impl GetRowData<LinkData> for McpServerBundle {
             },
             mono: true,
             remote_source: None,
+            via_kind: None,
         }
     }
 }
@@ -297,25 +314,38 @@ impl Row for CatalogEntry {
 
 impl GetRowData<LinkData> for CatalogEntry {
     fn get(&self) -> LinkData {
-        let route = match self.route_kind.as_str() {
-            "skill" => Route::SkillDetail {
-                id: self.id.to_string(),
-            },
-            "bundle" => Route::BundleDetail {
-                id: self.id.to_string(),
-            },
-            "mcp_server" => Route::McpServerDetail {
-                id: self.id.to_string(),
-            },
-            "mcp_bundle" => Route::McpBundleDetail {
-                id: self.id.to_string(),
-            },
-            _ => Route::SkillList {},
+        let (route, via_kind) = match self.route_kind.as_str() {
+            "skill" => (
+                Route::SkillDetail {
+                    id: self.id.to_string(),
+                },
+                ViaKind::SkillCenter,
+            ),
+            "bundle" => (
+                Route::BundleDetail {
+                    id: self.id.to_string(),
+                },
+                ViaKind::SkillCenter,
+            ),
+            "mcp_server" => (
+                Route::McpServerDetail {
+                    id: self.id.to_string(),
+                },
+                ViaKind::McpCenter,
+            ),
+            "mcp_bundle" => (
+                Route::McpBundleDetail {
+                    id: self.id.to_string(),
+                },
+                ViaKind::McpCenter,
+            ),
+            _ => (Route::SkillList {}, ViaKind::SkillCenter),
         };
         LinkData {
             label: self.slug.clone(),
             route,
             mono: true,
+            via_kind: self.skill_center_name.as_ref().map(|_| via_kind),
             remote_source: self.skill_center_name.clone(),
         }
     }
@@ -370,10 +400,14 @@ impl<R: Row + GetRowData<LinkData>> TableColumn<R> for LinkColumn {
         if let Some(source) = &data.remote_source {
             let mono_class = if data.mono { " font-mono text-sm" } else { "" };
             let source = source.clone();
+            let via = match data.via_kind {
+                Some(ViaKind::McpCenter) => t!("table-via-mcp-center", source: source),
+                _ => t!("table-via-skill-center", source: source),
+            };
             rsx! {
-                td { class: "td text-accent-strong",
-                    span { class: "{mono_class}", "{data.label}" }
-                    span { class: "text-xs text-accent ml-2", {t!("table-via", source: source)} }
+                td { class: "td",
+                    span { class: "text-fg-muted{mono_class}", "{data.label}" }
+                    span { class: "text-xs text-fg-faint ml-2", "{via}" }
                 }
             }
         } else {

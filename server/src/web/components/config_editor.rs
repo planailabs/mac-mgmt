@@ -214,7 +214,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
         div {
             if *raw_mode.read() {
                 textarea {
-                    class: "w-full h-64 font-mono text-sm border border-line rounded p-2 mb-2 dark:bg-surface-2 dark:text-fg",
+                    class: "w-full h-64 font-mono text-sm border border-line rounded-md p-2 mb-2 dark:bg-surface-2 dark:text-fg",
                     placeholder: t!("config-editor-paste-placeholder"),
                     value: "{editor_text}",
                     oninput: move |evt| editor_text.set(evt.value()),
@@ -233,7 +233,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                     Some(Err(e)) => rsx! {
                         p { class: "text-danger text-sm", {t!("config-editor-schema-error", error: e.to_string())} }
                         textarea {
-                            class: "w-full h-64 font-mono text-sm border border-line rounded p-2 mb-2 dark:bg-surface-2 dark:text-fg",
+                            class: "w-full h-64 font-mono text-sm border border-line rounded-md p-2 mb-2 dark:bg-surface-2 dark:text-fg",
                             placeholder: t!("config-editor-paste-placeholder"),
                             value: "{editor_text}",
                             oninput: move |evt| editor_text.set(evt.value()),
@@ -408,7 +408,7 @@ fn KeyHashField(
             div { class: "flex gap-2",
                 input {
                     r#type: "text",
-                    class: "flex-1 border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm font-mono",
+                    class: "flex-1 border border-line rounded-md px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm font-mono",
                     value: val_str,
                     oninput: move |evt| {
                         let v = evt.value();
