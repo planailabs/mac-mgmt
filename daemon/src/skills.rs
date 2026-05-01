@@ -2,6 +2,42 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
 
+const BUILTIN_PREFIX: &str = "builtin://";
+
+#[derive(rust_embed::Embed)]
+#[folder = "../skills/"]
+#[include = "*/SKILL.md"]
+struct BuiltinSkills;
+
+/// Write embedded skill content to disk.
+/// Returns `Ok(true)` if already up-to-date, `Ok(false)` if written fresh.
+fn materialize_builtin(slug: &str, dest: &Path) -> Result<bool> {
+    let asset_path = format!("{slug}/SKILL.md");
+    let file = BuiltinSkills::get(&asset_path)
+        .with_context(|| format!("no embedded content for builtin skill {slug}"))?;
+    let content = std::str::from_utf8(&file.data)
+        .with_context(|| format!("invalid UTF-8 in embedded skill {slug}"))?;
+
+    let skill_md = dest.join("SKILL.md");
+
+    // Idempotency: skip if content matches.
+    if skill_md.exists() {
+        if let Ok(existing) = std::fs::read_to_string(&skill_md) {
+            if existing == content {
+                return Ok(true);
+            }
+        }
+    }
+
+    std::fs::create_dir_all(dest)
+        .with_context(|| format!("failed to create {}", dest.display()))?;
+    std::fs::write(&skill_md, content)
+        .with_context(|| format!("failed to write {}", skill_md.display()))?;
+
+    tracing::info!("{slug}: materialized builtin skill");
+    Ok(false)
+}
+
 async fn nix_system() -> Result<String> {
     let output = tokio::process::Command::new("nix-instantiate")
         .args(["--eval", "--expr", "builtins.currentSystem"])
@@ -59,6 +95,23 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
     for (slug, store_path) in &skills {
         let link = skills_dir.join(slug);
 
+        // Handle built-in skills: write embedded content to disk.
+        if store_path.starts_with(BUILTIN_PREFIX) {
+            match materialize_builtin(slug, &link) {
+                Ok(true) => {
+                    up_to_date += 1;
+                }
+                Ok(false) => {
+                    realised += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("{slug}: failed to materialize builtin skill: {e}");
+                    failed += 1;
+                }
+            }
+            continue;
+        }
+
         // Skip if already pointing to the right store path
         if let Ok(target) = std::fs::read_link(&link) {
             if target.to_string_lossy() == *store_path {
@@ -102,7 +155,12 @@ pub async fn sync_skills(server_url: &str, token: &str, skills_dir: &Path) -> Re
             let name_str = name.to_string_lossy();
             if !skills.contains_key(name_str.as_ref()) {
                 tracing::info!("removing old skill: {name_str}");
-                let _ = std::fs::remove_file(entry.path());
+                let path = entry.path();
+                if path.is_dir() {
+                    let _ = std::fs::remove_dir_all(&path);
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                }
                 removed += 1;
             }
         }

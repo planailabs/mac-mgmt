@@ -527,6 +527,9 @@ pub struct FederationSkillChannel {
     pub hidden: bool,
     #[serde(default)]
     pub nix_packages: Vec<String>,
+    /// MCP server slugs this skill channel depends on (transitive deps).
+    #[serde(default)]
+    pub mcp_server_slugs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

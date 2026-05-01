@@ -69,16 +69,45 @@ async fn fetch_skill_channels(
         .await
         .map_err(|_| Status::InternalServerError)?;
 
+    // Fetch MCP dependency slugs per skill channel.
+    let channel_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let mut mcp_deps: HashMap<Uuid, Vec<String>> = HashMap::new();
+    if !channel_ids.is_empty() {
+        #[derive(sqlx::FromRow)]
+        struct McpDepRow {
+            skill_channel_id: Uuid,
+            slug: String,
+        }
+        let dep_rows: Vec<McpDepRow> = sqlx::query_as(
+            "SELECT smd.skill_channel_id, ms.slug \
+             FROM skill_mcp_dependencies smd \
+             JOIN mcp_servers ms ON ms.id = smd.mcp_server_id \
+             WHERE smd.skill_channel_id = ANY($1) \
+             ORDER BY ms.slug",
+        )
+        .bind(&channel_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+        for dep in dep_rows {
+            mcp_deps.entry(dep.skill_channel_id).or_default().push(dep.slug);
+        }
+    }
+
     Ok(rows
         .into_iter()
-        .map(|r| FederationSkillChannel {
-            id: r.id,
-            skill_slug: r.skill_slug,
-            skill_name: r.skill_name,
-            skill_description: r.skill_description,
-            channel: r.channel,
-            hidden: r.hidden,
-            nix_packages: r.nix_packages,
+        .map(|r| {
+            let mcp_server_slugs = mcp_deps.remove(&r.id).unwrap_or_default();
+            FederationSkillChannel {
+                id: r.id,
+                skill_slug: r.skill_slug,
+                skill_name: r.skill_name,
+                skill_description: r.skill_description,
+                channel: r.channel,
+                hidden: r.hidden,
+                nix_packages: r.nix_packages,
+                mcp_server_slugs,
+            }
         })
         .collect())
 }

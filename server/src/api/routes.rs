@@ -185,6 +185,13 @@ async fn aggregate_remote_skills(
     let mut result: HashMap<String, String> = HashMap::new();
 
     for (sc_id, slug_channels) in ordered {
+        if crate::builtin_skill_center::is_builtin(sc_id) {
+            let resolved = crate::builtin_skill_center::resolve_builtin_skills(slug_channels);
+            for (slug, path) in resolved {
+                result.insert(slug, path);
+            }
+            continue;
+        }
         if let Some(sc) = sc_map.get(sc_id) {
             let client = crate::skill_center_client::SkillCenterClient::new(
                 sc.url.clone(),
@@ -319,6 +326,148 @@ async fn aggregate_remote_mcp_servers(
     result
 }
 
+/// Resolve transitive MCP server dependencies for remote/builtin skill channels.
+///
+/// Looks up `mcp_server_slugs` on `FederationSkillChannel` entries in the cached
+/// catalogs for each skill center that has skill assignments for this cluster.
+async fn resolve_remote_skill_mcp_deps(
+    cluster_id: Uuid,
+    pool: &PgPool,
+    cache: &crate::skill_center_cache::SkillCenterCache,
+) -> HashMap<String, McpServerEntry> {
+    // Collect winning remote skill slugs per skill center (same logic as aggregate_remote_skills).
+    #[derive(sqlx::FromRow)]
+    struct RemoteRef {
+        skill_center_id: Option<Uuid>,
+        slug: Option<String>,
+        channel: Option<String>,
+    }
+
+    let direct: Vec<RemoteRef> = sqlx::query_as(
+        "SELECT skill_center_id, slug, channel FROM cluster_skills \
+         WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
+    )
+    .bind(cluster_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    #[derive(sqlx::FromRow)]
+    struct RemoteBundleRef {
+        skill_center_id: Option<Uuid>,
+        remote_id: Option<Uuid>,
+    }
+
+    let bundles: Vec<RemoteBundleRef> = sqlx::query_as(
+        "SELECT skill_center_id, remote_id FROM cluster_bundles \
+         WHERE cluster_id = $1 AND skill_center_id IS NOT NULL",
+    )
+    .bind(cluster_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // Group (slug, channel) by skill_center_id.
+    let mut by_sc: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
+    for r in direct {
+        if let (Some(sc_id), Some(slug), Some(channel)) =
+            (r.skill_center_id, r.slug, r.channel)
+        {
+            by_sc.entry(sc_id).or_default().push((slug, channel));
+        }
+    }
+
+    let all_caches = cache.get_all().await;
+    for b in bundles {
+        if let (Some(sc_id), Some(rid)) = (b.skill_center_id, b.remote_id) {
+            if let Some(cached) = all_caches.get(&sc_id) {
+                if let Some(bundle) = cached.catalog.bundles.iter().find(|fb| fb.id == rid) {
+                    for skill in &bundle.skills {
+                        by_sc
+                            .entry(sc_id)
+                            .or_default()
+                            .push((skill.skill_slug.clone(), skill.channel.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    if by_sc.is_empty() {
+        return HashMap::new();
+    }
+
+    // For each skill center, look up mcp_server_slugs from cached catalogs.
+    let mut mcp_slugs_by_sc: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for (sc_id, slug_channels) in &by_sc {
+        if let Some(cached) = all_caches.get(sc_id) {
+            for (slug, channel) in slug_channels {
+                if let Some(sc) = cached
+                    .catalog
+                    .skill_channels
+                    .iter()
+                    .find(|sc| sc.skill_slug == *slug && sc.channel == *channel)
+                {
+                    for mcp_slug in &sc.mcp_server_slugs {
+                        mcp_slugs_by_sc
+                            .entry(*sc_id)
+                            .or_default()
+                            .push(mcp_slug.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Resolve MCP server configs from each skill center.
+    let mut result: HashMap<String, McpServerEntry> = HashMap::new();
+    for (sc_id, mcp_slugs) in &mcp_slugs_by_sc {
+        if mcp_slugs.is_empty() {
+            continue;
+        }
+        if crate::builtin_skill_center::is_builtin(sc_id) {
+            let resolved = crate::builtin_skill_center::resolve_builtin_mcp_servers(mcp_slugs);
+            for (slug, entry) in resolved {
+                result.insert(slug, entry);
+            }
+            continue;
+        }
+        // For remote skill centers, resolve via HTTP.
+        #[derive(sqlx::FromRow)]
+        struct ScInfo {
+            url: String,
+            federation_token: String,
+        }
+        if let Ok(sc) = sqlx::query_as::<_, ScInfo>(
+            "SELECT url, federation_token FROM skill_centers WHERE id = $1 AND enabled = true",
+        )
+        .bind(sc_id)
+        .fetch_one(pool)
+        .await
+        {
+            let client = crate::skill_center_client::SkillCenterClient::new(
+                sc.url.clone(),
+                sc.federation_token,
+            );
+            match client.resolve_mcp_servers(mcp_slugs).await {
+                Ok(resolved) => {
+                    for (slug, entry) in resolved {
+                        result.insert(slug, entry);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "remote skill MCP dep resolve failed for {}: {e}",
+                        sc.url,
+                    );
+                }
+            }
+        }
+    }
+
+    result
+}
+
 #[derive(sqlx::FromRow)]
 struct McpServerRow {
     slug: String,
@@ -417,6 +566,21 @@ pub async fn get_mcp_servers(
                     ),
                 );
             }
+        }
+    }
+
+    // Resolve transitive MCP deps from remote/builtin skill channels via
+    // cached federation catalogs (mcp_server_slugs on FederationSkillChannel).
+    let remote_transitive = resolve_remote_skill_mcp_deps(
+        auth.cluster_id,
+        pool.inner(),
+        cache.inner(),
+    )
+    .await;
+    for (slug, entry) in remote_transitive {
+        // Transitive has lowest precedence (0) — don't override existing.
+        if !result.contains_key(&slug) {
+            result.insert(slug, (entry, 0));
         }
     }
 
