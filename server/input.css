@@ -421,35 +421,23 @@
      a 2×12 rectangle in the same color as the title that rotates 90°
      on expand — a quiet best-practice indicator that doesn't pull
      attention away from the link list itself. */
-  /* Toggle text aligns with `.nav-link` text (px-3); the triangle
-     marker is absolutely positioned so its centre sits at the button's
-     left edge — same x as the active link's orange `before:left-0`
-     rail. A `::before` pseudo extends the hover background to the
-     left so it always covers the triangle (which lives half outside
-     the visible button bounds) without affecting layout. */
+  /* Toggle and link siblings share the same x-frame: both start at
+     viewport-x = 20 (nav uses `pl-5`) and have their text at button
+     padding-left 12. The triangle marker sits absolutely inside the
+     toggle's left padding area (button-x 0-10), so its bbox left edge
+     lands exactly at the button's visible left edge — same x as the
+     topbar logo. Hover background covers the marker because the
+     marker now lives inside the button's bounds. */
   .nav-group-toggle  { @apply relative w-full flex items-center px-3 py-1
                               text-left rounded-md text-fg
+                              hover:bg-surface-3
                               focus-visible:outline-none
                               focus-visible:ring-2 focus-visible:ring-info
                               transition-colors; }
-  .nav-group-toggle::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    left: -10px;
-    border-radius: 0.375rem;
-    background-color: transparent;
-    transition: background-color 150ms ease;
-    pointer-events: none;
-    z-index: -1;
-  }
-  .nav-group-toggle:hover::before {
-    background-color: rgb(var(--c-surface-3));
-  }
   .nav-group-marker  { @apply absolute top-1/2 w-2.5 h-2.5
                               text-fg-muted shrink-0
-                              transition-transform duration-200 ease-out; }
-  .nav-group-marker  { left: 0; transform: translate(-50%, -50%); }
+                              transition-transform duration-200 ease-out;
+                       left: 5px; transform: translate(-50%, -50%); }
   .nav-group-marker-open { transform: translate(-50%, -50%) rotate(90deg); }
 
   /* Body collapse via grid-template-rows (modern, animatable). The

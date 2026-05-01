@@ -292,7 +292,7 @@ fn NavGroupList(
         // would never trigger and the sidebar would clip its bottom
         // links on short viewports. Extra bottom padding leaves room
         // below the last group so it doesn't kiss the viewport edge.
-        nav { class: "flex-1 min-h-0 overflow-y-auto pl-2 pr-3 py-5 pb-8 space-y-2",
+        nav { class: "flex-1 min-h-0 overflow-y-auto pl-5 pr-3 py-5 pb-8 space-y-2",
             for group in groups {
                 NavGroupItem {
                     key: "{group.title}",
@@ -496,13 +496,48 @@ pub fn MobileDrawer(
                 class: drawer_cls,
                 id: "mobile-drawer",
 
-                // Header: just the close button (logo lives in the
-                // topbar on every breakpoint now, so it's still visible
-                // behind/above the open drawer).
-                div { class: "px-5 py-4 bg-surface-2 flex justify-end items-center shrink-0",
+                // Combined drawer header: user identity on the left,
+                // close button on the right. Logo lives in the topbar
+                // (still visible above the open drawer), so we don't
+                // need a second brand row inside the drawer.
+                div { class: "px-5 py-4 bg-surface-2 border-b border-line flex items-center gap-3 shrink-0",
+                    if !display_name.is_empty() {
+                        svg {
+                            class: "h-9 w-9 text-fg-faint bg-surface rounded-full p-1.5 border border-line shrink-0",
+                            fill: "none",
+                            stroke: "currentColor",
+                            view_box: "0 0 24 24",
+                            stroke_width: "1.5",
+                            path {
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z",
+                            }
+                        }
+                        div { class: "flex flex-col min-w-0 flex-1",
+                            span { class: "text-sm font-medium text-fg-strong truncate", "{display_name}" }
+                            div { class: "flex gap-3",
+                                Link {
+                                    to: Route::Profile {},
+                                    class: "link text-xs",
+                                    onclick: move |_| is_open.set(false),
+                                    {t!("nav-view-profile")}
+                                }
+                                a {
+                                    href: "/auth/logout",
+                                    class: "link-danger text-xs",
+                                    {t!("nav-sign-out")}
+                                }
+                            }
+                        }
+                    } else {
+                        // Spacer so the close button still anchors right
+                        // when the user is unauthenticated.
+                        div { class: "flex-1" }
+                    }
                     button {
                         onclick: move |_| is_open.set(false),
-                        class: "nav-icon-btn",
+                        class: "nav-icon-btn shrink-0",
                         "aria-label": t!("nav-close-menu"),
                         svg {
                             class: "h-5 w-5",
@@ -514,42 +549,6 @@ pub fn MobileDrawer(
                                 stroke_linejoin: "round",
                                 stroke_width: "2",
                                 d: "M6 18L18 6M6 6l12 12",
-                            }
-                        }
-                    }
-                }
-
-                // User block — only when authenticated.
-                if !display_name.is_empty() {
-                    div { class: "px-5 py-3 border-b border-line bg-surface-2",
-                        div { class: "flex items-center gap-3",
-                            svg {
-                                class: "h-9 w-9 text-fg-faint bg-surface rounded-full p-1.5 border border-line shrink-0",
-                                fill: "none",
-                                stroke: "currentColor",
-                                view_box: "0 0 24 24",
-                                stroke_width: "1.5",
-                                path {
-                                    stroke_linecap: "round",
-                                    stroke_linejoin: "round",
-                                    d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z",
-                                }
-                            }
-                            div { class: "flex flex-col min-w-0",
-                                span { class: "text-sm font-medium text-fg-strong truncate", "{display_name}" }
-                                div { class: "flex gap-3",
-                                    Link {
-                                        to: Route::Profile {},
-                                        class: "link text-xs",
-                                        onclick: move |_| is_open.set(false),
-                                        {t!("nav-view-profile")}
-                                    }
-                                    a {
-                                        href: "/auth/logout",
-                                        class: "link-danger text-xs",
-                                        {t!("nav-sign-out")}
-                                    }
-                                }
                             }
                         }
                     }
