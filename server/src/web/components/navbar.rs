@@ -23,6 +23,13 @@ use crate::web::app::Route;
 #[derive(Clone, Copy)]
 pub struct SidebarCollapsed(pub Signal<bool>);
 
+/// Newtype wrapping the per-group expanded state for the desktop sidebar.
+/// Stored as a list of expanded `nav-*` keys so we can persist as a
+/// comma-joined string and skip serde_json in the WASM bundle. Provided
+/// by `Layout`; consumed by the per-group toggle in `NavGroupItem`.
+#[derive(Clone, Copy)]
+pub struct ExpandedGroups(pub Signal<Vec<String>>);
+
 #[server]
 async fn get_swagger_url() -> Result<String, ServerFnError> {
     let cfg = crate::config::config();
@@ -271,19 +278,89 @@ fn NavGroupList(
     /// mobile drawer uses this to close itself; the sidebar passes
     /// `None`.
     #[props(default)] on_navigate: Option<EventHandler<()>>,
+    /// When true (desktop sidebar only), each group header is a
+    /// collapse toggle. The mobile drawer passes `false` so users
+    /// always see every link — matches the always-expanded mobile
+    /// pattern of most chrome.
+    #[props(default = false)] collapsible: bool,
 ) -> Element {
-    let current_route = use_route::<Route>();
     rsx! {
         // `min-h-0` is the flexbox escape hatch that lets this child
         // shrink below its content size — without it, `overflow-y-auto`
         // would never trigger and the sidebar would clip its bottom
         // links on short viewports. Extra bottom padding leaves room
         // below the last group so it doesn't kiss the viewport edge.
-        nav { class: "flex-1 min-h-0 overflow-y-auto px-3 py-5 pb-8 space-y-7",
+        nav { class: "flex-1 min-h-0 overflow-y-auto px-3 py-5 pb-8 space-y-2",
             for group in groups {
-                div { key: "{group.title}",
-                    h3 { class: "nav-group-head", {t!(&group.title)} }
-                    div { class: "mt-2 space-y-0.5",
+                NavGroupItem {
+                    key: "{group.title}",
+                    group,
+                    on_navigate,
+                    collapsible,
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn NavGroupItem(
+    group: NavGroup,
+    on_navigate: Option<EventHandler<()>>,
+    collapsible: bool,
+) -> Element {
+    let current_route = use_route::<Route>();
+    let key = group.title.clone();
+
+    // The mobile drawer skips the context lookup entirely; only the
+    // desktop sidebar reads/writes group-collapse state.
+    let (is_open, toggle_handler) = if collapsible {
+        let ExpandedGroups(mut sig) = use_context::<ExpandedGroups>();
+        let open = sig.read().contains(&key);
+        let key_for_click = key.clone();
+        let onclick = move |_| {
+            let mut v = sig.read().clone();
+            if v.iter().any(|k| k == &key_for_click) {
+                v.retain(|k| k != &key_for_click);
+            } else {
+                v.push(key_for_click.clone());
+            }
+            sig.set(v);
+        };
+        (open, Some(onclick))
+    } else {
+        (true, None)
+    };
+
+    let body_class = if is_open {
+        "nav-group-body nav-group-body-open"
+    } else {
+        "nav-group-body"
+    };
+    let marker_class = if is_open {
+        "nav-group-marker nav-group-marker-open"
+    } else {
+        "nav-group-marker"
+    };
+
+    rsx! {
+        div {
+            // Header row — `<button>` when collapsible (desktop), plain
+            // `<h3>` otherwise (mobile drawer).
+            if let Some(handler) = toggle_handler {
+                button {
+                    class: "nav-group-toggle",
+                    "aria-expanded": "{is_open}",
+                    onclick: handler,
+                    span { class: "{marker_class}", "aria-hidden": "true" }
+                    span { class: "nav-group-head", {t!(&group.title)} }
+                }
+            } else {
+                h3 { class: "nav-group-head px-3", {t!(&group.title)} }
+            }
+            div { class: body_class,
+                div { class: "min-h-0 overflow-hidden",
+                    div { class: "mt-2 space-y-0.5 pb-1",
                         for link in group.links {
                             match link {
                                 NavLink::Internal(route, label) => {
@@ -353,7 +430,7 @@ pub fn Sidebar(is_admin: bool) -> Element {
             // out where content visually retreats behind the topbar
             // rather than reflowing.
             div { class: "nav-side-inner",
-                NavGroupList { groups }
+                NavGroupList { groups, collapsible: true }
             }
         }
     }

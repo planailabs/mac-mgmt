@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
-use super::navbar::{MobileDrawer, Sidebar, SidebarCollapsed};
+use super::navbar::{ExpandedGroups, MobileDrawer, Sidebar, SidebarCollapsed};
 use super::topbar::{Topbar, TopbarMeta};
 use super::ui::Breadcrumbs;
 
@@ -126,6 +126,38 @@ pub fn Layout() -> Element {
         let v = if *sidebar_collapsed.read() { "1" } else { "0" };
         document::eval(&format!(
             "try {{ localStorage.setItem('nav.sidebar.collapsed', '{v}'); }} catch(e) {{}}",
+        ));
+    });
+
+    // Per-group expansion (desktop sidebar). Default: only Overview
+    // expanded — keeps the sidebar tidy on first visit. Persisted as a
+    // comma-joined list of nav-* keys to avoid pulling serde_json into
+    // the WASM bundle.
+    let mut expanded_groups = use_signal(|| vec!["nav-overview".to_string()]);
+    use_context_provider(|| ExpandedGroups(expanded_groups));
+    use_effect(move || {
+        spawn(async move {
+            let r = document::eval(
+                "try { var v = localStorage.getItem('nav.groups.expanded'); return v == null ? null : v; } catch(e) { return null; }",
+            )
+            .await;
+            if let Ok(val) = r {
+                if let Some(s) = val.as_str() {
+                    let parsed: Vec<String> = s
+                        .split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
+                    expanded_groups.set(parsed);
+                }
+            }
+        });
+    });
+    use_effect(move || {
+        let v = expanded_groups.read().join(",");
+        // Group keys are static `nav-*` strings — no quote-escaping needed.
+        document::eval(&format!(
+            "try {{ localStorage.setItem('nav.groups.expanded', '{v}'); }} catch(e) {{}}",
         ));
     });
 

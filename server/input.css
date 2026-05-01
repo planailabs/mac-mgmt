@@ -383,8 +383,33 @@
                             overflow-y-auto pt-2; }
   .topbar         { @apply h-14 px-4 sm:px-6 flex items-center justify-between
                             shrink-0 bg-surface-2; }
-  .nav-group-head { @apply px-3 text-xs font-semibold text-fg-muted
+  .nav-group-head { @apply text-xs font-semibold text-fg-muted
                             uppercase tracking-wider; }
+
+  /* ── Sidebar group toggle ────────────────────────────────────
+     The desktop sidebar wraps each `.nav-group-head` in a button so
+     users can collapse sections. The leading `.nav-group-marker` is
+     a 2×12 rectangle in the same color as the title that rotates 90°
+     on expand — a quiet best-practice indicator that doesn't pull
+     attention away from the link list itself. */
+  .nav-group-toggle  { @apply w-full flex items-center gap-2 px-3 py-1
+                              text-left rounded-md
+                              hover:bg-surface-3 focus:outline-none
+                              focus:ring-2 focus:ring-info
+                              transition-colors; }
+  .nav-group-marker  { @apply inline-block w-[2px] h-3 rounded-sm
+                              bg-fg-muted shrink-0
+                              transition-transform duration-200 ease-out; }
+  .nav-group-marker-open { @apply rotate-90; }
+
+  /* Body collapse via grid-template-rows (modern, animatable). The
+     inner clip wrapper handles the actual overflow:hidden so the
+     animation is smooth and the rendered links never paint outside
+     the collapsing container. */
+  .nav-group-body         { @apply grid grid-rows-[0fr]
+                                   transition-[grid-template-rows]
+                                   duration-200 ease-out; }
+  .nav-group-body-open    { @apply grid-rows-[1fr]; }
   .nav-link       { @apply relative flex items-center px-3 py-2 text-sm
                             font-medium rounded-md text-fg
                             hover:bg-surface-3 hover:text-fg-strong
