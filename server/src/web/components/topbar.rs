@@ -83,12 +83,13 @@ pub fn Topbar(
 ) -> Element {
     rsx! {
         header { class: "topbar",
-            // ── Left: brand logo. On mobile it routes to the command
-            // center (the user's intuitive home); on desktop it's a
-            // sidebar-collapse toggle (wired in Layout via context).
-            div { class: "min-w-0 flex items-center",
+            // ── Left: brand logo on mobile only (the desktop sidebar
+            // owns the logo at xl+). Empty on desktop so the topbar
+            // reads as a clean strip aligned with the main content.
+            div { class: "min-w-0 flex items-center xl:hidden",
                 Logo {}
             }
+            div { class: "hidden xl:block" }
 
             // ── Right: global controls. Mobile order:
             //   [theme][hamburger] — hamburger is rightmost for thumb

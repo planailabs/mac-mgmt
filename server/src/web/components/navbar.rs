@@ -125,11 +125,14 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 // -- Logo ------------------------------------------------------------------
 
 /// SVG + wordmark. Used inside both the desktop button and the mobile
-/// link variants of `Logo`.
+/// link variants of `Logo`. The wordmark is wrapped with `.logo-wordmark`
+/// so the sidebar can hide it (via `.nav-side-collapsed`) when the
+/// sidebar collapses to its icon-rail width.
 #[component]
 fn LogoMark() -> Element {
     rsx! {
         svg {
+            class: "shrink-0",
             width: "20",
             height: "20",
             view_box: "0 0 20 20",
@@ -146,8 +149,9 @@ fn LogoMark() -> Element {
         }
         // Wordmark is brand chrome, not translatable copy — hard-code so
         // we don't accidentally render "<i18n value> mgmt" twice when the
-        // i18n key already contains the full brand string.
-        span {
+        // i18n key already contains the full brand string. Hidden when
+        // the sidebar collapses to icon-rail width — see input.css.
+        span { class: "logo-wordmark whitespace-nowrap",
             "plan.ai "
             span { class: "text-fg-muted font-medium", "mgmt" }
         }
@@ -352,7 +356,13 @@ fn NavGroupItem(
                     class: "nav-group-toggle",
                     "aria-expanded": "{is_open}",
                     onclick: handler,
-                    span { class: "{marker_class}", "aria-hidden": "true" }
+                    svg {
+                        class: "{marker_class}",
+                        view_box: "0 0 10 10",
+                        fill: "currentColor",
+                        "aria-hidden": "true",
+                        polygon { points: "2,1 9,5 2,9" }
+                    }
                     span { class: "nav-group-head", {t!(&group.title)} }
                 }
             } else {
@@ -425,11 +435,14 @@ pub fn Sidebar(is_admin: bool) -> Element {
 
     rsx! {
         aside { class: outer_class,
-            // Inner panel keeps its 220px width even while the outer
-            // aside animates to width 0 — the result is a clean slide-
-            // out where content visually retreats behind the topbar
-            // rather than reflowing.
+            // Inner panel keeps its 220px width while the outer aside
+            // shrinks down to the icon rail (56px) — only the orange
+            // logomark stays visible in collapsed mode, the wordmark
+            // and nav groups are hidden via CSS (see input.css).
             div { class: "nav-side-inner",
+                div { class: "px-5 pt-5 pb-4 shrink-0",
+                    Logo {}
+                }
                 NavGroupList { groups, collapsible: true }
             }
         }

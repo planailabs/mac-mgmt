@@ -375,14 +375,20 @@
      the mobile hamburger. */
   .nav-shell      { @apply bg-surface shadow shrink-0; }
   .nav-side       { @apply hidden xl:flex xl:flex-col w-[220px]
-                            bg-surface-2 shrink-0
+                            bg-surface-2 border-r border-line shrink-0
                             overflow-hidden
                             transition-[width] duration-300 ease-in-out; }
-  .nav-side-collapsed { @apply !w-0; }
+  /* Collapsed state: shrink to a 56px icon rail so the orange logomark
+     stays visible (and clickable) while the wordmark and nav groups
+     hide. See `.logo-wordmark` and `.nav-side-collapsed nav` below. */
+  .nav-side-collapsed { @apply !w-[56px]; }
   .nav-side-inner { @apply flex flex-col w-[220px] h-full
-                            overflow-y-auto pt-2; }
+                            overflow-y-auto pt-0; }
+  .nav-side-collapsed .logo-wordmark,
+  .nav-side-collapsed nav { @apply opacity-0 pointer-events-none
+                                   transition-opacity duration-150; }
   .topbar         { @apply h-14 px-4 sm:px-6 flex items-center justify-between
-                            shrink-0 bg-surface-2; }
+                            shrink-0 bg-surface-2 border-b border-line; }
   .nav-group-head { @apply text-xs font-semibold text-fg-muted
                             uppercase tracking-wider; }
 
@@ -397,8 +403,8 @@
                               hover:bg-surface-3 focus:outline-none
                               focus:ring-2 focus:ring-info
                               transition-colors; }
-  .nav-group-marker  { @apply inline-block w-[2px] h-3 rounded-sm
-                              bg-fg-muted shrink-0
+  .nav-group-marker  { @apply inline-block w-2.5 h-2.5
+                              text-fg-muted shrink-0
                               transition-transform duration-200 ease-out; }
   .nav-group-marker-open { @apply rotate-90; }
 
