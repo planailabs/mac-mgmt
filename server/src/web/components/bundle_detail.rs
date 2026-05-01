@@ -285,7 +285,7 @@ pub fn BundleDetail(id: String) -> Element {
                             }
                         }
                     } else {
-                        h2 { class: "h-page mb-0", "{name}" }
+                        h1 { class: "h-display", "{name}" }
                         span { class: "text-fg-faint font-mono text-sm", "({slug})" }
                         HiddenBadge { hidden: hide_flag }
                         button { class: "text-fg-faint hover:text-fg-muted",

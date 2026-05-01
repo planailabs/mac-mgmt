@@ -7,7 +7,7 @@ use dioxus_i18n::t;
 use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
-    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText,
+    Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Card, ErrorText, HelpText, Kicker,
     SectionHeading,
 };
 #[cfg(feature = "server")]
@@ -287,10 +287,11 @@ pub fn UserDetail(id: String) -> Element {
             let created = info.created_at.format("%Y-%m-%d %H:%M").to_string();
 
             rsx! {
-                div { class: "flex justify-between items-center mb-4",
-                    div {
-                        h2 { class: "h-page mb-0", "{info.email}" }
-                        p { class: "help",
+                div { class: "flex flex-col sm:flex-row sm:justify-between sm:items-end gap-3 mb-4",
+                    div { class: "min-w-0",
+                        Kicker { class: "mb-2", {t!("nav-users")} }
+                        h1 { class: "h-display break-all", "{info.email}" }
+                        p { class: "help mt-2",
                             if !info.name.is_empty() {
                                 span { "{info.name} · " }
                             }

@@ -649,7 +649,7 @@ pub fn OrganizationDetail(id: String) -> Element {
                                     }
                                 }
                             } else {
-                                h2 { class: "h-page mb-0", "{info.name}" }
+                                h1 { class: "h-display", "{info.name}" }
                                 if perms.is_org_admin {
                                     button { class: "text-fg-faint hover:text-fg-muted",
                                         onclick: move |_| {

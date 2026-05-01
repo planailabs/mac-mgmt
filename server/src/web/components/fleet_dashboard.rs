@@ -597,7 +597,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                     (h + usize::from(healthy), t + 1)
                 });
             let svc_pct: f64 = if svc_total == 0 {
-                100.0
+                0.0
             } else {
                 (svc_healthy as f64) / (svc_total as f64) * 100.0
             };
