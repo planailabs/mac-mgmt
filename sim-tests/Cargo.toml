@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+default = []
+memvault = ["dep:memvault-core", "dep:memvault-store", "dep:memvault-api", "dep:memvault-query", "dep:memvault-doc"]
+
 [dependencies]
 axum = { version = "0.8", features = ["json"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -23,5 +27,12 @@ rustls = { workspace = true }
 # The daemon library with sim + services + relay features (no self-update — that needs real binaries)
 mac-mgmt-daemon = { path = "../daemon", package = "mac-mgmt", default-features = false, features = ["sim", "services", "relay"] }
 
+memvault-core = { path = "../memvault/crates/memvault-core", optional = true }
+memvault-store = { path = "../memvault/crates/memvault-store", optional = true }
+memvault-api = { path = "../memvault/crates/memvault-api", optional = true }
+memvault-query = { path = "../memvault/crates/memvault-query", optional = true }
+memvault-doc = { path = "../memvault/crates/memvault-doc", optional = true }
+
 [dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
+tempfile = "3"

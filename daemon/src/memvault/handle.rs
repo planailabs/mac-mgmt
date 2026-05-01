@@ -1,15 +1,19 @@
 //! Memvault lifecycle handle.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use mac_mgmt_common::MemvaultConfig;
 use tracing::info;
 
+use super::BlockstoreBridge;
+
 /// Handle to the running memvault subsystem.
 pub struct MemvaultHandle {
+    store: Arc<memvault_store::MemvaultStore>,
     #[allow(dead_code)]
-    store: memvault_store::MemvaultStore,
+    bridge: BlockstoreBridge,
     #[allow(dead_code)]
     config: MemvaultConfig,
 }
@@ -21,12 +25,14 @@ impl MemvaultHandle {
         std::fs::create_dir_all(&data_dir)?;
 
         let db_path = data_dir.join("blocks.redb");
-        let store = memvault_store::MemvaultStore::open(&db_path)?;
+        let store = Arc::new(memvault_store::MemvaultStore::open(&db_path)?);
+        let bridge = BlockstoreBridge::new(Arc::clone(&store));
 
         info!(data_dir = %config.data_dir, "memvault initialized");
 
         Ok(Self {
             store,
+            bridge,
             config: config.clone(),
         })
     }
@@ -48,5 +54,10 @@ impl MemvaultHandle {
     /// Get a reference to the underlying store.
     pub fn store(&self) -> &memvault_store::MemvaultStore {
         &self.store
+    }
+
+    /// Get a reference to the blockstore bridge.
+    pub fn bridge(&self) -> &BlockstoreBridge {
+        &self.bridge
     }
 }
