@@ -77,8 +77,12 @@ pub async fn watch(tx: mpsc::Sender<RemoteSshCommand>) -> Result<()> {
             }
         }
 
-        // lines returned None — FIFO closed by all writers, re-open
+        // lines returned None — FIFO closed by all writers, re-open.
+        // Sleep to avoid busy-looping: tokio::fs::File uses a thread-pool,
+        // so non-blocking reads on an empty FIFO return 0 immediately
+        // rather than parking on epoll.
         tracing::trace!("FIFO EOF, re-opening");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }
 
