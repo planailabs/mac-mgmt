@@ -50,6 +50,18 @@ pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Resu
     VALIDATOR.merge_validate_and_write(config_path, patch)
 }
 
+/// The NODE_COMPILE_CACHE directory used for all openclaw invocations.
+fn cache_dir() -> PathBuf {
+    std::env::temp_dir().join("openclaw-cache")
+}
+
+/// Create a `Command` for openclaw with NODE_COMPILE_CACHE set.
+fn openclaw_cmd() -> Command {
+    let mut cmd = Command::new("openclaw");
+    cmd.env("NODE_COMPILE_CACHE", cache_dir());
+    cmd
+}
+
 pub struct OpenClaw {
     config: OpenClawConfig,
     active_sessions: prometheus::IntGauge,
@@ -76,7 +88,7 @@ impl OpenClaw {
             "running openclaw daemon uninstall",
             &[("service", "openclaw")],
         );
-        match Command::new("openclaw")
+        match openclaw_cmd()
             .args(["daemon", "uninstall"])
             .output()
         {
@@ -174,7 +186,7 @@ impl OpenClaw {
     }
 
     fn active_session_count() -> usize {
-        let output = Command::new("openclaw")
+        let output = openclaw_cmd()
             .args(["sessions", "--active", "1", "--json"])
             .output();
         let Ok(output) = output else { return 0 };
@@ -195,7 +207,7 @@ impl OpenClaw {
 
     /// Stop any existing openclaw gateway so we don't conflict on ports.
     fn stop_existing_gateway(phase: &str) {
-        let output = Command::new("openclaw").args(["gateway", "stop"]).output();
+        let output = openclaw_cmd().args(["gateway", "stop"]).output();
         match output {
             Ok(o) if o.status.success() => {
                 tracing::info!("stopped existing openclaw gateway");
@@ -255,7 +267,7 @@ impl ManagedService for OpenClaw {
                 "running openclaw setup",
                 &[("service", "openclaw")],
             );
-            let output = Command::new("openclaw")
+            let output = openclaw_cmd()
                 .arg("setup")
                 .output()
                 .context("failed to run openclaw setup")?;
@@ -294,15 +306,15 @@ impl ManagedService for OpenClaw {
     }
 
     fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
-        let cache_dir = std::env::temp_dir().join("openclaw-cache");
-        if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+        let dir = cache_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
             tracing::warn!("failed to create NODE_COMPILE_CACHE dir: {e}");
         }
 
         let mut env = std::collections::HashMap::new();
         env.insert(
             "NODE_COMPILE_CACHE".into(),
-            cache_dir.to_string_lossy().into_owned(),
+            dir.to_string_lossy().into_owned(),
         );
         env.insert("OPENCLAW_NO_RESPAWN".into(), "1".into());
 
@@ -315,7 +327,7 @@ impl ManagedService for OpenClaw {
 
     fn check_health(&self) -> Result<bool> {
         let output = crate::cmd::output_with_timeout(
-            Command::new("openclaw").args(["health", "--json"]),
+            openclaw_cmd().args(["health", "--json"]),
             crate::cmd::DEFAULT_TIMEOUT,
         )
         .context("failed to run openclaw health")?;
@@ -352,7 +364,7 @@ impl ManagedService for OpenClaw {
         );
 
         let output = crate::cmd::output_with_timeout(
-            Command::new("openclaw").args(["doctor", "--fix"]),
+            openclaw_cmd().args(["doctor", "--fix"]),
             std::time::Duration::from_secs(60),
         )
         .context("failed to run openclaw doctor --fix")?;
@@ -512,7 +524,7 @@ impl ManagedService for OpenClaw {
         Box::pin(async move {
             let mut entries = Vec::new();
             if let Ok(out) = crate::cmd::output_with_timeout(
-                Command::new("openclaw").arg("--version"),
+                openclaw_cmd().arg("--version"),
                 crate::cmd::DEFAULT_TIMEOUT,
             ) {
                 if out.status.success() {
