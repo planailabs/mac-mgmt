@@ -620,11 +620,10 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
 
             rsx! {
                 // ── Page hero ────────────────────────────────────────
-                // Composes kicker + display title + right-side live
-                // indicator. The "live" dot pulses via the dot's halo;
-                // the timestamp comes from the existing 5s refresh loop.
+                // Composes display title + right-side live indicator.
+                // The kicker slot was dropped now that breadcrumbs sit
+                // above every page hero.
                 PageHero {
-                    kicker: t!("fleet-title").to_uppercase(),
                     // Match the design's hero pattern ("47 instances
                     // healthy across 14 clusters") with muted connective
                     // words. Falls back to a calmer empty-state copy

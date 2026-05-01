@@ -312,7 +312,6 @@ fn render_overview(d: &OverviewData) -> Element {
     rsx! {
         // ── Hero ──
         PageHero {
-            kicker: t!("overview-kicker").to_uppercase(),
             title: rsx! {
                 "{d.instances_online} "
                 span { class: "text-fg-muted", "instances " }
