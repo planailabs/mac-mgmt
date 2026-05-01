@@ -125,9 +125,8 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 // -- Logo ------------------------------------------------------------------
 
 /// SVG + wordmark. Used inside both the desktop button and the mobile
-/// link variants of `Logo`. The wordmark is wrapped with `.logo-wordmark`
-/// so the sidebar can hide it (via `.nav-side-collapsed`) when the
-/// sidebar collapses to its icon-rail width.
+/// link variants of `Logo`. Always full-size — the brand mark stays
+/// visible whether the sidebar is open or collapsed.
 #[component]
 fn LogoMark() -> Element {
     rsx! {
@@ -148,10 +147,9 @@ fn LogoMark() -> Element {
             }
         }
         // Wordmark is brand chrome, not translatable copy — hard-code so
-        // we don't accidentally render "<i18n value> mgmt" twice when the
-        // i18n key already contains the full brand string. Hidden when
-        // the sidebar collapses to icon-rail width — see input.css.
-        span { class: "logo-wordmark whitespace-nowrap",
+        // we don't accidentally render "<i18n value> mgmt" twice when
+        // the i18n key already contains the full brand string.
+        span { class: "whitespace-nowrap",
             "plan.ai "
             span { class: "text-fg-muted font-medium", "mgmt" }
         }
@@ -435,14 +433,10 @@ pub fn Sidebar(is_admin: bool) -> Element {
 
     rsx! {
         aside { class: outer_class,
-            // Inner panel keeps its 220px width while the outer aside
-            // shrinks down to the icon rail (56px) — only the orange
-            // logomark stays visible in collapsed mode, the wordmark
-            // and nav groups are hidden via CSS (see input.css).
+            // Logo lives in the topbar's logo-pad now. The sidebar
+            // contains only nav groups, which slide off entirely when
+            // the user collapses (width 220 → 0).
             div { class: "nav-side-inner",
-                div { class: "px-5 pt-5 pb-4 shrink-0",
-                    Logo {}
-                }
                 NavGroupList { groups, collapsible: true }
             }
         }

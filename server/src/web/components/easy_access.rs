@@ -162,19 +162,17 @@ pub fn EasyAccess() -> Element {
         Some(Ok(nodes)) => {
             if nodes.is_empty() {
                 return rsx! {
-                    div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                        h1 { class: "text-3xl font-bold text-fg-strong mb-4", {t!("easy-access-title")} }
-                        p { class: "text-fg-muted text-lg",
-                            {t!("easy-access-no-nodes")}
-                        }
+                    h1 { class: "h-page", {t!("easy-access-title")} }
+                    p { class: "text-fg-muted text-lg",
+                        {t!("easy-access-no-nodes")}
                     }
                 };
             }
 
             rsx! {
-                div { class: "max-w-6xl mx-auto px-4 py-8",
-                    h1 { class: "text-3xl font-bold text-fg-strong mb-8", {t!("easy-access-title")} }
+                h1 { class: "h-page", {t!("easy-access-title")} }
 
+                div {
                     for node in nodes {
                         div { key: "{node.instance_id}", class: "mb-10",
                             // Node heading
@@ -292,16 +290,12 @@ pub fn EasyAccess() -> Element {
             }
         }
         Some(Err(e)) => rsx! {
-            div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                h1 { class: "text-3xl font-bold text-fg-strong mb-4", {t!("easy-access-title")} }
-                p { class: "text-danger", {t!("error-message", message: e.to_string())} }
-            }
+            h1 { class: "h-page", {t!("easy-access-title")} }
+            p { class: "text-danger", {t!("error-message", message: e.to_string())} }
         },
         None => rsx! {
-            div { class: "max-w-5xl mx-auto px-4 py-12 text-center",
-                h1 { class: "text-3xl font-bold text-fg-strong mb-4", {t!("easy-access-title")} }
-                p { class: "text-fg-muted", {t!("loading")} }
-            }
+            h1 { class: "h-page", {t!("easy-access-title")} }
+            p { class: "text-fg-muted", {t!("loading")} }
         },
     }
 }

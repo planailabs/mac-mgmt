@@ -162,42 +162,47 @@ pub fn Layout() -> Element {
     });
 
     rsx! {
-        div { class: "h-screen w-full flex overflow-hidden",
-            // ── Desktop sidebar (220px column, hidden under xl)
-            Sidebar { is_admin }
+        // Topbar at the top stretches the full viewport — its left
+        // segment owns the brand mark over the sidebar column, the
+        // right segment carries the controls + the hairline border-b
+        // that separates chrome from content. Sidebar + main share
+        // the row beneath.
+        div { class: "h-screen w-full flex flex-col overflow-hidden",
+            Topbar {
+                display_name: display_name.clone(),
+                is_drawer_open: drawer_open,
+            }
 
-            // ── Main column: topbar + optional banner + page content
-            div { class: "flex-1 flex flex-col min-w-0 overflow-hidden",
-                Topbar {
-                    display_name: display_name.clone(),
-                    is_drawer_open: drawer_open,
-                }
+            div { class: "flex flex-1 overflow-hidden",
+                Sidebar { is_admin }
 
-                if let Some(email) = &impersonating_email {
-                    div { class: "shrink-0 banner banner-warn flex items-center justify-center gap-3",
-                        span { {t!("impersonating", email: email.clone())} }
-                        button {
-                            class: "btn btn-xs btn-warn",
-                            onclick: move |_| {
-                                document::eval(
-                                    "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
-                                );
-                            },
-                            {t!("impersonate-stop")}
+                div { class: "flex-1 flex flex-col min-w-0 overflow-hidden",
+                    if let Some(email) = &impersonating_email {
+                        div { class: "shrink-0 banner banner-warn flex items-center justify-center gap-3",
+                            span { {t!("impersonating", email: email.clone())} }
+                            button {
+                                class: "btn btn-xs btn-warn",
+                                onclick: move |_| {
+                                    document::eval(
+                                        "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
+                                    );
+                                },
+                                {t!("impersonate-stop")}
+                            }
                         }
                     }
-                }
 
-                main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8",
-                    Breadcrumbs {}
-                    SuspenseBoundary {
-                        fallback: |_| rsx! { LoadingSpinner {} },
-                        Outlet::<Route> {}
+                    main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8",
+                        Breadcrumbs {}
+                        SuspenseBoundary {
+                            fallback: |_| rsx! { LoadingSpinner {} },
+                            Outlet::<Route> {}
+                        }
                     }
                 }
             }
 
-            // ── Mobile drawer (overlay, hidden on xl+)
+            // Mobile drawer (overlay, hidden on xl+)
             MobileDrawer {
                 is_admin,
                 display_name,

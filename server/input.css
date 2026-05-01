@@ -374,21 +374,31 @@
      navbar — always visible, holds the user/theme/lang controls and
      the mobile hamburger. */
   .nav-shell      { @apply bg-surface shadow shrink-0; }
+  /* Sidebar slides off entirely when the user collapses it (logo
+     stays in the topbar above, fully visible). The vertical hairline
+     to the content area lives on the sidebar — when width hits 0 the
+     border collapses with it, which is the desired behaviour: full
+     width = sidebar, full collapse = main reaches the left edge. */
   .nav-side       { @apply hidden xl:flex xl:flex-col w-[220px]
                             bg-surface-2 border-r border-line shrink-0
                             overflow-hidden
                             transition-[width] duration-300 ease-in-out; }
-  /* Collapsed state: shrink to a 56px icon rail so the orange logomark
-     stays visible (and clickable) while the wordmark and nav groups
-     hide. See `.logo-wordmark` and `.nav-side-collapsed nav` below. */
-  .nav-side-collapsed { @apply !w-[56px]; }
+  .nav-side-collapsed { @apply !w-0 !border-r-0; }
   .nav-side-inner { @apply flex flex-col w-[220px] h-full
-                            overflow-y-auto pt-0; }
-  .nav-side-collapsed .logo-wordmark,
-  .nav-side-collapsed nav { @apply opacity-0 pointer-events-none
-                                   transition-opacity duration-150; }
-  .topbar         { @apply h-14 px-4 sm:px-6 flex items-center justify-between
-                            shrink-0 bg-surface-2 border-b border-line; }
+                            overflow-y-auto pt-2; }
+
+  /* Topbar is full-width, split into a logo-pad (over the sidebar
+     column on desktop, no border-b — seamless to the sidebar) and a
+     controls cluster (over the content area, carrying the hairline
+     border-b that separates chrome from content). On mobile both
+     segments share the bottom border because there's no sidebar to
+     "merge" with. */
+  .topbar          { @apply h-14 flex shrink-0 bg-surface-2; }
+  .topbar-logo-pad { @apply flex items-center px-4 sm:px-5
+                             border-b border-line xl:border-b-0
+                             xl:w-[220px] xl:shrink-0; }
+  .topbar-controls { @apply flex flex-1 items-center justify-end gap-1
+                             px-4 sm:px-6 border-b border-line; }
   .nav-group-head { @apply text-xs font-semibold text-fg-muted
                             uppercase tracking-wider; }
 
@@ -398,13 +408,19 @@
      a 2×12 rectangle in the same color as the title that rotates 90°
      on expand — a quiet best-practice indicator that doesn't pull
      attention away from the link list itself. */
-  .nav-group-toggle  { @apply w-full flex items-center gap-2 px-3 py-1
+  /* Toggle text aligns with `.nav-link` text (px-3) — the triangle
+     marker is absolutely positioned so its center sits at the button's
+     left edge, matching the x-coordinate of the active link's orange
+     `before:left-0` rail. The triangle visually "anchors" both the
+     category and its child links to the same vertical line. */
+  .nav-group-toggle  { @apply relative w-full flex items-center px-3 py-1
                               text-left rounded-md
                               hover:bg-surface-3 focus:outline-none
                               focus:ring-2 focus:ring-info
                               transition-colors; }
-  .nav-group-marker  { @apply inline-block w-2.5 h-2.5
+  .nav-group-marker  { @apply absolute left-0 top-1/2 w-2.5 h-2.5
                               text-fg-muted shrink-0
+                              -translate-x-1/2 -translate-y-1/2
                               transition-transform duration-200 ease-out; }
   .nav-group-marker-open { @apply rotate-90; }
 
