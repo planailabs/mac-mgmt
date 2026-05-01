@@ -1556,6 +1556,30 @@ impl BackupConfig {
     }
 }
 
+// ── Memvault Config ────────────────────────────────────────────────────
+
+/// Configuration for the memvault subsystem.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct MemvaultConfig {
+    #[schemars(description = "Whether memvault is enabled")]
+    #[serde(default)]
+    pub enabled: bool,
+    #[schemars(description = "Data directory for memvault storage (redb, identity, etc.)")]
+    #[serde(default)]
+    pub data_dir: String,
+    #[schemars(
+        description = "Cluster ID (base58-encoded 32 bytes, or \"auto\" to generate on first run)"
+    )]
+    #[serde(default)]
+    pub cluster_id: String,
+    #[schemars(description = "Bootstrap peers for Kademlia and initial connections")]
+    #[serde(default)]
+    pub bootstrap_peers: Vec<String>,
+    #[schemars(description = "Port for the memvault web UI (0 = disabled)")]
+    #[serde(default)]
+    pub web_port: u16,
+}
+
 // ── Cluster Config (what the server manages per-cluster) ──────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -1786,6 +1810,8 @@ pub struct DaemonConfig {
     pub healer: HealerClusterConfig,
     #[serde(default)]
     pub backup: BackupConfig,
+    #[serde(default)]
+    pub memvault: MemvaultConfig,
 }
 
 impl DaemonSettings {

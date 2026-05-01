@@ -16,6 +16,8 @@ pub mod events;
 pub mod file_tunnels;
 #[cfg(feature = "healer")]
 pub mod healer_bridge;
+#[cfg(feature = "memvault")]
+pub mod memvault;
 pub mod host_keys;
 pub mod local_client;
 pub mod log_buffer;

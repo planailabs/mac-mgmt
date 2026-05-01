@@ -247,3 +247,13 @@ flavour = "cpu"
 # provider = "openrouter"
 # api_key = "sk-or-xxx"
 # default_model = "openrouter/auto"
+
+# ── Memvault (p2p AI memory store) ──────────────────────────────────
+# Requires the daemon to be compiled with --features memvault.
+# All fields are optional; shown values are the defaults.
+# [memvault]
+# enabled = false
+# data_dir = "~/.local/share/memvault"
+# cluster_id = ""                        # base58-encoded 32-byte cluster ID, or leave empty
+# bootstrap_peers = []                   # libp2p multiaddrs for Kademlia bootstrap
+# web_port = 0                           # 0 = web UI disabled
