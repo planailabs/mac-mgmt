@@ -225,6 +225,7 @@ impl ServiceManager {
             cloud_cfgs,
             backup_cfg,
             &cfg.ai_proxy,
+            &cfg.memvault,
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();

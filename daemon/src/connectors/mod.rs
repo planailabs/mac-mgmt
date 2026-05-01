@@ -22,9 +22,12 @@ use crate::services::{
     mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw,
     opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
 };
+#[cfg(feature = "memvault")]
+use crate::services::memvault_svc::MemvaultService;
 use mac_mgmt_common::{
     AgentProvider, AiProxyConfig, BackupConfig, CloudConfig, GlobalConfig, LitellmConfig,
-    LlmProvider, LmsConfig, OllamaConfig, OpenClawConfig, OpencodeConfig, UnslothConfig,
+    LlmProvider, LmsConfig, MemvaultConfig, OllamaConfig, OpenClawConfig, OpencodeConfig,
+    UnslothConfig,
 };
 
 /// When a connector runs relative to service startup.
@@ -76,6 +79,7 @@ pub fn build_services(
     cloud_cfgs: Vec<CloudConfig>,
     backup_cfg: BackupConfig,
     ai_proxy_cfg: &AiProxyConfig,
+    memvault_cfg: &MemvaultConfig,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
@@ -140,6 +144,14 @@ pub fn build_services(
         services.push(Box::new(AiProxyService::new(ai_proxy_cfg)));
     } else {
         tracing::info!("ai-proxy disabled");
+    }
+
+    #[cfg(feature = "memvault")]
+    if memvault_cfg.enabled {
+        tracing::info!("memvault enabled (integrated)");
+        services.push(Box::new(MemvaultService::new(memvault_cfg)));
+    } else {
+        tracing::info!("memvault disabled");
     }
 
     services
