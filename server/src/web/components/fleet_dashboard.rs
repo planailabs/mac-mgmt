@@ -703,7 +703,8 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                         }
                     }
                     div { class: "card",
-                        table { class: "table",
+                        div { class: "overflow-x-auto",
+                            table { class: "table",
                             thead { class: "thead",
                                 tr {
                                     SortableTh { label: t!("fleet-col-cluster"), sort_key: "cluster".to_string(), sort }
@@ -1050,6 +1051,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                             }
                         }
                     }
+                }
                 }
             }
         }

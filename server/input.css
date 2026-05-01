@@ -469,7 +469,7 @@
   .tile {
     @apply flex flex-col items-center justify-center w-28 h-28 rounded-xl
            bg-surface border-2 border-line-soft
-           hover:border-info hover:shadow-lg hover:scale-105
+           hover:border-brand hover:shadow-lg hover:scale-105
            transition-all duration-150 cursor-pointer;
   }
   .tile-disabled {
@@ -478,10 +478,10 @@
            opacity-50 cursor-not-allowed;
   }
   .tile-icon {
-    @apply h-10 w-10 text-fg-muted group-hover:text-info transition-colors mb-2;
+    @apply h-10 w-10 text-fg-muted group-hover:text-brand transition-colors mb-2;
   }
   .tile-label {
-    @apply text-xs font-medium text-fg group-hover:text-info
+    @apply text-xs font-medium text-fg group-hover:text-brand
            transition-colors text-center leading-tight;
   }
 

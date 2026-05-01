@@ -725,6 +725,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                 KvGrid { rows: sample_rows }
                 if !disks.is_empty() {
                     h4 { class: "mt-4 mb-2 text-sm font-semibold text-fg-strong", {t!("fleet-detail-disks")} }
+                    div { class: "overflow-x-auto",
                     table { class: "min-w-full text-sm",
                         thead {
                             tr { class: "text-xs text-fg-muted",
@@ -758,6 +759,7 @@ fn render_detail(d: &FleetDetailData) -> Element {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
