@@ -111,13 +111,15 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 // -- Logo ------------------------------------------------------------------
 
 /// Brand mark — orange rounded-square outline + filled inner square,
-/// followed by "plan.ai mgmt" wordmark. Used at the top of both the
-/// desktop sidebar and the mobile drawer.
+/// followed by "plan.ai mgmt" wordmark. Lives in the topbar (left edge);
+/// on mobile it routes to the command center (the user's home), on
+/// desktop it toggles the sidebar (wired by `Layout` via context — see
+/// phase 3). Public so `topbar.rs` can render it.
 #[component]
-fn Logo() -> Element {
+pub fn Logo() -> Element {
     rsx! {
         Link {
-            to: Route::ClusterList {},
+            to: Route::Overview {},
             class: "flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight",
             svg {
                 width: "20",
@@ -309,9 +311,8 @@ pub fn Sidebar(is_admin: bool) -> Element {
 
     rsx! {
         aside { class: "nav-side",
-            div { class: "px-5 pt-5 pb-4 shrink-0",
-                Logo {}
-            }
+            // Logo moved to Topbar (header bar owns the brand mark now);
+            // sidebar starts at the first nav group with breathing room.
             NavGroupList { groups }
         }
     }
@@ -337,10 +338,14 @@ pub fn MobileDrawer(
     };
     let groups = get_nav_groups(is_admin, swagger_url);
 
+    // Backdrop tints the canvas (matches the page theme rather than
+    // contrasting it) so dark mode gets a dark scrim and light mode a
+    // light one — the inverse of the previous fg-strong-based scrim,
+    // which made dark-mode users see a flash of white.
     let backdrop_cls = if open {
-        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
+        "fixed inset-0 bg-bg/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
     } else {
-        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
+        "fixed inset-0 bg-bg/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
     };
 
     let drawer_cls = if open {
@@ -366,11 +371,10 @@ pub fn MobileDrawer(
                 class: drawer_cls,
                 id: "mobile-drawer",
 
-                // Header: logo + close button. We deliberately repeat
-                // the logo here (rather than only in the sidebar) so
-                // the drawer is self-contained on phones.
-                div { class: "px-5 py-4 border-b border-line bg-surface-2 flex justify-between items-center shrink-0",
-                    Logo {}
+                // Header: just the close button (logo lives in the
+                // topbar on every breakpoint now, so it's still visible
+                // behind/above the open drawer).
+                div { class: "px-5 py-4 bg-surface-2 flex justify-end items-center shrink-0",
                     button {
                         onclick: move |_| is_open.set(false),
                         class: "nav-icon-btn",
