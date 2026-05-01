@@ -7570,6 +7570,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "memvault-policy"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "blake3",
+ "memvault-core",
+ "rand 0.8.6",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "memvault-query"
 version = "0.1.0"
 dependencies = [
