@@ -12,7 +12,7 @@ name = "mac-mgmt"
 path = "src/main.rs"
 
 [features]
-default = ["services", "relay"]
+default = ["services", "relay", "memvault"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
 relay = ["dep:libp2p", "dep:libp2p-stream"]
@@ -68,6 +68,7 @@ mac-mgmt-healer = { path = "../mac-mgmt-healer", default-features = false, optio
 plan-ai-cleaner = { path = "../plan-ai-cleaner" }
 plan-ai-cloud = { path = "../plan-ai-cloud" }
 plan-ai-memvault = { path = "../plan-ai-memvault" }
+memvault-api = { path = "../memvault/crates/memvault-api" }
 aes-gcm = "0.10"
 tokio-tungstenite = "0.26"
 tokio-util = { version = "0.7", features = ["compat"] }

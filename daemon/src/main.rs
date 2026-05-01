@@ -120,6 +120,8 @@ enum Commands {
     McpCloud(plan_ai_cloud::Cli),
     /// Run the memvault memory MCP server (stdio transport)
     McpMemvault(plan_ai_memvault::Cli),
+    /// Memvault management CLI (memctl)
+    Memctl(memvault_api::memctl::Cli),
 }
 
 #[derive(Subcommand)]
@@ -511,6 +513,9 @@ async fn main() -> Result<()> {
         }
         Commands::McpMemvault(cli) => {
             plan_ai_memvault::run(cli).await?;
+        }
+        Commands::Memctl(cli) => {
+            memvault_api::memctl::run(cli).await?;
         }
     }
 
