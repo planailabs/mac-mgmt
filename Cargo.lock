@@ -7489,6 +7489,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "memvault-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "memvault-auth",
+ "memvault-core",
+ "memvault-doc",
+ "memvault-query",
+ "memvault-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "memvault-auth"
 version = "0.1.0"
 dependencies = [
@@ -7548,6 +7566,21 @@ dependencies = [
  "serde_ipld_dagcbor",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "memvault-query"
+version = "0.1.0"
+dependencies = [
+ "memvault-auth",
+ "memvault-core",
+ "memvault-doc",
+ "memvault-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
