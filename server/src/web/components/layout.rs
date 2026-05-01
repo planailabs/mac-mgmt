@@ -17,6 +17,7 @@ use crate::web::app::Route;
 
 use super::navbar::{MobileDrawer, Sidebar};
 use super::topbar::{Topbar, TopbarMeta};
+use super::ui::Breadcrumbs;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UserInfo {
@@ -131,6 +132,7 @@ pub fn Layout() -> Element {
                 }
 
                 main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8",
+                    Breadcrumbs {}
                     SuspenseBoundary {
                         fallback: |_| rsx! { LoadingSpinner {} },
                         Outlet::<Route> {}

@@ -398,6 +398,19 @@
                             focus:outline-none focus:ring-2 focus:ring-info
                             transition-colors; }
 
+  /* ── Breadcrumbs ──────────────────────────────────────────────
+     One-line trail rendered above every page title by `<Breadcrumbs>`.
+     Matches the visual weight of `.kicker` so it reads as a quiet
+     signpost, not a competing element. */
+  .breadcrumbs        { @apply flex flex-wrap items-center gap-1.5
+                                text-xs mb-2; }
+  .breadcrumb-category { @apply text-fg-faint font-medium uppercase
+                                 tracking-[0.08em]; }
+  .breadcrumb-link     { @apply text-fg-muted hover:text-fg-strong
+                                 hover:underline transition-colors; }
+  .breadcrumb-current  { @apply text-fg-muted font-medium; }
+  .breadcrumb-sep      { @apply text-fg-faint select-none; }
+
   /* ── Tile launcher ─────────────────────────────────────────────
      Square button used on the easy-access page. Pair the class
      with `group` on the element so child .tile-icon / .tile-label

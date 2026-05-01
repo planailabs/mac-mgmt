@@ -17,6 +17,7 @@
 
 pub mod alert;
 pub mod badge;
+pub mod breadcrumbs;
 pub mod button;
 pub mod card;
 pub mod chart;
@@ -32,6 +33,7 @@ pub mod timeline;
 
 pub use alert::{Alert, AlertVariant};
 pub use badge::{Badge, BadgeVariant};
+pub use breadcrumbs::Breadcrumbs;
 pub use button::{Button, ButtonKind, ButtonSize, ButtonVariant};
 pub use card::Card;
 pub use chart::{Bars, ChartColor, Sparkline};
