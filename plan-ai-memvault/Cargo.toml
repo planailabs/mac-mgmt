@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 memvault-core = { path = "../memvault/crates/memvault-core" }
 memvault-api = { path = "../memvault/crates/memvault-api" }
+memvault-attach = { path = "../memvault/crates/memvault-attach" }
+memvault-extract = { path = "../memvault/crates/memvault-extract" }
 memvault-store = { path = "../memvault/crates/memvault-store" }
 memvault-doc = { path = "../memvault/crates/memvault-doc" }
 memvault-query = { path = "../memvault/crates/memvault-query" }

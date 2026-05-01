@@ -127,13 +127,9 @@ impl MemvaultServer {
         description = "Retrieve a memory by its hex-encoded CID. Returns the document text and metadata."
     )]
     async fn get(&self, Parameters(params): Parameters<GetParams>) -> String {
-        // The CID is the envelope CID; we need to find the doc_id from it.
-        // For now, we look up by treating the CID as a doc_id hex (the user gets
-        // the doc_id hex from put/list/search results).
         let doc_id = match doc_id_from_hex(&params.cid) {
             Ok(id) => id,
             Err(_) => {
-                // Try as raw cid lookup — not directly supported, return error
                 return format!(
                     "error: CID {} does not map to a 32-byte doc ID. Use the doc_id from list/search results.",
                     params.cid
@@ -152,7 +148,6 @@ impl MemvaultServer {
                     "doc_id": bytes_to_hex(&doc_id.0),
                     "title": title,
                     "body": doc.body,
-                    "attachments": doc.attachments.len(),
                 })
                 .to_string()
             }
@@ -227,14 +222,9 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_attach",
-        description = "Attach a file to a memory. Content must be base64-encoded. Returns the attachment CID."
+        description = "Attach a file to memvault. Content must be base64-encoded. Returns the manifest CID. Files are now stored as standalone first-class objects."
     )]
     async fn attach(&self, Parameters(params): Parameters<AttachParams>) -> String {
-        let doc_id = match doc_id_from_hex(&params.doc_cid) {
-            Ok(id) => id,
-            Err(e) => return format!("error: {e}"),
-        };
-
         let data = match base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
             &params.content_base64,
@@ -243,24 +233,147 @@ impl MemvaultServer {
             Err(e) => return format!("error: invalid base64: {e}"),
         };
 
-        let content_type = params
+        let mime_type = params
             .content_type
             .as_deref()
             .unwrap_or("application/octet-stream");
+        let tags = parse_tags(&params.tags.unwrap_or_default());
+        let visibility = params.visibility.as_deref().unwrap_or("internal");
 
         match self
             .client
-            .attach_file(&doc_id, &params.filename, content_type, &data)
+            .attach_file(&data, Some(&params.filename), mime_type, tags, visibility)
             .await
         {
             Ok(cid) => {
                 serde_json::json!({
-                    "attachment_cid": bytes_to_hex(&cid),
+                    "manifest_cid": bytes_to_hex(&cid),
                     "filename": params.filename,
                     "status": "attached"
                 })
                 .to_string()
             }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_read_range",
+        description = "Read a byte range from an attachment. Returns base64-encoded bytes for the range [start, end)."
+    )]
+    async fn read_range(&self, Parameters(params): Parameters<ReadRangeParams>) -> String {
+        let cid = match hex_to_bytes(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        match self.client.read_attachment_range(&cid, params.start, params.end).await {
+            Ok(data) => {
+                use base64::Engine;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                serde_json::json!({
+                    "data_base64": encoded,
+                    "size": data.len(),
+                })
+                .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_pin",
+        description = "Pin an attachment to prevent garbage collection."
+    )]
+    async fn pin(&self, Parameters(params): Parameters<PinParams>) -> String {
+        let cid = match hex_to_bytes(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        match self.client.pin_attachment(&cid).await {
+            Ok(()) => {
+                serde_json::json!({
+                    "manifest_cid": params.manifest_cid,
+                    "status": "pinned"
+                })
+                .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_unpin",
+        description = "Unpin an attachment, allowing garbage collection."
+    )]
+    async fn unpin(&self, Parameters(params): Parameters<UnpinParams>) -> String {
+        let cid = match hex_to_bytes(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        match self.client.unpin_attachment(&cid).await {
+            Ok(()) => {
+                serde_json::json!({
+                    "manifest_cid": params.manifest_cid,
+                    "status": "unpinned"
+                })
+                .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_extract_text",
+        description = "Extract text content from an attachment (supports PDF, DOCX, HTML, Markdown, plain text)."
+    )]
+    async fn extract_text(&self, Parameters(params): Parameters<ExtractTextParams>) -> String {
+        let cid = match hex_to_bytes(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        match self.client.read_extracted_text(&cid).await {
+            Ok(Some(text)) => {
+                serde_json::json!({
+                    "manifest_cid": params.manifest_cid,
+                    "text": text,
+                })
+                .to_string()
+            }
+            Ok(None) => {
+                serde_json::json!({
+                    "manifest_cid": params.manifest_cid,
+                    "text": null,
+                    "note": "extraction not supported for this file type"
+                })
+                .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_attachment_info",
+        description = "Get the manifest metadata for an attachment (filename, MIME type, size, layout, etc.)."
+    )]
+    async fn attachment_info(&self, Parameters(params): Parameters<AttachmentInfoParams>) -> String {
+        let cid = match hex_to_bytes(&params.manifest_cid) {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        match self.client.get_attachment_manifest(&cid).await {
+            Ok(Some(json_bytes)) => {
+                // The manifest is stored as JSON, just return it
+                match String::from_utf8(json_bytes) {
+                    Ok(json_str) => json_str,
+                    Err(_) => "error: manifest is not valid UTF-8".to_string(),
+                }
+            }
+            Ok(None) => format!("error: manifest not found for cid {}", params.manifest_cid),
             Err(e) => format!("error: {e}"),
         }
     }

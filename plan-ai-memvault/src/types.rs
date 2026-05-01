@@ -61,8 +61,6 @@ pub struct ListParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AttachParams {
-    /// Hex-encoded CID of the document to attach to.
-    pub doc_cid: String,
     /// Filename for the attachment.
     pub filename: String,
     /// Base64-encoded file content.
@@ -70,6 +68,56 @@ pub struct AttachParams {
     /// MIME content type (default: "application/octet-stream").
     #[serde(default)]
     pub content_type: Option<String>,
+    /// Tags in "scope:label" format.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    /// Visibility level: "internal", "federated", or "public". Defaults to "internal".
+    #[serde(default)]
+    pub visibility: Option<String>,
+}
+
+// -- memvault_read_range --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadRangeParams {
+    /// Hex-encoded manifest CID.
+    pub manifest_cid: String,
+    /// Start byte offset (inclusive).
+    pub start: u64,
+    /// End byte offset (exclusive).
+    pub end: u64,
+}
+
+// -- memvault_pin --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PinParams {
+    /// Hex-encoded manifest CID of the attachment to pin.
+    pub manifest_cid: String,
+}
+
+// -- memvault_unpin --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct UnpinParams {
+    /// Hex-encoded manifest CID of the attachment to unpin.
+    pub manifest_cid: String,
+}
+
+// -- memvault_extract_text --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ExtractTextParams {
+    /// Hex-encoded manifest CID of the attachment to extract text from.
+    pub manifest_cid: String,
+}
+
+// -- memvault_attachment_info --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct AttachmentInfoParams {
+    /// Hex-encoded manifest CID of the attachment.
+    pub manifest_cid: String,
 }
 
 // -- memvault_graph_add --

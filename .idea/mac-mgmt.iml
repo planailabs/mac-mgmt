@@ -16,6 +16,28 @@
       <sourceFolder url="file://$MODULE_DIR$/sim-tests/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/mac-mgmt-healer/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/trainer/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/mac-mgmt-executor/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/mac-mgmt-executor/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-api/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-attach/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-auth/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-core/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-core/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-doc/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-extract/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-net/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-policy/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-query/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-store/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-summarize/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-summarize/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-web/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/plan-ai-cleaner/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/plan-ai-cloud/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/plan-ai-design/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/plan-ai-memvault/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/memvault/crates/memvault-store/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
