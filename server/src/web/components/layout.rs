@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
-use super::navbar::{MobileDrawer, Sidebar};
+use super::navbar::{MobileDrawer, Sidebar, SidebarCollapsed};
 use super::topbar::{Topbar, TopbarMeta};
 use super::ui::Breadcrumbs;
 
@@ -103,6 +103,31 @@ pub fn Layout() -> Element {
     // Mobile drawer open/closed — shared between the topbar's
     // hamburger and the drawer itself.
     let drawer_open = use_signal(|| false);
+
+    // Sidebar collapsed state (desktop only). Shared via context so the
+    // topbar's Logo button can toggle it without prop-drilling. Restored
+    // from localStorage on first paint, persisted whenever it flips.
+    let mut sidebar_collapsed = use_signal(|| false);
+    use_context_provider(|| SidebarCollapsed(sidebar_collapsed));
+    use_effect(move || {
+        spawn(async move {
+            let r = document::eval(
+                "try { return localStorage.getItem('nav.sidebar.collapsed') || '0'; } catch(e) { return '0'; }",
+            )
+            .await;
+            if let Ok(val) = r {
+                if val.as_str() == Some("1") {
+                    sidebar_collapsed.set(true);
+                }
+            }
+        });
+    });
+    use_effect(move || {
+        let v = if *sidebar_collapsed.read() { "1" } else { "0" };
+        document::eval(&format!(
+            "try {{ localStorage.setItem('nav.sidebar.collapsed', '{v}'); }} catch(e) {{}}",
+        ));
+    });
 
     rsx! {
         div { class: "h-screen w-full flex overflow-hidden",

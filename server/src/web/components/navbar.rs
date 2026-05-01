@@ -16,6 +16,13 @@ use dioxus_i18n::t;
 
 use crate::web::app::Route;
 
+/// Newtype wrapping the desktop-sidebar collapsed signal so it lives in
+/// the context graph without colliding with other `Signal<bool>` values.
+/// Provided by `Layout`; consumed by `Sidebar` (slide-off animation) and
+/// the topbar `Logo` (click toggles it).
+#[derive(Clone, Copy)]
+pub struct SidebarCollapsed(pub Signal<bool>);
+
 #[server]
 async fn get_swagger_url() -> Result<String, ServerFnError> {
     let cfg = crate::config::config();
@@ -110,39 +117,63 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 
 // -- Logo ------------------------------------------------------------------
 
-/// Brand mark — orange rounded-square outline + filled inner square,
-/// followed by "plan.ai mgmt" wordmark. Lives in the topbar (left edge);
-/// on mobile it routes to the command center (the user's home), on
-/// desktop it toggles the sidebar (wired by `Layout` via context — see
-/// phase 3). Public so `topbar.rs` can render it.
+/// SVG + wordmark. Used inside both the desktop button and the mobile
+/// link variants of `Logo`.
+#[component]
+fn LogoMark() -> Element {
+    rsx! {
+        svg {
+            width: "20",
+            height: "20",
+            view_box: "0 0 20 20",
+            fill: "none",
+            rect {
+                x: "1.5", y: "1.5", width: "17", height: "17", rx: "5",
+                stroke: "rgb(var(--c-brand))",
+                "stroke-width": "1.6",
+            }
+            rect {
+                x: "6", y: "6", width: "8", height: "8", rx: "1.5",
+                fill: "rgb(var(--c-brand))",
+            }
+        }
+        // Wordmark is brand chrome, not translatable copy — hard-code so
+        // we don't accidentally render "<i18n value> mgmt" twice when the
+        // i18n key already contains the full brand string.
+        span {
+            "plan.ai "
+            span { class: "text-fg-muted font-medium", "mgmt" }
+        }
+    }
+}
+
+/// Brand mark in the topbar's left edge.
+///
+/// * **Mobile** — renders as a `<Link to=Overview>` so a tap brings the
+///   user home. The sidebar collapse signal is desktop-only.
+/// * **Desktop** — renders as a `<button>` that toggles
+///   `SidebarCollapsed`, sliding the sidebar away (and back) per the
+///   user's preference. Persistence is handled in `Layout`.
 #[component]
 pub fn Logo() -> Element {
+    let SidebarCollapsed(mut collapsed) = use_context::<SidebarCollapsed>();
+
     rsx! {
+        // Desktop variant — sidebar toggle.
+        button {
+            class: "hidden xl:flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight cursor-pointer rounded-md px-1 py-1 -mx-1 hover:bg-surface-3 focus:outline-none focus:ring-2 focus:ring-info transition-colors",
+            "aria-label": t!("nav-toggle-sidebar"),
+            onclick: move |_| {
+                let cur = *collapsed.read();
+                collapsed.set(!cur);
+            },
+            LogoMark {}
+        }
+        // Mobile variant — navigates home.
         Link {
             to: Route::Overview {},
-            class: "flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight",
-            svg {
-                width: "20",
-                height: "20",
-                view_box: "0 0 20 20",
-                fill: "none",
-                rect {
-                    x: "1.5", y: "1.5", width: "17", height: "17", rx: "5",
-                    stroke: "rgb(var(--c-brand))",
-                    "stroke-width": "1.6",
-                }
-                rect {
-                    x: "6", y: "6", width: "8", height: "8", rx: "1.5",
-                    fill: "rgb(var(--c-brand))",
-                }
-            }
-            // Wordmark is brand chrome, not translatable copy — hard-code so
-            // we don't accidentally render "<i18n value> mgmt" twice when the
-            // i18n key already contains the full brand string.
-            span {
-                "plan.ai "
-                span { class: "text-fg-muted font-medium", "mgmt" }
-            }
+            class: "xl:hidden flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight",
+            LogoMark {}
         }
     }
 }
@@ -308,12 +339,22 @@ pub fn Sidebar(is_admin: bool) -> Element {
     };
 
     let groups = get_nav_groups(is_admin, swagger_url);
+    let SidebarCollapsed(collapsed) = use_context::<SidebarCollapsed>();
+    let outer_class = if *collapsed.read() {
+        "nav-side nav-side-collapsed"
+    } else {
+        "nav-side"
+    };
 
     rsx! {
-        aside { class: "nav-side",
-            // Logo moved to Topbar (header bar owns the brand mark now);
-            // sidebar starts at the first nav group with breathing room.
-            NavGroupList { groups }
+        aside { class: outer_class,
+            // Inner panel keeps its 220px width even while the outer
+            // aside animates to width 0 — the result is a clean slide-
+            // out where content visually retreats behind the topbar
+            // rather than reflowing.
+            div { class: "nav-side-inner",
+                NavGroupList { groups }
+            }
         }
     }
 }

@@ -376,6 +376,10 @@
   .nav-shell      { @apply bg-surface shadow shrink-0; }
   .nav-side       { @apply hidden xl:flex xl:flex-col w-[220px]
                             bg-surface-2 shrink-0
+                            overflow-hidden
+                            transition-[width] duration-300 ease-in-out; }
+  .nav-side-collapsed { @apply !w-0; }
+  .nav-side-inner { @apply flex flex-col w-[220px] h-full
                             overflow-y-auto pt-2; }
   .topbar         { @apply h-14 px-4 sm:px-6 flex items-center justify-between
                             shrink-0 bg-surface-2; }

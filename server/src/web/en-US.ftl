@@ -66,6 +66,7 @@ nav-sign-out = Sign out
 nav-view-profile = View Profile
 nav-open-main-menu = Open main menu
 nav-close-menu = Close menu
+nav-toggle-sidebar = Toggle sidebar
 breadcrumb-aria = Breadcrumb
 breadcrumb-new = New
 breadcrumb-edit = Edit
