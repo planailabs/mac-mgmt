@@ -196,7 +196,7 @@ pub fn builtin_catalog() -> FederationCatalog {
         vec![FederationBundle {
             id: SKILLS_BUNDLE_ID,
             slug: "plan-ai-builtin-skills".into(),
-            name: "Built-in Skills".into(),
+            name: "Core Skills".into(),
             description: "Bundle containing built-in skills shipped with the daemon".into(),
             hidden: false,
             skills: bundle_skills,
@@ -240,7 +240,7 @@ pub fn builtin_catalog() -> FederationCatalog {
         mcp_bundles: vec![FederationMcpBundle {
             id: MCP_BUNDLE_ID,
             slug: "plan-ai-builtin".into(),
-            name: "Built-in MCP Servers".into(),
+            name: "Core MCP Servers".into(),
             description: "Bundle containing the built-in cleaner and cloud MCP servers".into(),
             hidden: false,
             servers: vec![

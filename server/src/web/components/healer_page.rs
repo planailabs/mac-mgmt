@@ -719,7 +719,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                         div { class: "mb-3",
                             label { class: "block text-sm font-medium text-fg mb-1", {t!("healer-model")} }
                             select {
-                                class: "w-full px-3 py-2 text-sm border rounded ",
+                                class: "w-full px-3 py-2 text-sm border rounded-md ",
                                 value: "{selected_model_key}",
                                 onchange: move |e| selected_model_key.set(e.value()),
                                 if !ollama_models.is_empty() {
@@ -780,7 +780,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
                         div { class: "mb-3",
                             label { class: "block text-sm font-medium text-fg mb-1", {t!("healer-fix-model")} }
                             select {
-                                class: "w-full px-3 py-2 text-sm border rounded ",
+                                class: "w-full px-3 py-2 text-sm border rounded-md ",
                                 value: "{selected_fix_model_key}",
                                 onchange: move |e| selected_fix_model_key.set(e.value()),
                                 option { value: "none", {t!("healer-same-as-diagnosis")} }
@@ -819,7 +819,7 @@ fn render_healer(ctx: &HealerContext) -> Element {
 
                         div { class: "mb-3",
                             textarea {
-                                class: "w-full px-3 py-2 text-sm border rounded ",
+                                class: "w-full px-3 py-2 text-sm border rounded-md ",
                                 rows: "2",
                                 placeholder: t!("healer-instructions-placeholder"),
                                 value: "{user_input}",

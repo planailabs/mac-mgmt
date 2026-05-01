@@ -134,7 +134,7 @@ pub fn TableToolbar(
                     span { {t!("table-showing", shown: shown, total: total)} }
                 }
                 select {
-                    class: "input input-sm w-auto",
+                    class: "input w-auto py-1.5",
                     value: "{limit}",
                     onchange: move |evt| {
                         if let Ok(n) = evt.value().parse::<usize>() {
