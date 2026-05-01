@@ -119,8 +119,8 @@
 
     --c-fg:           232 237 245;    /* #e8edf5 */
     --c-fg-strong:    255 255 255;
-    --c-fg-muted:     147 152 161;    /* ≈ rgba(232,237,245,0.6) over canvas */
-    --c-fg-faint:     102 108 117;    /* ≈ rgba(232,237,245,0.4) over canvas */
+    --c-fg-muted:     188 194 204;    /* ≈ rgba(232,237,245,0.78) over canvas — bumped for legibility */
+    --c-fg-faint:     156 162 172;    /* ≈ rgba(232,237,245,0.62) over canvas — bumped above WCAG AA */
     --c-fg-invert:    255 255 255;
 
     /* Lines re-derived over the new chrome surface. Slightly heavier
