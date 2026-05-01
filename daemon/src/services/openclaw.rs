@@ -271,10 +271,22 @@ impl ManagedService for OpenClaw {
     }
 
     fn spawn_spec(&self) -> crate::managed_service::SpawnSpec {
+        let cache_dir = std::env::temp_dir().join("openclaw-cache");
+        if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+            tracing::warn!("failed to create NODE_COMPILE_CACHE dir: {e}");
+        }
+
+        let mut env = std::collections::HashMap::new();
+        env.insert(
+            "NODE_COMPILE_CACHE".into(),
+            cache_dir.to_string_lossy().into_owned(),
+        );
+        env.insert("OPENCLAW_NO_RESPAWN".into(), "1".into());
+
         crate::managed_service::SpawnSpec {
             program: "openclaw".into(),
             args: vec!["gateway".into()],
-            env: Default::default(),
+            env,
         }
     }
 
