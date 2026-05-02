@@ -33,7 +33,14 @@ nix_system_for() {
 }
 
 # Native linux build
+# libloading (via dioxus→subsecond) emits #[link(name = "dl")] on Linux,
+# but musl libc has dlopen/dlsym built-in — no separate libdl exists.
+# Provide an empty stub archive so the linker resolves -ldl.
+DL_STUB="$(mktemp -d)"
+ar rcs "$DL_STUB/libdl.a"
+export RUSTFLAGS="${RUSTFLAGS:-} -L $DL_STUB"
 cargo build --release --target x86_64-unknown-linux-musl -p mac-mgmt --features "$FEATURES"
+rm -rf "$DL_STUB"
 
 # Darwin cross via zigbuild + macOS SDK from the flake
 SDKROOT="$(nix build --no-link --print-out-paths "$SCRIPT_DIR#macosx-sdk")"
