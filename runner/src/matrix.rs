@@ -152,6 +152,8 @@ fn relay() -> Value {
     })
 }
 
+/// AI proxy config with a default test key.
+/// Raw key: sk-1234 (SHA2-256 multihash below).
 fn ai_proxy() -> Value {
     json!({
         "enabled": true,
