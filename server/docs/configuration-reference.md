@@ -155,6 +155,41 @@ Settings for the relay server used for remote SSH access.
 | `url` | *none* | Relay server URL (e.g. `wss://relay.plan.ai`). Must start with `ws://` or `wss://` |
 | `remote_ssh_enabled` | `false` | Whether remote SSH access is enabled on startup |
 
+## `ai_proxy`
+
+An OpenAI-compatible API proxy that sits in front of local LLM backends (Ollama, Unsloth) and optionally load-balances across cluster peers. See [AI Proxy Setup](/docs/ai-proxy-setup) for a detailed walkthrough.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Whether the AI proxy is started |
+| `host` | `"127.0.0.1"` | Listen address |
+| `port` | `18900` | Listen port |
+| `keys` | `[]` | API keys with per-key token budgets (see below) |
+
+### `ai_proxy.keys[]`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `name` | `""` | Human-readable label for this key |
+| `key_hash` | *required* | Hex-encoded SHA2-256 multihash of the API key |
+| `token_budget` | `0` | Maximum total tokens (input+output) within the budget window. `0` = unlimited |
+| `budget_window` | `"24h"` | Sliding window duration (e.g. `"24h"`, `"7d"`, `"1h"`) |
+| `enabled` | `true` | Whether this key is active |
+
+## `memvault`
+
+Distributed p2p memory store for AI context sharing across cluster nodes. Requires the daemon to be compiled with `--features memvault`. See [Memvault Setup](/docs/memvault-setup) for a detailed walkthrough.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Whether memvault is started |
+| `data_dir` | `"~/.local/share/memvault"` | Data directory for storage (redb, identity) |
+| `cluster_id` | `""` | Base58-encoded 32-byte cluster ID, or `"auto"` to generate on first run |
+| `bootstrap_peers` | `[]` | libp2p multiaddrs for Kademlia bootstrap |
+| `port` | `8401` | API server port |
+| `web_enabled` | `false` | Expose the web UI on the API port |
+| `auth_token_hash` | *none* | Hex-encoded SHA2-256 multihash of the bearer token (empty = no auth) |
+
 ## Example configuration
 
 ```json
@@ -197,6 +232,22 @@ Settings for the relay server used for remote SSH access.
   "relay": {
     "url": "wss://relay.plan.ai",
     "remote_ssh_enabled": true
+  },
+  "ai_proxy": {
+    "enabled": true,
+    "keys": [
+      {
+        "name": "dev-team",
+        "key_hash": "1220...",
+        "token_budget": 1000000,
+        "budget_window": "24h"
+      }
+    ]
+  },
+  "memvault": {
+    "enabled": true,
+    "port": 8401,
+    "web_enabled": true
   },
   "metrics": {
     "port": 9396
