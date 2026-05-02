@@ -177,6 +177,17 @@ pub struct ActiveSectionFilter(pub Signal<SectionFilter>);
 #[derive(Clone, Default)]
 pub struct SavedConfigBaseline(pub Signal<String>);
 
+/// Cross-component counters: how many fields are modified, and across
+/// how many sections. Computed once per render in `StructuredEditor`
+/// and consumed by the `SaveBar` so the toast can read like
+/// "N unsaved changes in M sections".
+#[derive(Clone, Copy, PartialEq, Default)]
+pub struct EditorStats {
+    pub modified_fields: Signal<usize>,
+    pub modified_sections: Signal<usize>,
+    pub total_sections: Signal<usize>,
+}
+
 #[component]
 pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
@@ -194,6 +205,12 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let mut raw_mode = use_signal(|| false);
     let filter = use_signal(|| SectionFilter::All);
     use_context_provider(|| ActiveSectionFilter(filter));
+    let stats = EditorStats {
+        modified_fields: use_signal(|| 0usize),
+        modified_sections: use_signal(|| 0usize),
+        total_sections: use_signal(|| 0usize),
+    };
+    use_context_provider(|| stats);
 
     if !*initialized.read() {
         if let Some(Ok(Some(cfg))) = &*config.read() {
@@ -298,6 +315,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                 last_saved: last_saved_at,
                 on_save: do_save,
                 on_discard: do_discard,
+                stats,
             }
         }
     }
@@ -336,12 +354,20 @@ fn SaveBar(
     last_saved: Option<String>,
     on_save: EventHandler<()>,
     on_discard: EventHandler<MouseEvent>,
+    stats: EditorStats,
 ) -> Element {
+    let fields = *stats.modified_fields.read();
+    let sections = *stats.modified_sections.read();
+    let summary = if fields == 0 {
+        t!("config-save-unsaved")
+    } else {
+        t!("config-save-summary", fields: fields, sections: sections)
+    };
     rsx! {
         div { class: "config-save-bar",
             span { class: "dot dot-accent" }
             div { class: "min-w-0",
-                div { class: "text-sm font-semibold text-fg-strong", {t!("config-save-unsaved")} }
+                div { class: "text-sm font-semibold text-fg-strong", "{summary}" }
                 if let Some(t) = last_saved {
                     div { class: "text-[11px] text-fg-faint mt-0.5",
                         {t!("config-editor-last-saved", time: t)}
@@ -360,6 +386,7 @@ fn SaveBar(
                 r#type: "button",
                 onclick: move |_| on_save.call(()),
                 {t!("config-editor-save")}
+                span { class: "ml-1.5 text-[10px] font-mono opacity-70", "⌘S" }
             }
         }
     }
@@ -507,6 +534,65 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
     let active_filter = *filter_sig.read();
     let form_snapshot = form_values.read().clone();
     let defs_for_filter = defs.clone();
+
+    // Compute per-section modified counts once per render and publish
+    // through `EditorStats` so the floating save bar (rendered in the
+    // ConfigEditor parent) can read totals without re-walking the
+    // schema. Result is also reused below for the right-rail "N∆" pill.
+    let modified_per_section: std::collections::HashMap<String, usize> = {
+        let mut out = std::collections::HashMap::new();
+        for (_, sections) in &categories {
+            for s in sections {
+                if s.is_array {
+                    continue;
+                }
+                let props = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                let count = props
+                    .iter()
+                    .filter(|(fname, fschema)| {
+                        if fname.as_str() == "enabled" {
+                            return false;
+                        }
+                        let resolved = resolve_ref(fschema, &defs_for_filter);
+                        let schema_default = resolved.get("default");
+                        let current =
+                            get_at_path(&form_snapshot, &[s.name.clone(), fname.to_string()]);
+                        match (current, schema_default) {
+                            (Some(cur), Some(def)) => &cur != def,
+                            (Some(_), None) => true,
+                            _ => false,
+                        }
+                    })
+                    .count();
+                if count > 0 {
+                    out.insert(s.name.clone(), count);
+                }
+            }
+        }
+        out
+    };
+    let total_modified_fields: usize = modified_per_section.values().sum();
+    let touched_section_count = modified_per_section.len();
+    {
+        let stats = use_context::<EditorStats>();
+        let mut mf = stats.modified_fields;
+        let mut ms = stats.modified_sections;
+        let mut ts = stats.total_sections;
+        if *mf.read() != total_modified_fields {
+            mf.set(total_modified_fields);
+        }
+        if *ms.read() != touched_section_count {
+            ms.set(touched_section_count);
+        }
+        if *ts.read() != total_sections {
+            ts.set(total_sections);
+        }
+    }
     let section_passes_filter = move |s: &SectionMeta| -> bool {
         match active_filter {
             SectionFilter::All => true,
@@ -727,19 +813,33 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
                                         "dot dot-muted"
                                     };
                                     let name_display = name.clone();
+                                    let mod_count = modified_per_section.get(&name).copied().unwrap_or(0);
                                     rsx! {
                                         a {
                                             key: "{name}",
                                             href: "#sec-{name}",
                                             class: "flex items-center gap-2 px-2 py-1 rounded-md text-xs font-mono text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
                                             span { class: "{dot_cls}" }
-                                            span { class: "truncate", "{name_display}" }
+                                            span { class: "truncate flex-1", "{name_display}" }
+                                            if mod_count > 0 {
+                                                span { class: "text-[10px] font-mono text-brand", "{mod_count}∆" }
+                                            }
                                         }
                                     }
                                 })}
                             }
                         }
                     })}
+                }
+                // Footer — config history shortcut. The right rail
+                // mirrors the design's bottom-of-rail tools strip.
+                div { class: "border-t border-line pt-3 mt-3 px-2",
+                    a {
+                        href: "#sec-config-history",
+                        class: "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
+                        span { "⟲" }
+                        span { {t!("cluster-detail-tab-config-history")} }
+                    }
                 }
             }
         }

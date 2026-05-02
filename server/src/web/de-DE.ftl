@@ -790,6 +790,13 @@ config-filter-enabled = Aktiv
 config-filter-modified = Geändert
 config-filter-errors = Fehler
 config-save-unsaved = Ungespeicherte Änderungen
+config-save-summary = { $fields ->
+    [one] { $fields } ungespeicherte Änderung
+   *[other] { $fields } ungespeicherte Änderungen
+} in { $sections ->
+    [one] { $sections } Abschnitt
+   *[other] { $sections } Abschnitten
+}
 config-save-discard = Verwerfen
 config-editor-last-saved = Zuletzt gespeichert: { $time }
 config-editor-no-config = Noch keine Konfiguration gespeichert.

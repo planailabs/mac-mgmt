@@ -274,30 +274,30 @@ pub fn ClusterConfigPage(id: String) -> Element {
     };
 
     rsx! {
-        div { class: "mb-4",
-            Link { to: Route::ClusterDetail { id: id.clone() }, class: "link text-sm",
-                {t!("cluster-config-back")}
-            }
-            if !name.is_empty() {
-                PageHeader { class: "mt-1", "{name} — {t!(\"cluster-detail-tab-config\")}" }
-            }
+        // Back-link sits above the headline so the cluster context is
+        // discoverable without taking up a full breadcrumb row (the
+        // app-level breadcrumbs from `Layout` already cover navigation).
+        Link { to: Route::ClusterDetail { id: id.clone() }, class: "link text-sm",
+            {t!("cluster-config-back")}
+        }
+        if !name.is_empty() {
+            PageHeader { class: "mt-1 mb-4", "{name} — {t!(\"cluster-detail-tab-config\")}" }
         }
 
-        div { class: "space-y-6",
+        ConfigEditor { cluster_id: id.clone(), read_only }
+
+        // Secrets + history land below the editor as full-width
+        // sections (the right rail handles drill-down navigation, no
+        // need for a side-by-side grid here).
+        div { class: "space-y-6 mt-10",
             div {
-                SectionHeading { {t!("cluster-detail-tab-config")} }
-                ConfigEditor { cluster_id: id.clone(), read_only }
+                SectionHeading { {t!("secrets-title")} }
+                p { class: "help mb-3", {t!("secrets-description")} }
+                SecretsEditor { cluster_id: id.clone(), read_only }
             }
-            div { class: "grid grid-cols-1 lg:grid-cols-2 gap-6",
-                div {
-                    SectionHeading { {t!("secrets-title")} }
-                    p { class: "help mb-3", {t!("secrets-description")} }
-                    SecretsEditor { cluster_id: id.clone(), read_only }
-                }
-                div {
-                    SectionHeading { {t!("cluster-detail-tab-config-history")} }
-                    ConfigHistory { cluster_id: id.clone() }
-                }
+            div { id: "sec-config-history",
+                SectionHeading { {t!("cluster-detail-tab-config-history")} }
+                ConfigHistory { cluster_id: id.clone() }
             }
         }
     }

@@ -790,6 +790,13 @@ config-filter-enabled = Enabled
 config-filter-modified = Modified
 config-filter-errors = Errors
 config-save-unsaved = Unsaved changes
+config-save-summary = { $fields ->
+    [one] { $fields } unsaved change
+   *[other] { $fields } unsaved changes
+} in { $sections ->
+    [one] { $sections } section
+   *[other] { $sections } sections
+}
 config-save-discard = Discard
 config-editor-last-saved = Last saved: { $time }
 config-editor-no-config = No config saved yet.
