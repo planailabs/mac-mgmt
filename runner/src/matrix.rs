@@ -228,8 +228,8 @@ mod tests {
     #[test]
     fn every_cell_parses_as_cluster_config() {
         let mut m = MatrixConfig::default();
-        m.ollama_model = "smollm2:1.7b".into();
-        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.ollama_model = "qwen2.5:0.5b".into();
+        m.lms_model = "qwen2.5-0.5b-instruct".into();
         m.cluster_sizes = vec![1, 2];
         m.cloud_api_keys
             .insert("anthropic".into(), "sk-ant-test".into());
@@ -246,8 +246,8 @@ mod tests {
     #[test]
     fn cluster_sizes_multiply_matrix() {
         let mut m = MatrixConfig::default();
-        m.ollama_model = "smollm2:1.7b".into();
-        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.ollama_model = "qwen2.5:0.5b".into();
+        m.lms_model = "qwen2.5-0.5b-instruct".into();
         m.agents = Some(vec!["openclaw".into()]);
         m.llms = Some(vec!["ollama".into()]);
 
@@ -276,8 +276,8 @@ mod tests {
     #[test]
     fn throttle_does_not_starve_n2_cells() {
         let mut m = MatrixConfig::default();
-        m.ollama_model = "smollm2:1.7b".into();
-        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.ollama_model = "qwen2.5:0.5b".into();
+        m.lms_model = "qwen2.5-0.5b-instruct".into();
         m.agents = Some(vec!["openclaw".into(), "none".into()]);
         m.llms = Some(vec!["ollama".into(), "lms".into()]);
         m.cluster_sizes = vec![1, 2];
@@ -370,8 +370,8 @@ mod tests {
     #[test]
     fn cells_interleave_sizes_per_agent_llm_pair() {
         let mut m = MatrixConfig::default();
-        m.ollama_model = "smollm2:1.7b".into();
-        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.ollama_model = "qwen2.5:0.5b".into();
+        m.lms_model = "qwen2.5-0.5b-instruct".into();
         m.agents = Some(vec!["openclaw".into(), "none".into()]);
         m.llms = Some(vec!["ollama".into(), "lms".into()]);
         m.cluster_sizes = vec![1, 2];
@@ -395,8 +395,8 @@ mod tests {
     #[test]
     fn sparse_configs_omit_irrelevant_sections() {
         let mut m = MatrixConfig::default();
-        m.ollama_model = "smollm2:1.7b".into();
-        m.lms_model = "smollm2-1.7b-instruct".into();
+        m.ollama_model = "qwen2.5:0.5b".into();
+        m.lms_model = "qwen2.5-0.5b-instruct".into();
         m.cluster_sizes = vec![1];
         let cells = generate(&m);
         for cell in cells {

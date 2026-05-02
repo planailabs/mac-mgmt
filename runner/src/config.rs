@@ -242,10 +242,10 @@ fn default_chaos_interval() -> String {
     "5m".into()
 }
 fn default_ollama_model() -> String {
-    "smollm2:1.7b".into()
+    "qwen2.5:0.5b".into()
 }
 fn default_lms_model() -> String {
-    "smollm2-1.7b-instruct".into()
+    "qwen2.5-0.5b-instruct".into()
 }
 fn default_cluster_sizes() -> Vec<u32> {
     vec![1, 2]
@@ -285,13 +285,13 @@ client_key = "/tmp/k"
     fn cluster_sizes_default_when_no_matrix_section() {
         let cfg: RunnerConfig = toml::from_str(CONFIG_MIN).expect("parse");
         assert_eq!(cfg.matrix.cluster_sizes, vec![1, 2]);
-        assert_eq!(cfg.matrix.ollama_model, "smollm2:1.7b");
+        assert_eq!(cfg.matrix.ollama_model, "qwen2.5:0.5b");
     }
 
     #[test]
     fn cluster_sizes_default_when_matrix_section_is_partial() {
         let mut t = CONFIG_MIN.to_string();
-        t.push_str("\n[matrix]\nollama_model = \"smollm2:1.7b\"\n");
+        t.push_str("\n[matrix]\nollama_model = \"qwen2.5:0.5b\"\n");
         let cfg: RunnerConfig = toml::from_str(&t).expect("parse");
         assert_eq!(cfg.matrix.cluster_sizes, vec![1, 2]);
     }

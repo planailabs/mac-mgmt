@@ -64,9 +64,9 @@ chaos_interval = "5m"
 
 [matrix]
 # Model pulled on every ollama-LLM matrix cell. Must support tools.
-ollama_model = "smollm2:1.7b"
+ollama_model = "qwen2.5:0.5b"
 # Model loaded on every lms-LLM matrix cell (LM Studio identifier).
-lms_model = "smollm2-1.7b-instruct"
+lms_model = "qwen2.5-0.5b-instruct"
 # Restrict the matrix axes (omit for defaults).
 # agents = ["openclaw", "none"]
 # llms = ["ollama", "lms", "cloud"]
