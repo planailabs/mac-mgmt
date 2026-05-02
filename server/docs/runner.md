@@ -81,7 +81,7 @@ A preflight `GET /api/self` runs at startup. If the URL redirects to an OIDC sig
 | Key | Default | Description |
 |---|---|---|
 | `project` | `"default"` | Incus project to create instances in |
-| `image_alias` | `"ubuntu/24.04/cloud"` | Image alias or fingerprint |
+| `image_alias` | `"ubuntu/26.04/cloud"` | Image alias or fingerprint |
 | `image_server` | `"https://images.linuxcontainers.org"` | Image server for remote lookups |
 | `instance_type` | `"container"` | `"container"` or `"virtual-machine"` |
 | `profiles` | `["default"]` | Incus profiles to attach |

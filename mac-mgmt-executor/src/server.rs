@@ -42,7 +42,7 @@ impl ServerHandler for ExecutorServer {
 impl ExecutorServer {
     #[tool(
         name = "os_list",
-        description = "List available OS images for container creation. Returns image aliases (like 'ubuntu/24.04', 'alpine/3.21') with descriptions. Use the 'filter' parameter to narrow results by distro name. Call this first if unsure which OS to use. Common choices: ubuntu/24.04 (general purpose, apt), alpine/3.21 (minimal, apk), debian/12 (stable, apt), fedora/42 (cutting edge, dnf)."
+        description = "List available OS images for container creation. Returns image aliases (like 'ubuntu/26.04', 'alpine/3.21') with descriptions. Use the 'filter' parameter to narrow results by distro name. Call this first if unsure which OS to use. Common choices: ubuntu/26.04 (general purpose, apt), alpine/3.21 (minimal, apk), debian/12 (stable, apt), fedora/42 (cutting edge, dnf)."
     )]
     async fn os_list(
         &self,

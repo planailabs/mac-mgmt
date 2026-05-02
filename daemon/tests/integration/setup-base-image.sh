@@ -15,9 +15,9 @@ echo "Building base image: $IMAGE_NAME"
 # Clean up any previous build container
 incus delete --force "$BUILD_CONTAINER" 2>/dev/null || true
 
-# Launch a fresh Ubuntu 24.04 container
-echo "Launching Ubuntu 24.04 container..."
-incus launch images:ubuntu/24.04 "$BUILD_CONTAINER" -c limits.memory=4GiB
+# Launch a fresh Ubuntu 26.04 container
+echo "Launching Ubuntu 26.04 container..."
+incus launch images:ubuntu/26.04 "$BUILD_CONTAINER" -c limits.memory=4GiB
 
 # Wait for container to be ready
 echo "Waiting for container to be ready..."

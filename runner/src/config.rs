@@ -54,7 +54,7 @@ pub struct IncusConfig {
     /// Target Incus project (default: "default").
     #[serde(default = "default_project")]
     pub project: String,
-    /// Image alias or fingerprint to launch (e.g. "images:ubuntu/24.04/cloud").
+    /// Image alias or fingerprint to launch (e.g. "images:ubuntu/26.04/cloud").
     #[serde(default = "default_image")]
     pub image_alias: String,
     /// Image server for remote image lookups (e.g. "https://images.linuxcontainers.org").
@@ -197,7 +197,7 @@ fn default_project() -> String {
     "default".into()
 }
 fn default_image() -> String {
-    "ubuntu/24.04/cloud".into()
+    "ubuntu/26.04/cloud".into()
 }
 fn default_image_server() -> String {
     "https://images.linuxcontainers.org".into()

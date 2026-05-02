@@ -26,7 +26,7 @@ client_key  = "/etc/mac-mgmt-runner/incus-client.key"
 # Optional server CA (omit to skip TLS verification — only for self-signed test hosts).
 # server_ca = "/etc/mac-mgmt-runner/incus-ca.crt"
 project = "default"
-image_alias = "ubuntu/24.04/cloud"
+image_alias = "ubuntu/26.04/cloud"
 image_server = "https://images.linuxcontainers.org"
 instance_type = "container"   # or "virtual-machine"
 profiles = ["default"]

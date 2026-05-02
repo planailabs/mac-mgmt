@@ -34,7 +34,7 @@ pub struct OsImage {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SystemCreateParams {
-    /// OS image alias (e.g. "ubuntu/24.04", "alpine/3.21", "debian/12").
+    /// OS image alias (e.g. "ubuntu/26.04", "alpine/3.21", "debian/12").
     /// Use os_list to discover available aliases.
     pub os: String,
     /// Optional instance name. Auto-generated if omitted.
