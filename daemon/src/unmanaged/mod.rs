@@ -70,6 +70,7 @@ pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<Unmanaged
         std::mem::take(&mut cfg.backup),
         &cfg.ai_proxy,
         &cfg.memvault,
+        std::mem::take(&mut cfg.custom_services),
     );
 
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));

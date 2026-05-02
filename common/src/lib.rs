@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 pub mod config_migrate;
+pub mod custom_service;
 
 // ── Secret wrapper for sensitive config values ──────────────────────────
 
@@ -1828,6 +1829,8 @@ pub struct DaemonConfig {
     pub backup: BackupConfig,
     #[serde(default)]
     pub memvault: MemvaultConfig,
+    #[serde(default, rename = "custom-service")]
+    pub custom_services: Vec<custom_service::CustomServiceConfig>,
 }
 
 impl DaemonSettings {
@@ -1869,6 +1872,17 @@ impl DaemonConfig {
         config.ollama.validate().map_err(|e| e.to_string())?;
         config.litellm.validate().map_err(|e| e.to_string())?;
         config.relay.validate().map_err(|e| e.to_string())?;
+        // Validate custom services and check for duplicate names.
+        let mut seen_names = std::collections::HashSet::new();
+        for cs in &config.custom_services {
+            cs.validate().map_err(|e| e.to_string())?;
+            if !seen_names.insert(&cs.name) {
+                return Err(format!(
+                    "custom-service: duplicate name '{}'",
+                    cs.name
+                ));
+            }
+        }
         Ok(config)
     }
 

@@ -7648,6 +7648,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "humantime",
+ "regex",
  "schemars",
  "sentry",
  "serde",

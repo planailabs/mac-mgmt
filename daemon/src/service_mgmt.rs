@@ -214,6 +214,7 @@ impl ServiceManager {
         let connectors =
             connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &unsloth_cfg, &litellm_cfg, &cloud_cfgs, &backup_cfg);
 
+        let custom_services = std::mem::take(&mut cfg.custom_services);
         let all_services = connectors::build_services(
             &global_cfg,
             openclaw_cfg,
@@ -226,6 +227,7 @@ impl ServiceManager {
             backup_cfg,
             &cfg.ai_proxy,
             &cfg.memvault,
+            custom_services,
         );
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();

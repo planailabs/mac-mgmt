@@ -6,6 +6,7 @@
 
 pub mod ai_proxy;
 pub mod apprise;
+pub mod custom;
 pub mod lms;
 pub mod mcporter;
 pub mod ollama;
@@ -228,6 +229,9 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
             probes.push(Box::new(fp));
         }
     }
+
+    // Custom service probes
+    probes.extend(custom::CustomProbe::from_configs(&cfg.custom_services));
 
     probes
 }

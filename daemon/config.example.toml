@@ -259,3 +259,90 @@ flavour = "cpu"
 # cluster_id = ""                        # base58-encoded 32-byte cluster ID, or leave empty
 # bootstrap_peers = []                   # libp2p multiaddrs for Kademlia bootstrap
 # web_port = 0                           # 0 = web UI disabled
+
+# ── Custom services ────────────────────────────────────────────────────
+# Define virtual services entirely through config. Each [[custom-service]]
+# entry creates one service that can expose tunnels, probes, inventory,
+# security checks, shell commands, and file tunnels.
+#
+# If `spawn` is present, the daemon supervises the process (managed mode).
+# If omitted, the service is integrated (no process, capabilities only).
+#
+# [[custom-service]]
+# name = "my-app"
+# enabled = true
+#
+# # Optional: spawn and supervise a process (makes it a managed service)
+# [custom-service.spawn]
+# command = "my-app-server"
+# args = ["--config=/etc/my-app/config.toml"]
+# [custom-service.spawn.env]
+# MY_APP_LOG = "info"
+#
+# # Optional: health check command (exit 0 = healthy)
+# [custom-service.health_check]
+# command = "curl"
+# args = ["-sf", "http://127.0.0.1:8080/health"]
+# timeout_secs = 10
+#
+# # TCP tunnels — expose local ports through the relay
+# [[custom-service.tunnels]]
+# name = "my-app-web"
+# host = "127.0.0.1"
+# port = 8080
+#
+# # File tunnels — expose files/folders for remote editing
+# [[custom-service.files]]
+# kind = "file"
+# name = "my-app-config"
+# path = "/etc/my-app/config.toml"
+# writable = true
+# description = "Main application config"
+#
+# # Shell commands — predefined commands for remote execution
+# [[custom-service.commands]]
+# name = "my-app-reload"
+# command = "systemctl"
+# args = ["reload", "my-app"]
+# description = "Reload application configuration"
+# timeout_secs = 30
+#
+# # Probes — periodic health/functional checks
+# [[custom-service.probes]]
+# name = "my-app-health"
+# kind = "liveness"                       # "liveness" or "functional"
+# [custom-service.probes.http]
+# url = "http://127.0.0.1:8080/health"
+# method = "GET"
+# expected_status = 200
+# timeout_secs = 10
+#
+# # Inventory — static facts collected every 6h
+# [[custom-service.inventory]]
+# id = "my_app_version"
+# name = "App Version"
+# value_type = "string"                   # "string", "number", "bool", "json"
+# [custom-service.inventory.command]
+# run = "my-app"
+# args = ["--version"]
+# parse_regex = "v([\\d.]+)"             # first capture group used
+#
+# # Samples — dynamic values collected every heartbeat (~1min)
+# [[custom-service.samples]]
+# id = "active_connections"
+# name = "Active Connections"
+# value_type = "number"
+# [custom-service.samples.command]
+# run = "curl"
+# args = ["-s", "http://127.0.0.1:8080/metrics"]
+# parse_regex = "connections_active (\\d+)"
+#
+# # Security checks — evaluated every 6h
+# [[custom-service.security]]
+# id = "config_perms"
+# severity = "medium"                     # "info", "low", "medium", "high", "critical"
+# message = "Config file should not be world-readable"
+# [custom-service.security.file_check]
+# path = "/etc/my-app/config.toml"
+# exists = true
+# max_mode = "0640"                       # octal permission ceiling

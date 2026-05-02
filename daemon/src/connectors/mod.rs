@@ -18,8 +18,8 @@ use anyhow::Result;
 
 use crate::managed_service::ManagedService;
 use crate::services::{
-    ai_proxy_svc::AiProxyService, apprise::Apprise, litellm::Litellm, lms::Lms,
-    mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw,
+    ai_proxy_svc::AiProxyService, apprise::Apprise, custom_svc::CustomService, litellm::Litellm,
+    lms::Lms, mcporter::McPorter, nvidia_smi::NvidiaSmi, ollama::Ollama, openclaw::OpenClaw,
     opencode::Opencode, restic::Restic, rocm_smi::RocmSmi, unsloth::Unsloth,
 };
 #[cfg(feature = "memvault")]
@@ -80,6 +80,7 @@ pub fn build_services(
     backup_cfg: BackupConfig,
     ai_proxy_cfg: &AiProxyConfig,
     memvault_cfg: &MemvaultConfig,
+    custom_services: Vec<mac_mgmt_common::custom_service::CustomServiceConfig>,
 ) -> Vec<Box<dyn ManagedService>> {
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
@@ -152,6 +153,20 @@ pub fn build_services(
         services.push(Box::new(MemvaultService::new(memvault_cfg)));
     } else {
         tracing::info!("memvault disabled");
+    }
+
+    for cs in custom_services {
+        if cs.enabled {
+            let mode = if cs.spawn.is_some() {
+                "managed"
+            } else {
+                "integrated"
+            };
+            tracing::info!("custom-service '{}' enabled ({mode})", cs.name);
+            services.push(Box::new(CustomService::new(cs)));
+        } else {
+            tracing::info!("custom-service '{}' disabled", cs.name);
+        }
     }
 
     services

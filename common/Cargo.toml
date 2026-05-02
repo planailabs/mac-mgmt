@@ -15,6 +15,7 @@ futures-util = { version = "0.3", default-features = false, features = ["io"] }
 humantime = "2"
 schemars = { version = "1.2.1", features = ["derive"] }
 sentry = { workspace = true, features = ["tracing"], optional = true }
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["serde"] }

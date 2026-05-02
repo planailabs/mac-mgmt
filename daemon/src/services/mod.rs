@@ -1,5 +1,6 @@
 pub mod ai_proxy_svc;
 pub mod apprise;
+pub mod custom_svc;
 #[cfg(feature = "memvault")]
 pub mod memvault_svc;
 pub mod gpu_tool_common;
