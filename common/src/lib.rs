@@ -1633,6 +1633,8 @@ pub struct ClusterConfig {
     pub healer: HealerClusterConfig,
     #[serde(default)]
     pub backup: BackupConfig,
+    #[serde(default)]
+    pub memvault: MemvaultConfig,
 }
 
 impl OllamaConfig {
