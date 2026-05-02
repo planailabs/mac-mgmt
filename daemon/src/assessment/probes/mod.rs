@@ -123,7 +123,7 @@ pub fn digest_hex(data: &[u8]) -> String {
 ///
 /// The probe's job is to verify the pipeline (daemon → backend → model →
 /// response) works end-to-end, not to enforce that a tiny canary model
-/// followed the prompt verbatim. smollm2:135m and other sub-500M models
+/// followed the prompt verbatim. qwen3:0.6b and other sub-1B models
 /// routinely paraphrase, omit casing, or pad responses in ways that break
 /// a literal `.contains("READY")` check even when the pipeline is fine.
 ///

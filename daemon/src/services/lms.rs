@@ -276,7 +276,11 @@ impl ManagedService for Lms {
 /// the managed post_start path and the unmanaged installer.
 pub fn load_configured_models(config: &mac_mgmt_common::LmsConfig) -> anyhow::Result<()> {
     use std::process::Command;
-    for model in &config.models {
+    let canary = crate::canary::LMS_CANARY;
+    let models: Vec<&str> = std::iter::once(canary)
+        .chain(config.models.iter().map(|s| s.as_str()))
+        .collect();
+    for model in models {
         tracing::info!("loading lms model: {model}");
         crate::sentry_ext::breadcrumb(
             "post_start",

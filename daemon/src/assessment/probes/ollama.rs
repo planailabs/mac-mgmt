@@ -1,8 +1,8 @@
-//! Ollama functional probe: full-prompt round-trip against a small canary model.
+//! Ollama functional probe: full-prompt round-trip against the canary model.
 //!
-//! Uses `smollm2:135m` (≈91 MB) as the canary so it's cheap to pull and quick
-//! to infer. If the model isn't present the probe triggers a blocking pull
-//! the first time it runs — subsequent probes reuse the cached weights.
+//! Uses `qwen3:0.6b` as the canary so it's cheap to pull and quick to infer.
+//! If the model isn't present the probe triggers a blocking pull the first
+//! time it runs — subsequent probes reuse the cached weights.
 
 use std::time::Instant;
 
@@ -15,8 +15,6 @@ use serde::{Deserialize, Serialize};
 use super::{
     Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex, response_has_content, snippet, timed,
 };
-
-pub const CANARY_MODEL: &str = "smollm2:135m";
 
 pub struct OllamaProbe {
     base_url: String,
@@ -33,7 +31,7 @@ impl OllamaProbe {
         let port = if cfg.port == 0 { 11434 } else { cfg.port };
         Self {
             base_url: format!("http://{host}:{port}"),
-            canary_model: CANARY_MODEL.to_string(),
+            canary_model: crate::canary::OLLAMA_CANARY.to_string(),
         }
     }
 

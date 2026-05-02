@@ -1,7 +1,7 @@
 //! AI proxy probes:
 //! - **Liveness** (`AiProxyProbe`): HTTP GET `/health` returns 200.
-//! - **Functional** (`AiProxyFunctionalProbe`): discovers a model via
-//!   `/v1/models`, then sends a canary prompt through `/v1/chat/completions`.
+//! - **Functional** (`AiProxyFunctionalProbe`): sends the canary model through
+//!   `/v1/chat/completions` using the ollama canary (`qwen3:0.6b`).
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -76,6 +76,7 @@ async fn liveness_impl(url: &str, ctx: &ProbeCtx) -> Result<ProbeResult> {
 pub struct AiProxyFunctionalProbe {
     base_url: String,
     bearer_token: String,
+    canary_model: String,
 }
 
 impl AiProxyFunctionalProbe {
@@ -90,38 +91,15 @@ impl AiProxyFunctionalProbe {
         Some(Self {
             base_url: format!("http://{host}:{}", cfg.port),
             bearer_token: token.clone(),
+            canary_model: crate::canary::OLLAMA_CANARY.to_string(),
         })
     }
 
     async fn run_impl(&self, ctx: &ProbeCtx) -> Result<ProbeResult> {
         let client = reqwest::Client::builder().timeout(ctx.timeout).build()?;
+        let model = self.canary_model.clone();
 
-        // 1. Discover available models.
-        let models_resp: ModelsResponse = client
-            .get(format!("{}/v1/models", self.base_url))
-            .bearer_auth(&self.bearer_token)
-            .send()
-            .await
-            .context("ai-proxy /v1/models request failed")?
-            .error_for_status()
-            .context("ai-proxy /v1/models non-2xx")?
-            .json()
-            .await
-            .context("failed to parse models response")?;
-
-        let model = match models_resp.data.first() {
-            Some(m) => m.id.clone(),
-            None => {
-                return Ok(ProbeResult {
-                    ok: false,
-                    error_class: Some("no_models".into()),
-                    error_detail: Some("no models available from any backend".into()),
-                    ..Default::default()
-                });
-            }
-        };
-
-        // 2. Send a canary chat completion.
+        // Send a canary chat completion.
         let resp: ChatResponse = client
             .post(format!("{}/v1/chat/completions", self.base_url))
             .bearer_auth(&self.bearer_token)
@@ -230,14 +208,4 @@ struct ChatReplyMessage {
 struct Usage {
     prompt_tokens: u32,
     completion_tokens: u32,
-}
-
-#[derive(Deserialize)]
-struct ModelsResponse {
-    data: Vec<Model>,
-}
-
-#[derive(Deserialize)]
-struct Model {
-    id: String,
 }

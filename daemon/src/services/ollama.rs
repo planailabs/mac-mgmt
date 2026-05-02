@@ -441,7 +441,11 @@ impl ManagedService for Ollama {
 /// the managed post_start path and the unmanaged installer.
 pub fn pull_configured_models(config: &mac_mgmt_common::OllamaConfig) -> anyhow::Result<()> {
     use std::process::Command;
-    for model in &config.models {
+    let canary = crate::canary::OLLAMA_CANARY;
+    let models: Vec<&str> = std::iter::once(canary)
+        .chain(config.models.iter().map(|s| s.as_str()))
+        .collect();
+    for model in models {
         tracing::info!("pulling ollama model: {model}");
         crate::sentry_ext::breadcrumb(
             "post_start",

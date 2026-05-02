@@ -1,10 +1,9 @@
 //! LM Studio functional probe: OpenAI-compatible `/v1/chat/completions` round-trip
-//! against the configured default model.
+//! against the canary model.
 //!
-//! LMS doesn't support auto-pull of small canary models from a CLI the way
-//! ollama does, so we use whatever model the cluster has configured as
-//! `lms.default_model` — if that's absent, the probe reports a configuration
-//! error rather than trying to load a model.
+//! Uses `lmstudio-community/Qwen3-0.6B-GGUF` as the canary, which is always
+//! loaded during `post_start`. If the model is missing, the probe reports an
+//! error (indicating `post_start` failed or the service restarted).
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -18,7 +17,7 @@ use super::{
 
 pub struct LmsProbe {
     base_url: String,
-    default_model: String,
+    canary_model: String,
 }
 
 impl LmsProbe {
@@ -31,19 +30,16 @@ impl LmsProbe {
         let port = if cfg.port == 0 { 1234 } else { cfg.port };
         Self {
             base_url: format!("http://{host}:{port}"),
-            default_model: cfg.default_model.clone(),
+            canary_model: crate::canary::LMS_CANARY.to_string(),
         }
     }
 
     async fn run_impl(&self, ctx: &ProbeCtx) -> Result<ProbeResult> {
-        if self.default_model.is_empty() {
-            anyhow::bail!("no default model configured for lms");
-        }
         let client = Client::builder().timeout(ctx.timeout).build()?;
         let resp: ChatResponse = client
             .post(format!("{}/v1/chat/completions", self.base_url))
             .json(&ChatBody {
-                model: self.default_model.clone(),
+                model: self.canary_model.clone(),
                 messages: vec![ChatMessage {
                     role: "user".into(),
                     content: ctx.canary_prompt.clone(),
@@ -74,7 +70,7 @@ impl LmsProbe {
             ok,
             tokens_in: resp.usage.as_ref().map(|u| u.prompt_tokens),
             tokens_out: resp.usage.as_ref().map(|u| u.completion_tokens),
-            model: Some(self.default_model.clone()),
+            model: Some(self.canary_model.clone()),
             canary_digest: Some(digest_hex(content.trim().as_bytes())),
             error_class: if ok {
                 None
