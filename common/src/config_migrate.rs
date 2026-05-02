@@ -22,6 +22,7 @@ use serde_json::Value;
 pub fn migrate(config: &mut Value) {
     migrate_001_provider_fields(config);
     migrate_002_relay_libp2p(config);
+    migrate_003_disable_providers_by_default(config);
 }
 
 // ── Migration 001 ─────────────────────────────────────────────────────
@@ -117,6 +118,24 @@ fn ws_url_to_multiaddr(url: &str) -> Option<String> {
     };
 
     Some(format!("/dns4/{host}/tcp/{port}/{scheme}"))
+}
+
+// ── Migration 003 ─────────────────────────────────────────────────────
+//
+// Context: providers (ollama, lms, openclaw) now default to disabled.
+// Existing configs that have a section for these providers but no explicit
+// `enabled` field were relying on the old default (true). This migration
+// adds `enabled: true` to existing sections so their behavior is preserved.
+
+fn migrate_003_disable_providers_by_default(config: &mut Value) {
+    for key in &["ollama", "lms", "openclaw"] {
+        if let Some(section) = config.get_mut(key).and_then(|s| s.as_object_mut()) {
+            // If the section exists but has no explicit `enabled`, the old
+            // default was `true` — make that explicit so the new default
+            // (`false`) doesn't silently disable it.
+            section.entry("enabled").or_insert(Value::Bool(true));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -328,5 +347,63 @@ mod tests {
         migrate(&mut cfg);
         let _: crate::ClusterConfig =
             serde_json::from_value(cfg).expect("migrated relay config must parse");
+    }
+
+    // ── Migration 003 tests ──────────────────────────────────────────
+
+    #[test]
+    fn migrate_003_adds_enabled_true_to_existing_sections() {
+        let mut cfg = json!({
+            "ollama": { "port": 11434 },
+            "lms": { "host": "127.0.0.1" },
+            "openclaw": {}
+        });
+        migrate(&mut cfg);
+        assert_eq!(cfg["ollama"]["enabled"], true);
+        assert_eq!(cfg["lms"]["enabled"], true);
+        assert_eq!(cfg["openclaw"]["enabled"], true);
+    }
+
+    #[test]
+    fn migrate_003_does_not_overwrite_explicit_enabled() {
+        let mut cfg = json!({
+            "ollama": { "enabled": false },
+            "openclaw": { "enabled": false }
+        });
+        migrate(&mut cfg);
+        assert_eq!(cfg["ollama"]["enabled"], false);
+        assert_eq!(cfg["openclaw"]["enabled"], false);
+    }
+
+    #[test]
+    fn migrate_003_no_sections_is_noop() {
+        let mut cfg = json!({});
+        migrate(&mut cfg);
+        assert!(cfg.get("ollama").is_none());
+        assert!(cfg.get("lms").is_none());
+        assert!(cfg.get("openclaw").is_none());
+    }
+
+    #[test]
+    fn migrate_003_idempotent() {
+        let mut cfg = json!({
+            "ollama": { "port": 11434 },
+            "openclaw": {}
+        });
+        migrate(&mut cfg);
+        let after_first = cfg.clone();
+        migrate(&mut cfg);
+        assert_eq!(cfg, after_first, "second run must be a no-op");
+    }
+
+    #[test]
+    fn migrate_003_config_parses() {
+        let mut cfg = json!({
+            "ollama": { "port": 11434 },
+            "openclaw": {}
+        });
+        migrate(&mut cfg);
+        let _: crate::ClusterConfig =
+            serde_json::from_value(cfg).expect("migrated config must parse");
     }
 }

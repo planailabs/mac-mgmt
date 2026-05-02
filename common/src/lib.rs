@@ -637,7 +637,7 @@ pub enum LlmProvider {
 
 impl Default for LlmProvider {
     fn default() -> Self {
-        Self::Ollama
+        Self::None
     }
 }
 
@@ -670,7 +670,7 @@ pub enum AgentProvider {
 
 impl Default for AgentProvider {
     fn default() -> Self {
-        Self::Openclaw
+        Self::None
     }
 }
 
@@ -886,7 +886,7 @@ fn default_true() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
     #[schemars(description = "Whether this provider is installed and started")]
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enabled: bool,
     #[schemars(description = "Ollama listen address")]
     #[serde(default = "default_host")]
@@ -908,7 +908,7 @@ pub struct OllamaConfig {
 impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             host: default_host(),
             port: default_port(),
             models: default_models(),
@@ -936,7 +936,7 @@ fn default_lms_model() -> String {
 #[serde(deny_unknown_fields)]
 pub struct LmsConfig {
     #[schemars(description = "Whether this provider is installed and started")]
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enabled: bool,
     #[schemars(description = "LM Studio listen address")]
     #[serde(default = "default_host")]
@@ -955,7 +955,7 @@ pub struct LmsConfig {
 impl Default for LmsConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             host: default_host(),
             port: default_lms_port(),
             models: default_lms_models(),
@@ -1169,7 +1169,7 @@ pub struct OpenClawTelegramConfig {
 #[serde(deny_unknown_fields)]
 pub struct OpenClawConfig {
     #[schemars(description = "Whether the OpenClaw agent is installed and started")]
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enabled: bool,
     #[schemars(description = "Gateway settings merged into ~/.openclaw/openclaw.json")]
     #[serde(default)]
@@ -1190,7 +1190,7 @@ pub struct OpenClawConfig {
 impl Default for OpenClawConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             gateway: None,
             skills: None,
             telegram: None,
@@ -1927,11 +1927,11 @@ mod tests {
     fn valid_minimal_config() {
         let config = ClusterConfig::from_toml("").unwrap();
         assert_eq!(config.ollama.flavour, "cpu");
-        assert_eq!(config.global.default_llm, LlmProvider::Ollama);
-        assert_eq!(config.global.default_agent, AgentProvider::Openclaw);
-        assert!(config.ollama.enabled);
-        assert!(config.lms.enabled);
-        assert!(config.openclaw.enabled);
+        assert_eq!(config.global.default_llm, LlmProvider::None);
+        assert_eq!(config.global.default_agent, AgentProvider::None);
+        assert!(!config.ollama.enabled);
+        assert!(!config.lms.enabled);
+        assert!(!config.openclaw.enabled);
         assert!(config.cloud.is_empty());
     }
 
@@ -1982,6 +1982,7 @@ key = "value"
     fn rejects_invalid_flavour() {
         let toml = r#"
 [ollama]
+enabled = true
 flavour = "metal"
 "#;
         let err = ClusterConfig::from_toml(toml).unwrap_err();
@@ -1992,6 +1993,7 @@ flavour = "metal"
     fn rejects_empty_models() {
         let toml = r#"
 [ollama]
+enabled = true
 models = []
 "#;
         let err = ClusterConfig::from_toml(toml).unwrap_err();
@@ -2105,10 +2107,10 @@ log_level = "verbose"
     // ── Provider toggle tests ──────────────────────────────────────────
 
     #[test]
-    fn providers_default_to_ollama_and_openclaw() {
+    fn providers_default_to_none() {
         let config = ClusterConfig::from_toml("").unwrap();
-        assert_eq!(config.global.default_llm, LlmProvider::Ollama);
-        assert_eq!(config.global.default_agent, AgentProvider::Openclaw);
+        assert_eq!(config.global.default_llm, LlmProvider::None);
+        assert_eq!(config.global.default_agent, AgentProvider::None);
     }
 
     #[test]
@@ -2124,30 +2126,29 @@ default_agent = "none"
     }
 
     #[test]
-    fn enabled_flags_default_to_true() {
+    fn enabled_flags_default_to_false() {
         let config = ClusterConfig::from_toml("").unwrap();
-        assert!(config.ollama.enabled);
-        assert!(config.lms.enabled);
-        assert!(config.openclaw.enabled);
-    }
-
-    #[test]
-    fn enabled_flags_can_be_disabled() {
-        let toml = r#"
-[ollama]
-enabled = false
-models = []
-
-[lms]
-enabled = false
-
-[openclaw]
-enabled = false
-"#;
-        let config = ClusterConfig::from_toml(toml).unwrap();
         assert!(!config.ollama.enabled);
         assert!(!config.lms.enabled);
         assert!(!config.openclaw.enabled);
+    }
+
+    #[test]
+    fn enabled_flags_can_be_enabled() {
+        let toml = r#"
+[ollama]
+enabled = true
+
+[lms]
+enabled = true
+
+[openclaw]
+enabled = true
+"#;
+        let config = ClusterConfig::from_toml(toml).unwrap();
+        assert!(config.ollama.enabled);
+        assert!(config.lms.enabled);
+        assert!(config.openclaw.enabled);
     }
 
     #[test]

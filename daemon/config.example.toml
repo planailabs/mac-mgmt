@@ -27,9 +27,9 @@
 # Individual providers are toggled via their own `enabled` flag.
 [global]
 # Default LLM backend: "ollama", "lms", "cloud", or "none"
-default_llm = "ollama"
+default_llm = "none"
 # Default agent provider: "openclaw" or "none"
-default_agent = "openclaw"
+default_agent = "none"
 
 # ── Metrics ──────────────────────────────────────────────────────────
 # Prometheus metrics endpoint. Scraped by monitoring systems.
@@ -42,7 +42,7 @@ port = 9396
 # OpenClaw AI gateway configuration.
 # Toggle with enabled = true/false. Active when global.default_agent = "openclaw".
 # [openclaw]
-# enabled = true
+# enabled = false
 # Gateway settings merged into ~/.openclaw/openclaw.json.
 # These are typed, validated fields for common settings.
 # [openclaw.gateway]
@@ -77,7 +77,7 @@ port = 9396
 # ── Ollama ───────────────────────────────────────────────────────────
 # Ollama LLM inference engine. Toggle with enabled = true/false.
 [ollama]
-# enabled = true
+# enabled = false
 host = "127.0.0.1"
 port = 11434
 # Models to pull on startup. At least one required.
