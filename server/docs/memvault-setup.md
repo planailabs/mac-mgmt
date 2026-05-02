@@ -36,8 +36,6 @@ With defaults, memvault will:
 | `cluster_id` | `""` | Base58-encoded 32-byte cluster ID, or `"auto"` to generate on first run |
 | `bootstrap_peers` | `[]` | libp2p multiaddrs for Kademlia bootstrap |
 | `port` | `8401` | API server port (`0` to disable the API server entirely) |
-| `web_enabled` | `false` | Expose the web UI on the API port |
-| `auth_token_hash` | *none* | Hex-encoded SHA2-256 multihash of the bearer token (empty = no auth) |
 
 ## Cluster ID
 
@@ -81,45 +79,11 @@ For multi-node clusters, set the same explicit `cluster_id` on all nodes so they
    - Block count and store size
    - Cluster ID and bootstrap peers in the inventory
 
-## Securing the API
+## API authentication
 
-The API server listens on localhost by default. To add bearer token authentication:
+The API server listens on localhost and is secured with a bearer token that is automatically generated on first run. The token is stored at `{data_dir}/api.token` with `0600` permissions.
 
-1. Generate a token and compute its multihash (same procedure as [AI Proxy keys](/docs/ai-proxy-setup#generating-api-keys)):
-   ```
-   echo -n "your-memvault-token" | python3 -c "
-   import hashlib, sys
-   d = hashlib.sha256(sys.stdin.buffer.read()).digest()
-   print(bytes([0x12, 0x20]).hex() + d.hex())
-   "
-   ```
-
-2. Set `auth_token_hash` in the config:
-   ```json
-   {
-     "memvault": {
-       "enabled": true,
-       "auth_token_hash": "1220<sha256-hex>"
-     }
-   }
-   ```
-
-Requests to the API must then include `Authorization: Bearer your-memvault-token`.
-
-## Enabling the web UI
-
-Set `web_enabled` to `true` to serve the web interface on the same port as the API:
-
-```json
-{
-  "memvault": {
-    "enabled": true,
-    "web_enabled": true
-  }
-}
-```
-
-The web UI is then accessible at `http://127.0.0.1:8401/`. When the relay is configured, the memvault port is exposed as a TCP tunnel named `memvault`, making the web UI accessible remotely through the relay.
+The MCP server (`plan-ai-memvault`) reads this token file automatically to authenticate against the daemon's API.
 
 ## Health monitoring
 

@@ -23,6 +23,7 @@ pub fn migrate(config: &mut Value) {
     migrate_001_provider_fields(config);
     migrate_002_relay_libp2p(config);
     migrate_003_disable_providers_by_default(config);
+    migrate_004_memvault_remove_fields(config);
 }
 
 // ── Migration 001 ─────────────────────────────────────────────────────
@@ -135,6 +136,19 @@ fn migrate_003_disable_providers_by_default(config: &mut Value) {
             // (`false`) doesn't silently disable it.
             section.entry("enabled").or_insert(Value::Bool(true));
         }
+    }
+}
+
+// ── Migration 004 ─────────────────────────────────────────────────────
+//
+// Context: memvault auth token moved from config (`auth_token_hash`) to
+// an auto-generated file on disk (`data_dir/api.token`). The
+// `web_enabled` field was never wired up and is removed.
+
+fn migrate_004_memvault_remove_fields(config: &mut Value) {
+    if let Some(mv) = config.get_mut("memvault").and_then(|v| v.as_object_mut()) {
+        mv.remove("auth_token_hash");
+        mv.remove("web_enabled");
     }
 }
 
@@ -401,6 +415,51 @@ mod tests {
         let mut cfg = json!({
             "ollama": { "port": 11434 },
             "openclaw": {}
+        });
+        migrate(&mut cfg);
+        let _: crate::ClusterConfig =
+            serde_json::from_value(cfg).expect("migrated config must parse");
+    }
+
+    // ── Migration 004 tests ──────────────────────────────────────────
+
+    #[test]
+    fn migrate_004_strips_removed_memvault_fields() {
+        let mut cfg = json!({
+            "memvault": {
+                "enabled": true,
+                "port": 8401,
+                "web_enabled": true,
+                "auth_token_hash": "1220abcd"
+            }
+        });
+        migrate(&mut cfg);
+        let mv = cfg["memvault"].as_object().unwrap();
+        assert!(!mv.contains_key("web_enabled"));
+        assert!(!mv.contains_key("auth_token_hash"));
+        assert_eq!(mv["enabled"], true);
+        assert_eq!(mv["port"], 8401);
+    }
+
+    #[test]
+    fn migrate_004_idempotent() {
+        let mut cfg = json!({
+            "memvault": { "enabled": true, "port": 8401 }
+        });
+        migrate(&mut cfg);
+        let after_first = cfg.clone();
+        migrate(&mut cfg);
+        assert_eq!(cfg, after_first);
+    }
+
+    #[test]
+    fn migrate_004_config_parses() {
+        let mut cfg = json!({
+            "memvault": {
+                "enabled": true,
+                "web_enabled": false,
+                "auth_token_hash": "1220abcd"
+            }
         });
         migrate(&mut cfg);
         let _: crate::ClusterConfig =

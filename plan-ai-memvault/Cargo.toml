@@ -12,14 +12,8 @@ name = "plan-ai-memvault"
 path = "src/main.rs"
 
 [dependencies]
-memvault-core = { path = "../memvault/crates/memvault-core" }
-memvault-api = { path = "../memvault/crates/memvault-api" }
-memvault-attach = { path = "../memvault/crates/memvault-attach" }
-memvault-extract = { path = "../memvault/crates/memvault-extract" }
-memvault-store = { path = "../memvault/crates/memvault-store" }
-memvault-doc = { path = "../memvault/crates/memvault-doc" }
-memvault-query = { path = "../memvault/crates/memvault-query" }
 rmcp = { version = "0.17", features = ["server", "transport-io", "macros"], default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

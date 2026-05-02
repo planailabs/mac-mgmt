@@ -258,9 +258,7 @@ flavour = "cpu"
 # data_dir = "~/.local/share/memvault"
 # cluster_id = ""                        # base58-encoded 32-byte cluster ID, or leave empty
 # bootstrap_peers = []                   # libp2p multiaddrs for Kademlia bootstrap
-# port = 8401                            # API server port
-# web_enabled = false                    # expose web UI on the API port
-# auth_token_hash = ""                   # hex-encoded multihash of bearer token (empty = no auth)
+# port = 8401                            # API server port (token auto-generated in data_dir/api.token)
 
 # ── Custom services ────────────────────────────────────────────────────
 # Define virtual services entirely through config. Each [[custom-service]]

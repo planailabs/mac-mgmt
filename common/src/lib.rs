@@ -1598,15 +1598,6 @@ pub struct MemvaultConfig {
     #[schemars(description = "Port for the memvault API server (default 8401)")]
     #[serde(default = "default_memvault_port")]
     pub port: u16,
-    #[schemars(description = "Whether the web UI is accessible on the API port", extend("x-advanced" = true))]
-    #[serde(default)]
-    pub web_enabled: bool,
-    #[schemars(
-        description = "Hex-encoded multihash of the bearer token for the memvault API (empty = no auth)",
-        extend("x-advanced" = true),
-    )]
-    #[serde(default)]
-    pub auth_token_hash: Option<String>,
 }
 
 // ── Cluster Config (what the server manages per-cluster) ──────────────

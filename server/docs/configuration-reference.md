@@ -256,9 +256,7 @@ Distributed p2p memory store for AI context sharing across cluster nodes. Requir
 | `data_dir` | `"~/.local/share/memvault"` | Data directory for storage (redb, identity) |
 | `cluster_id` | `""` | Base58-encoded 32-byte cluster ID, or `"auto"` to generate on first run |
 | `bootstrap_peers` | `[]` | libp2p multiaddrs for Kademlia bootstrap |
-| `port` | `8401` | API server port |
-| `web_enabled` | `false` | Expose the web UI on the API port |
-| `auth_token_hash` | *none* | Hex-encoded SHA2-256 multihash of the bearer token (empty = no auth) |
+| `port` | `8401` | API server port (bearer token auto-generated in `data_dir/api.token`) |
 
 ## Example configuration
 
@@ -329,8 +327,7 @@ Distributed p2p memory store for AI context sharing across cluster nodes. Requir
   },
   "memvault": {
     "enabled": true,
-    "port": 8401,
-    "web_enabled": true
+    "port": 8401
   },
   "metrics": {
     "port": 9396
