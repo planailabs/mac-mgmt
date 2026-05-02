@@ -359,7 +359,7 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
         if entries.is_empty() {
             HelpText { class: "mb-3", {t!("secrets-empty")} }
         } else {
-            div { class: "border border-line rounded overflow-hidden mb-3",
+            div { class: "border border-line rounded overflow-x-auto mb-3",
                 table { class: "w-full text-sm",
                     thead {
                         tr { class: "bg-surface-2 text-left",

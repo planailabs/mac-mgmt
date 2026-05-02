@@ -254,7 +254,7 @@ pub fn RolloutGroupDetail(id: String) -> Element {
             rsx! {
                 div { class: "flex justify-between items-center mb-4",
                     div {
-                        h1 { class: "h-display", "{info.name}" }
+                        h1 { class: "h-page mb-0", "{info.name}" }
                         if *editing_desc.read() {
                             form { class: "flex items-center gap-2 mt-1",
                                 onsubmit: {

@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::web::app::Route;
 
-use super::navbar::{MobileDrawer, Sidebar};
+use super::navbar::{ExpandedGroups, MobileDrawer, Sidebar, SidebarCollapsed};
 use super::topbar::{Topbar, TopbarMeta};
+use super::ui::Breadcrumbs;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UserInfo {
@@ -103,42 +104,105 @@ pub fn Layout() -> Element {
     // hamburger and the drawer itself.
     let drawer_open = use_signal(|| false);
 
-    rsx! {
-        div { class: "h-screen w-full flex overflow-hidden",
-            // ── Desktop sidebar (220px column, hidden under xl)
-            Sidebar { is_admin }
-
-            // ── Main column: topbar + optional banner + page content
-            div { class: "flex-1 flex flex-col min-w-0 overflow-hidden",
-                Topbar {
-                    display_name: display_name.clone(),
-                    is_drawer_open: drawer_open,
+    // Sidebar collapsed state (desktop only). Shared via context so the
+    // topbar's Logo button can toggle it without prop-drilling. Restored
+    // from localStorage on first paint, persisted whenever it flips.
+    let mut sidebar_collapsed = use_signal(|| false);
+    use_context_provider(|| SidebarCollapsed(sidebar_collapsed));
+    use_effect(move || {
+        spawn(async move {
+            let r = document::eval(
+                "try { return localStorage.getItem('nav.sidebar.collapsed') || '0'; } catch(e) { return '0'; }",
+            )
+            .await;
+            if let Ok(val) = r {
+                if val.as_str() == Some("1") {
+                    sidebar_collapsed.set(true);
                 }
+            }
+        });
+    });
+    use_effect(move || {
+        let v = if *sidebar_collapsed.read() { "1" } else { "0" };
+        document::eval(&format!(
+            "try {{ localStorage.setItem('nav.sidebar.collapsed', '{v}'); }} catch(e) {{}}",
+        ));
+    });
 
-                if let Some(email) = &impersonating_email {
-                    div { class: "shrink-0 banner banner-warn flex items-center justify-center gap-3",
-                        span { {t!("impersonating", email: email.clone())} }
-                        button {
-                            class: "btn btn-xs btn-warn",
-                            onclick: move |_| {
-                                document::eval(
-                                    "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
-                                );
-                            },
-                            {t!("impersonate-stop")}
+    // Per-group expansion (desktop sidebar). Default: only Overview
+    // expanded — keeps the sidebar tidy on first visit. Persisted as a
+    // comma-joined list of nav-* keys to avoid pulling serde_json into
+    // the WASM bundle.
+    let mut expanded_groups = use_signal(|| vec!["nav-overview".to_string()]);
+    use_context_provider(|| ExpandedGroups(expanded_groups));
+    use_effect(move || {
+        spawn(async move {
+            let r = document::eval(
+                "try { var v = localStorage.getItem('nav.groups.expanded'); return v == null ? null : v; } catch(e) { return null; }",
+            )
+            .await;
+            if let Ok(val) = r {
+                if let Some(s) = val.as_str() {
+                    let parsed: Vec<String> = s
+                        .split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
+                    expanded_groups.set(parsed);
+                }
+            }
+        });
+    });
+    use_effect(move || {
+        let v = expanded_groups.read().join(",");
+        // Group keys are static `nav-*` strings — no quote-escaping needed.
+        document::eval(&format!(
+            "try {{ localStorage.setItem('nav.groups.expanded', '{v}'); }} catch(e) {{}}",
+        ));
+    });
+
+    rsx! {
+        // Topbar at the top stretches the full viewport — its left
+        // segment owns the brand mark over the sidebar column, the
+        // right segment carries the controls + the hairline border-b
+        // that separates chrome from content. Sidebar + main share
+        // the row beneath.
+        div { class: "h-screen w-full flex flex-col overflow-hidden",
+            Topbar {
+                display_name: display_name.clone(),
+                is_drawer_open: drawer_open,
+            }
+
+            div { class: "flex flex-1 overflow-hidden",
+                Sidebar { is_admin }
+
+                div { class: "flex-1 flex flex-col min-w-0 overflow-hidden",
+                    if let Some(email) = &impersonating_email {
+                        div { class: "shrink-0 banner banner-warn flex items-center justify-center gap-3",
+                            span { {t!("impersonating", email: email.clone())} }
+                            button {
+                                class: "btn btn-xs btn-warn",
+                                onclick: move |_| {
+                                    document::eval(
+                                        "document.cookie = 'impersonate_user_id=; Path=/; Max-Age=0'; window.location.reload();"
+                                    );
+                                },
+                                {t!("impersonate-stop")}
+                            }
                         }
                     }
-                }
 
-                main { class: "flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8",
-                    SuspenseBoundary {
-                        fallback: |_| rsx! { LoadingSpinner {} },
-                        Outlet::<Route> {}
+                    main { class: "flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8",
+                        Breadcrumbs {}
+                        SuspenseBoundary {
+                            fallback: |_| rsx! { LoadingSpinner {} },
+                            Outlet::<Route> {}
+                        }
                     }
                 }
             }
 
-            // ── Mobile drawer (overlay, hidden on xl+)
+            // Mobile drawer (overlay, hidden on xl+)
             MobileDrawer {
                 is_admin,
                 display_name,

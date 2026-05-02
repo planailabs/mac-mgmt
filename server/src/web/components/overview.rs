@@ -312,14 +312,7 @@ fn render_overview(d: &OverviewData) -> Element {
     rsx! {
         // ── Hero ──
         PageHero {
-            kicker: t!("overview-kicker").to_uppercase(),
-            title: rsx! {
-                "{d.instances_online} "
-                span { class: "text-fg-muted", "instances " }
-                span { class: "text-fg-muted", "across " }
-                "{d.instances_total} "
-                span { class: "text-fg-muted", "heartbeats" }
-            },
+            title: rsx! { {t!("nav-command-center")} },
             right: rsx! {
                 div { class: "flex items-center gap-2 text-fg-muted text-xs",
                     Dot { variant: PillVariant::Ok }

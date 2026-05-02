@@ -290,7 +290,7 @@ pub fn UserDetail(id: String) -> Element {
                 div { class: "flex flex-col sm:flex-row sm:justify-between sm:items-end gap-3 mb-4",
                     div { class: "min-w-0",
                         Kicker { class: "mb-2", {t!("nav-users")} }
-                        h1 { class: "h-display break-all", "{info.email}" }
+                        h1 { class: "h-page mb-0 break-all", "{info.email}" }
                         p { class: "help mt-2",
                             if !info.name.is_empty() {
                                 span { "{info.name} · " }

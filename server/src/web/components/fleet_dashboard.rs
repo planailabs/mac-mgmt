@@ -620,27 +620,11 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
 
             rsx! {
                 // ── Page hero ────────────────────────────────────────
-                // Composes kicker + display title + right-side live
-                // indicator. The "live" dot pulses via the dot's halo;
-                // the timestamp comes from the existing 5s refresh loop.
+                // Composes display title + right-side live indicator.
+                // The kicker slot was dropped now that breadcrumbs sit
+                // above every page hero.
                 PageHero {
-                    kicker: t!("fleet-title").to_uppercase(),
-                    // Match the design's hero pattern ("47 instances
-                    // healthy across 14 clusters") with muted connective
-                    // words. Falls back to a calmer empty-state copy
-                    // when the fleet hasn't reported yet — the giant
-                    // "0 · 0" reads broken.
-                    title: rsx! {
-                        if online_instances == 0 && total_clusters == 0 {
-                            span { class: "text-fg-muted", {t!("fleet-no-daemons")} }
-                        } else {
-                            "{online_instances} "
-                            span { class: "text-fg-muted", "instances " }
-                            span { class: "text-fg-muted", "across " }
-                            "{total_clusters} "
-                            span { class: "text-fg-muted", "clusters" }
-                        }
-                    },
+                    title: rsx! { {t!("nav-fleet")} },
                     right: rsx! {
                         div { class: "flex items-center gap-2 text-fg-muted text-xs",
                             Dot { variant: PillVariant::Ok }
@@ -719,7 +703,8 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                         }
                     }
                     div { class: "card",
-                        table { class: "table",
+                        div { class: "overflow-x-auto",
+                            table { class: "table",
                             thead { class: "thead",
                                 tr {
                                     SortableTh { label: t!("fleet-col-cluster"), sort_key: "cluster".to_string(), sort }
@@ -1066,6 +1051,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                             }
                         }
                     }
+                }
                 }
             }
         }

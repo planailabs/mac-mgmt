@@ -57,6 +57,7 @@ nav-users = Users
 nav-skill-centers = Skill Centers
 nav-version = Version
 nav-rollouts = Rollouts
+nav-rollout-groups = Rollout Groups
 nav-daemon-versions = Daemon Versions
 nav-resources = Resources
 nav-docs = Docs
@@ -65,6 +66,14 @@ nav-sign-out = Sign out
 nav-view-profile = View Profile
 nav-open-main-menu = Open main menu
 nav-close-menu = Close menu
+nav-toggle-sidebar = Toggle sidebar
+breadcrumb-aria = Breadcrumb
+breadcrumb-new = New
+breadcrumb-edit = Edit
+breadcrumb-config = Config
+breadcrumb-packages = Packages
+breadcrumb-search = Search
+breadcrumb-profile = Profile
 
 ## ── Language Picker ─────────────────────────────────────────────
 

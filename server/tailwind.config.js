@@ -19,6 +19,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        bg: tokenColor('c-bg'),
         brand: {
           DEFAULT: tokenColor('c-brand'),
           strong:  tokenColor('c-brand-strong'),

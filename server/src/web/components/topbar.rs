@@ -17,6 +17,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, t, unic_langid::langid};
 
 use crate::web::app::Route;
+use crate::web::components::navbar::Logo;
 
 /// Page-level metadata read by the `Topbar` component. Pages set this
 /// via `use_topbar`. Keep it small — anything heavier (per-page
@@ -80,34 +81,20 @@ pub fn Topbar(
     /// Bound to the mobile drawer. Topbar's hamburger toggles this.
     is_drawer_open: Signal<bool>,
 ) -> Element {
-    let meta = use_context::<Signal<TopbarMeta>>();
-    let title = meta.read().title.clone();
-    let subtitle = meta.read().subtitle.clone();
-
     rsx! {
         header { class: "topbar",
-            // ── Left: page title (hidden on very small screens to give
-            // room for the hamburger and user pill).
-            div { class: "min-w-0 flex items-center gap-3",
-                // Mobile hamburger lives on the left for thumb reach.
-                MobileMenuButton { is_open: is_drawer_open }
-                if !title.is_empty() {
-                    span { class: "text-fg-strong font-semibold text-sm truncate",
-                        "{title}"
-                    }
-                }
-                if let Some(s) = subtitle {
-                    span { class: "hidden sm:inline text-fg-muted text-xs truncate",
-                        "{s}"
-                    }
-                }
+            // ── Left segment: brand logo. On desktop it sits over the
+            // sidebar column (220px wide, no border-b — seamless to
+            // the sidebar below). On mobile it just sits at the left
+            // and the controls share the same hairline at the bottom.
+            div { class: "topbar-logo-pad",
+                Logo {}
             }
 
-            // ── Right: global controls. Below xl the language picker
-            // and user pill move into the mobile drawer (the hamburger
-            // already opens it), so we keep only the theme toggle on
-            // narrow screens to avoid the cluster overflowing the topbar.
-            div { class: "flex items-center gap-1",
+            // ── Right segment: global controls. Carries the hairline
+            // border-b that separates topbar from main content. Mobile
+            // order: [theme][hamburger]. Desktop: [lang][theme][user].
+            div { class: "topbar-controls",
                 div { class: "hidden xl:flex items-center gap-1",
                     LanguagePicker {}
                 }
@@ -117,6 +104,7 @@ pub fn Topbar(
                         UserPill { display_name }
                     }
                 }
+                MobileMenuButton { is_open: is_drawer_open }
             }
         }
     }

@@ -456,7 +456,7 @@ pub fn ClusterDetail(id: String) -> Element {
                                 }
                             }
                         } else {
-                            h1 { class: "h-display", "{name}" }
+                            h1 { class: "h-page mb-0", "{name}" }
                         }
                     }
                     if is_admin && !*editing.read() {

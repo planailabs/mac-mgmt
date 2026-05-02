@@ -16,6 +16,20 @@ use dioxus_i18n::t;
 
 use crate::web::app::Route;
 
+/// Newtype wrapping the desktop-sidebar collapsed signal so it lives in
+/// the context graph without colliding with other `Signal<bool>` values.
+/// Provided by `Layout`; consumed by `Sidebar` (slide-off animation) and
+/// the topbar `Logo` (click toggles it).
+#[derive(Clone, Copy)]
+pub struct SidebarCollapsed(pub Signal<bool>);
+
+/// Newtype wrapping the per-group expanded state for the desktop sidebar.
+/// Stored as a list of expanded `nav-*` keys so we can persist as a
+/// comma-joined string and skip serde_json in the WASM bundle. Provided
+/// by `Layout`; consumed by the per-group toggle in `NavGroupItem`.
+#[derive(Clone, Copy)]
+pub struct ExpandedGroups(pub Signal<Vec<String>>);
+
 #[server]
 async fn get_swagger_url() -> Result<String, ServerFnError> {
     let cfg = crate::config::config();
@@ -110,37 +124,65 @@ pub fn get_nav_groups(is_admin: bool, swagger_url: Option<String>) -> Vec<NavGro
 
 // -- Logo ------------------------------------------------------------------
 
-/// Brand mark — orange rounded-square outline + filled inner square,
-/// followed by "plan.ai mgmt" wordmark. Used at the top of both the
-/// desktop sidebar and the mobile drawer.
+/// SVG + wordmark. Used inside both the desktop button and the mobile
+/// link variants of `Logo`. Always full-size — the brand mark stays
+/// visible whether the sidebar is open or collapsed.
 #[component]
-fn Logo() -> Element {
+fn LogoMark() -> Element {
     rsx! {
+        svg {
+            class: "shrink-0",
+            width: "20",
+            height: "20",
+            view_box: "0 0 20 20",
+            fill: "none",
+            rect {
+                x: "1.5", y: "1.5", width: "17", height: "17", rx: "5",
+                stroke: "rgb(var(--c-brand))",
+                "stroke-width": "1.6",
+            }
+            rect {
+                x: "6", y: "6", width: "8", height: "8", rx: "1.5",
+                fill: "rgb(var(--c-brand))",
+            }
+        }
+        // Wordmark is brand chrome, not translatable copy — hard-code so
+        // we don't accidentally render "<i18n value> mgmt" twice when
+        // the i18n key already contains the full brand string.
+        span { class: "whitespace-nowrap",
+            "plan.ai "
+            span { class: "text-fg-muted font-medium", "mgmt" }
+        }
+    }
+}
+
+/// Brand mark in the topbar's left edge.
+///
+/// * **Mobile** — renders as a `<Link to=Overview>` so a tap brings the
+///   user home. The sidebar collapse signal is desktop-only.
+/// * **Desktop** — renders as a `<button>` that toggles
+///   `SidebarCollapsed`, sliding the sidebar away (and back) per the
+///   user's preference. Persistence is handled in `Layout`.
+#[component]
+pub fn Logo() -> Element {
+    let SidebarCollapsed(mut collapsed) = use_context::<SidebarCollapsed>();
+
+    rsx! {
+        // Desktop variant — sidebar toggle.
+        button {
+            class: "hidden xl:flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight cursor-pointer rounded-md px-1 py-1 -mx-1 hover:bg-surface-3 focus:outline-none focus:ring-2 focus:ring-info transition-colors",
+            "aria-label": t!("nav-toggle-sidebar"),
+            onclick: move |_| {
+                let cur = *collapsed.read();
+                collapsed.set(!cur);
+            },
+            LogoMark {}
+        }
+        // Mobile variant — navigates home.
         Link {
-            to: Route::ClusterList {},
-            class: "flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight",
-            svg {
-                width: "20",
-                height: "20",
-                view_box: "0 0 20 20",
-                fill: "none",
-                rect {
-                    x: "1.5", y: "1.5", width: "17", height: "17", rx: "5",
-                    stroke: "rgb(var(--c-brand))",
-                    "stroke-width": "1.6",
-                }
-                rect {
-                    x: "6", y: "6", width: "8", height: "8", rx: "1.5",
-                    fill: "rgb(var(--c-brand))",
-                }
-            }
-            // Wordmark is brand chrome, not translatable copy — hard-code so
-            // we don't accidentally render "<i18n value> mgmt" twice when the
-            // i18n key already contains the full brand string.
-            span {
-                "plan.ai "
-                span { class: "text-fg-muted font-medium", "mgmt" }
-            }
+            to: Route::Overview {},
+            class: "xl:hidden flex items-center gap-2 text-fg-strong font-semibold text-sm tracking-tight",
+            LogoMark {}
         }
     }
 }
@@ -238,19 +280,95 @@ fn NavGroupList(
     /// mobile drawer uses this to close itself; the sidebar passes
     /// `None`.
     #[props(default)] on_navigate: Option<EventHandler<()>>,
+    /// When true (desktop sidebar only), each group header is a
+    /// collapse toggle. The mobile drawer passes `false` so users
+    /// always see every link — matches the always-expanded mobile
+    /// pattern of most chrome.
+    #[props(default = false)] collapsible: bool,
 ) -> Element {
-    let current_route = use_route::<Route>();
     rsx! {
         // `min-h-0` is the flexbox escape hatch that lets this child
         // shrink below its content size — without it, `overflow-y-auto`
         // would never trigger and the sidebar would clip its bottom
         // links on short viewports. Extra bottom padding leaves room
         // below the last group so it doesn't kiss the viewport edge.
-        nav { class: "flex-1 min-h-0 overflow-y-auto px-3 py-5 pb-8 space-y-7",
+        nav { class: "flex-1 min-h-0 overflow-y-auto pl-5 pr-3 py-5 pb-8 space-y-2",
             for group in groups {
-                div { key: "{group.title}",
-                    h3 { class: "nav-group-head", {t!(&group.title)} }
-                    div { class: "mt-2 space-y-0.5",
+                NavGroupItem {
+                    key: "{group.title}",
+                    group,
+                    on_navigate,
+                    collapsible,
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn NavGroupItem(
+    group: NavGroup,
+    on_navigate: Option<EventHandler<()>>,
+    collapsible: bool,
+) -> Element {
+    let current_route = use_route::<Route>();
+    let key = group.title.clone();
+
+    // The mobile drawer skips the context lookup entirely; only the
+    // desktop sidebar reads/writes group-collapse state.
+    let (is_open, toggle_handler) = if collapsible {
+        let ExpandedGroups(mut sig) = use_context::<ExpandedGroups>();
+        let open = sig.read().contains(&key);
+        let key_for_click = key.clone();
+        let onclick = move |_| {
+            let mut v = sig.read().clone();
+            if v.iter().any(|k| k == &key_for_click) {
+                v.retain(|k| k != &key_for_click);
+            } else {
+                v.push(key_for_click.clone());
+            }
+            sig.set(v);
+        };
+        (open, Some(onclick))
+    } else {
+        (true, None)
+    };
+
+    let body_class = if is_open {
+        "nav-group-body nav-group-body-open"
+    } else {
+        "nav-group-body"
+    };
+    let marker_class = if is_open {
+        "nav-group-marker nav-group-marker-open"
+    } else {
+        "nav-group-marker"
+    };
+
+    rsx! {
+        div {
+            // Header row — `<button>` when collapsible (desktop), plain
+            // `<h3>` otherwise (mobile drawer).
+            if let Some(handler) = toggle_handler {
+                button {
+                    class: "nav-group-toggle",
+                    "aria-expanded": "{is_open}",
+                    onclick: handler,
+                    svg {
+                        class: "{marker_class}",
+                        view_box: "0 0 10 10",
+                        fill: "currentColor",
+                        "aria-hidden": "true",
+                        polygon { points: "2,1 9,5 2,9" }
+                    }
+                    span { class: "nav-group-head", {t!(&group.title)} }
+                }
+            } else {
+                h3 { class: "nav-group-head px-3", {t!(&group.title)} }
+            }
+            div { class: body_class,
+                div { class: "min-h-0 overflow-hidden",
+                    div { class: "mt-2 space-y-0.5 pb-1",
                         for link in group.links {
                             match link {
                                 NavLink::Internal(route, label) => {
@@ -306,13 +424,21 @@ pub fn Sidebar(is_admin: bool) -> Element {
     };
 
     let groups = get_nav_groups(is_admin, swagger_url);
+    let SidebarCollapsed(collapsed) = use_context::<SidebarCollapsed>();
+    let outer_class = if *collapsed.read() {
+        "nav-side nav-side-collapsed"
+    } else {
+        "nav-side"
+    };
 
     rsx! {
-        aside { class: "nav-side",
-            div { class: "px-5 pt-5 pb-4 shrink-0",
-                Logo {}
+        aside { class: outer_class,
+            // Logo lives in the topbar's logo-pad now. The sidebar
+            // contains only nav groups, which slide off entirely when
+            // the user collapses (width 220 → 0).
+            div { class: "nav-side-inner",
+                NavGroupList { groups, collapsible: true }
             }
-            NavGroupList { groups }
         }
     }
 }
@@ -337,10 +463,14 @@ pub fn MobileDrawer(
     };
     let groups = get_nav_groups(is_admin, swagger_url);
 
+    // Backdrop tints the canvas (matches the page theme rather than
+    // contrasting it) so dark mode gets a dark scrim and light mode a
+    // light one — the inverse of the previous fg-strong-based scrim,
+    // which made dark-mode users see a flash of white.
     let backdrop_cls = if open {
-        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
+        "fixed inset-0 bg-bg/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-100 pointer-events-auto"
     } else {
-        "fixed inset-0 bg-fg-strong/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
+        "fixed inset-0 bg-bg/80 backdrop-blur-sm transition-opacity duration-300 z-40 opacity-0 pointer-events-none"
     };
 
     let drawer_cls = if open {
@@ -366,14 +496,48 @@ pub fn MobileDrawer(
                 class: drawer_cls,
                 id: "mobile-drawer",
 
-                // Header: logo + close button. We deliberately repeat
-                // the logo here (rather than only in the sidebar) so
-                // the drawer is self-contained on phones.
-                div { class: "px-5 py-4 border-b border-line bg-surface-2 flex justify-between items-center shrink-0",
-                    Logo {}
+                // Combined drawer header: user identity on the left,
+                // close button on the right. Logo lives in the topbar
+                // (still visible above the open drawer), so we don't
+                // need a second brand row inside the drawer.
+                div { class: "px-5 py-4 bg-surface-2 border-b border-line flex items-center gap-3 shrink-0",
+                    if !display_name.is_empty() {
+                        svg {
+                            class: "h-9 w-9 text-fg-faint bg-surface rounded-full p-1.5 border border-line shrink-0",
+                            fill: "none",
+                            stroke: "currentColor",
+                            view_box: "0 0 24 24",
+                            stroke_width: "1.5",
+                            path {
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z",
+                            }
+                        }
+                        div { class: "flex flex-col min-w-0 flex-1",
+                            span { class: "text-sm font-medium text-fg-strong truncate", "{display_name}" }
+                            div { class: "flex gap-3",
+                                Link {
+                                    to: Route::Profile {},
+                                    class: "link text-xs",
+                                    onclick: move |_| is_open.set(false),
+                                    {t!("nav-view-profile")}
+                                }
+                                a {
+                                    href: "/auth/logout",
+                                    class: "link-danger text-xs",
+                                    {t!("nav-sign-out")}
+                                }
+                            }
+                        }
+                    } else {
+                        // Spacer so the close button still anchors right
+                        // when the user is unauthenticated.
+                        div { class: "flex-1" }
+                    }
                     button {
                         onclick: move |_| is_open.set(false),
-                        class: "nav-icon-btn",
+                        class: "nav-icon-btn shrink-0",
                         "aria-label": t!("nav-close-menu"),
                         svg {
                             class: "h-5 w-5",
@@ -385,42 +549,6 @@ pub fn MobileDrawer(
                                 stroke_linejoin: "round",
                                 stroke_width: "2",
                                 d: "M6 18L18 6M6 6l12 12",
-                            }
-                        }
-                    }
-                }
-
-                // User block — only when authenticated.
-                if !display_name.is_empty() {
-                    div { class: "px-5 py-3 border-b border-line bg-surface-2",
-                        div { class: "flex items-center gap-3",
-                            svg {
-                                class: "h-9 w-9 text-fg-faint bg-surface rounded-full p-1.5 border border-line shrink-0",
-                                fill: "none",
-                                stroke: "currentColor",
-                                view_box: "0 0 24 24",
-                                stroke_width: "1.5",
-                                path {
-                                    stroke_linecap: "round",
-                                    stroke_linejoin: "round",
-                                    d: "M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z",
-                                }
-                            }
-                            div { class: "flex flex-col min-w-0",
-                                span { class: "text-sm font-medium text-fg-strong truncate", "{display_name}" }
-                                div { class: "flex gap-3",
-                                    Link {
-                                        to: Route::Profile {},
-                                        class: "link text-xs",
-                                        onclick: move |_| is_open.set(false),
-                                        {t!("nav-view-profile")}
-                                    }
-                                    a {
-                                        href: "/auth/logout",
-                                        class: "link-danger text-xs",
-                                        {t!("nav-sign-out")}
-                                    }
-                                }
                             }
                         }
                     }

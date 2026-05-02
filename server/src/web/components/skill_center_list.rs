@@ -52,32 +52,34 @@ pub fn SkillCenterList() -> Element {
                     if centers.is_empty() {
                         HelpText { {t!("skill-center-list-none")} }
                     } else {
-                        table { class: "table",
-                            thead { class: "thead",
-                                tr {
-                                    Th { {t!("name")} }
-                                    Th { {t!("skill-center-list-col-url")} }
-                                    Th { {t!("skill-center-list-col-priority")} }
-                                    Th { {t!("skill-center-list-col-enabled")} }
-                                }
-                            }
-                            tbody { class: "tbody",
-                                for center in centers {
+                        div { class: "overflow-x-auto",
+                            table { class: "table",
+                                thead { class: "thead",
                                     tr {
-                                        td { class: "td",
-                                            Link {
-                                                to: crate::web::app::Route::SkillCenterDetail { id: center.id.to_string() },
-                                                class: "link",
-                                                "{center.name}"
+                                        Th { {t!("name")} }
+                                        Th { {t!("skill-center-list-col-url")} }
+                                        Th { {t!("skill-center-list-col-priority")} }
+                                        Th { {t!("skill-center-list-col-enabled")} }
+                                    }
+                                }
+                                tbody { class: "tbody",
+                                    for center in centers {
+                                        tr {
+                                            td { class: "td",
+                                                Link {
+                                                    to: crate::web::app::Route::SkillCenterDetail { id: center.id.to_string() },
+                                                    class: "link",
+                                                    "{center.name}"
+                                                }
                                             }
-                                        }
-                                        td { class: "td-muted", "{center.url}" }
-                                        td { class: "td", "{center.priority}" }
-                                        td { class: "td",
-                                            if center.enabled {
-                                                Badge { variant: BadgeVariant::Success, {t!("yes")} }
-                                            } else {
-                                                Badge { variant: BadgeVariant::Danger, {t!("no")} }
+                                            td { class: "td-muted", "{center.url}" }
+                                            td { class: "td", "{center.priority}" }
+                                            td { class: "td",
+                                                if center.enabled {
+                                                    Badge { variant: BadgeVariant::Success, {t!("yes")} }
+                                                } else {
+                                                    Badge { variant: BadgeVariant::Danger, {t!("no")} }
+                                                }
                                             }
                                         }
                                     }

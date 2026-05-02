@@ -1282,7 +1282,7 @@ pub fn RolloutDetail(id: String) -> Element {
                             }
                         }
                         Kicker { class: "mb-1", {t!("nav-rollouts")} }
-                        h1 { class: "h-display font-mono",
+                        h1 { class: "h-page mb-0 font-mono",
                             "{display_name}"
                             if info.name.is_some() {
                                 span { class: "text-fg-muted ml-2 text-xl", "#{short_id}" }
