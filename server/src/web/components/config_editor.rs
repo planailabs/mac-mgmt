@@ -249,6 +249,21 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     // or a discard, so this stays O(1) on the typical input path.
     let dirty = *editor_text.read() != *saved_text.read() && *initialized.read();
 
+    // Block accidental tab-close / hard-nav while there are unsaved
+    // changes. Browsers ignore a custom message in modern Chrome /
+    // Firefox / Safari but still surface the native "Leave site?"
+    // prompt as long as `beforeunload` is wired up. Untoggled the
+    // moment the user saves or discards.
+    use_effect(move || {
+        let active = dirty;
+        let script = if active {
+            "window.onbeforeunload = function(e) { e.preventDefault(); e.returnValue = ''; return ''; };"
+        } else {
+            "window.onbeforeunload = null;"
+        };
+        document::eval(script);
+    });
+
     let last_saved_at: Option<String> = match &*config.read() {
         Some(Ok(Some(cfg))) => Some(cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string()),
         _ => None,
@@ -987,7 +1002,12 @@ fn ObjectSectionCard(
         "dot dot-muted"
     };
 
-    let show_body = *expanded.read() && (always_on || is_enabled);
+    // Body visibility is decoupled from the `enabled` toggle: users
+    // need to inspect / edit the fields of disabled sections without
+    // having to flip the toggle on first (and risk mutating dependent
+    // services). The toggle only persists the `enabled` field;
+    // everything else stays exactly as it was.
+    let show_body = *expanded.read();
     let section_name_toggle = section_name.clone();
     let section_name_display = section_name.clone();
     let section_anchor = format!("sec-{section_name}");
@@ -1160,7 +1180,9 @@ fn ArrayEntrySectionCard(
         .collect();
 
     let dot_class = if is_enabled { "dot dot-ok" } else { "dot dot-muted" };
-    let show_body = *expanded.read() && is_enabled;
+    // Same rule as in `ObjectSectionCard`: expand state is independent
+    // of the enabled toggle so users can read disabled sections.
+    let show_body = *expanded.read();
     let section_name_toggle = section_name.clone();
     let path_remove = vec![section_name.clone()];
     let sync_remove = sync_to_json.clone();

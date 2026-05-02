@@ -505,20 +505,23 @@
   .config-chip-active { @apply bg-brand text-fg-invert hover:text-fg-invert; }
 
   /* Right rail. Static — flows with the page rather than sticking to
-     the viewport. Negative margins on top / bottom / right cancel the
-     `<main>` padding so the rail's `bg-surface-2` reaches the viewport
-     edge on three sides; inner padding is asymmetric to keep the
+     the viewport. Negative margin on bottom and right cancels the
+     `<main>` padding so the rail's `bg-surface-2` reaches the
+     viewport edge on those two sides; the top edge stays where the
+     editor's flex row begins so the rail aligns with the chip-strip's
+     hairline border to its left. Inner padding is asymmetric to keep
      content well clear of the page scrollbar on the right. */
   .config-right-rail  { @apply hidden xl:flex xl:flex-col w-64 shrink-0
                                 bg-surface-2 border-l border-line
-                                -my-4 sm:-my-6 lg:-my-8
+                                -mb-4 sm:-mb-6 lg:-mb-8
                                 -mr-4 sm:-mr-6 lg:-mr-8
                                 py-5 pl-4 pr-6; }
 
   .config-save-bar    { @apply fixed bottom-5 left-1/2 -translate-x-1/2 z-40
                                 flex items-center gap-3 px-4 py-3
                                 bg-surface border border-brand rounded-xl
-                                shadow-pop max-w-[640px]; }
+                                shadow-pop ring-4 ring-brand/15
+                                max-w-[640px]; }
 
   /* ── Tile launcher ─────────────────────────────────────────────
      Square button used on the easy-access page. Pair the class
