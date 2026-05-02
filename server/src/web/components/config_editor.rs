@@ -250,18 +250,38 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let dirty = *editor_text.read() != *saved_text.read() && *initialized.read();
 
     // Block accidental tab-close / hard-nav while there are unsaved
-    // changes. Browsers ignore a custom message in modern Chrome /
-    // Firefox / Safari but still surface the native "Leave site?"
-    // prompt as long as `beforeunload` is wired up. Untoggled the
-    // moment the user saves or discards.
+    // changes. Two-step wiring so we don't churn `window.onbeforeunload`
+    // on every keystroke (rebinding the handler from inside an effect
+    // that tries to schedule a `document::eval` future caused a
+    // wasm-bindgen-futures `_was_scheduled` panic):
+    //   1. once on mount — install a permanent `beforeunload` that
+    //      reads a global `__configDirty` flag.
+    //   2. each render where `dirty` changes — update the flag.
     use_effect(move || {
-        let active = dirty;
-        let script = if active {
-            "window.onbeforeunload = function(e) { e.preventDefault(); e.returnValue = ''; return ''; };"
-        } else {
-            "window.onbeforeunload = null;"
-        };
-        document::eval(script);
+        spawn(async move {
+            let _ = document::eval(
+                "if (!window.__configBeforeUnloadInstalled) { \
+                   window.__configDirty = false; \
+                   window.onbeforeunload = function(e) { \
+                     if (!window.__configDirty) return; \
+                     e.preventDefault(); e.returnValue = ''; return ''; \
+                   }; \
+                   window.__configBeforeUnloadInstalled = true; \
+                 }"
+            ).await;
+        });
+    });
+    use_effect(move || {
+        // Reading the signals INSIDE the effect makes Dioxus re-run
+        // the effect whenever any of them change.
+        let edit = editor_text.read();
+        let save = saved_text.read();
+        let init = *initialized.read();
+        let active = init && *edit != *save;
+        let val = if active { "true" } else { "false" };
+        spawn(async move {
+            let _ = document::eval(&format!("window.__configDirty = {val};")).await;
+        });
     });
 
     let last_saved_at: Option<String> = match &*config.read() {
@@ -915,31 +935,11 @@ fn ObjectSectionCard(
         text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
     };
 
-    // Toggle handler that also writes back to sessionStorage so the
-    // change survives a navigation away and back.
+    // Persistence helpers: cloned once so the inline onclick closure
+    // below can capture them by `move` without keeping the surrounding
+    // String props on its hot path.
     let cid_persist = cluster_id.clone();
     let sn_persist = section_name.clone();
-    let mut toggle_expanded = move || {
-        let new_val = !*expanded.read();
-        expanded.set(new_val);
-        let cid = cid_persist.clone();
-        let sn = sn_persist.clone();
-        let new_v = if new_val { "true" } else { "false" };
-        let script = format!(
-            "try {{ \
-              var k = 'cluster-cfg.' + {cid:?} + '.expanded'; \
-              var v; try {{ v = JSON.parse(sessionStorage.getItem(k) || '[]'); }} catch(e) {{ v = []; }} \
-              var idx = v.indexOf({sn:?}); \
-              if ({nv} && idx === -1) v.push({sn:?}); \
-              if (!{nv} && idx !== -1) v.splice(idx, 1); \
-              sessionStorage.setItem(k, JSON.stringify(v)); \
-            }} catch(e) {{}}",
-            cid = cid,
-            sn = sn,
-            nv = new_v
-        );
-        document::eval(&script);
-    };
 
     let properties = section_schema
         .get("properties")
@@ -1017,7 +1017,28 @@ fn ObjectSectionCard(
             // Header
             div {
                 class: "flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-2 transition-colors",
-                onclick: move |_| toggle_expanded(),
+                onclick: move |_| {
+                    let new_val = !*expanded.read();
+                    expanded.set(new_val);
+                    // Persist the new state so navigating away and
+                    // back restores the open / closed sections.
+                    let cid = cid_persist.clone();
+                    let sn = sn_persist.clone();
+                    let nv = if new_val { "true" } else { "false" };
+                    spawn(async move {
+                        let _ = document::eval(&format!(
+                            "try {{ \
+                              var k = 'cluster-cfg.' + {cid:?} + '.expanded'; \
+                              var v; try {{ v = JSON.parse(sessionStorage.getItem(k) || '[]'); }} catch(e) {{ v = []; }} \
+                              var idx = v.indexOf({sn:?}); \
+                              if ({nv} && idx === -1) v.push({sn:?}); \
+                              if (!{nv} && idx !== -1) v.splice(idx, 1); \
+                              sessionStorage.setItem(k, JSON.stringify(v)); \
+                            }} catch(e) {{}}",
+                            cid = cid, sn = sn, nv = nv,
+                        )).await;
+                    });
+                },
                 // Chevron
                 span { class: if *expanded.read() { "text-fg-faint text-[10px] font-mono transition-transform rotate-90" } else { "text-fg-faint text-[10px] font-mono transition-transform" },
                     "▶"
