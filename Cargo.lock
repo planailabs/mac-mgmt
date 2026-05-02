@@ -7791,6 +7791,7 @@ dependencies = [
  "mac-mgmt-common",
  "mac-mgmt-healer",
  "multihash",
+ "plan-ai-design",
  "pulldown-cmark 0.12.2",
  "rand 0.9.4",
  "reqwest 0.13.2",
@@ -9862,6 +9863,7 @@ name = "plan-ai-design"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "dioxus-i18n",
 ]
 
 [[package]]

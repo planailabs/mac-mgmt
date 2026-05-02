@@ -16,7 +16,7 @@ pub enum ChartColor {
 }
 
 impl ChartColor {
-    pub(super) fn text_class(self) -> &'static str {
+    pub fn text_class(self) -> &'static str {
         match self {
             Self::Brand => "text-brand",
             Self::Ok    => "text-success",

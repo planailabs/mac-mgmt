@@ -1,6 +1,11 @@
 use dioxus::prelude::*;
 
-#[derive(Default, Clone, Copy, PartialEq)]
+/// Status color shared between `Pill` and `Dot`. Names mirror the
+/// design language: ok/warn/bad/info/accent are status semantics,
+/// `Muted` is the chrome variant (used for environment tags, version
+/// numbers, anything where the pill is decorative rather than load-
+/// bearing).
+#[derive(Clone, Copy, PartialEq, Default)]
 pub enum PillVariant {
     #[default]
     Muted,
@@ -12,41 +17,68 @@ pub enum PillVariant {
 }
 
 impl PillVariant {
-    pub fn class(self) -> &'static str {
+    fn pill_class(self) -> &'static str {
         match self {
-            Self::Muted => "pill-muted",
-            Self::Ok => "pill-ok",
-            Self::Warn => "pill-warn",
-            Self::Bad => "pill-bad",
-            Self::Info => "pill-info",
+            Self::Muted  => "pill-muted",
+            Self::Ok     => "pill-ok",
+            Self::Warn   => "pill-warn",
+            Self::Bad    => "pill-bad",
+            Self::Info   => "pill-info",
             Self::Accent => "pill-accent",
+        }
+    }
+
+    fn dot_class(self) -> &'static str {
+        match self {
+            Self::Muted  => "dot-muted",
+            Self::Ok     => "dot-ok",
+            Self::Warn   => "dot-warn",
+            Self::Bad    => "dot-bad",
+            Self::Info   => "dot-info",
+            Self::Accent => "dot-accent",
         }
     }
 }
 
+/// Status pill — rounded-full chip with one of six color variants
+/// (principle 8: pills, not badges). Pass `mono = true` for identifier
+/// pills (versions, hashes, model names) — those tighten typography
+/// and switch to mono per principle 4.
+///
+/// Composing a pill with a leading dot:
+/// ```ignore
+/// Pill { variant: PillVariant::Ok,
+///     Dot { variant: PillVariant::Ok }
+///     "online"
+/// }
+/// ```
 #[component]
 pub fn Pill(
     #[props(default)] variant: PillVariant,
     #[props(default)] mono: bool,
+    #[props(default, into)] title: Option<String>,
     #[props(default, into)] class: String,
     children: Element,
 ) -> Element {
-    let variant_cls = variant.class();
     let mono_cls = if mono { "pill-mono" } else { "" };
+    let cls = format!("pill {} {} {}", variant.pill_class(), mono_cls, class);
     rsx! {
-        span { class: "pill {variant_cls} {mono_cls} {class}", {children} }
+        span { class: "{cls}", title,
+            {children}
+        }
     }
 }
 
+/// Status dot — 6×6 colored disc with a 3px soft ring, used inside
+/// pills and as leading bullets in activity feeds. Visual is owned by
+/// `.dot-*` semantic classes.
 #[component]
-pub fn Dot(#[props(default)] variant: PillVariant) -> Element {
-    let dot_cls = match variant {
-        PillVariant::Muted => "dot-muted",
-        PillVariant::Ok => "dot-ok",
-        PillVariant::Warn => "dot-warn",
-        PillVariant::Bad => "dot-bad",
-        PillVariant::Info => "dot-info",
-        PillVariant::Accent => "dot-accent",
-    };
-    rsx! { span { class: "dot {dot_cls}" } }
+pub fn Dot(
+    #[props(default)] variant: PillVariant,
+    #[props(default, into)] class: String,
+) -> Element {
+    let cls = format!("dot {} {}", variant.dot_class(), class);
+    rsx! {
+        span { class: "{cls}" }
+    }
 }

@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-#[derive(Default, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 pub enum AlertVariant {
     #[default]
     Info,
@@ -10,24 +10,30 @@ pub enum AlertVariant {
 }
 
 impl AlertVariant {
-    pub fn class(self) -> &'static str {
+    fn class(self) -> &'static str {
         match self {
-            Self::Info => "alert-info",
-            Self::Success => "alert-ok",
-            Self::Warn => "alert-warn",
-            Self::Danger => "alert-bad",
+            Self::Info    => "alert-info",
+            Self::Success => "alert-success",
+            Self::Warn    => "alert-warn",
+            Self::Danger  => "alert-danger",
         }
     }
 }
 
+/// Boxed status message — a soft-tinted background with matching border
+/// and text color. Use `<ErrorText>` / `<SuccessText>` for inline single-
+/// line messages; reach for `<Alert>` when the message has structure
+/// (heading + body, or a value to copy).
 #[component]
 pub fn Alert(
     #[props(default)] variant: AlertVariant,
     #[props(default, into)] class: String,
     children: Element,
 ) -> Element {
-    let variant_cls = variant.class();
+    let cls = format!("alert {} {}", variant.class(), class);
     rsx! {
-        div { class: "alert {variant_cls} {class}", {children} }
+        div { class: "{cls}",
+            {children}
+        }
     }
 }
