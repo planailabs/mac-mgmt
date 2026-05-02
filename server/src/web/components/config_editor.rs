@@ -274,7 +274,97 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     }
 }
 
+/// Category ordering used by the structured editor.
+const CATEGORY_ORDER: &[&str] = &[
+    "identity",
+    "llm-providers",
+    "agents",
+    "infra",
+    "ops",
+    "custom",
+];
+
+/// Parsed information about a top-level config section derived from the schema.
+struct SectionMeta {
+    /// Config key (e.g. "ollama", "cloud")
+    name: String,
+    /// The raw property schema (may contain $ref, x-category, etc.)
+    property_schema: serde_json::Value,
+    /// Resolved schema (after following $ref)
+    resolved: serde_json::Value,
+    /// Category from x-category extension
+    #[allow(dead_code)]
+    category: String,
+    /// Whether this is an array section (Vec<T>)
+    is_array: bool,
+    /// For array sections, which field to use as the entry label
+    array_entry_label: Option<String>,
+    /// Whether the section is always-on (no enable/disable toggle)
+    always_on: bool,
+}
+
+/// Gather section metadata from the schema, grouped by category.
+fn gather_sections(
+    properties: &serde_json::Map<String, serde_json::Value>,
+    defs: &serde_json::Value,
+) -> Vec<(String, Vec<SectionMeta>)> {
+    let mut by_category: std::collections::HashMap<String, Vec<SectionMeta>> =
+        std::collections::HashMap::new();
+
+    for (name, prop_schema) in properties {
+        let category = prop_schema
+            .get("x-category")
+            .and_then(|c| c.as_str())
+            .unwrap_or("other")
+            .to_string();
+
+        let always_on = prop_schema
+            .get("x-always-on")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let array_entry_label = prop_schema
+            .get("x-array-entry-label")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let resolved = resolve_ref(prop_schema, defs);
+        let section_type = resolved
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("object");
+        let is_array = section_type == "array";
+
+        by_category
+            .entry(category.clone())
+            .or_default()
+            .push(SectionMeta {
+                name: name.clone(),
+                property_schema: prop_schema.clone(),
+                resolved,
+                category,
+                is_array,
+                array_entry_label,
+                always_on,
+            });
+    }
+
+    // Return in defined order
+    let mut result = Vec::new();
+    for cat in CATEGORY_ORDER {
+        if let Some(sections) = by_category.remove(*cat) {
+            result.push((cat.to_string(), sections));
+        }
+    }
+    // Any remaining categories
+    for (cat, sections) in by_category {
+        result.push((cat, sections));
+    }
+    result
+}
+
 /// Renders structured form sections from JSON Schema, keeping the JSON signal in sync.
+/// Sections are grouped by `x-category` from the schema and rendered as collapsible cards.
 #[component]
 fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Signal<String>) -> Element {
     let mut form_values: Signal<serde_json::Value> =
@@ -289,12 +379,6 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
         }
     });
 
-    let sync_to_json = move || {
-        let json = form_values.read().clone();
-        let mut text = json_text;
-        text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
-    };
-
     // Get schema properties (top-level sections)
     let properties = schema
         .get("properties")
@@ -308,70 +392,1094 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
         .cloned()
         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
+    let categories = gather_sections(&properties, &defs);
+
+    // Build sidebar data: Vec<(category_id, Vec<(section_name, always_on, is_array)>)>
+    let sidebar_data: Vec<(String, Vec<(String, bool, bool)>)> = categories
+        .iter()
+        .map(|(cat_id, sections)| {
+            let items: Vec<_> = sections
+                .iter()
+                .map(|s| (s.name.clone(), s.always_on, s.is_array))
+                .collect();
+            (cat_id.clone(), items)
+        })
+        .collect();
+    let total_sections: usize = sidebar_data.iter().map(|(_, items)| items.len()).sum();
+
     rsx! {
         ExtraConfigModalHost {
             open: extra_config_open,
             form_values,
             json_text,
         }
-        div { class: "columns-1 xl:columns-2 2xl:columns-3 gap-4 space-y-4 mb-4",
-            {properties.into_iter().map(|(section_name, section_schema)| {
-                let resolved = resolve_ref(&section_schema, &defs);
-                let description = resolved
-                    .get("description")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("")
-                    .to_string();
+        div { class: "flex gap-6",
+            // Main content
+            div { class: "flex-1 min-w-0 space-y-8 mb-4",
+                {categories.into_iter().enumerate().map(|(cat_idx, (category_id, sections))| {
+                    let cat_i18n_key = format!("category-{category_id}");
+                    let enabled_count = sections.iter().filter(|s| {
+                        if s.always_on { return true; }
+                        if s.is_array { return true; }
+                        let resolved = &s.resolved;
+                        let has_enabled = resolved.get("properties")
+                            .and_then(|p| p.get("enabled"))
+                            .is_some();
+                        if !has_enabled { return true; }
+                        get_at_path(&form_values.read(), &[s.name.clone()])
+                            .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                            .unwrap_or(false)
+                    }).count();
+                    let total_count = sections.len();
 
-                let section_type = resolved
-                    .get("type")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("object");
-
-                let section_name_clone = section_name.clone();
-
-                // Top-level array sections (e.g. cloud: Vec<CloudConfig>)
-                // need the array-of-objects UI, not render_section_fields.
-                let is_array_section = section_type == "array";
-
-                rsx! {
-                    details { class: "border border-line rounded shadow-sm break-inside-avoid",
-                        key: "{section_name}",
-                        open: form_values.read().get(&section_name).is_some(),
-                        summary { class: "px-3 py-2 bg-surface-2 cursor-pointer font-semibold text-sm hover:bg-surface-3",
-                            "{section_name_clone}"
+                    rsx! {
+                        div { key: "{category_id}",
+                            // Category header
+                            div { class: "flex items-baseline justify-between mb-3 px-1",
+                                div { class: "flex items-baseline gap-3",
+                                    span { class: "kicker font-mono",
+                                        "§ {cat_idx + 1:02}"
+                                    }
+                                    h3 { class: "text-[15px] font-semibold text-fg-strong tracking-tight",
+                                        {t!(&cat_i18n_key)}
+                                    }
+                                }
+                                span { class: "text-xs text-fg-muted font-mono",
+                                    "{enabled_count}/{total_count} "
+                                    {t!("config-editor-enabled-suffix")}
+                                }
+                            }
+                            // Section cards
+                            div { class: "space-y-3",
+                                {sections.into_iter().map(|section| {
+                                    let defs = defs.clone();
+                                    let section_key = section.name.clone();
+                                    if section.is_array {
+                                        let items_schema = section.resolved.get("items")
+                                            .map(|s| resolve_ref(s, &defs))
+                                            .unwrap_or_default();
+                                        let path = vec![section.name.clone()];
+                                        let entries: Vec<serde_json::Value> = get_at_path(&form_values.read(), &path)
+                                            .and_then(|v| v.as_array().cloned())
+                                            .unwrap_or_default();
+                                        let entry_label_field = section.array_entry_label.clone().unwrap_or_default();
+                                        let section_name = section.name.clone();
+                                        rsx! {
+                                            div { key: "{section_key}", class: "space-y-3",
+                                                {entries.iter().enumerate().map(|(idx, _)| {
+                                                    let mut entry_path = vec![section_name.clone()];
+                                                    entry_path.push(format!("{idx}"));
+                                                    let label = get_at_path(&form_values.read(), &entry_path)
+                                                        .and_then(|v| v.get(&entry_label_field).and_then(|p| p.as_str().map(String::from)))
+                                                        .unwrap_or_else(|| format!("#{idx}"));
+                                                    rsx! {
+                                                        ArrayEntrySectionCard {
+                                                            key: "{section_name}-{idx}",
+                                                            section_name: section_name.clone(),
+                                                            entry_index: idx,
+                                                            entry_label: label,
+                                                            items_schema: items_schema.clone(),
+                                                            defs: defs.clone(),
+                                                            form_values,
+                                                            json_text,
+                                                            extra_config_open,
+                                                            cluster_id: cluster_id.clone(),
+                                                        }
+                                                    }
+                                                })}
+                                                {render_add_entry_button(
+                                                    &section.name,
+                                                    &items_schema,
+                                                    &defs,
+                                                    form_values,
+                                                    json_text,
+                                                )}
+                                            }
+                                        }
+                                    } else {
+                                        rsx! {
+                                            div { key: "{section_key}",
+                                                ObjectSectionCard {
+                                                    section_name: section.name.clone(),
+                                                    section_schema: section.resolved.clone(),
+                                                    property_schema: section.property_schema.clone(),
+                                                    always_on: section.always_on,
+                                                    defs: defs.clone(),
+                                                    form_values,
+                                                    json_text,
+                                                    extra_config_open,
+                                                    cluster_id: cluster_id.clone(),
+                                                }
+                                            }
+                                        }
+                                    }
+                                })}
+                            }
                         }
-                        if !description.is_empty() {
-                            p { class: "px-3 pt-1 text-xs text-fg-muted", "{description}" }
+                    }
+                })}
+            }
+            // Right sidebar - section navigation
+            aside { class: "hidden xl:block w-56 shrink-0 sticky top-20 self-start max-h-[calc(100vh-6rem)] overflow-y-auto",
+                div { class: "border-b border-line pb-3 mb-3",
+                    div { class: "kicker mb-1", {t!("config-editor-on-this-page")} }
+                    div { class: "text-sm text-fg-strong font-medium",
+                        "{total_sections} "
+                        {t!("config-editor-sections-count")}
+                    }
+                }
+                nav { class: "space-y-4",
+                    {sidebar_data.into_iter().map(|(cat_id, items)| {
+                        let cat_i18n_key = format!("category-{cat_id}");
+                        let enabled_count = items.iter().filter(|(name, always_on, is_array)| {
+                            if *always_on || *is_array { return true; }
+                            let resolved = properties.get(name)
+                                .map(|ps| resolve_ref(ps, &defs));
+                            let has_enabled_prop = resolved.as_ref()
+                                .and_then(|r| r.get("properties").and_then(|p| p.get("enabled")))
+                                .is_some();
+                            if !has_enabled_prop { return true; }
+                            get_at_path(&form_values.read(), &[name.clone()])
+                                .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                                .unwrap_or(false)
+                        }).count();
+                        let total = items.len();
+                        rsx! {
+                            div { key: "{cat_id}",
+                                div { class: "flex items-center justify-between px-2 mb-1",
+                                    span { class: "kicker", {t!(&cat_i18n_key)} }
+                                    span { class: "text-[10px] font-mono text-fg-faint",
+                                        "{enabled_count}/{total}"
+                                    }
+                                }
+                                {items.into_iter().map(|(name, always_on, is_array)| {
+                                    let resolved = properties.get(&name)
+                                        .map(|ps| resolve_ref(ps, &defs));
+                                    let has_enabled = !always_on && !is_array && resolved.as_ref()
+                                        .and_then(|r| r.get("properties").and_then(|p| p.get("enabled")))
+                                        .is_some();
+                                    let is_enabled = if has_enabled {
+                                        get_at_path(&form_values.read(), &[name.clone()])
+                                            .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                                            .unwrap_or(false)
+                                    } else {
+                                        true
+                                    };
+                                    let dot_cls = if always_on {
+                                        "dot dot-info"
+                                    } else if is_enabled {
+                                        "dot dot-ok"
+                                    } else {
+                                        "dot dot-muted"
+                                    };
+                                    let name_display = name.clone();
+                                    rsx! {
+                                        a {
+                                            key: "{name}",
+                                            href: "#sec-{name}",
+                                            class: "flex items-center gap-2 px-2 py-1 rounded-md text-xs font-mono text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
+                                            span { class: "{dot_cls}" }
+                                            span { class: "truncate", "{name_display}" }
+                                        }
+                                    }
+                                })}
+                            }
                         }
-                        div { class: "px-3 py-3 space-y-3",
-                            if is_array_section {
-                                {render_top_level_array(
-                                    &resolved,
-                                    &defs,
-                                    section_name.clone(),
-                                    form_values,
-                                    json_text,
-                                    extra_config_open,
-                                    cluster_id.clone(),
-                                    sync_to_json,
-                                )}
-                            } else {
-                                {render_section_fields(
-                                    &resolved,
-                                    &defs,
-                                    vec![section_name.clone()],
-                                    form_values,
-                                    json_text,
-                                    extra_config_open,
-                                    cluster_id.clone(),
-                                    sync_to_json,
-                                )}
+                    })}
+                }
+            }
+        }
+    }
+}
+
+/// A section card for a single object config section (e.g. ollama, relay).
+#[component]
+fn ObjectSectionCard(
+    section_name: String,
+    section_schema: serde_json::Value,
+    property_schema: serde_json::Value,
+    always_on: bool,
+    defs: serde_json::Value,
+    mut form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+    extra_config_open: Signal<bool>,
+    cluster_id: String,
+) -> Element {
+    let mut expanded = use_signal(|| false);
+    let mut show_advanced = use_signal(|| false);
+
+    let sync_to_json = move || {
+        let json = form_values.read().clone();
+        let mut text = json_text;
+        text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+    };
+
+    let properties = section_schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let has_enabled = properties.contains_key("enabled");
+    let is_enabled = if has_enabled {
+        get_at_path(&form_values.read(), &[section_name.clone()])
+            .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+            .unwrap_or(false)
+    } else {
+        true
+    };
+
+    let description = property_schema
+        .get("description")
+        .or_else(|| section_schema.get("description"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Count modified fields (non-default)
+    let mod_count = properties.iter().filter(|(fname, fschema)| {
+        if fname.as_str() == "enabled" { return false; }
+        let resolved = resolve_ref(fschema, &defs);
+        let schema_default = resolved.get("default");
+        let current = get_at_path(&form_values.read(), &[section_name.clone(), fname.to_string()]);
+        match (current, schema_default) {
+            (Some(cur), Some(def)) => &cur != def,
+            (Some(_), None) => true,
+            _ => false,
+        }
+    }).count();
+
+    // Split fields into essential and advanced
+    let essential_fields: Vec<_> = properties.iter()
+        .filter(|(k, v)| {
+            k.as_str() != "enabled"
+                && !resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+                && !v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let advanced_fields: Vec<_> = properties.iter()
+        .filter(|(k, v)| {
+            k.as_str() != "enabled"
+                && (resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+                    || v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false))
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let dot_class = if always_on {
+        "dot dot-info"
+    } else if is_enabled {
+        "dot dot-ok"
+    } else {
+        "dot dot-muted"
+    };
+
+    let show_body = *expanded.read() && (always_on || is_enabled);
+    let section_name_toggle = section_name.clone();
+    let section_name_display = section_name.clone();
+    let section_anchor = format!("sec-{section_name}");
+
+    rsx! {
+        div { class: "card overflow-hidden scroll-mt-20", id: "{section_anchor}",
+            // Header
+            div {
+                class: "flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-2 transition-colors",
+                onclick: move |_| { let v = *expanded.read(); expanded.set(!v); },
+                // Chevron
+                span { class: if *expanded.read() { "text-fg-faint text-[10px] font-mono transition-transform rotate-90" } else { "text-fg-faint text-[10px] font-mono transition-transform" },
+                    "▶"
+                }
+                // Status dot
+                span { class: "{dot_class}" }
+                // Name + description
+                div { class: "min-w-0 flex-1",
+                    div { class: "flex items-center gap-2 mb-0.5",
+                        span { class: "text-sm font-semibold font-mono tracking-tight text-fg-strong",
+                            "{section_name_display}"
+                        }
+                        if mod_count > 0 {
+                            span { class: "pill pill-accent text-[10px]",
+                                "{mod_count} modified"
+                            }
+                        }
+                    }
+                    if !description.is_empty() {
+                        div { class: "text-xs text-fg-muted font-mono truncate",
+                            "{description}"
+                        }
+                    }
+                }
+                // Enable/disable toggle
+                if has_enabled && !always_on {
+                    div {
+                        onclick: move |evt| evt.stop_propagation(),
+                        label { class: "relative inline-flex items-center cursor-pointer",
+                            input {
+                                r#type: "checkbox",
+                                class: "sr-only peer",
+                                checked: is_enabled,
+                                onchange: {
+                                    let sn = section_name_toggle.clone();
+                                    move |evt| {
+                                        set_at_path(
+                                            &mut form_values,
+                                            &[sn.clone(), "enabled".to_string()],
+                                            serde_json::Value::Bool(evt.checked()),
+                                        );
+                                        sync_to_json();
+                                    }
+                                },
+                            }
+                            div { class: "w-8 h-[18px] bg-surface-3 peer-focus-visible:ring-2 peer-focus-visible:ring-brand rounded-full peer peer-checked:bg-brand transition-colors" }
+                            div { class: "absolute left-[2px] top-[2px] w-[14px] h-[14px] bg-white rounded-full shadow transition-transform peer-checked:translate-x-[14px]" }
+                        }
+                    }
+                }
+            }
+            // Body
+            if show_body {
+                div { class: "border-t border-line",
+                    // Essential fields
+                    {essential_fields.iter().map(|(field_name, field_schema)| {
+                        rsx! {
+                            SectionFieldRow {
+                                key: "{section_name}-{field_name}",
+                                section_name: section_name.clone(),
+                                field_name: field_name.clone(),
+                                field_schema: field_schema.clone(),
+                                defs: defs.clone(),
+                                form_values,
+                                json_text,
+                                extra_config_open,
+                                cluster_id: cluster_id.clone(),
+                            }
+                        }
+                    })}
+                    // Advanced fields accordion
+                    if !advanced_fields.is_empty() {
+                        div { class: "border-t border-line",
+                            button {
+                                class: "w-full text-left px-4 py-2 text-xs text-fg-muted font-medium hover:bg-surface-2 transition-colors flex items-center gap-2",
+                                onclick: move |_| { let v = *show_advanced.read(); show_advanced.set(!v); },
+                                span { class: if *show_advanced.read() { "text-[9px] font-mono transition-transform rotate-90" } else { "text-[9px] font-mono transition-transform" },
+                                    "▶"
+                                }
+                                {t!("config-editor-advanced", count: advanced_fields.len())}
+                            }
+                            if *show_advanced.read() {
+                                {advanced_fields.iter().map(|(field_name, field_schema)| {
+                                    rsx! {
+                                        SectionFieldRow {
+                                            key: "{section_name}-adv-{field_name}",
+                                            section_name: section_name.clone(),
+                                            field_name: field_name.clone(),
+                                            field_schema: field_schema.clone(),
+                                            defs: defs.clone(),
+                                            form_values,
+                                            json_text,
+                                            extra_config_open,
+                                            cluster_id: cluster_id.clone(),
+                                        }
+                                    }
+                                })}
                             }
                         }
                     }
                 }
-            })}
+            }
+        }
+    }
+}
+
+/// A section card for a single entry in an array section (e.g. one cloud provider).
+#[component]
+fn ArrayEntrySectionCard(
+    section_name: String,
+    entry_index: usize,
+    entry_label: String,
+    items_schema: serde_json::Value,
+    defs: serde_json::Value,
+    mut form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+    extra_config_open: Signal<bool>,
+    cluster_id: String,
+) -> Element {
+    let mut expanded = use_signal(|| false);
+    let mut show_advanced = use_signal(|| false);
+
+    let sync_to_json = move || {
+        let json = form_values.read().clone();
+        let mut text = json_text;
+        text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+    };
+
+    let properties = items_schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let has_enabled = properties.contains_key("enabled");
+    let entry_path = vec![section_name.clone(), format!("{entry_index}")];
+    let is_enabled = if has_enabled {
+        get_at_path(&form_values.read(), &entry_path)
+            .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+            .unwrap_or(true)
+    } else {
+        true
+    };
+
+    let essential_fields: Vec<_> = properties.iter()
+        .filter(|(k, v)| {
+            k.as_str() != "enabled"
+                && !resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+                && !v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let advanced_fields: Vec<_> = properties.iter()
+        .filter(|(k, v)| {
+            k.as_str() != "enabled"
+                && (resolve_ref(v, &defs).get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false)
+                    || v.get("x-advanced").and_then(|v| v.as_bool()).unwrap_or(false))
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let dot_class = if is_enabled { "dot dot-ok" } else { "dot dot-muted" };
+    let show_body = *expanded.read() && is_enabled;
+    let section_name_toggle = section_name.clone();
+    let path_remove = vec![section_name.clone()];
+    let sync_remove = sync_to_json.clone();
+    let entry_anchor = format!("sec-{section_name}-{entry_index}");
+
+    rsx! {
+        div { class: "card overflow-hidden scroll-mt-20", id: "{entry_anchor}",
+            // Header
+            div {
+                class: "flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-2 transition-colors",
+                onclick: move |_| { let v = *expanded.read(); expanded.set(!v); },
+                span { class: if *expanded.read() { "text-fg-faint text-[10px] font-mono transition-transform rotate-90" } else { "text-fg-faint text-[10px] font-mono transition-transform" },
+                    "▶"
+                }
+                span { class: "{dot_class}" }
+                div { class: "min-w-0 flex-1",
+                    div { class: "flex items-center gap-2 mb-0.5",
+                        span { class: "text-sm font-semibold font-mono tracking-tight text-fg-strong",
+                            "{entry_label}"
+                        }
+                        span { class: "kicker", "{section_name}" }
+                    }
+                }
+                // Enable/disable toggle
+                if has_enabled {
+                    div {
+                        onclick: move |evt| evt.stop_propagation(),
+                        label { class: "relative inline-flex items-center cursor-pointer",
+                            input {
+                                r#type: "checkbox",
+                                class: "sr-only peer",
+                                checked: is_enabled,
+                                onchange: {
+                                    let sn = section_name_toggle.clone();
+                                    let idx = entry_index;
+                                    move |evt| {
+                                        set_at_path(
+                                            &mut form_values,
+                                            &[sn.clone(), format!("{idx}"), "enabled".to_string()],
+                                            serde_json::Value::Bool(evt.checked()),
+                                        );
+                                        sync_to_json();
+                                    }
+                                },
+                            }
+                            div { class: "w-8 h-[18px] bg-surface-3 peer-focus-visible:ring-2 peer-focus-visible:ring-brand rounded-full peer peer-checked:bg-brand transition-colors" }
+                            div { class: "absolute left-[2px] top-[2px] w-[14px] h-[14px] bg-white rounded-full shadow transition-transform peer-checked:translate-x-[14px]" }
+                        }
+                    }
+                }
+                // Remove button
+                div {
+                    onclick: move |evt| evt.stop_propagation(),
+                    button {
+                        class: "btn btn-xs btn-danger-soft",
+                        r#type: "button",
+                        onclick: {
+                            let fp = path_remove.clone();
+                            move |_| {
+                                let mut arr = get_at_path(&form_values.read(), &fp)
+                                    .and_then(|v| v.as_array().cloned())
+                                    .unwrap_or_default();
+                                if entry_index < arr.len() {
+                                    arr.remove(entry_index);
+                                }
+                                set_at_path(&mut form_values, &fp, serde_json::Value::Array(arr));
+                                sync_remove();
+                            }
+                        },
+                        {t!("config-editor-remove")}
+                    }
+                }
+            }
+            // Body
+            if show_body {
+                div { class: "border-t border-line",
+                    {essential_fields.iter().map(|(field_name, field_schema)| {
+                        let base_path = format!("{section_name}.{entry_index}");
+                        rsx! {
+                            SectionFieldRow {
+                                key: "{base_path}-{field_name}",
+                                section_name: base_path.clone(),
+                                field_name: field_name.clone(),
+                                field_schema: field_schema.clone(),
+                                defs: defs.clone(),
+                                form_values,
+                                json_text,
+                                extra_config_open,
+                                cluster_id: cluster_id.clone(),
+                            }
+                        }
+                    })}
+                    if !advanced_fields.is_empty() {
+                        div { class: "border-t border-line",
+                            button {
+                                class: "w-full text-left px-4 py-2 text-xs text-fg-muted font-medium hover:bg-surface-2 transition-colors flex items-center gap-2",
+                                onclick: move |_| { let v = *show_advanced.read(); show_advanced.set(!v); },
+                                span { class: if *show_advanced.read() { "text-[9px] font-mono transition-transform rotate-90" } else { "text-[9px] font-mono transition-transform" },
+                                    "▶"
+                                }
+                                {t!("config-editor-advanced", count: advanced_fields.len())}
+                            }
+                            if *show_advanced.read() {
+                                {advanced_fields.iter().map(|(field_name, field_schema)| {
+                                    let base_path = format!("{section_name}.{entry_index}");
+                                    rsx! {
+                                        SectionFieldRow {
+                                            key: "{base_path}-adv-{field_name}",
+                                            section_name: base_path.clone(),
+                                            field_name: field_name.clone(),
+                                            field_schema: field_schema.clone(),
+                                            defs: defs.clone(),
+                                            form_values,
+                                            json_text,
+                                            extra_config_open,
+                                            cluster_id: cluster_id.clone(),
+                                        }
+                                    }
+                                })}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Render the "+ Add entry" button for array sections.
+fn render_add_entry_button(
+    section_name: &str,
+    items_schema: &serde_json::Value,
+    defs: &serde_json::Value,
+    mut form_values: Signal<serde_json::Value>,
+    mut json_text: Signal<String>,
+) -> Element {
+    let path = vec![section_name.to_string()];
+    let items_schema = items_schema.clone();
+    let defs = defs.clone();
+    rsx! {
+        button {
+            r#type: "button",
+            class: "btn btn-sm btn-ghost w-full border border-dashed border-line text-fg-muted",
+            onclick: move |_| {
+                let mut arr = get_at_path(&form_values.read(), &path)
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let new_obj = build_default_object(&items_schema, &defs);
+                arr.push(new_obj);
+                set_at_path(&mut form_values, &path, serde_json::Value::Array(arr));
+                json_text.set(serde_json::to_string_pretty(&*form_values.read()).unwrap_or_default());
+            },
+            {t!("config-editor-add-entry")}
+        }
+    }
+}
+
+/// A single field row within a section card. This is a component so hooks are safe.
+#[component]
+fn SectionFieldRow(
+    /// Dot-separated path prefix (e.g. "ollama" or "cloud.0")
+    section_name: String,
+    field_name: String,
+    field_schema: serde_json::Value,
+    defs: serde_json::Value,
+    mut form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+    extra_config_open: Signal<bool>,
+    cluster_id: String,
+) -> Element {
+    let resolved = resolve_ref(&field_schema, &defs);
+    let is_secret = resolved.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false)
+        || field_schema.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false);
+    let description = field_schema
+        .get("description")
+        .or_else(|| resolved.get("description"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let field_type = resolved
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("string")
+        .to_string();
+
+    let is_object = field_type == "object" || resolved.get("properties").is_some();
+
+    // Build the path segments from the dot-separated section_name + field_name
+    let mut field_path: Vec<String> = section_name.split('.').map(String::from).collect();
+    field_path.push(field_name.clone());
+
+    let current_value = get_at_path(&form_values.read(), &field_path);
+    let schema_default = resolved.get("default").cloned();
+
+    let is_non_default = current_value.as_ref().is_some_and(|v| {
+        schema_default.as_ref().map_or(true, |d| v != d)
+    });
+
+    let sync = move || {
+        let json = form_values.read().clone();
+        let mut text = json_text;
+        text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+    };
+
+    // Special-case: extra_config under openclaw
+    if field_name == "extra_config" && section_name.contains("openclaw") {
+        return rsx! {
+            ExtraConfigField {
+                form_values,
+                open: extra_config_open,
+            }
+        };
+    }
+
+    // Special-case: key_hash under ai_proxy.keys
+    if field_name == "key_hash" && section_name.contains("keys") {
+        return rsx! {
+            div { class: "px-4 py-3 border-t border-line",
+                KeyHashField {
+                    field_path,
+                    form_values,
+                    json_text,
+                }
+            }
+        };
+    }
+
+    if is_object {
+        // Render as a nested subsection
+        return rsx! {
+            div { class: "border-t border-line px-4 py-3",
+                div { class: "border-l-2 border-info pl-3",
+                    label { class: "text-sm font-semibold text-info", "{field_name}" }
+                    if !description.is_empty() {
+                        p { class: "text-xs text-fg-muted mt-0.5", "{description}" }
+                    }
+                    {render_section_fields(
+                        &resolved,
+                        &defs,
+                        field_path,
+                        form_values,
+                        json_text,
+                        extra_config_open,
+                        cluster_id,
+                        sync,
+                    )}
+                }
+            }
+        };
+    }
+
+    let fp = field_path.clone();
+    let fp2 = field_path.clone();
+    let reset_path = field_path.clone();
+    let reset_default = schema_default.clone();
+    let sync_reset = sync.clone();
+
+    rsx! {
+        div { class: "px-4 py-3 border-t border-line",
+            div { class: "grid grid-cols-[200px_1fr_28px] gap-3 items-start",
+                // Label column
+                div { class: if field_type == "boolean" { "pt-0" } else { "pt-1.5" },
+                    div { class: "flex items-center gap-1.5",
+                        span { class: "text-xs font-medium font-mono text-fg-strong", "{field_name}" }
+                        if is_non_default {
+                            span { class: "w-1.5 h-1.5 rounded-full bg-brand", title: "modified" }
+                        }
+                    }
+                    if !description.is_empty() {
+                        p { class: "text-[11px] text-fg-faint mt-0.5 leading-tight", "{description}" }
+                    }
+                }
+                // Input column
+                div { class: "min-w-0",
+                    {render_field_input(
+                        &field_type,
+                        &resolved,
+                        &defs,
+                        is_secret,
+                        current_value.clone(),
+                        fp.clone(),
+                        fp2.clone(),
+                        form_values,
+                        json_text,
+                        extra_config_open,
+                        cluster_id.clone(),
+                        sync.clone(),
+                        field_name.clone(),
+                    )}
+                }
+                // Reset column
+                div { class: "flex justify-end pt-1",
+                    if is_non_default {
+                        button {
+                            r#type: "button",
+                            class: "text-fg-faint hover:text-danger text-xs",
+                            title: t!("config-editor-reset-default"),
+                            onclick: move |evt| {
+                                evt.prevent_default();
+                                evt.stop_propagation();
+                                if let Some(ref def) = reset_default {
+                                    set_at_path(&mut form_values, &reset_path, def.clone());
+                                } else {
+                                    remove_at_path(&mut form_values, &reset_path);
+                                }
+                                sync_reset();
+                            },
+                            "↺"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Render the appropriate input widget for a field based on its schema type.
+#[allow(clippy::too_many_arguments)]
+fn render_field_input(
+    field_type: &str,
+    resolved: &serde_json::Value,
+    defs: &serde_json::Value,
+    is_secret: bool,
+    current_value: Option<serde_json::Value>,
+    fp: Vec<String>,
+    fp2: Vec<String>,
+    mut form_values: Signal<serde_json::Value>,
+    json_text: Signal<String>,
+    extra_config_open: Signal<bool>,
+    cluster_id: String,
+    sync: impl Fn() + Clone + 'static,
+    field_name: String,
+) -> Element {
+    match field_type {
+        "boolean" => {
+            let checked = current_value
+                .as_ref()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let sync_c = sync.clone();
+            rsx! {
+                label { class: "relative inline-flex items-center cursor-pointer",
+                    input {
+                        r#type: "checkbox",
+                        class: "sr-only peer",
+                        checked: checked,
+                        onchange: move |evt| {
+                            set_at_path(&mut form_values, &fp,
+                                serde_json::Value::Bool(evt.checked()));
+                            sync_c();
+                        },
+                    }
+                    div { class: "w-8 h-[18px] bg-surface-3 peer-focus-visible:ring-2 peer-focus-visible:ring-brand rounded-full peer peer-checked:bg-brand transition-colors" }
+                    div { class: "absolute left-[2px] top-[2px] w-[14px] h-[14px] bg-white rounded-full shadow transition-transform peer-checked:translate-x-[14px]" }
+                }
+            }
+        }
+        "integer" => {
+            let val_str = current_value
+                .as_ref()
+                .and_then(|v| v.as_i64())
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let sync_c = sync.clone();
+            rsx! {
+                input {
+                    r#type: "number",
+                    class: "input input-sm font-mono",
+                    value: val_str,
+                    oninput: move |evt| {
+                        if let Ok(n) = evt.value().parse::<i64>() {
+                            set_at_path(&mut form_values, &fp,
+                                serde_json::json!(n));
+                            sync_c();
+                        }
+                    },
+                }
+            }
+        }
+        "array" => {
+            let items_schema = resolved.get("items")
+                .map(|s| resolve_ref(s, defs))
+                .unwrap_or_default();
+            let is_object_array = items_schema.get("properties").is_some();
+
+            if is_object_array {
+                let entries: Vec<serde_json::Value> = current_value
+                    .as_ref()
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let fp_add = fp.clone();
+                let sync_add = sync.clone();
+                let items_schema_add = items_schema.clone();
+                let defs_add = defs.clone();
+                rsx! {
+                    div { class: "space-y-2",
+                        for (idx, _entry) in entries.iter().enumerate() {
+                            {
+                                let items_c = items_schema.clone();
+                                let defs_c = defs.clone();
+                                let fp_r = fp.clone();
+                                let sync_r = sync.clone();
+                                let mut entry_path = fp.clone();
+                                entry_path.push(format!("{idx}"));
+                                rsx! {
+                                    div { class: "border border-line rounded p-2",
+                                        key: "{idx}",
+                                        div { class: "flex justify-between items-center mb-1",
+                                            span { class: "text-xs font-semibold text-fg-muted", "#{idx}" }
+                                            button {
+                                                class: "btn btn-xs btn-danger-soft",
+                                                r#type: "button",
+                                                onclick: move |_| {
+                                                    let mut arr = get_at_path(&form_values.read(), &fp_r)
+                                                        .and_then(|v| v.as_array().cloned())
+                                                        .unwrap_or_default();
+                                                    if idx < arr.len() {
+                                                        arr.remove(idx);
+                                                    }
+                                                    set_at_path(&mut form_values, &fp_r,
+                                                        serde_json::Value::Array(arr));
+                                                    sync_r();
+                                                },
+                                                {t!("config-editor-remove")}
+                                            }
+                                        }
+                                        {render_object_array_entry(
+                                            &items_c,
+                                            &defs_c,
+                                            entry_path,
+                                            form_values,
+                                            json_text,
+                                            extra_config_open,
+                                            cluster_id.clone(),
+                                            sync.clone(),
+                                        )}
+                                    }
+                                }
+                            }
+                        }
+                        button {
+                            r#type: "button",
+                            class: "btn btn-xs btn-success-soft",
+                            onclick: move |_| {
+                                let mut arr = get_at_path(&form_values.read(), &fp_add)
+                                    .and_then(|v| v.as_array().cloned())
+                                    .unwrap_or_default();
+                                let new_obj = build_default_object(&items_schema_add, &defs_add);
+                                arr.push(new_obj);
+                                set_at_path(&mut form_values, &fp_add,
+                                    serde_json::Value::Array(arr));
+                                sync_add();
+                            },
+                            {t!("config-editor-add-entry")}
+                        }
+                    }
+                }
+            } else {
+                // Array of primitives
+                let items: Vec<String> = current_value
+                    .as_ref()
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|v| match v {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let fp_add = fp.clone();
+                let fp_remove = fp.clone();
+                let sync_add = sync.clone();
+                let sync_remove = sync.clone();
+                let mut new_val = use_signal(String::new);
+                rsx! {
+                    div { class: "space-y-1",
+                        for (idx, item) in items.iter().enumerate() {
+                            div {
+                                key: "{idx}",
+                                class: "flex items-center gap-1",
+                                span { class: "flex-1 text-sm font-mono bg-surface-2 border border-line-soft rounded-md px-2 py-0.5 truncate",
+                                    "{item}"
+                                }
+                                button {
+                                    class: "link-danger text-xs px-1",
+                                    r#type: "button",
+                                    onclick: {
+                                        let fp = fp_remove.clone();
+                                        let sync_c = sync_remove.clone();
+                                        move |_| {
+                                            let mut arr = get_at_path(&form_values.read(), &fp)
+                                                .and_then(|v| v.as_array().cloned())
+                                                .unwrap_or_default();
+                                            if idx < arr.len() {
+                                                arr.remove(idx);
+                                            }
+                                            set_at_path(&mut form_values, &fp,
+                                                serde_json::Value::Array(arr));
+                                            sync_c();
+                                        }
+                                    },
+                                    "×"
+                                }
+                            }
+                        }
+                        div { class: "flex gap-1",
+                            input {
+                                r#type: "text",
+                                class: "input input-sm font-mono flex-1",
+                                placeholder: t!("config-editor-add-item"),
+                                value: "{new_val}",
+                                oninput: move |e| new_val.set(e.value()),
+                                onkeypress: {
+                                    let fp = fp_add.clone();
+                                    let sync_c = sync_add.clone();
+                                    move |e: KeyboardEvent| {
+                                        if e.key() == Key::Enter {
+                                            let val = new_val.read().clone();
+                                            if !val.trim().is_empty() {
+                                                let mut arr = get_at_path(&form_values.read(), &fp)
+                                                    .and_then(|v| v.as_array().cloned())
+                                                    .unwrap_or_default();
+                                                arr.push(serde_json::Value::String(val.trim().to_string()));
+                                                set_at_path(&mut form_values, &fp,
+                                                    serde_json::Value::Array(arr));
+                                                sync_c();
+                                                new_val.set(String::new());
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                            button {
+                                r#type: "button",
+                                class: "btn btn-xs btn-primary",
+                                onclick: {
+                                    let fp = fp_add.clone();
+                                    let sync_c = sync_add.clone();
+                                    move |_| {
+                                        let val = new_val.read().clone();
+                                        if !val.trim().is_empty() {
+                                            let mut arr = get_at_path(&form_values.read(), &fp)
+                                                .and_then(|v| v.as_array().cloned())
+                                                .unwrap_or_default();
+                                            arr.push(serde_json::Value::String(val.trim().to_string()));
+                                            set_at_path(&mut form_values, &fp,
+                                                serde_json::Value::Array(arr));
+                                            sync_c();
+                                            new_val.set(String::new());
+                                        }
+                                    }
+                                },
+                                "+"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            let enum_values: Vec<String> = resolved
+                .get("enum")
+                .and_then(|e| e.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let val_str = current_value
+                .as_ref()
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let sync_c = sync.clone();
+            if !enum_values.is_empty() {
+                let selected_val = val_str.clone();
+                rsx! {
+                    div { class: "relative",
+                        select {
+                            class: "input input-sm font-mono appearance-none pr-8",
+                            value: val_str,
+                            onchange: move |evt| {
+                                set_at_path(&mut form_values, &fp,
+                                    serde_json::Value::String(evt.value()));
+                                sync_c();
+                            },
+                            option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
+                            {enum_values.iter().map(|v| {
+                                let is_selected = *v == selected_val;
+                                let v = v.clone();
+                                rsx! { option { value: "{v}", selected: is_selected, "{v}" } }
+                            })}
+                        }
+                        span { class: "absolute right-2 top-1/2 -translate-y-1/2 text-fg-faint text-[10px] pointer-events-none",
+                            "▾"
+                        }
+                    }
+                }
+            } else if is_secret {
+                let field_path = fp.clone();
+                let secret_key = field_path.join(".");
+                rsx! {
+                    SecretField {
+                        key: "{secret_key}",
+                        cluster_id,
+                        field_name,
+                        field_path,
+                        form_values,
+                        json_text,
+                    }
+                }
+            } else {
+                rsx! {
+                    input {
+                        r#type: "text",
+                        class: "input input-sm font-mono",
+                        value: val_str,
+                        oninput: move |evt| {
+                            let v = evt.value();
+                            if v.is_empty() {
+                                remove_at_path(&mut form_values, &fp2);
+                            } else {
+                                set_at_path(&mut form_values, &fp2,
+                                    serde_json::Value::String(v));
+                            }
+                            sync_c();
+                        },
+                    }
+                }
+            }
         }
     }
 }
@@ -584,108 +1692,6 @@ fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_js
         }
     }
     schema.clone()
-}
-
-/// Render a top-level array section (e.g. `cloud: Vec<CloudConfig>`).
-///
-/// Shows each array entry as a numbered card with all its fields and a
-/// "Remove" button, plus an {t!("config-editor-add-entry")} button at the bottom.
-fn render_top_level_array(
-    section_schema: &serde_json::Value,
-    defs: &serde_json::Value,
-    section_name: String,
-    mut form_values: Signal<serde_json::Value>,
-    json_text: Signal<String>,
-    extra_config_open: Signal<bool>,
-    cluster_id: String,
-    sync_to_json: impl Fn() + Clone + 'static,
-) -> Element {
-    let items_schema = section_schema
-        .get("items")
-        .map(|s| resolve_ref(s, defs))
-        .unwrap_or_default();
-
-    let path = vec![section_name.clone()];
-    let entries: Vec<serde_json::Value> = get_at_path(&form_values.read(), &path)
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-
-    let items_schema_add = items_schema.clone();
-    let defs_add = defs.clone();
-    let path_add = path.clone();
-    let sync_add = sync_to_json.clone();
-
-    rsx! {
-        div { class: "space-y-2",
-            for (idx, _entry) in entries.iter().enumerate() {
-                {
-                    let items_c = items_schema.clone();
-                    let defs_c = defs.clone();
-                    let path_r = path.clone();
-                    let sync_r = sync_to_json.clone();
-                    let mut entry_path = path.clone();
-                    entry_path.push(format!("{idx}"));
-
-                    // Build a label from the entry's provider field (if any)
-                    let label = get_at_path(&form_values.read(), &entry_path)
-                        .and_then(|v| v.get("provider").and_then(|p| p.as_str().map(String::from)))
-                        .unwrap_or_else(|| format!("#{idx}"));
-
-                    rsx! {
-                        div { class: "border border-line rounded p-2",
-                            key: "{idx}",
-                            div { class: "flex justify-between items-center mb-2",
-                                span { class: "text-xs font-semibold text-fg",
-                                    "{label}"
-                                }
-                                button {
-                                    class: "text-xs px-2 py-0.5 border border-danger text-danger hover:bg-danger-soft rounded",
-                                    r#type: "button",
-                                    onclick: move |_| {
-                                        let mut arr = get_at_path(&form_values.read(), &path_r)
-                                            .and_then(|v| v.as_array().cloned())
-                                            .unwrap_or_default();
-                                        if idx < arr.len() {
-                                            arr.remove(idx);
-                                        }
-                                        set_at_path(&mut form_values, &path_r,
-                                            serde_json::Value::Array(arr));
-                                        sync_r();
-                                    },
-                                    "Remove"
-                                }
-                            }
-                            {render_object_array_entry(
-                                &items_c,
-                                &defs_c,
-                                entry_path,
-                                form_values,
-                                json_text,
-                                extra_config_open,
-                                cluster_id.clone(),
-                                sync_to_json.clone(),
-                            )}
-                        }
-                    }
-                }
-            }
-            button {
-                r#type: "button",
-                class: "btn btn-md btn-success-soft",
-                onclick: move |_| {
-                    let mut arr = get_at_path(&form_values.read(), &path_add)
-                        .and_then(|v| v.as_array().cloned())
-                        .unwrap_or_default();
-                    let new_obj = build_default_object(&items_schema_add, &defs_add);
-                    arr.push(new_obj);
-                    set_at_path(&mut form_values, &path_add,
-                        serde_json::Value::Array(arr));
-                    sync_add();
-                },
-                {t!("config-editor-add-entry")}
-            }
-        }
-    }
 }
 
 /// Render fields for one config section, including nested subsections.

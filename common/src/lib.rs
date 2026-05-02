@@ -819,7 +819,8 @@ pub struct DaemonSettings {
     #[serde(default = "default_log_level")]
     pub log_level: String,
     #[schemars(
-        description = "Time window for upgrades in HH:MM-HH:MM format (e.g. \"02:00-05:00\"). Omit to allow anytime."
+        description = "Time window for upgrades in HH:MM-HH:MM format (e.g. \"02:00-05:00\"). Omit to allow anytime.",
+        extend("x-advanced" = true),
     )]
     #[serde(default)]
     pub upgrade_window: Option<String>,
@@ -904,7 +905,7 @@ pub struct OllamaConfig {
     #[schemars(description = "Package flavour: cpu, rocm (AMD), cuda (NVIDIA), or vulkan")]
     #[serde(default = "default_flavour")]
     pub flavour: String,
-    #[schemars(description = "Context length passed as OLLAMA_CONTEXT_LENGTH env var")]
+    #[schemars(description = "Context length passed as OLLAMA_CONTEXT_LENGTH env var", extend("x-advanced" = true))]
     #[serde(default = "default_context_length")]
     pub context_length: u32,
 }
@@ -1112,13 +1113,13 @@ pub struct CloudConfig {
     #[schemars(description = "Default model (e.g. anthropic/claude-sonnet-4-6, openai/gpt-5.4)")]
     #[serde(default = "default_cloud_model")]
     pub default_model: String,
-    #[schemars(description = "Custom base URL (for proxies, Bedrock, etc.)")]
+    #[schemars(description = "Custom base URL (for proxies, Bedrock, etc.)", extend("x-advanced" = true))]
     #[serde(default)]
     pub base_url: Option<String>,
-    #[schemars(description = "API type override for custom providers")]
+    #[schemars(description = "API type override for custom providers", extend("x-advanced" = true))]
     #[serde(default)]
     pub api: Option<CloudApiType>,
-    #[schemars(description = "Authentication mode")]
+    #[schemars(description = "Authentication mode", extend("x-advanced" = true))]
     #[serde(default)]
     pub auth: Option<CloudAuthMode>,
 }
@@ -1509,7 +1510,7 @@ pub struct BackupConfig {
     )]
     #[serde(default)]
     pub repository: String,
-    #[schemars(description = "Path to the restic password/key file for repository encryption. Auto-generated if omitted.")]
+    #[schemars(description = "Path to the restic password/key file for repository encryption. Auto-generated if omitted.", extend("x-advanced" = true))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_file: Option<String>,
     #[schemars(description = "How often to run backups (e.g. \"6h\", \"1d\")")]
@@ -1518,16 +1519,16 @@ pub struct BackupConfig {
     #[schemars(description = "Retention policy: keep snapshots from the last N duration (e.g. \"7d\", \"30d\")")]
     #[serde(default = "default_backup_keep")]
     pub keep_within: String,
-    #[schemars(description = "Extra paths to include in backups (beyond auto-detected service paths)")]
+    #[schemars(description = "Extra paths to include in backups (beyond auto-detected service paths)", extend("x-advanced" = true))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_paths: Vec<String>,
-    #[schemars(description = "Glob patterns to exclude from backups")]
+    #[schemars(description = "Glob patterns to exclude from backups", extend("x-advanced" = true))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
-    #[schemars(description = "Whether to include large model caches (ollama models, lm-studio cache). Default false.")]
+    #[schemars(description = "Whether to include large model caches (ollama models, lm-studio cache). Default false.", extend("x-advanced" = true))]
     #[serde(default)]
     pub include_models: bool,
-    #[schemars(description = "Environment variables for restic (e.g. AWS_ACCESS_KEY_ID for S3 backends)")]
+    #[schemars(description = "Environment variables for restic (e.g. AWS_ACCESS_KEY_ID for S3 backends)", extend("x-advanced" = true))]
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub env: std::collections::HashMap<String, String>,
 }
@@ -1582,11 +1583,12 @@ pub struct MemvaultConfig {
     #[schemars(description = "Whether memvault is enabled")]
     #[serde(default)]
     pub enabled: bool,
-    #[schemars(description = "Data directory for memvault storage (redb, identity, etc.)")]
+    #[schemars(description = "Data directory for memvault storage (redb, identity, etc.)", extend("x-advanced" = true))]
     #[serde(default)]
     pub data_dir: String,
     #[schemars(
-        description = "Cluster ID (base58-encoded 32 bytes, or \"auto\" to generate on first run)"
+        description = "Cluster ID (base58-encoded 32 bytes, or \"auto\" to generate on first run)",
+        extend("x-advanced" = true),
     )]
     #[serde(default)]
     pub cluster_id: String,
@@ -1596,11 +1598,12 @@ pub struct MemvaultConfig {
     #[schemars(description = "Port for the memvault API server (default 8401)")]
     #[serde(default = "default_memvault_port")]
     pub port: u16,
-    #[schemars(description = "Whether the web UI is accessible on the API port")]
+    #[schemars(description = "Whether the web UI is accessible on the API port", extend("x-advanced" = true))]
     #[serde(default)]
     pub web_enabled: bool,
     #[schemars(
-        description = "Hex-encoded multihash of the bearer token for the memvault API (empty = no auth)"
+        description = "Hex-encoded multihash of the bearer token for the memvault API (empty = no auth)",
+        extend("x-advanced" = true),
     )]
     #[serde(default)]
     pub auth_token_hash: Option<String>,
@@ -1612,38 +1615,57 @@ pub struct MemvaultConfig {
 #[serde(deny_unknown_fields)]
 pub struct ClusterConfig {
     #[serde(default)]
+    #[schemars(extend("x-category" = "infra"))]
     pub daemon: DaemonSettings,
     #[serde(default)]
+    #[schemars(extend("x-category" = "ops"))]
     pub notifications: NotificationsConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "identity", "x-always-on" = true))]
     pub global: GlobalConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "agents"))]
     pub openclaw: OpenClawConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "agents"))]
     pub opencode: OpencodeConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
     pub ollama: OllamaConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
     pub lms: LmsConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
     pub unsloth: UnslothConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "llm-providers"))]
     pub litellm: LitellmConfig,
-    #[schemars(description = "Cloud LLM provider entries (list of providers)")]
+    #[schemars(
+        description = "Cloud LLM provider entries (list of providers)",
+        extend("x-category" = "llm-providers", "x-array-entry-label" = "provider"),
+    )]
     #[serde(default, deserialize_with = "deserialize_cloud_list")]
     pub cloud: Vec<CloudConfig>,
     #[serde(default)]
+    #[schemars(extend("x-category" = "ops"))]
     pub metrics: MetricsConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "infra"))]
     pub relay: RelayConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "infra"))]
     pub ai_proxy: AiProxyConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "ops"))]
     pub healer: HealerClusterConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "ops"))]
     pub backup: BackupConfig,
     #[serde(default)]
+    #[schemars(extend("x-category" = "infra"))]
     pub memvault: MemvaultConfig,
+    #[schemars(extend("x-category" = "custom", "x-array-entry-label" = "name"))]
     #[serde(default, rename = "custom-service")]
     pub custom_services: Vec<custom_service::CustomServiceConfig>,
 }
@@ -1753,12 +1775,14 @@ pub struct RelayConfig {
     #[serde(default = "default_true")]
     pub tunnels_enabled: bool,
     #[schemars(
-        description = "Rewrite Host, Referer, Origin and strip forwarding headers when proxying TCP tunnels. Prevents services (e.g. Ollama) from rejecting requests with non-local origins. Default true."
+        description = "Rewrite Host, Referer, Origin and strip forwarding headers when proxying TCP tunnels. Prevents services (e.g. Ollama) from rejecting requests with non-local origins. Default true.",
+        extend("x-advanced" = true),
     )]
     #[serde(default = "default_true")]
     pub fake_origin_local: bool,
     #[schemars(
-        description = "Cluster pre-shared key for p2p peer authentication (hex-encoded, 32 bytes). Generated by the server."
+        description = "Cluster pre-shared key for p2p peer authentication (hex-encoded, 32 bytes). Generated by the server.",
+        extend("x-advanced" = true),
     )]
     #[serde(default)]
     pub cluster_psk: Option<Secret>,
@@ -1767,14 +1791,15 @@ pub struct RelayConfig {
     )]
     #[serde(default, alias = "url")]
     pub relay_multiaddr: Option<String>,
-    #[schemars(description = "Enable mDNS local peer discovery (default true)")]
+    #[schemars(description = "Enable mDNS local peer discovery (default true)", extend("x-advanced" = true))]
     #[serde(default = "default_true")]
     pub mdns_enabled: bool,
-    #[schemars(description = "QUIC listen port for p2p connections (default 1122)")]
+    #[schemars(description = "QUIC listen port for p2p connections (default 1122)", extend("x-advanced" = true))]
     #[serde(default = "default_p2p_port")]
     pub p2p_port: u16,
     #[schemars(
-        description = "Enable AI proxy request distribution across cluster peers (default true)"
+        description = "Enable AI proxy request distribution across cluster peers (default true)",
+        extend("x-advanced" = true),
     )]
     #[serde(default = "default_true")]
     pub ai_proxy_distribution: bool,

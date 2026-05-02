@@ -803,6 +803,24 @@ config-editor-secret-placeholder = secret:NAME oder Rohwert
 config-editor-secret-hint = Nutze secret:NAME um ein Vault-Secret zu referenzieren, oder gib einen Rohwert ein
 config-editor-convert-to-secret = In Vault verschieben
 config-editor-converting = Wird konvertiert...
+config-editor-advanced = Erweitert · { $count } { $count ->
+    [one] Feld
+    *[other] Felder
+}
+config-editor-enabled-suffix = aktiviert
+config-editor-remove = Entfernen
+config-editor-on-this-page = Auf dieser Seite
+config-editor-sections-count = Abschnitte
+
+## ── Konfigurationskategorien ──────────────────────────────────
+
+category-identity = Identität
+category-llm-providers = LLM-Anbieter
+category-agents = Agenten
+category-infra = Infrastruktur
+category-ops = Betrieb
+category-custom = Benutzerdefinierte Dienste
+category-other = Sonstiges
 
 ## ── Konfigurationsverlauf ──────────────────────────────────────
 
