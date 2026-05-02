@@ -43,27 +43,11 @@ pub fn config_path() -> Result<PathBuf> {
 }
 
 /// Atomically merge a JSON patch into openclaw.json with validation and rollback.
-///
-/// Injects schema-required defaults (e.g. `commands`) that openclaw itself
-/// provides at runtime but are mandatory in the JSON schema, so validation
-/// doesn't reject configs that simply never set them.
 pub fn merge_and_validate(config_path: &Path, patch: &serde_json::Value) -> Result<()> {
     if !config_path.exists() {
         anyhow::bail!("openclaw config not found at {}", config_path.display());
     }
-
-    // Ensure schema-required fields with sane defaults are present.
-    let mut full_patch = serde_json::json!({
-        "commands": {
-            "native": "auto",
-            "nativeSkills": "auto",
-            "ownerDisplay": "raw",
-            "restart": true,
-        }
-    });
-    merge_json(&mut full_patch, patch);
-
-    VALIDATOR.merge_validate_and_write(config_path, &full_patch)
+    VALIDATOR.merge_validate_and_write(config_path, patch)
 }
 
 /// The NODE_COMPILE_CACHE directory used for all openclaw invocations.

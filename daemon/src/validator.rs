@@ -491,11 +491,15 @@ fn validate_with_file_schema(path: &str, value: &serde_json::Value) -> Result<()
     run_jsonschema(&schema, value)
 }
 
-/// HACK: Replace `{"$ref": "#/$defs/..."}` nodes with `{}` (accept any value)
-/// and remove the top-level `$defs` key.  This works around `openclaw config
-/// schema` emitting `$ref` pointers to definitions that don't exist in the
-/// schema document, causing jsonschema compilation to fail.  Remove once
-/// openclaw ships schemas with valid `$defs`.
+/// HACK: Sanitize exec-sourced schemas (e.g. `openclaw config schema`) so they
+/// work with our partial-patch validation approach:
+/// - Replace `{"$ref": "#/$defs/..."}` nodes with `{}` (accept any value),
+///   because openclaw emits dangling `$ref` pointers.
+/// - Strip all `"required"` arrays, because we validate the full merged config
+///   but only patch a subset of keys — missing required fields in parts we
+///   didn't touch would fail validation.
+/// Remove once openclaw ships schemas with valid `$defs` and we move to
+/// patch-scoped validation.
 fn strip_defs_refs(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
@@ -507,6 +511,7 @@ fn strip_defs_refs(value: &mut serde_json::Value) {
                 }
             }
             map.remove("$defs");
+            map.remove("required");
             for v in map.values_mut() {
                 strip_defs_refs(v);
             }
