@@ -115,7 +115,14 @@ impl OpenClaw {
             .context("HOME not set")?
             .join(".openclaw/openclaw.json");
 
-        let mut patch = serde_json::json!({});
+        let mut patch = serde_json::json!({
+            "commands": {
+                "native": "auto",
+                "nativeSkills": "auto",
+                "ownerDisplay": "raw",
+                "restart": true,
+            }
+        });
 
         {
             let gw_cfg = if let Some(gw) = &self.config.gateway {
@@ -143,7 +150,11 @@ impl OpenClaw {
         }
 
         if let Some(tg) = &self.config.telegram {
-            let mut tg_cfg = serde_json::json!({ "enabled": tg.enabled });
+            let mut tg_cfg = serde_json::json!({
+                "enabled": tg.enabled,
+                "dmPolicy": "pairing",
+                "groupPolicy": "allowlist",
+            });
             if !tg.bot_token.is_empty() {
                 tg_cfg["botToken"] = serde_json::json!(tg.bot_token.expose());
             }

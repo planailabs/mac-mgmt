@@ -37,6 +37,11 @@ impl Connector for UnslothOpenClaw {
             &[("connector", "unsloth\u{2192}openclaw"), ("base_url", &base_url), ("model", &self.default_model)],
         );
 
+        if self.default_model.is_empty() {
+            tracing::warn!("no default_model configured for unsloth, skipping openclaw connector");
+            return Ok(());
+        }
+
         let path = config_path()?;
         if !path.exists() {
             tracing::warn!("openclaw config not found, skipping unsloth connector");

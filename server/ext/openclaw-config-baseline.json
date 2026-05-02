@@ -600,6 +600,16 @@
       "hasChildren": false
     },
     {
+      "path": "agents.defaults.cliBackends.*.jsonlDialect",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
       "path": "agents.defaults.cliBackends.*.maxPromptArgChars",
       "kind": "core",
       "type": "integer",
@@ -871,6 +881,26 @@
     },
     {
       "path": "agents.defaults.cliBackends.*.systemPromptArg",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.cliBackends.*.systemPromptFileConfigArg",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.cliBackends.*.systemPromptFileConfigKey",
       "kind": "core",
       "type": "string",
       "required": false,
@@ -1492,6 +1522,52 @@
       "hasChildren": false
     },
     {
+      "path": "agents.defaults.embeddedHarness",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Default Embedded Harness",
+      "help": "Default embedded agent harness policy. Use runtime=auto for plugin harness selection, runtime=pi for built-in PI, or a registered harness id such as codex.",
+      "hasChildren": true
+    },
+    {
+      "path": "agents.defaults.embeddedHarness.fallback",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "pi",
+        "none"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "reliability"
+      ],
+      "label": "Default Embedded Harness Fallback",
+      "help": "Embedded harness fallback when no plugin harness matches or an auto-selected plugin harness fails before side effects. Set none to disable automatic PI fallback.",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.embeddedHarness.runtime",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Default Embedded Harness Runtime",
+      "help": "Embedded harness runtime: auto, pi, or a registered plugin harness id such as codex.",
+      "hasChildren": false
+    },
+    {
       "path": "agents.defaults.embeddedPi",
       "kind": "core",
       "type": "object",
@@ -1504,6 +1580,20 @@
       "label": "Embedded Pi",
       "help": "Embedded Pi runner hardening controls for how workspace-local Pi settings are trusted and applied in OpenClaw sessions.",
       "hasChildren": true
+    },
+    {
+      "path": "agents.defaults.embeddedPi.executionContract",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Embedded Pi Execution Contract",
+      "help": "Embedded Pi execution contract: \"default\" keeps the standard runner behavior, while \"strict-agentic\" keeps OpenAI/OpenAI Codex GPT-5-family runs acting until they hit a real blocker instead of stopping at plans or filler.",
+      "hasChildren": false
     },
     {
       "path": "agents.defaults.embeddedPi.projectSettingsPolicy",
@@ -1756,6 +1846,21 @@
         "automation"
       ],
       "help": "Delivery target (\"last\", \"none\", or a channel id). Known channels: feishu, googlechat, nostr, msteams, mattermost, nextcloud-talk, matrix, bluebubbles, line, zalo, zalouser, synology-chat, tlon, qa-channel, discord, imessage, irc, qqbot, signal, slack, telegram, twitch, whatsapp.",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.heartbeat.timeoutSeconds",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "automation",
+        "performance"
+      ],
+      "label": "Heartbeat Timeout (Seconds)",
+      "help": "Maximum time in seconds allowed for a heartbeat agent turn before it is aborted. Leave unset to use agents.defaults.timeoutSeconds.",
       "hasChildren": false
     },
     {
@@ -2162,7 +2267,7 @@
         "reliability"
       ],
       "label": "Memory Search Fallback",
-      "help": "Backup provider used when primary embeddings fail: \"openai\", \"gemini\", \"voyage\", \"mistral\", \"ollama\", \"local\", or \"none\". Set a real fallback for production reliability; use \"none\" only if you prefer explicit failures.",
+      "help": "Backup provider used when primary embeddings fail: \"openai\", \"gemini\", \"voyage\", \"mistral\", \"bedrock\", \"lmstudio\", \"ollama\", \"local\", or \"none\". Set a real fallback for production reliability; use \"none\" only if you prefer explicit failures.",
       "hasChildren": false
     },
     {
@@ -2305,7 +2410,7 @@
         "advanced"
       ],
       "label": "Memory Search Provider",
-      "help": "Selects the embedding backend used to build/query memory vectors: \"openai\", \"gemini\", \"voyage\", \"mistral\", \"bedrock\", \"ollama\", or \"local\". Keep your most reliable provider here and configure fallback for resilience.",
+      "help": "Selects the embedding backend used to build/query memory vectors: \"openai\", \"gemini\", \"voyage\", \"mistral\", \"bedrock\", \"lmstudio\", \"ollama\", or \"local\". Keep your most reliable provider here and configure fallback for resilience.",
       "hasChildren": false
     },
     {
@@ -4134,6 +4239,116 @@
       "hasChildren": false
     },
     {
+      "path": "agents.defaults.startupContext",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Startup Context",
+      "help": "Runtime-owned first-turn prelude for bare \"/new\" and \"/reset\". Use this to control whether recent daily memory files are preloaded into the first prompt instead of asking the model to decide what to read.",
+      "hasChildren": true
+    },
+    {
+      "path": "agents.defaults.startupContext.applyOn",
+      "kind": "core",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Startup Context Apply On",
+      "help": "Chooses which bare reset commands get startup context: include \"new\", \"reset\", or both (default: [\"new\",\"reset\"]).",
+      "hasChildren": true
+    },
+    {
+      "path": "agents.defaults.startupContext.applyOn.*",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.startupContext.dailyMemoryDays",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Startup Context Daily Memory Days",
+      "help": "Number of dated memory files to load counting backward from today in the configured user timezone (default: 2 for today + yesterday).",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.startupContext.enabled",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Enable Startup Context",
+      "help": "Enable the startup-context prelude for bare session resets (default: true). Disable this to fall back to prompt-only behavior with no runtime-loaded daily memory.",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.startupContext.maxFileBytes",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "performance",
+        "storage"
+      ],
+      "label": "Startup Context Max File Bytes",
+      "help": "Maximum bytes allowed per daily memory file when building startup context (default: 16384). Files over this boundary-safe read limit are skipped.",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.startupContext.maxFileChars",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "performance",
+        "storage"
+      ],
+      "label": "Startup Context Max File Chars",
+      "help": "Maximum characters retained from each loaded daily memory file in the startup prelude (default: 2000).",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.defaults.startupContext.maxTotalChars",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "performance"
+      ],
+      "label": "Startup Context Max Total Chars",
+      "help": "Maximum total characters retained across all loaded daily memory files in the startup prelude (default: 4500). Additional files are truncated from the prelude once this cap is reached.",
+      "hasChildren": false
+    },
+    {
       "path": "agents.defaults.subagents",
       "kind": "core",
       "type": "object",
@@ -4477,6 +4692,80 @@
       "hasChildren": false
     },
     {
+      "path": "agents.list.*.embeddedHarness",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Agent Embedded Harness",
+      "help": "Per-agent embedded harness policy override. Use fallback=none to make this agent fail instead of falling back to PI.",
+      "hasChildren": true
+    },
+    {
+      "path": "agents.list.*.embeddedHarness.fallback",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "pi",
+        "none"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "reliability"
+      ],
+      "label": "Agent Embedded Harness Fallback",
+      "help": "Per-agent embedded harness fallback. Set none to disable automatic PI fallback for this agent.",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.list.*.embeddedHarness.runtime",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Agent Embedded Harness Runtime",
+      "help": "Per-agent embedded harness runtime: auto, pi, or a registered plugin harness id such as codex.",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.list.*.embeddedPi",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Agent Embedded Pi",
+      "help": "Optional per-agent embedded Pi overrides. Use this to opt specific agents into stricter GPT-5 execution behavior without changing the global default.",
+      "hasChildren": true
+    },
+    {
+      "path": "agents.list.*.embeddedPi.executionContract",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Agent Embedded Pi Execution Contract",
+      "help": "Optional per-agent embedded Pi execution contract override. Set \"strict-agentic\" to keep that agent acting through plan-only turns on OpenAI/OpenAI Codex GPT-5-family runs, or \"default\" to inherit the standard runner behavior.",
+      "hasChildren": false
+    },
+    {
       "path": "agents.list.*.fastModeDefault",
       "kind": "core",
       "type": "boolean",
@@ -4710,8 +4999,7 @@
       "tags": [
         "automation"
       ],
-      "label": "Agent Heartbeat Suppress Tool Error Warnings",
-      "help": "Suppress tool error warning payloads during heartbeat runs.",
+      "label": "Heartbeat Suppress Tool Error Warnings",
       "hasChildren": false
     },
     {
@@ -4725,6 +5013,20 @@
         "automation"
       ],
       "help": "Delivery target (\"last\", \"none\", or a channel id). Known channels: feishu, googlechat, nostr, msteams, mattermost, nextcloud-talk, matrix, bluebubbles, line, zalo, zalouser, synology-chat, tlon, qa-channel, discord, imessage, irc, qqbot, signal, slack, telegram, twitch, whatsapp.",
+      "hasChildren": false
+    },
+    {
+      "path": "agents.list.*.heartbeat.timeoutSeconds",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "automation",
+        "performance"
+      ],
+      "label": "Heartbeat Timeout (Seconds)",
       "hasChildren": false
     },
     {
@@ -7473,6 +7775,16 @@
       "hasChildren": false
     },
     {
+      "path": "agents.list.*.tools.loopDetection.unknownToolThreshold",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
       "path": "agents.list.*.tools.loopDetection.warningThreshold",
       "kind": "core",
       "type": "integer",
@@ -9015,7 +9327,7 @@
         "security"
       ],
       "label": "Browser Dangerously Allow Private Network",
-      "help": "Allows access to private-network address ranges from browser tooling. Default is enabled for trusted-network operator setups; disable to enforce strict public-only resolution checks.",
+      "help": "Allows access to private-network address ranges from browser tooling. Default is disabled when unset; enable only for explicitly trusted private-network destinations.",
       "hasChildren": false
     },
     {
@@ -10729,6 +11041,23 @@
       "hasChildren": false
     },
     {
+      "path": "gateway.controlUi.allowExternalEmbedUrls",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access",
+        "advanced",
+        "network",
+        "security"
+      ],
+      "label": "Allow External Control UI Embed URLs",
+      "help": "DANGEROUS toggle that allows hosted embeds to load absolute external http(s) URLs. Keep this off unless your Control UI intentionally embeds trusted third-party pages; hosted /__openclaw__/canvas and /__openclaw__/a2ui documents do not need it.",
+      "hasChildren": false
+    },
+    {
       "path": "gateway.controlUi.allowInsecureAuth",
       "kind": "core",
       "type": "boolean",
@@ -10792,6 +11121,22 @@
       ],
       "label": "Dangerously Disable Control UI Device Auth",
       "help": "Disables Control UI device identity checks and relies on token/password only. Use only for short-lived debugging on trusted networks, then turn it off immediately.",
+      "hasChildren": false
+    },
+    {
+      "path": "gateway.controlUi.embedSandbox",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access",
+        "advanced",
+        "security"
+      ],
+      "label": "Control UI Embed Sandbox Mode",
+      "help": "Iframe sandbox policy for hosted Control UI embeds. \"strict\" disables scripts, \"scripts\" allows interactive embeds while keeping origin isolation (default), and \"trusted\" adds `allow-same-origin` for same-site documents that intentionally need stronger privileges.",
       "hasChildren": false
     },
     {
@@ -15687,8 +16032,23 @@
         "models"
       ],
       "label": "Model Provider Request Overrides",
-      "help": "Optional request overrides for model-provider requests, including extra headers, auth overrides, proxy routing, and TLS client settings. Use these only when your upstream or enterprise network path requires transport customization.",
+      "help": "Optional request overrides for model-provider requests, including extra headers, auth overrides, proxy routing, TLS client settings, and optional allowPrivateNetwork for trusted self-hosted endpoints. Use these only when your upstream or enterprise network path requires transport customization.",
       "hasChildren": true
+    },
+    {
+      "path": "models.providers.*.request.allowPrivateNetwork",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access",
+        "models"
+      ],
+      "label": "Model Provider Request Allow Private Network",
+      "help": "When true, allow HTTPS to the model base URL when DNS resolves to private, CGNAT, or similar ranges, via the provider HTTP fetch guard (fetchWithSsrFGuard). OpenAI Responses WebSocket reuses request for headers/TLS but does not use that fetch SSRF path. Use only for operator-controlled self-hosted OpenAI-compatible endpoints (LAN, overlay, split DNS). Default is false.",
+      "hasChildren": false
     },
     {
       "path": "models.providers.*.request.auth",
@@ -18151,6 +18511,30 @@
       "hasChildren": false
     },
     {
+      "path": "skills.allowExternalSkillsIn",
+      "kind": "core",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allow External Skills In",
+      "help": "List of directory prefixes whose real paths are allowed to host skill files even when they resolve outside the configured skills root via symlinks. Useful for package-manager stores like /nix/store where skills are installed into an external read-only tree, or for shared git repositories symlinked into the workspace.",
+      "hasChildren": true
+    },
+    {
+      "path": "skills.allowExternalSkillsIn.*",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
       "path": "skills.entries",
       "kind": "core",
       "type": "object",
@@ -19271,7 +19655,7 @@
         "tools"
       ],
       "label": "Enable Structured Plan Tool",
-      "help": "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking across all providers. OpenAI and OpenAI Codex runs auto-enable it even when this flag is unset.",
+      "help": "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. Leave this off unless you explicitly want the tool outside strict-agentic embedded Pi runs.",
       "hasChildren": false
     },
     {
@@ -19651,6 +20035,20 @@
       "hasChildren": false
     },
     {
+      "path": "tools.loopDetection.unknownToolThreshold",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "tools"
+      ],
+      "label": "Unknown-tool Loop Threshold",
+      "help": "Block repeated calls to the same unavailable tool after this many misses (default: 10).",
+      "hasChildren": false
+    },
+    {
       "path": "tools.loopDetection.warningThreshold",
       "kind": "core",
       "type": "integer",
@@ -19673,6 +20071,32 @@
       "sensitive": false,
       "tags": [],
       "hasChildren": true
+    },
+    {
+      "path": "tools.media.asyncCompletion",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "tools.media.asyncCompletion.directSend",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "media",
+        "storage",
+        "tools"
+      ],
+      "label": "Async Media Completion Direct Send",
+      "help": "Enable direct channel sends for completed async music/video generation tasks instead of relying on the requester session wake path. Default off so detached media completion keeps the legacy model-delivery flow unless you opt in.",
+      "hasChildren": false
     },
     {
       "path": "tools.media.audio",
@@ -27415,6 +27839,36 @@
       ],
       "label": "Web Fetch Readability Extraction",
       "help": "Use Readability to extract main content from HTML (fallbacks to basic HTML cleanup).",
+      "hasChildren": false
+    },
+    {
+      "path": "tools.web.fetch.ssrfPolicy",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access",
+        "tools"
+      ],
+      "label": "Web Fetch SSRF Policy",
+      "help": "Scoped SSRF policy overrides for web_fetch. Keep this narrow and opt in only for known local-network proxy environments.",
+      "hasChildren": true
+    },
+    {
+      "path": "tools.web.fetch.ssrfPolicy.allowRfc2544BenchmarkRange",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access",
+        "tools"
+      ],
+      "label": "Web Fetch Allow RFC 2544 Benchmark Range",
+      "help": "Allow RFC 2544 benchmark-range IPs (198.18.0.0/15) for fake-IP proxy compatibility such as Clash or Surge.",
       "hasChildren": false
     },
     {
@@ -44003,6 +44457,20 @@
       "hasChildren": false
     },
     {
+      "path": "channels.msteams.authType",
+      "kind": "channel",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "secret",
+        "federated"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
       "path": "channels.msteams.blockStreaming",
       "kind": "channel",
       "type": "boolean",
@@ -44073,6 +44541,26 @@
       "hasChildren": false
     },
     {
+      "path": "channels.msteams.certificatePath",
+      "kind": "channel",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.msteams.certificateThumbprint",
+      "kind": "channel",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
       "path": "channels.msteams.chunkMode",
       "kind": "channel",
       "type": "string",
@@ -44128,6 +44616,46 @@
     },
     {
       "path": "channels.msteams.defaultTo",
+      "kind": "channel",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.msteams.delegatedAuth",
+      "kind": "channel",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "channels.msteams.delegatedAuth.enabled",
+      "kind": "channel",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.msteams.delegatedAuth.scopes",
+      "kind": "channel",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "channels.msteams.delegatedAuth.scopes.*",
       "kind": "channel",
       "type": "string",
       "required": false,
@@ -44350,6 +44878,16 @@
       "hasChildren": false
     },
     {
+      "path": "channels.msteams.managedIdentityClientId",
+      "kind": "channel",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
       "path": "channels.msteams.markdown",
       "kind": "channel",
       "type": "object",
@@ -44483,6 +45021,36 @@
       "path": "channels.msteams.sharePointSiteId",
       "kind": "channel",
       "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.msteams.sso",
+      "kind": "channel",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "channels.msteams.sso.connectionName",
+      "kind": "channel",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.msteams.sso.enabled",
+      "kind": "channel",
+      "type": "boolean",
       "required": false,
       "deprecated": false,
       "sensitive": false,
@@ -44899,6 +45467,16 @@
     },
     {
       "path": "channels.msteams.typingIndicator",
+      "kind": "channel",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.msteams.useManagedIdentity",
       "kind": "channel",
       "type": "boolean",
       "required": false,
@@ -46886,6 +47464,15 @@
       "hasChildren": true
     },
     {
+      "path": "channels.qqbot.*",
+      "kind": "channel",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
       "path": "channels.qqbot.accounts",
       "kind": "channel",
       "type": "object",
@@ -46904,6 +47491,15 @@
       "sensitive": false,
       "tags": [],
       "hasChildren": true
+    },
+    {
+      "path": "channels.qqbot.accounts.*.*",
+      "kind": "channel",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
     },
     {
       "path": "channels.qqbot.accounts.*.allowFrom",
@@ -47087,6 +47683,43 @@
       "kind": "channel",
       "type": "string",
       "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.qqbot.accounts.*.streaming",
+      "kind": "channel",
+      "type": [
+        "boolean",
+        "object"
+      ],
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "channels.qqbot.accounts.*.streaming.*",
+      "kind": "channel",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.qqbot.accounts.*.streaming.mode",
+      "kind": "channel",
+      "type": "string",
+      "required": true,
+      "enumValues": [
+        "off",
+        "partial"
+      ],
+      "defaultValue": "partial",
       "deprecated": false,
       "sensitive": false,
       "tags": [],
@@ -47348,6 +47981,43 @@
       "kind": "channel",
       "type": "string",
       "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.qqbot.streaming",
+      "kind": "channel",
+      "type": [
+        "boolean",
+        "object"
+      ],
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "channels.qqbot.streaming.*",
+      "kind": "channel",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "channels.qqbot.streaming.mode",
+      "kind": "channel",
+      "type": "string",
+      "required": true,
+      "enumValues": [
+        "off",
+        "partial"
+      ],
+      "defaultValue": "partial",
       "deprecated": false,
       "sensitive": false,
       "tags": [],
@@ -52190,7 +52860,7 @@
         "network"
       ],
       "label": "Slack Native Streaming",
-      "help": "Enable native Slack text streaming (chat.startStream/chat.appendStream/chat.stopStream) when channels.slack.streaming.mode is partial (default: true).",
+      "help": "Enable native Slack text streaming (chat.startStream/chat.appendStream/chat.stopStream) when channels.slack.streaming.mode is partial (default: true). Requires a reply thread target; top-level DMs stay on the non-thread fallback path.",
       "hasChildren": false
     },
     {
@@ -60977,6 +61647,7 @@
       "kind": "plugin",
       "type": "number",
       "required": false,
+      "defaultValue": 120,
       "deprecated": false,
       "sensitive": false,
       "tags": [
@@ -60984,7 +61655,7 @@
         "performance"
       ],
       "label": "Prompt Timeout Seconds",
-      "help": "Optional timeout for each embedded runtime turn.",
+      "help": "Timeout for each embedded runtime turn. Defaults to 120 seconds so slower Gemini CLI ACP startups have room to initialize.",
       "hasChildren": false
     },
     {
@@ -61068,6 +61739,482 @@
     },
     {
       "path": "plugins.entries.acpx.subagent.allowModelOverride",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allow Plugin Subagent Model Override",
+      "help": "Explicitly allows this plugin to request provider/model overrides in background subagent runs. Keep false unless the plugin is trusted to steer model selection.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Active Memory",
+      "help": "Runs a bounded blocking memory sub-agent before eligible conversational replies and injects relevant memory into prompt context. (plugin: active-memory)",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.config",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Active Memory Config",
+      "help": "Plugin-defined config payload for active-memory.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.config.agents",
+      "kind": "plugin",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Target Agents",
+      "help": "Explicit agent ids that may use active memory.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.config.agents.*",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.allowedChatTypes",
+      "kind": "plugin",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allowed Chat Types",
+      "help": "Choose which session types may run Active Memory. Defaults to direct-message style sessions only.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.config.allowedChatTypes.*",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "direct",
+        "group",
+        "channel"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.cacheTtlMs",
+      "kind": "plugin",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.enabled",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Active Memory Recall",
+      "help": "Globally enable or pause Active Memory recall while keeping the plugin command available.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.logging",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Enable Logging",
+      "help": "Emit active memory timing and result logs.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.maxSummaryChars",
+      "kind": "plugin",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "performance"
+      ],
+      "label": "Max Summary Characters",
+      "help": "Maximum total characters allowed in the active-memory summary.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.model",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "models"
+      ],
+      "label": "Memory Model",
+      "help": "Provider/model used for the blocking memory sub-agent.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.modelFallback",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "reliability"
+      ],
+      "label": "Fallback Memory Model",
+      "help": "Optional provider/model to use if no explicit plugin model, session model, or agent primary model resolves.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.modelFallbackPolicy",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "default-remote",
+        "resolved-only"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access",
+        "reliability"
+      ],
+      "label": "Model Fallback Policy",
+      "help": "Deprecated compatibility field. Active Memory no longer uses a built-in fallback model; set modelFallback explicitly if you want a fallback.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.persistTranscripts",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "media"
+      ],
+      "label": "Persist Transcripts",
+      "help": "Keep blocking memory sub-agent session transcripts on disk in a separate plugin-owned directory.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.promptAppend",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Prompt Append",
+      "help": "Advanced: append extra operator instructions after the default Active Memory sub-agent instructions.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.promptOverride",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Prompt Override",
+      "help": "Advanced: replace the default Active Memory sub-agent instructions. Conversation context is still appended.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.promptStyle",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "balanced",
+        "strict",
+        "contextual",
+        "recall-heavy",
+        "precision-heavy",
+        "preference-only"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Prompt Style",
+      "help": "Choose how eager or strict the blocking memory sub-agent should be when deciding whether to return memory.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.qmd",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.config.qmd.searchMode",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "inherit",
+        "search",
+        "vsearch",
+        "query"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "QMD Search Mode",
+      "help": "Override the QMD search mode used by the blocking memory sub-agent. Defaults to fast lexical search; use inherit to match the main memory backend setting.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.queryMode",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "message",
+        "recent",
+        "full"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Query Mode",
+      "help": "Choose whether the blocking memory sub-agent sees only the latest user message, a small recent tail, or the full conversation.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.recentAssistantChars",
+      "kind": "plugin",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.recentAssistantTurns",
+      "kind": "plugin",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.recentUserChars",
+      "kind": "plugin",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.recentUserTurns",
+      "kind": "plugin",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.thinking",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "adaptive"
+      ],
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Thinking Override",
+      "help": "Advanced: optional thinking level for the blocking memory sub-agent. Defaults to off for speed.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.timeoutMs",
+      "kind": "plugin",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "performance"
+      ],
+      "label": "Timeout (ms)",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.config.transcriptDir",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "storage"
+      ],
+      "label": "Transcript Directory",
+      "help": "Relative directory under the agent sessions folder used when transcript persistence is enabled.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.enabled",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Enable Active Memory",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.hooks",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Plugin Hook Policy",
+      "help": "Per-plugin typed hook policy controls for core-enforced safety gates. Use this to constrain high-impact hook categories without disabling the entire plugin.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.hooks.allowPromptInjection",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allow Prompt Injection Hooks",
+      "help": "Controls whether this plugin may mutate prompts through typed hooks. Set false to block `before_prompt_build` and ignore prompt-mutating fields from legacy `before_agent_start`, while preserving legacy `modelOverride` and `providerOverride` behavior.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.subagent",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Plugin Subagent Policy",
+      "help": "Per-plugin subagent runtime controls for model override trust and allowlists. Keep this unset unless a plugin must explicitly steer subagent model selection.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.subagent.allowedModels",
+      "kind": "plugin",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Plugin Subagent Allowed Models",
+      "help": "Allowed override targets for trusted plugin subagent runs as canonical \"provider/model\" refs. Use \"*\" only when you intentionally allow any model.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.active-memory.subagent.allowedModels.*",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.active-memory.subagent.allowModelOverride",
       "kind": "plugin",
       "type": "boolean",
       "required": false,
@@ -62739,6 +63886,393 @@
     },
     {
       "path": "plugins.entries.cloudflare-ai-gateway.subagent.allowModelOverride",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allow Plugin Subagent Model Override",
+      "help": "Explicitly allows this plugin to request provider/model overrides in background subagent runs. Keep false unless the plugin is trusted to steer model selection.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Codex",
+      "help": "Codex app-server harness and Codex-managed GPT model catalog. (plugin: codex)",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.config",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Codex Config",
+      "help": "Plugin-defined config payload for codex.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "App Server",
+      "help": "Runtime controls for connecting to Codex app-server.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.approvalPolicy",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "never",
+        "on-request",
+        "on-failure",
+        "untrusted"
+      ],
+      "defaultValue": "never",
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access",
+        "advanced"
+      ],
+      "label": "Approval Policy",
+      "help": "Codex native approval policy sent to thread start, resume, and turns.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.approvalsReviewer",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "user",
+        "guardian_subagent"
+      ],
+      "defaultValue": "user",
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Approvals Reviewer",
+      "help": "Use user approvals or the Codex guardian subagent for native app-server approvals.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.args",
+      "kind": "plugin",
+      "type": [
+        "array",
+        "string"
+      ],
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Arguments",
+      "help": "Arguments used for stdio transport. Defaults to app-server --listen stdio://.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.args.*",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.authToken",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": true,
+      "tags": [
+        "advanced",
+        "auth",
+        "security"
+      ],
+      "label": "Auth Token",
+      "help": "Bearer token sent to the WebSocket app-server.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.command",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "defaultValue": "codex",
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Command",
+      "help": "Executable used for stdio transport.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.headers",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Headers",
+      "help": "Additional headers sent to the WebSocket app-server.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.headers.*",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.requestTimeoutMs",
+      "kind": "plugin",
+      "type": "number",
+      "required": false,
+      "defaultValue": 60000,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced",
+        "media",
+        "performance"
+      ],
+      "label": "Request Timeout",
+      "help": "Maximum time to wait for Codex app-server control-plane requests.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.sandbox",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "read-only",
+        "workspace-write",
+        "danger-full-access"
+      ],
+      "defaultValue": "workspace-write",
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced",
+        "storage"
+      ],
+      "label": "Sandbox",
+      "help": "Codex native sandbox mode sent to thread start and resume.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.serviceTier",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Service Tier",
+      "help": "Optional Codex service tier passed when starting or resuming threads.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.transport",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "stdio",
+        "websocket"
+      ],
+      "defaultValue": "stdio",
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Transport",
+      "help": "Use stdio to spawn Codex locally, or websocket to connect to an already-running app-server.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.appServer.url",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "WebSocket URL",
+      "help": "Codex app-server WebSocket URL when transport is websocket.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.discovery",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Model Discovery",
+      "help": "Plugin-owned controls for discovering Codex app-server models.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.config.discovery.enabled",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Enable Discovery",
+      "help": "When false, OpenClaw keeps the Codex harness available but uses the bundled fallback model list.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.config.discovery.timeoutMs",
+      "kind": "plugin",
+      "type": "number",
+      "required": false,
+      "defaultValue": 2500,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced",
+        "performance"
+      ],
+      "label": "Discovery Timeout",
+      "help": "Maximum time to wait for Codex app-server model discovery before falling back to the bundled model list.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.enabled",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Enable Codex",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.hooks",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Plugin Hook Policy",
+      "help": "Per-plugin typed hook policy controls for core-enforced safety gates. Use this to constrain high-impact hook categories without disabling the entire plugin.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.hooks.allowPromptInjection",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allow Prompt Injection Hooks",
+      "help": "Controls whether this plugin may mutate prompts through typed hooks. Set false to block `before_prompt_build` and ignore prompt-mutating fields from legacy `before_agent_start`, while preserving legacy `modelOverride` and `providerOverride` behavior.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.subagent",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Plugin Subagent Policy",
+      "help": "Per-plugin subagent runtime controls for model override trust and allowlists. Keep this unset unless a plugin must explicitly steer subagent model selection.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.subagent.allowedModels",
+      "kind": "plugin",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Plugin Subagent Allowed Models",
+      "help": "Allowed override targets for trusted plugin subagent runs as canonical \"provider/model\" refs. Use \"*\" only when you intentionally allow any model.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.codex.subagent.allowedModels.*",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.codex.subagent.allowModelOverride",
       "kind": "plugin",
       "type": "boolean",
       "required": false,
@@ -67160,6 +68694,127 @@
       "hasChildren": false
     },
     {
+      "path": "plugins.entries.lmstudio",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "@openclaw/lmstudio-provider",
+      "help": "OpenClaw LM Studio provider plugin (plugin: lmstudio)",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.lmstudio.config",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "@openclaw/lmstudio-provider Config",
+      "help": "Plugin-defined config payload for lmstudio.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.lmstudio.enabled",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Enable @openclaw/lmstudio-provider",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.lmstudio.hooks",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Plugin Hook Policy",
+      "help": "Per-plugin typed hook policy controls for core-enforced safety gates. Use this to constrain high-impact hook categories without disabling the entire plugin.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.lmstudio.hooks.allowPromptInjection",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allow Prompt Injection Hooks",
+      "help": "Controls whether this plugin may mutate prompts through typed hooks. Set false to block `before_prompt_build` and ignore prompt-mutating fields from legacy `before_agent_start`, while preserving legacy `modelOverride` and `providerOverride` behavior.",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.lmstudio.subagent",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "advanced"
+      ],
+      "label": "Plugin Subagent Policy",
+      "help": "Per-plugin subagent runtime controls for model override trust and allowlists. Keep this unset unless a plugin must explicitly steer subagent model selection.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.lmstudio.subagent.allowedModels",
+      "kind": "plugin",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Plugin Subagent Allowed Models",
+      "help": "Allowed override targets for trusted plugin subagent runs as canonical \"provider/model\" refs. Use \"*\" only when you intentionally allow any model.",
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.lmstudio.subagent.allowedModels.*",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.lmstudio.subagent.allowModelOverride",
+      "kind": "plugin",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "access"
+      ],
+      "label": "Allow Plugin Subagent Model Override",
+      "help": "Explicitly allows this plugin to request provider/model overrides in background subagent runs. Keep false unless the plugin is trusted to steer model selection.",
+      "hasChildren": false
+    },
+    {
       "path": "plugins.entries.lobster",
       "kind": "plugin",
       "type": "object",
@@ -68006,6 +69661,20 @@
         "storage"
       ],
       "label": "Database Path",
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.memory-lancedb.config.dreaming",
+      "kind": "plugin",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "storage"
+      ],
+      "label": "Dreaming",
+      "help": "Optional dreaming config consumed when this plugin owns the memory slot",
       "hasChildren": false
     },
     {
@@ -71752,6 +73421,34 @@
       "kind": "plugin",
       "type": "string",
       "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": false
+    },
+    {
+      "path": "plugins.entries.qqbot.config.streaming",
+      "kind": "plugin",
+      "type": [
+        "boolean",
+        "object"
+      ],
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "hasChildren": true
+    },
+    {
+      "path": "plugins.entries.qqbot.config.streaming.mode",
+      "kind": "plugin",
+      "type": "string",
+      "required": false,
+      "enumValues": [
+        "off",
+        "partial"
+      ],
+      "defaultValue": "partial",
       "deprecated": false,
       "sensitive": false,
       "tags": [],
