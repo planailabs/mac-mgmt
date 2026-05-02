@@ -86,6 +86,15 @@ impl PeerRegistry {
             .map(|(id, e)| (*id, &e.advertisement))
     }
 
+    /// Iterate over all non-stale peers and their advertisements.
+    pub fn fresh_peers(&self) -> impl Iterator<Item = (PeerId, &BackendAdvertisement)> {
+        let cutoff = Instant::now() - std::time::Duration::from_secs(STALE_TIMEOUT_SECS);
+        self.peers
+            .iter()
+            .filter(move |(_, e)| e.last_seen > cutoff)
+            .map(|(id, e)| (*id, &e.advertisement))
+    }
+
     pub fn peer_count(&self) -> usize {
         let cutoff = Instant::now() - std::time::Duration::from_secs(STALE_TIMEOUT_SECS);
         self.peers

@@ -181,6 +181,9 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
 
     if cfg.ai_proxy.enabled {
         probes.push(Box::new(ai_proxy::AiProxyProbe::from_config(&cfg.ai_proxy)));
+        if let Some(fp) = ai_proxy::AiProxyFunctionalProbe::from_config(&cfg.ai_proxy) {
+            probes.push(Box::new(fp));
+        }
     }
 
     probes

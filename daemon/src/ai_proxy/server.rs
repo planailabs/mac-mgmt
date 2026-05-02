@@ -1,4 +1,4 @@
-use rocket::http::{ContentType, Status};
+use rocket::http::Status;
 use rocket::response::stream::{Event, EventStream};
 use rocket::serde::json::Json;
 use rocket::{Either, State, get, post, routes};
@@ -261,18 +261,79 @@ async fn usage(
     })
 }
 
+#[derive(serde::Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    backends: Vec<HealthBackend>,
+}
+
+#[derive(serde::Serialize)]
+struct HealthBackend {
+    local: bool,
+    name: String,
+    base_url: String,
+    active_jobs: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_id: Option<String>,
+    models: Vec<String>,
+}
+
 #[get("/health")]
-async fn health(state: &State<Arc<AiProxyState>>) -> (Status, (ContentType, &'static str)) {
+async fn health(state: &State<Arc<AiProxyState>>) -> (Status, Json<HealthResponse>) {
     let backends = state.backends.read().await;
-    let has_backend = backends.ollama.is_some() || backends.unsloth.is_some();
-    if has_backend {
-        (Status::Ok, (ContentType::JSON, r#"{"status":"ok"}"#))
-    } else {
-        (
-            Status::ServiceUnavailable,
-            (ContentType::JSON, r#"{"status":"no_backends"}"#),
-        )
+    let local_jobs = state.active_jobs.load(std::sync::atomic::Ordering::Relaxed);
+    let mut entries = Vec::new();
+
+    if let Some(ref ollama) = backends.ollama {
+        entries.push(HealthBackend {
+            local: true,
+            name: "ollama".into(),
+            base_url: ollama.base_url(),
+            active_jobs: local_jobs,
+            peer_id: None,
+            models: Vec::new(),
+        });
     }
+    if let Some(ref unsloth) = backends.unsloth {
+        entries.push(HealthBackend {
+            local: true,
+            name: "unsloth".into(),
+            base_url: unsloth.base_url(),
+            active_jobs: local_jobs,
+            peer_id: None,
+            models: Vec::new(),
+        });
+    }
+
+    #[cfg(feature = "relay")]
+    if let Some(ref registry) = state.p2p_peer_registry {
+        let reg = registry.read().await;
+        for (peer_id, ad) in reg.fresh_peers() {
+            for bi in &ad.backends {
+                entries.push(HealthBackend {
+                    local: false,
+                    name: bi.name.clone(),
+                    base_url: bi.base_url.clone(),
+                    active_jobs: ad.active_jobs,
+                    peer_id: Some(peer_id.to_string()),
+                    models: ad.models.clone(),
+                });
+            }
+        }
+    }
+
+    let status = if entries.is_empty() {
+        "no_backends"
+    } else {
+        "ok"
+    };
+    let http_status = if entries.is_empty() {
+        Status::ServiceUnavailable
+    } else {
+        Status::Ok
+    };
+
+    (http_status, Json(HealthResponse { status, backends: entries }))
 }
 
 fn proxy_error_to_status(err: ProxyError) -> (Status, Json<ErrorResponse>) {

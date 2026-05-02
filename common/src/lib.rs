@@ -1379,6 +1379,10 @@ pub struct AiProxyConfig {
     #[schemars(description = "API keys with per-key token budgets")]
     #[serde(default, deserialize_with = "deserialize_ai_proxy_key_list")]
     pub keys: Vec<AiProxyKeyConfig>,
+    /// Plaintext probe token, generated at runtime. Never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub probe_token: Option<String>,
 }
 
 impl Default for AiProxyConfig {
@@ -1388,6 +1392,7 @@ impl Default for AiProxyConfig {
             port: default_ai_proxy_port(),
             host: default_host(),
             keys: Vec::new(),
+            probe_token: None,
         }
     }
 }

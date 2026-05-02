@@ -151,7 +151,7 @@ impl Daemon {
             Ok(Err(e)) => {
                 tracing::warn!("config reload failed: {e}");
             }
-            Ok(Ok(new_cfg)) => {
+            Ok(Ok(mut new_cfg)) => {
                 if let Err(e) = new_cfg.daemon.validate() {
                     tracing::warn!("new config invalid, keeping old: {e}");
                     return;
@@ -235,6 +235,13 @@ impl Daemon {
                             &new_cfg.unsloth,
                         )
                         .await;
+                }
+
+                // Preserve the runtime-only probe token across config reloads.
+                #[cfg(feature = "services")]
+                {
+                    new_cfg.ai_proxy.probe_token =
+                        self.current_cfg.ai_proxy.probe_token.clone();
                 }
 
                 self.assessor.update_config(new_cfg.clone()).await;
@@ -889,7 +896,7 @@ pub async fn run(
     }
 
     let mut cfg = config::load().await?;
-    let current_cfg = cfg.clone();
+    let mut current_cfg = cfg.clone();
 
     let update_interval = humantime::parse_duration(&cfg.daemon.update_interval)
         .context("invalid update_interval")?;
@@ -1021,12 +1028,33 @@ pub async fn run(
         let usage_path = crate::config::config_dir().join("ai-proxy-usage.jsonl");
         let usage_tracker =
             std::sync::Arc::new(crate::ai_proxy::usage::UsageTracker::new(usage_path));
-        let state = std::sync::Arc::new(crate::ai_proxy::AiProxyState::new(
+        // Generate an in-memory probe token with no budget for assessment probes.
+        use rand::Rng;
+        let probe_token: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect();
+        let probe_key_hash = crate::ai_proxy::multihash_key(&probe_token);
+        current_cfg.ai_proxy.probe_token = Some(probe_token);
+
+        let mut state = crate::ai_proxy::AiProxyState::new(
             &current_cfg.ai_proxy,
             &current_cfg.ollama,
             &current_cfg.unsloth,
             std::sync::Arc::clone(&usage_tracker),
-        ));
+        );
+        // Inject the probe key into the state so it survives config reloads.
+        state.probe_key_hash = Some(probe_key_hash.clone());
+        state.keys.write().await.push(crate::ai_proxy::KeyEntry {
+            key_hash: probe_key_hash,
+            name: "__probe__".into(),
+            token_budget: 0,
+            budget_window: std::time::Duration::from_secs(86400),
+            enabled: true,
+        });
+
+        let state = std::sync::Arc::new(state);
         let handle = crate::ai_proxy::AiProxyHandle::new(std::sync::Arc::clone(&state));
         let proxy_port = current_cfg.ai_proxy.port;
         let proxy_host = current_cfg.ai_proxy.host.clone();

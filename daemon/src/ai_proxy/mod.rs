@@ -28,6 +28,8 @@ pub struct AiProxyState {
     pub client: reqwest::Client,
     /// Number of currently active inference requests (for load balancing).
     pub active_jobs: Arc<AtomicU32>,
+    /// Hash of the internal probe key — re-injected on every config reload.
+    pub probe_key_hash: Option<String>,
     /// Peer registry for load-aware routing (set when p2p is active).
     #[cfg(feature = "relay")]
     pub p2p_peer_registry: Option<Arc<RwLock<crate::p2p::discovery::PeerRegistry>>>,
@@ -91,6 +93,7 @@ impl AiProxyState {
             usage_tracker,
             client: reqwest::Client::new(),
             active_jobs: Arc::new(AtomicU32::new(0)),
+            probe_key_hash: None,
             #[cfg(feature = "relay")]
             p2p_peer_registry: None,
             #[cfg(feature = "relay")]
@@ -112,7 +115,17 @@ impl AiProxyState {
         ollama: &OllamaConfig,
         unsloth: &UnslothConfig,
     ) {
-        *self.keys.write().await = build_key_entries(&config.keys);
+        let mut keys = build_key_entries(&config.keys);
+        if let Some(ref hash) = self.probe_key_hash {
+            keys.push(KeyEntry {
+                key_hash: hash.clone(),
+                name: "__probe__".into(),
+                token_budget: 0,
+                budget_window: std::time::Duration::from_secs(86400),
+                enabled: true,
+            });
+        }
+        *self.keys.write().await = keys;
         *self.backends.write().await = build_backend_map(ollama, unsloth);
     }
 }
