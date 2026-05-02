@@ -58,13 +58,13 @@ impl ManagedService for MemvaultService {
     }
 
     fn check_health_async(&self) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        if self.config.web_port == 0 {
-            // No web API — just check store exists.
+        if self.config.port == 0 {
+            // No API server — just check store exists.
             let healthy = self.check_health().unwrap_or(false);
             return Box::pin(async move { Ok(healthy) });
         }
 
-        let url = format!("http://127.0.0.1:{}/api/v1/health", self.config.web_port);
+        let url = format!("http://127.0.0.1:{}/api/v1/health", self.config.port);
         Box::pin(async move {
             let resp = reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(2))
@@ -86,11 +86,11 @@ impl ManagedService for MemvaultService {
     }
 
     fn expose_tunnels(&self) -> Vec<TunnelDef> {
-        if self.config.web_port > 0 {
+        if self.config.port > 0 {
             vec![TunnelDef {
                 name: "memvault".into(),
                 host: "127.0.0.1".into(),
-                tcp_port: self.config.web_port,
+                tcp_port: self.config.port,
             }]
         } else {
             vec![]
@@ -116,9 +116,9 @@ impl ManagedService for MemvaultService {
                     value_type: InventoryValueType::String,
                 },
                 InventoryEntry {
-                    id: "web_port".into(),
-                    name: "Web API Port".into(),
-                    value: serde_json::json!(self.config.web_port),
+                    id: "port".into(),
+                    name: "API Port".into(),
+                    value: serde_json::json!(self.config.port),
                     value_type: InventoryValueType::Number,
                 },
                 InventoryEntry {

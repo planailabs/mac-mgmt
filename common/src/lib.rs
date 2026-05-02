@@ -1572,6 +1572,10 @@ impl BackupConfig {
 
 // ── Memvault Config ────────────────────────────────────────────────────
 
+fn default_memvault_port() -> u16 {
+    8401
+}
+
 /// Configuration for the memvault subsystem.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct MemvaultConfig {
@@ -1589,12 +1593,17 @@ pub struct MemvaultConfig {
     #[schemars(description = "Bootstrap peers for Kademlia and initial connections")]
     #[serde(default)]
     pub bootstrap_peers: Vec<String>,
-    #[schemars(description = "Port for the memvault web UI (0 = disabled)")]
+    #[schemars(description = "Port for the memvault API server (default 8401)")]
+    #[serde(default = "default_memvault_port")]
+    pub port: u16,
+    #[schemars(description = "Whether the web UI is accessible on the API port")]
     #[serde(default)]
-    pub web_port: u16,
-    #[schemars(description = "Bearer token for the memvault web API (empty = no auth)")]
+    pub web_enabled: bool,
+    #[schemars(
+        description = "Hex-encoded multihash of the bearer token for the memvault API (empty = no auth)"
+    )]
     #[serde(default)]
-    pub auth_token: Option<String>,
+    pub auth_token_hash: Option<String>,
 }
 
 // ── Cluster Config (what the server manages per-cluster) ──────────────

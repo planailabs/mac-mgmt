@@ -50,13 +50,13 @@ impl MemvaultHandle {
             cluster_id_from_dir(&data_dir),
         ));
 
-        // Start the web API server if web_port > 0.
-        let web_handle = if config.web_port > 0 {
-            let port = config.web_port;
+        // Start the API server (and optionally the web UI).
+        let web_handle = if config.port > 0 {
+            let port = config.port;
             let app_state = Arc::new(memvault_web::AppState {
                 client: Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>,
                 event_bus: Arc::new(memvault_api::EventBus::new(256)),
-                auth_token: config.auth_token.clone().unwrap_or_default(),
+                auth_token: config.auth_token_hash.clone().unwrap_or_default(),
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
             let router = memvault_web::build_router(app_state);

@@ -152,9 +152,27 @@ fn relay() -> Value {
     })
 }
 
+fn ai_proxy() -> Value {
+    json!({
+        "enabled": true,
+        "keys": [{
+            "name": "default",
+            "key_hash": "122088dc28d0f030c55ed4ab77ed8faf098196cb1c05df778539800c9f1243fe6b4b",
+        }],
+    })
+}
+
+fn memvault_if_multi(size: u32) -> Option<Value> {
+    if size > 1 {
+        Some(json!({ "enabled": true }))
+    } else {
+        None
+    }
+}
+
 fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> MatrixCell {
     let key = with_size(format!("{agent}-cloud-{provider}"), size);
-    let config = json!({
+    let mut config = json!({
         "global": global(agent, "cloud"),
         "cloud": [{
             "enabled": true,
@@ -163,7 +181,11 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> Ma
             "default_model": cloud_default_model(provider),
         }],
         "relay": relay(),
+        "ai_proxy": ai_proxy(),
     });
+    if let Some(mv) = memvault_if_multi(size) {
+        config["memvault"] = mv;
+    }
     MatrixCell {
         key,
         config,
@@ -173,7 +195,7 @@ fn build_cloud_cell(agent: &str, provider: &str, api_key: &str, size: u32) -> Ma
 
 fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
     let key = with_size(format!("{agent}-ollama"), size);
-    let config = json!({
+    let mut config = json!({
         "global": global(agent, "ollama"),
         "ollama": {
             "enabled": true,
@@ -181,7 +203,11 @@ fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
             "default_model": model,
         },
         "relay": relay(),
+        "ai_proxy": ai_proxy(),
     });
+    if let Some(mv) = memvault_if_multi(size) {
+        config["memvault"] = mv;
+    }
     MatrixCell {
         key,
         config,
@@ -191,7 +217,7 @@ fn build_ollama_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
 
 fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
     let key = with_size(format!("{agent}-lms"), size);
-    let config = json!({
+    let mut config = json!({
         "global": global(agent, "lms"),
         "lms": {
             "enabled": true,
@@ -199,7 +225,11 @@ fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
             "default_model": model,
         },
         "relay": relay(),
+        "ai_proxy": ai_proxy(),
     });
+    if let Some(mv) = memvault_if_multi(size) {
+        config["memvault"] = mv;
+    }
     MatrixCell {
         key,
         config,
@@ -209,10 +239,14 @@ fn build_lms_cell(agent: &str, model: &str, size: u32) -> MatrixCell {
 
 fn build_none_llm_cell(agent: &str, size: u32) -> MatrixCell {
     let key = with_size(format!("{agent}-nollm"), size);
-    let config = json!({
+    let mut config = json!({
         "global": global(agent, "none"),
         "relay": relay(),
+        "ai_proxy": ai_proxy(),
     });
+    if let Some(mv) = memvault_if_multi(size) {
+        config["memvault"] = mv;
+    }
     MatrixCell {
         key,
         config,
