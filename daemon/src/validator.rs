@@ -407,7 +407,10 @@ fn cache_store_exec(command: &[String]) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             match serde_json::from_str::<serde_json::Value>(&stdout) {
-                Ok(schema) => {
+                Ok(mut schema) => {
+                    // HACK: openclaw emits schemas with broken $defs pointers;
+                    // strip them so jsonschema can compile the schema at all.
+                    strip_defs_refs(&mut schema);
                     cache().lock().unwrap().insert(key, schema);
                     tracing::info!("cached JSON schema from command: {}", command.join(" "));
                 }
@@ -486,6 +489,35 @@ fn validate_with_file_schema(path: &str, value: &serde_json::Value) -> Result<()
     let schema: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("failed to parse schema {path}: {e}"))?;
     run_jsonschema(&schema, value)
+}
+
+/// HACK: Replace `{"$ref": "#/$defs/..."}` nodes with `{}` (accept any value)
+/// and remove the top-level `$defs` key.  This works around `openclaw config
+/// schema` emitting `$ref` pointers to definitions that don't exist in the
+/// schema document, causing jsonschema compilation to fail.  Remove once
+/// openclaw ships schemas with valid `$defs`.
+fn strip_defs_refs(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            // If this object is a `$ref` pointing into `$defs`, replace with `{}`
+            if let Some(r) = map.get("$ref").and_then(|v| v.as_str()) {
+                if r.starts_with("#/$defs/") {
+                    map.clear();
+                    return;
+                }
+            }
+            map.remove("$defs");
+            for v in map.values_mut() {
+                strip_defs_refs(v);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                strip_defs_refs(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn run_jsonschema(schema: &serde_json::Value, value: &serde_json::Value) -> Result<(), String> {
