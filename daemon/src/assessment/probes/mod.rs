@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use mac_mgmt_common::DaemonConfig;
+use serde::{Deserialize, Serialize};
 
 /// Classification used both for scheduling and for rollout gate configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +149,48 @@ pub fn snippet(s: &str) -> String {
         out.push('…');
         out
     }
+}
+
+// ── Shared OpenAI-compatible wire types for probe requests ──────────
+
+#[derive(Serialize)]
+pub struct ChatBody {
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+    pub temperature: f32,
+    pub max_tokens: u32,
+    pub stream: bool,
+}
+
+#[derive(Serialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Deserialize)]
+pub struct ChatResponse {
+    #[serde(default)]
+    pub model: String,
+    pub choices: Vec<ChatChoice>,
+    #[serde(default)]
+    pub usage: Option<Usage>,
+}
+
+#[derive(Deserialize)]
+pub struct ChatChoice {
+    pub message: ChatReplyMessage,
+}
+
+#[derive(Deserialize)]
+pub struct ChatReplyMessage {
+    pub content: String,
+}
+
+#[derive(Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
 }
 
 /// Build the full probe registry from the current daemon config. Called each

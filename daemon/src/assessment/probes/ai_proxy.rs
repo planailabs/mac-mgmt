@@ -6,10 +6,10 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mac_mgmt_common::AiProxyConfig;
-use serde::{Deserialize, Serialize};
 
 use super::{
-    Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex, response_has_content, snippet, timed,
+    ChatBody, ChatMessage, ChatResponse, Probe, ProbeCtx, ProbeKind, ProbeResult, digest_hex,
+    response_has_content, snippet, timed,
 };
 
 // ── Liveness probe: GET /health ─────────────────────────────────────
@@ -170,42 +170,3 @@ impl Probe for AiProxyFunctionalProbe {
     }
 }
 
-// ── Local types (not imported from ai_proxy::types) ─────────────────
-
-#[derive(Serialize)]
-struct ChatBody {
-    model: String,
-    messages: Vec<ChatMessage>,
-    temperature: f32,
-    max_tokens: u32,
-    stream: bool,
-}
-
-#[derive(Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-    #[serde(default)]
-    usage: Option<Usage>,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatReplyMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatReplyMessage {
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct Usage {
-    prompt_tokens: u32,
-    completion_tokens: u32,
-}
