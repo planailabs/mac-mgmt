@@ -350,7 +350,7 @@ pub struct DiskInfo {
 // ── Security findings (shared between system-level and per-service) ──
 
 /// Severity level for a security finding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FindingSeverity {
     Info,
@@ -376,7 +376,7 @@ pub struct SecurityFinding {
 // ── Per-service inventory / sample / security ──
 
 /// Display-type hint for an [`InventoryEntry`] value.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum InventoryValueType {
     String,
@@ -1644,6 +1644,8 @@ pub struct ClusterConfig {
     pub backup: BackupConfig,
     #[serde(default)]
     pub memvault: MemvaultConfig,
+    #[serde(default, rename = "custom-service")]
+    pub custom_services: Vec<custom_service::CustomServiceConfig>,
 }
 
 impl OllamaConfig {

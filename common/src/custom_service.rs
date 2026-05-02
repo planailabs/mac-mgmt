@@ -7,6 +7,7 @@
 //! If `spawn` is set the service becomes fully managed (supervised process);
 //! otherwise it runs as an integrated service (no process, capabilities only).
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{FindingSeverity, InventoryValueType};
@@ -14,7 +15,7 @@ use crate::{FindingSeverity, InventoryValueType};
 // ── Top-level config ─────────────────────────────────────────────────────
 
 /// One custom service definition — maps to a `[[custom-service]]` TOML entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomServiceConfig {
     /// Service name — used as the identifier in heartbeats, tunnels, etc.
     pub name: String,
@@ -72,7 +73,7 @@ fn default_true() -> bool {
 
 /// Process spawn specification. When present, the custom service becomes
 /// a managed service with full lifecycle (spawn → health-check → restart).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SpawnDef {
     /// Program to execute (e.g. "grafana-server").
     pub command: String,
@@ -87,7 +88,7 @@ pub struct SpawnDef {
 // ── Health check ─────────────────────────────────────────────────────────
 
 /// Health check command. Exit code 0 = healthy, non-zero = unhealthy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HealthCheckDef {
     pub command: String,
     #[serde(default)]
@@ -104,7 +105,7 @@ fn default_health_timeout() -> u64 {
 // ── Tunnels ──────────────────────────────────────────────────────────────
 
 /// A TCP port to expose through the relay.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomTunnelDef {
     /// Short, URL-safe name (e.g. "grafana").
     pub name: String,
@@ -122,7 +123,7 @@ fn default_host() -> String {
 // ── File tunnels ─────────────────────────────────────────────────────────
 
 /// A file or folder exposed for remote editing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CustomFileDef {
     File {
@@ -150,7 +151,7 @@ pub enum CustomFileDef {
 // ── Shell commands ───────────────────────────────────────────────────────
 
 /// A predefined shell command exposed for remote execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomCommandDef {
     /// Short, URL-safe identifier (e.g. "grafana-reload").
     pub name: String,
@@ -171,7 +172,7 @@ pub struct CustomCommandDef {
 }
 
 /// Template for a user-provided argument on a shell command.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomArgTemplate {
     /// Label shown in the UI (e.g. "Model name").
     pub label: String,
@@ -186,7 +187,7 @@ pub struct CustomArgTemplate {
 // ── Probes ───────────────────────────────────────────────────────────────
 
 /// Probe classification.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CustomProbeKind {
     Liveness,
@@ -194,7 +195,7 @@ pub enum CustomProbeKind {
 }
 
 /// A custom probe definition. Exactly one of `http` or `exec` must be set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomProbeDef {
     pub name: String,
     #[serde(default = "default_probe_kind")]
@@ -212,7 +213,7 @@ fn default_probe_kind() -> CustomProbeKind {
 }
 
 /// HTTP probe: make a request and check the status code.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HttpProbeDef {
     pub url: String,
     /// HTTP method (default: "GET").
@@ -243,7 +244,7 @@ fn default_probe_timeout() -> u64 {
 }
 
 /// Command-based probe: run a command, exit 0 = pass.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExecProbeDef {
     pub command: String,
     #[serde(default)]
@@ -257,7 +258,7 @@ pub struct ExecProbeDef {
 
 /// An inventory or sample entry. Exactly one of `static_value` or `command`
 /// must be set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomInventoryDef {
     /// Machine-readable key (e.g. "grafana_version").
     pub id: String,
@@ -279,7 +280,7 @@ fn default_value_type() -> InventoryValueType {
 }
 
 /// Command that produces an inventory/sample value.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InventoryCommandDef {
     /// Program to execute.
     pub run: String,
@@ -301,7 +302,7 @@ fn default_cmd_timeout() -> u64 {
 // ── Security checks ──────────────────────────────────────────────────────
 
 /// A custom security check. Exactly one of `exec` or `file_check` must be set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CustomSecurityDef {
     /// Machine-readable identifier (e.g. "grafana_anon_auth").
     pub id: String,
@@ -323,7 +324,7 @@ fn default_severity() -> FindingSeverity {
 }
 
 /// Command-based security check: exit 0 = pass, non-zero = fail.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SecurityExecDef {
     pub command: String,
     #[serde(default)]
@@ -334,7 +335,7 @@ pub struct SecurityExecDef {
 }
 
 /// File-based security check: validates existence and/or permissions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SecurityFileCheckDef {
     /// Path to check.
     pub path: String,
