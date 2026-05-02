@@ -25,10 +25,13 @@ pub fn generate(matrix: &MatrixConfig) -> Vec<MatrixCell> {
         .agents
         .clone()
         .unwrap_or_else(|| vec!["openclaw".into(), "opencode".into(), "none".into()]);
-    let llms = matrix
+    let mut llms = matrix
         .llms
         .clone()
         .unwrap_or_else(|| vec!["ollama".into(), "lms".into(), "cloud".into()]);
+    if !matrix.lms_enabled {
+        llms.retain(|l| l != "lms");
+    }
     let cloud_providers = matrix.cloud_providers.clone().unwrap_or_else(|| {
         vec![
             "anthropic",
@@ -277,6 +280,7 @@ mod tests {
     fn throttle_does_not_starve_n2_cells() {
         let mut m = MatrixConfig::default();
         m.ollama_model = "qwen2.5:0.5b".into();
+        m.lms_enabled = true;
         m.lms_model = "qwen2.5-0.5b-instruct".into();
         m.agents = Some(vec!["openclaw".into(), "none".into()]);
         m.llms = Some(vec!["ollama".into(), "lms".into()]);
@@ -371,6 +375,7 @@ mod tests {
     fn cells_interleave_sizes_per_agent_llm_pair() {
         let mut m = MatrixConfig::default();
         m.ollama_model = "qwen2.5:0.5b".into();
+        m.lms_enabled = true;
         m.lms_model = "qwen2.5-0.5b-instruct".into();
         m.agents = Some(vec!["openclaw".into(), "none".into()]);
         m.llms = Some(vec!["ollama".into(), "lms".into()]);

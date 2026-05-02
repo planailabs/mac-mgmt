@@ -160,6 +160,9 @@ pub struct MatrixConfig {
     /// Ollama model to configure on every ollama-llm cell.
     #[serde(default = "default_ollama_model")]
     pub ollama_model: String,
+    /// Whether LM Studio cells are included in the matrix.
+    #[serde(default)]
+    pub lms_enabled: bool,
     /// LM Studio model to configure on every lms-llm cell.
     #[serde(default = "default_lms_model")]
     pub lms_model: String,
@@ -184,6 +187,7 @@ impl Default for MatrixConfig {
             llms: None,
             cloud_providers: None,
             ollama_model: default_ollama_model(),
+            lms_enabled: false,
             lms_model: default_lms_model(),
             cluster_sizes: default_cluster_sizes(),
         }
