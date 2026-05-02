@@ -156,6 +156,27 @@ async fn generate_ai_proxy_key() -> Result<(String, String), ServerFnError> {
     Ok((raw_key, key_hash))
 }
 
+/// One filter chip in the page-header strip. Drives which section
+/// cards the editor renders.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SectionFilter {
+    All,
+    Enabled,
+    Modified,
+    Errors,
+}
+
+/// Newtype for the active filter so child components can `use_context`
+/// without colliding with other `Signal<SectionFilter>` values.
+#[derive(Clone, Copy)]
+pub struct ActiveSectionFilter(pub Signal<SectionFilter>);
+
+/// Last-saved baseline for the cluster config — read by the floating
+/// SaveBar to compute "unsaved changes" without re-querying the server
+/// every keystroke.
+#[derive(Clone, Default)]
+pub struct SavedConfigBaseline(pub Signal<String>);
+
 #[component]
 pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
@@ -167,13 +188,18 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let schema = use_server_future(|| async { get_config_schema().await })?;
 
     let mut editor_text = use_signal(String::new);
+    let mut saved_text = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut initialized = use_signal(|| false);
     let mut raw_mode = use_signal(|| false);
+    let filter = use_signal(|| SectionFilter::All);
+    use_context_provider(|| ActiveSectionFilter(filter));
 
     if !*initialized.read() {
         if let Some(Ok(Some(cfg))) = &*config.read() {
-            editor_text.set(serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default());
+            let pretty = serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default();
+            editor_text.set(pretty.clone());
+            saved_text.set(pretty);
             initialized.set(true);
         }
     }
@@ -183,9 +209,10 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
         let cid = cid_save.clone();
         let text = editor_text.read().clone();
         spawn(async move {
-            match save_config(cid, text).await {
+            match save_config(cid, text.clone()).await {
                 Ok(()) => {
                     error.set(None);
+                    saved_text.set(text);
                     config.restart();
                 }
                 Err(e) => {
@@ -195,13 +222,31 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
         });
     };
 
+    let do_discard = move |_| {
+        let baseline = saved_text.read().clone();
+        editor_text.set(baseline);
+    };
+
+    // Diff-aware dirty flag — fast string compare, no JSON re-parse on
+    // every keystroke. `saved_text` only mutates after a successful save
+    // or a discard, so this stays O(1) on the typical input path.
+    let dirty = *editor_text.read() != *saved_text.read() && *initialized.read();
+
+    let last_saved_at: Option<String> = match &*config.read() {
+        Some(Ok(Some(cfg))) => Some(cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string()),
+        _ => None,
+    };
+
     rsx! {
         if let Some(err) = &*error.read() {
             p { class: "text-danger text-sm mb-2", "{err}" }
         }
 
-        div { class: "flex items-center gap-2 mb-3",
-            label { class: "text-sm text-fg flex items-center gap-1 cursor-pointer",
+        // Sticky filter / mode strip — under the page header. Mirrors
+        // the design's "All / Enabled / Modified / Errors" pill row.
+        div { class: "config-strip",
+            FilterChips { filter }
+            label { class: "ml-auto text-xs text-fg-muted flex items-center gap-1.5 cursor-pointer select-none",
                 input {
                     r#type: "checkbox",
                     checked: *raw_mode.read(),
@@ -211,7 +256,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
             }
         }
 
-        div {
+        div { class: "pb-32",
             if *raw_mode.read() {
                 textarea {
                     class: "w-full h-64 font-mono text-sm border border-line rounded-md p-2 mb-2 dark:bg-surface-2 dark:text-fg",
@@ -242,35 +287,81 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                     None => rsx! { p { class: "text-sm", {t!("config-editor-loading-schema")} } },
                 }}
             }
-            if !read_only {
-                button {
-                    class: "btn btn-lg btn-primary",
-                    r#type: "button",
-                    onclick: move |evt| {
-                        evt.prevent_default();
-                        evt.stop_propagation();
-                        do_save();
-                    },
-                    {t!("config-editor-save")}
-                }
-            }
         }
 
-        {match &*config.read() {
-            Some(Ok(Some(cfg))) => {
-                let saved_at = cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string();
-                rsx! {
-                    div { class: "mt-4",
-                        p { class: "text-xs text-fg-muted", {t!("config-editor-last-saved", time: saved_at)} }
+        // Floating save bar. Visible only when the editor diverges from
+        // the last server snapshot. Centred at the bottom of the
+        // viewport with brand-orange ring, mirroring the Cmd+S
+        // affordance described in the design.
+        if !read_only && dirty {
+            SaveBar {
+                last_saved: last_saved_at,
+                on_save: do_save,
+                on_discard: do_discard,
+            }
+        }
+    }
+}
+
+#[component]
+fn FilterChips(filter: Signal<SectionFilter>) -> Element {
+    let cur = *filter.read();
+    let chip = |opt: SectionFilter, label_key: &'static str| {
+        let active = cur == opt;
+        let cls = if active {
+            "config-chip config-chip-active"
+        } else {
+            "config-chip"
+        };
+        rsx! {
+            button {
+                class: "{cls}",
+                onclick: move |_| filter.set(opt),
+                {t!(label_key)}
+            }
+        }
+    };
+    rsx! {
+        div { class: "config-chips",
+            {chip(SectionFilter::All, "config-filter-all")}
+            {chip(SectionFilter::Enabled, "config-filter-enabled")}
+            {chip(SectionFilter::Modified, "config-filter-modified")}
+            {chip(SectionFilter::Errors, "config-filter-errors")}
+        }
+    }
+}
+
+#[component]
+fn SaveBar(
+    last_saved: Option<String>,
+    on_save: EventHandler<()>,
+    on_discard: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        div { class: "config-save-bar",
+            span { class: "dot dot-accent" }
+            div { class: "min-w-0",
+                div { class: "text-sm font-semibold text-fg-strong", {t!("config-save-unsaved")} }
+                if let Some(t) = last_saved {
+                    div { class: "text-[11px] text-fg-faint mt-0.5",
+                        {t!("config-editor-last-saved", time: t)}
                     }
                 }
             }
-            Some(Ok(None)) => rsx! {
-                p { class: "text-sm text-fg-muted mt-2", {t!("config-editor-no-config")} }
-            },
-            Some(Err(e)) => rsx! { p { class: "text-danger text-sm mt-2", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { class: "text-sm mt-2", {t!("loading")} } },
-        }}
+            div { class: "h-7 w-px bg-line mx-1" }
+            button {
+                class: "btn btn-md btn-secondary",
+                r#type: "button",
+                onclick: on_discard,
+                {t!("config-save-discard")}
+            }
+            button {
+                class: "btn btn-md btn-primary",
+                r#type: "button",
+                onclick: move |_| on_save.call(()),
+                {t!("config-editor-save")}
+            }
+        }
     }
 }
 
@@ -407,6 +498,60 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
         .collect();
     let total_sections: usize = sidebar_data.iter().map(|(_, items)| items.len()).sum();
 
+    // Read the page-level filter chip (All / Enabled / Modified /
+    // Errors). Hidden sections are dropped from the main column but
+    // STAY in the right rail — clicking a rail entry still expands and
+    // scrolls into view, matching the design's "rail is always
+    // complete" rule.
+    let ActiveSectionFilter(filter_sig) = use_context::<ActiveSectionFilter>();
+    let active_filter = *filter_sig.read();
+    let form_snapshot = form_values.read().clone();
+    let defs_for_filter = defs.clone();
+    let section_passes_filter = move |s: &SectionMeta| -> bool {
+        match active_filter {
+            SectionFilter::All => true,
+            SectionFilter::Enabled => {
+                if s.always_on || s.is_array {
+                    return true;
+                }
+                let has_enabled = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.get("enabled"))
+                    .is_some();
+                if !has_enabled {
+                    return true;
+                }
+                get_at_path(&form_snapshot, &[s.name.clone()])
+                    .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                    .unwrap_or(false)
+            }
+            SectionFilter::Modified => {
+                let props = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                props.iter().any(|(fname, fschema)| {
+                    if fname == "enabled" {
+                        return false;
+                    }
+                    let resolved = resolve_ref(fschema, &defs_for_filter);
+                    let schema_default = resolved.get("default");
+                    let current =
+                        get_at_path(&form_snapshot, &[s.name.clone(), fname.clone()]);
+                    match (current, schema_default) {
+                        (Some(cur), Some(def)) => &cur != def,
+                        (Some(_), None) => true,
+                        _ => false,
+                    }
+                })
+            }
+            SectionFilter::Errors => false, // Wired up when validation surfaces per-section errors.
+        }
+    };
+
     rsx! {
         ExtraConfigModalHost {
             open: extra_config_open,
@@ -416,7 +561,13 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
         div { class: "flex gap-6",
             // Main content
             div { class: "flex-1 min-w-0 space-y-8 mb-4",
-                {categories.into_iter().enumerate().map(|(cat_idx, (category_id, sections))| {
+                {categories.into_iter().filter_map(|(category_id, sections)| {
+                    let visible: Vec<SectionMeta> = sections.into_iter().filter(|s| section_passes_filter(s)).collect();
+                    if visible.is_empty() {
+                        return None;
+                    }
+                    Some((category_id, visible))
+                }).enumerate().map(|(cat_idx, (category_id, sections))| {
                     let cat_i18n_key = format!("category-{category_id}");
                     let enabled_count = sections.iter().filter(|s| {
                         if s.always_on { return true; }
@@ -519,8 +670,11 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
                     }
                 })}
             }
-            // Right sidebar - section navigation
-            aside { class: "hidden xl:block w-56 shrink-0 sticky top-20 self-start max-h-[calc(100vh-6rem)] overflow-y-auto",
+            // Right sidebar — page-local rail with the section index.
+            // Stays usable when the filter chip hides sections from the
+            // main column: clicking a rail entry still expands the
+            // matching card and scrolls into view.
+            aside { class: "config-right-rail",
                 div { class: "border-b border-line pb-3 mb-3",
                     div { class: "kicker mb-1", {t!("config-editor-on-this-page")} }
                     div { class: "text-sm text-fg-strong font-medium",
@@ -608,10 +762,68 @@ fn ObjectSectionCard(
     let mut expanded = use_signal(|| false);
     let mut show_advanced = use_signal(|| false);
 
+    // First-paint expand decision:
+    //   1. URL `?expand=all` → expand everything (used by screenshot
+    //      automation; also a handy power-user toggle).
+    //   2. Otherwise read sessionStorage so the previous user's
+    //      open/closed state for THIS cluster is restored.
+    // Both reads happen in JS land via `document::eval` because
+    // session/local storage isn't available to WASM directly.
+    let cid_init = cluster_id.clone();
+    let sn_init = section_name.clone();
+    use_effect(move || {
+        let cid = cid_init.clone();
+        let sn = sn_init.clone();
+        spawn(async move {
+            let script = format!(
+                "try {{ \
+                  var u = new URL(window.location.href); \
+                  if (u.searchParams.get('expand') === 'all') return '1'; \
+                  var k = 'cluster-cfg.' + {cid:?} + '.expanded'; \
+                  var v = JSON.parse(sessionStorage.getItem(k) || '[]'); \
+                  return v.indexOf({sn:?}) !== -1 ? '1' : '0'; \
+                }} catch(e) {{ return '0'; }}",
+                cid = cid,
+                sn = sn
+            );
+            if let Ok(val) = document::eval(&script).await {
+                if val.as_str() == Some("1") {
+                    expanded.set(true);
+                }
+            }
+        });
+    });
+
     let sync_to_json = move || {
         let json = form_values.read().clone();
         let mut text = json_text;
         text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
+    };
+
+    // Toggle handler that also writes back to sessionStorage so the
+    // change survives a navigation away and back.
+    let cid_persist = cluster_id.clone();
+    let sn_persist = section_name.clone();
+    let mut toggle_expanded = move || {
+        let new_val = !*expanded.read();
+        expanded.set(new_val);
+        let cid = cid_persist.clone();
+        let sn = sn_persist.clone();
+        let new_v = if new_val { "true" } else { "false" };
+        let script = format!(
+            "try {{ \
+              var k = 'cluster-cfg.' + {cid:?} + '.expanded'; \
+              var v; try {{ v = JSON.parse(sessionStorage.getItem(k) || '[]'); }} catch(e) {{ v = []; }} \
+              var idx = v.indexOf({sn:?}); \
+              if ({nv} && idx === -1) v.push({sn:?}); \
+              if (!{nv} && idx !== -1) v.splice(idx, 1); \
+              sessionStorage.setItem(k, JSON.stringify(v)); \
+            }} catch(e) {{}}",
+            cid = cid,
+            sn = sn,
+            nv = new_v
+        );
+        document::eval(&script);
     };
 
     let properties = section_schema
@@ -685,7 +897,7 @@ fn ObjectSectionCard(
             // Header
             div {
                 class: "flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-2 transition-colors",
-                onclick: move |_| { let v = *expanded.read(); expanded.set(!v); },
+                onclick: move |_| toggle_expanded(),
                 // Chevron
                 span { class: if *expanded.read() { "text-fg-faint text-[10px] font-mono transition-transform rotate-90" } else { "text-fg-faint text-[10px] font-mono transition-transform" },
                     "▶"
