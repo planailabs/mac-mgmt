@@ -157,6 +157,10 @@ impl ManagedService for Ollama {
                 format!("{}:{}", self.config.host, self.config.port),
             );
         }
+        env.insert(
+            "OLLAMA_CONTEXT_LENGTH".into(),
+            self.config.context_length.to_string(),
+        );
         // Load extra env vars from ollama-env file (e.g. OLLAMA_ORIGINS from relay connector).
         let extra = crate::connectors::relay_ollama::load_env_file();
         for (k, v) in extra {

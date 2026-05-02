@@ -87,6 +87,8 @@ default_model = "phi4-mini"
 # Options: cpu, rocm (AMD), cuda (NVIDIA), vulkan
 # "cpu" installs "ollama", others install "ollama-{flavour}".
 flavour = "cpu"
+# Context length passed as OLLAMA_CONTEXT_LENGTH env var.
+# context_length = 16384
 
 
 # ── Unsloth ──────────────────────────────────────────────────────────

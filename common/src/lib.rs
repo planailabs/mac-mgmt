@@ -903,6 +903,13 @@ pub struct OllamaConfig {
     #[schemars(description = "Package flavour: cpu, rocm (AMD), cuda (NVIDIA), or vulkan")]
     #[serde(default = "default_flavour")]
     pub flavour: String,
+    #[schemars(description = "Context length passed as OLLAMA_CONTEXT_LENGTH env var")]
+    #[serde(default = "default_context_length")]
+    pub context_length: u32,
+}
+
+fn default_context_length() -> u32 {
+    16384
 }
 
 impl Default for OllamaConfig {
@@ -914,6 +921,7 @@ impl Default for OllamaConfig {
             models: default_models(),
             default_model: default_model(),
             flavour: default_flavour(),
+            context_length: default_context_length(),
         }
     }
 }
