@@ -494,9 +494,9 @@
        * `.config-save-bar`   — floating "n unsaved changes" toast,
                                  brand-bordered, centred at the bottom
      None of these classes are referenced anywhere else in the app. */
-  .config-strip       { @apply sticky top-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8
-                                py-2 mb-4 bg-bg/80 backdrop-blur
-                                border-b border-line flex items-center gap-3 flex-wrap; }
+  /* Static (non-sticky) filter strip. Sits inline above the editor. */
+  .config-strip       { @apply py-2 mb-4 border-b border-line
+                                flex items-center gap-3 flex-wrap; }
   .config-chips       { @apply inline-flex items-center gap-1 p-0.5 rounded-md
                                 border border-line bg-surface-2; }
   .config-chip        { @apply px-3 py-1 rounded text-xs font-medium
@@ -504,10 +504,16 @@
                                 transition-colors cursor-pointer; }
   .config-chip-active { @apply bg-brand text-fg-invert hover:text-fg-invert; }
 
+  /* Right rail. Static — flows with the page rather than sticking to
+     the viewport. Negative margins on top / bottom / right cancel the
+     `<main>` padding so the rail's `bg-surface-2` reaches the viewport
+     edge on three sides; inner padding is asymmetric to keep the
+     content well clear of the page scrollbar on the right. */
   .config-right-rail  { @apply hidden xl:flex xl:flex-col w-64 shrink-0
-                                sticky top-0 self-start max-h-screen overflow-y-auto
-                                bg-surface-2 border-l border-line -my-4 sm:-my-6 lg:-my-8
-                                py-5 pl-4 pr-3; }
+                                bg-surface-2 border-l border-line
+                                -my-4 sm:-my-6 lg:-my-8
+                                -mr-4 sm:-mr-6 lg:-mr-8
+                                py-5 pl-4 pr-6; }
 
   .config-save-bar    { @apply fixed bottom-5 left-1/2 -translate-x-1/2 z-40
                                 flex items-center gap-3 px-4 py-3
