@@ -11,6 +11,7 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
+use crate::web::app::Route;
 use crate::web::components::topbar::use_topbar;
 use crate::web::components::ui::{
     ActivityFeed, ActivityItem, ChartColor, Dot, ErrorText, HelpText, Kicker, KpiCard, PageHero,
@@ -146,13 +147,17 @@ async fn get_overview() -> Result<OverviewData, ServerFnError> {
     .await
     .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Open staff pings — pings without a resolution timestamp.
+    // Open staff pings — must match what the Staff Pings page renders
+    // (see staff_pings_page.rs: filters by `resolved = false`). Earlier
+    // version queried the wrong table (`staff_pings`) on the wrong
+    // column (`resolved_at IS NULL`) and silently returned 0 via
+    // unwrap_or, hiding all open pings from the dashboard.
     let open_staff_pings: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM staff_pings WHERE resolved_at IS NULL",
+        "SELECT COUNT(*) FROM healer_staff_pings WHERE resolved = false",
     )
     .fetch_one(&pool)
     .await
-    .unwrap_or(0); // table may not exist on legacy installs
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Activity feed: union of the most recent rollout state changes
     // and the latest cluster-online heartbeats. The rollouts table
@@ -323,11 +328,15 @@ fn render_overview(d: &OverviewData) -> Element {
         }
 
         // ── KPI strip ──
+        // Each card drills down to the page that owns the metric:
+        // online → Fleet, healthy services → Fleet, active rollouts →
+        // Rollouts, open pings → Staff Pings.
         div { class: "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5",
             KpiCard {
                 label: t!("overview-kpi-online"),
                 value: online_value,
                 color: ChartColor::Brand,
+                to: Route::FleetDashboard { stage_id: None },
             }
             KpiCard {
                 label: t!("overview-kpi-services"),
@@ -335,6 +344,7 @@ fn render_overview(d: &OverviewData) -> Element {
                 delta: services_sub,
                 delta_kind: ChartColor::Ok,
                 color: ChartColor::Ok,
+                to: Route::FleetDashboard { stage_id: None },
             }
             KpiCard {
                 label: t!("overview-kpi-rollouts"),
@@ -342,11 +352,13 @@ fn render_overview(d: &OverviewData) -> Element {
                 delta: rollouts_sub,
                 delta_kind: ChartColor::Info,
                 color: ChartColor::Info,
+                to: Route::RolloutList {},
             }
             KpiCard {
                 label: t!("overview-kpi-pings"),
                 value: pings_value,
                 color: ChartColor::Warn,
+                to: Route::StaffPings {},
             }
         }
 
