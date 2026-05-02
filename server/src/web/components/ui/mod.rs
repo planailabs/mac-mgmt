@@ -1,50 +1,43 @@
 //! Shared UI components.
 //!
-//! Each component emits semantic classes (`btn`, `input`, `card`, `h-page`,
-//! …) defined in `server/input.css`. Theme — color, typography, spacing
-//! tokens — lives in CSS. Components describe structure, accessibility,
-//! and behavior; views compose them.
+//! Visual primitives are owned by the `plan-ai-design` crate — this
+//! module re-exports them so existing callsites keep working with
+//! `use crate::web::components::ui::Button` etc. The CSS source of
+//! truth (`assets/input.css`) also lives in that crate and is
+//! consumed via the server's tailwind config.
 //!
-//! When adding a new component, prefer:
-//!   1. Add the semantic classes to `input.css` (under `@layer components`).
-//!   2. Add the Rust component here that emits those classes.
-//!   3. Don't put hex literals or palette utilities (`bg-blue-600`, `dark:…`)
-//!      anywhere in this module — those would defeat the theme contract.
+//! When adding a new component:
+//!   1. **If it's purely visual (no app types)** — add it to the
+//!      `plan-ai-design` crate and re-export here.
+//!   2. **If it depends on the server's `Route` enum or other
+//!      app-specific types** — add it locally and re-export here.
+//!      `breadcrumbs` and `metric::KpiCard` are the existing
+//!      precedents.
+//!   3. The semantic class for the component goes in
+//!      `plan-ai-design/assets/input.css`, never in inline classes
+//!      and never with hex literals.
+//!
+//! See `plan-ai-design/src/components/mod.rs` for the up-to-date
+//! list of primitives the crate provides.
 
-// Phase 0: only some of these components have consumers yet. Phase 1+ will
-// migrate the remaining pages and the dead-code warnings will resolve.
 #![allow(dead_code, unused_imports)]
 
-pub mod alert;
-pub mod badge;
 pub mod breadcrumbs;
-pub mod button;
-pub mod card;
-pub mod chart;
-pub mod data_table;
-pub mod feed;
-pub mod form;
-pub mod hero;
 pub mod metric;
-pub mod pill;
-pub mod session;
-pub mod text;
-pub mod timeline;
 
-pub use alert::{Alert, AlertVariant};
-pub use badge::{Badge, BadgeVariant};
-pub use breadcrumbs::Breadcrumbs;
-pub use button::{Button, ButtonKind, ButtonSize, ButtonVariant};
-pub use card::Card;
-pub use chart::{Bars, ChartColor, Sparkline};
-pub use data_table::{
-    Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th,
+pub use plan_ai_design::{
+    ActivityFeed, ActivityItem, Alert, AlertVariant, Badge, BadgeVariant, Bars, Button, ButtonKind,
+    ButtonSize, ButtonVariant, Card, ChartColor, Dash, DataTable, Dot, ErrorText, FormField,
+    HelpText, Kicker, Mono, PageHeader, PageHero, Pill, PillVariant, SectionHeading, SortState,
+    SortableTh, Sparkline, StageItem, StageStatus, StageTimeline, StatBlock, SuccessText, Td,
+    TdMono, TdMuted, Th, TableToolbar, ActiveSessionCard, TraceStatus, TraceStep,
 };
-pub use feed::{ActivityFeed, ActivityItem};
-pub use form::FormField;
-pub use hero::PageHero;
-pub use metric::{Kicker, KpiCard, Mono, StatBlock};
-pub use pill::{Dot, Pill, PillVariant};
-pub use session::{ActiveSessionCard, TraceStatus, TraceStep};
-pub use text::{ErrorText, HelpText, PageHeader, SectionHeading, SuccessText};
-pub use timeline::{StageItem, StageStatus, StageTimeline};
+
+pub use breadcrumbs::Breadcrumbs;
+pub use metric::KpiCard;
+
+pub mod data_table {
+    //! Re-export submodule so existing pages can keep using
+    //! `crate::web::components::ui::data_table::SortableTh` etc.
+    pub use plan_ai_design::{Dash, DataTable, SortState, SortableTh, TableToolbar, Td, TdMono, TdMuted, Th};
+}
