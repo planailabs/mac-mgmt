@@ -15,7 +15,7 @@ path = "src/main.rs"
 default = ["services", "relay", "memvault"]
 services = []
 self-update = ["dep:self_update", "dep:self-replace"]
-relay = ["dep:libp2p", "dep:libp2p-stream"]
+relay = ["dep:libp2p-stream"]
 memvault = ["dep:memvault-core", "dep:memvault-auth", "dep:memvault-store", "dep:memvault-net", "dep:memvault-web", "dep:memvault-query", "dep:axum", "relay"]
 healer = ["dep:mac-mgmt-healer", "services", "relay"]
 sim = []
@@ -75,8 +75,8 @@ tokio-util = { version = "0.7", features = ["compat"] }
 libp2p = { version = "0.56", default-features = false, features = [
     "tokio", "noise", "yamux", "quic", "tcp", "websocket", "dns",
     "mdns", "relay", "request-response", "identify", "ping",
-    "gossipsub", "macros", "serde",
-], optional = true }
+    "gossipsub", "macros", "serde", "kad",
+] }
 libp2p-stream = { version = "0.4.0-alpha", optional = true }
 memvault-core = { path = "../memvault/crates/memvault-core", optional = true }
 memvault-auth = { path = "../memvault/crates/memvault-auth", optional = true }
