@@ -661,6 +661,7 @@ pub fn FleetDashboard(stage_id: Option<String>) -> Element {
                         label: t!("fleet-kpi-clusters"),
                         value: format!("{total_clusters}"),
                         color: ChartColor::Info,
+                        to: Route::ClusterList {},
                     }
                     KpiCard {
                         label: t!("fleet-kpi-failing-probes"),
