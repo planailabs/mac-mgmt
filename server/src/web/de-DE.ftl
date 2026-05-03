@@ -29,10 +29,7 @@ confirm = Bestätigen
 back = Zurück
 download = Herunterladen
 clear = Leeren
-search-placeholder = Suchen…
 hidden = Versteckt
-dash = -
-em-dash = —
 
 ## ── Navigation ──────────────────────────────────────────────────
 
@@ -871,12 +868,6 @@ table-via = über { $source }
 table-via-skill-center = über { $source } Skill Center
 table-via-mcp-center = über { $source } MCP Center
 table-version-prefix = v{ $version }
-table-showing-filtered = Zeige { $shown } von { $filtered } (gefiltert aus { $total })
-table-showing = Zeige { $shown } von { $total }
-table-per-page-20 = 20 pro Seite
-table-per-page-50 = 50 pro Seite
-table-per-page-100 = 100 pro Seite
-
 ## ── Versteckt-Badge ────────────────────────────────────────────
 
 hidden-badge = Versteckt
