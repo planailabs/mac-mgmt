@@ -74,6 +74,9 @@ impl Connector for MemvaultOpenClaw {
         // Enable the plugin and register the load path.
         let patch = serde_json::json!({
             "plugins": {
+                "slots": {
+                    "memory": "memvault-memory",
+                },
                 "load": {
                     "paths": load_paths,
                 },
