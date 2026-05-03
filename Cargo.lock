@@ -8141,6 +8141,7 @@ dependencies = [
  "cid",
  "ed25519-dalek",
  "glob",
+ "hex",
  "ipld-core",
  "multihash",
  "multihash-codetable",

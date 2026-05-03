@@ -201,6 +201,47 @@ impl HttpClient {
         Ok(resp.json().await?)
     }
 
+    // ── Links (cross-type edges) ──────────────────────────────────────
+
+    pub async fn add_link(
+        &self,
+        source: &str,
+        target: &str,
+        relation: &str,
+        weight: Option<f32>,
+    ) -> Result<serde_json::Value> {
+        let resp = self
+            .client
+            .post(self.url("/links"))
+            .json(&serde_json::json!({
+                "source": source,
+                "target": target,
+                "relation": relation,
+                "weight": weight,
+                "props": {},
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn edges_of(&self, node: &str) -> Result<serde_json::Value> {
+        let url = format!("{}?node={}", self.url("/links"), urlencoded(node));
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn delete_link(&self, edge_id: &str) -> Result<serde_json::Value> {
+        self.client
+            .delete(self.url(&format!("/links/{edge_id}")))
+            .send()
+            .await?
+            .error_for_status()?;
+        // 204 No Content returns empty body
+        Ok(serde_json::json!({ "status": "removed" }))
+    }
+
     // ── Audit ────────────────────────────────────────────────────────
 
     pub async fn retract(&self, cid_hex: &str) -> Result<serde_json::Value> {

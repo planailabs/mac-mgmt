@@ -361,6 +361,54 @@ impl MemvaultServer {
     }
 
     #[tool(
+        name = "memvault_link",
+        description = "Create a directed link between any two nodes (entities, documents, or attachments). \
+                       Nodes are specified as 'entity:<hex>', 'doc:<hex>', or 'attachment:<hex>'. Returns the edge ID."
+    )]
+    async fn link(&self, Parameters(params): Parameters<LinkParams>) -> String {
+        match self.client.add_link(&params.source, &params.target, &params.relation, params.weight).await {
+            Ok(resp) => {
+                serde_json::json!({
+                    "edge_id": resp.get("edge_id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "status": "linked"
+                })
+                .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_edges",
+        description = "List all edges (incoming and outgoing) for any node. \
+                       Node is specified as 'entity:<hex>', 'doc:<hex>', or 'attachment:<hex>'."
+    )]
+    async fn edges(&self, Parameters(params): Parameters<EdgesOfParams>) -> String {
+        match self.client.edges_of(&params.node).await {
+            Ok(edges) => {
+                let results = edges.as_array().cloned().unwrap_or_default();
+                serde_json::json!({
+                    "count": results.len(),
+                    "edges": results,
+                })
+                .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_unlink",
+        description = "Remove a link (edge) by its hex-encoded edge ID."
+    )]
+    async fn unlink(&self, Parameters(params): Parameters<UnlinkParams>) -> String {
+        match self.client.delete_link(&params.edge_id).await {
+            Ok(_) => serde_json::json!({ "edge_id": params.edge_id, "status": "removed" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
         name = "memvault_retract",
         description = "Retract (soft-delete) a memory by its CID. Creates a tombstone. Returns the tombstone CID."
     )]

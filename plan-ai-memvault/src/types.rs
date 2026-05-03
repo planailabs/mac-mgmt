@@ -163,6 +163,37 @@ pub struct GraphQueryParams {
     pub max_depth: Option<usize>,
 }
 
+// -- memvault_link --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct LinkParams {
+    /// Source node as "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    pub source: String,
+    /// Target node — same format as source.
+    pub target: String,
+    /// Relation type (e.g. "references", "evidence_for", "related_to").
+    pub relation: String,
+    /// Optional edge weight (0.0 to 1.0).
+    #[serde(default)]
+    pub weight: Option<f32>,
+}
+
+// -- memvault_edges --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct EdgesOfParams {
+    /// Node to query — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    pub node: String,
+}
+
+// -- memvault_unlink --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct UnlinkParams {
+    /// Hex-encoded edge ID to remove.
+    pub edge_id: String,
+}
+
 // -- memvault_retract --
 
 #[derive(Deserialize, JsonSchema)]
