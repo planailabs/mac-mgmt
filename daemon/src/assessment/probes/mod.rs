@@ -208,8 +208,9 @@ pub fn registry(cfg: &DaemonConfig) -> Vec<Box<dyn Probe>> {
 
     if cfg.openclaw.enabled {
         probes.push(Box::new(openclaw::OpenClawHealthProbe));
-        probes.push(Box::new(openclaw::OpenClawProbe::from_config(
+        probes.push(Box::new(openclaw::OpenClawProbe::new(
             &cfg.openclaw,
+            crate::canary::openclaw_canary(cfg),
         )));
     }
 
