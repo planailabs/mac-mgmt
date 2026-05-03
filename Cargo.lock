@@ -8269,6 +8269,7 @@ dependencies = [
  "dioxus",
  "dioxus-i18n",
  "getrandom 0.2.17",
+ "gloo-timers",
  "hex",
  "http-body-util",
  "js-sys",
