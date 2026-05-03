@@ -48,12 +48,13 @@ impl Connector for MemvaultOpenClaw {
                     "memvault-memory": {
                         "enabled": true,
                         "config": {
+                            "apiUrl": format!("http://127.0.0.1:{}", self.port),
                             "autoCapture": true,
                             "autoRecall": true,
                             "maxRecallResults": 5,
                             "defaultVisibility": "internal",
                             "defaultTags": ["agent:openclaw"],
-                        }
+                        },
                     }
                 }
             }

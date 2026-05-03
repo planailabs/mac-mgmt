@@ -7,6 +7,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "apiUrl": {
+        "type": "string",
+        "description": "Memvault API base URL",
+        "default": "http://127.0.0.1:8401"
+      },
       "dataDir": {
         "type": "string",
         "description": "Path to memvault data directory",
