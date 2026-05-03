@@ -13,10 +13,13 @@ struct WebAssets;
 
 /// Try to serve an embedded static asset by path.
 ///
-/// Returns `Some(response)` for exact file matches (wasm, js, css, index.html, etc.).
-/// Returns `None` for unknown paths.
+/// Returns `Some(response)` for exact file matches (wasm, js, css, etc.).
+/// Returns `None` for index.html and unknown paths — those are handled by
+/// the Dioxus SSR handler which provides hydration data.
 pub fn try_serve(path: &str) -> Option<axum::response::Response> {
-    let path = if path.is_empty() { "index.html" } else { path };
+    if path.is_empty() || path == "index.html" {
+        return None;
+    }
     WebAssets::get(path).map(|file| serve_file(path, file))
 }
 
