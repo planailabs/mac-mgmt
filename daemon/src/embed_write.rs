@@ -36,6 +36,7 @@ pub fn materialize_all<E: rust_embed::Embed>(target_dir: &Path) -> Result<usize>
             let dest = target_dir.join(path.as_ref());
             let up_to_date = materialize_embedded(&file.data, &dest)?;
             if !up_to_date {
+                tracing::debug!("materialize: wrote {} ({} bytes)", dest.display(), file.data.len());
                 written += 1;
             }
         }
