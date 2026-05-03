@@ -23,5 +23,13 @@ clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
+async-trait = "0.1"
+
+# Local backend (direct redb access, no HTTP)
+memvault-core = { path = "../memvault/crates/memvault-core" }
+memvault-doc = { path = "../memvault/crates/memvault-doc" }
+memvault-store = { path = "../memvault/crates/memvault-store" }
+memvault-query = { path = "../memvault/crates/memvault-query" }
+memvault-api = { path = "../memvault/crates/memvault-api" }
 base64 = "0.22"
 hex = "0.4"

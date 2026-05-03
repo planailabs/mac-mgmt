@@ -5,19 +5,19 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 
-use crate::http_client::HttpClient;
+use crate::backend::Backend;
 use crate::types::*;
 
 #[derive(Clone)]
 pub struct MemvaultServer {
-    client: Arc<HttpClient>,
+    client: Arc<dyn Backend>,
     default_tags: Vec<String>,
     default_visibility: String,
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
 impl MemvaultServer {
-    pub fn new(client: Arc<HttpClient>, default_tags: Vec<String>, default_visibility: String) -> Self {
+    pub fn new(client: Arc<dyn Backend>, default_tags: Vec<String>, default_visibility: String) -> Self {
         Self {
             client,
             default_tags,

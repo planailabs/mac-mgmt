@@ -1,0 +1,43 @@
+//! Backend trait — abstracts over HTTP and local (direct redb) access.
+
+use anyhow::Result;
+use async_trait::async_trait;
+
+/// Operations the MCP server needs from its backend.
+#[async_trait]
+pub trait Backend: Send + Sync {
+    async fn put_doc(
+        &self, body: &str, frontmatter: serde_json::Value,
+        tags: Vec<(String, String)>, visibility: Option<&str>,
+    ) -> Result<serde_json::Value>;
+
+    async fn get_doc(&self, id: &str) -> Result<Option<serde_json::Value>>;
+
+    async fn search(&self, query: &str, limit: usize) -> Result<serde_json::Value>;
+
+    async fn list_docs(
+        &self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize,
+    ) -> Result<serde_json::Value>;
+
+    async fn attach_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value>;
+
+    async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>>;
+
+    async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>>;
+
+    async fn add_entity(
+        &self, kind: &str, props: serde_json::Value, visibility: Option<&str>,
+    ) -> Result<serde_json::Value>;
+
+    async fn add_link(
+        &self, source: &str, target: &str, relation: &str, weight: Option<f32>,
+    ) -> Result<serde_json::Value>;
+
+    async fn edges_of(&self, node: &str) -> Result<serde_json::Value>;
+
+    async fn delete_link(&self, edge_id: &str) -> Result<serde_json::Value>;
+
+    async fn retract(&self, cid_hex: &str) -> Result<serde_json::Value>;
+
+    async fn status(&self) -> Result<serde_json::Value>;
+}
