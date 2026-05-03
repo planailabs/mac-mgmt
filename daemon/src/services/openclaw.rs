@@ -9,23 +9,6 @@ use crate::sentry_ext;
 use crate::validator::{Validator, merge_json};
 pub use mac_mgmt_common::OpenClawConfig;
 
-#[derive(rust_embed::Embed)]
-#[folder = "../extensions/memvault-memory/"]
-struct MemvaultExtension;
-
-/// Install the memvault-memory openclaw extension to ~/.openclaw/extensions/memvault-memory/
-pub fn install_memvault_extension() -> Result<()> {
-    let ext_dir = dirs::home_dir()
-        .context("HOME not set")?
-        .join(".openclaw/extensions/memvault-memory");
-
-    let written = crate::embed_write::materialize_all::<MemvaultExtension>(&ext_dir)?;
-    if written > 0 {
-        tracing::info!("installed memvault-memory openclaw extension ({written} files)");
-    }
-    Ok(())
-}
-
 /// Validator for openclaw JSON config files.
 pub static VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
     Validator::json("openclaw.json").with_exec(vec![
@@ -290,11 +273,6 @@ impl ManagedService for OpenClaw {
         }
 
         self.apply_config_patch()?;
-
-        // Install the memvault-memory extension for openclaw.
-        if let Err(e) = install_memvault_extension() {
-            tracing::warn!("failed to install memvault-memory extension: {e:#}");
-        }
 
         Ok(())
     }

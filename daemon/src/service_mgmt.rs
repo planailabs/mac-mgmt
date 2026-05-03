@@ -200,6 +200,9 @@ impl ServiceManager {
         if let Ok(v) = serde_json::to_value(&cfg.backup) {
             config_store.set("backup", v);
         }
+        if let Ok(v) = serde_json::to_value(&cfg.memvault) {
+            config_store.set("memvault", v);
+        }
 
         let connectors = connectors::build_connectors(&cfg);
 
@@ -996,6 +999,9 @@ impl ServiceManager {
         }
         if let Ok(v) = serde_json::to_value(&cfg.backup) {
             self.config_store.set("backup", v);
+        }
+        if let Ok(v) = serde_json::to_value(&cfg.memvault) {
+            self.config_store.set("memvault", v);
         }
 
         // Refresh backup paths in the config store.
