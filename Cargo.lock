@@ -8266,6 +8266,7 @@ dependencies = [
  "dioxus-i18n",
  "hex",
  "http-body-util",
+ "js-sys",
  "memvault-api",
  "memvault-auth",
  "memvault-core",
