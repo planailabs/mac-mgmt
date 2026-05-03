@@ -11,21 +11,18 @@ use rust_embed::Embed;
 #[folder = "memvault-web-dist/"]
 struct WebAssets;
 
-/// Axum fallback handler that serves embedded web assets.
+/// Try to serve an embedded static asset by path.
 ///
-/// Tries an exact file match first; for unknown paths returns `index.html`
-/// so client-side (SPA) routing works.
-pub async fn serve_embedded(uri: axum::http::Uri) -> impl IntoResponse {
-    let path = uri.path().trim_start_matches('/');
-
-    // Try exact match, then fall back to index.html for SPA routing.
-    match WebAssets::get(path) {
-        Some(file) => serve_file(path, file),
-        None => match WebAssets::get("index.html") {
-            Some(file) => serve_file("index.html", file),
-            None => (StatusCode::NOT_FOUND, "index.html not found in embedded assets").into_response(),
-        },
+/// Returns `Some(response)` for exact file matches (wasm, js, css, etc.).
+/// Returns `None` for index.html and unknown paths — those are left to
+/// the Dioxus SSR handler so it can provide proper hydration data.
+pub fn try_serve(path: &str) -> Option<axum::response::Response> {
+    // Skip index.html — SSR handles that with hydration data.
+    if path.is_empty() || path == "index.html" {
+        return None;
     }
+
+    WebAssets::get(path).map(|file| serve_file(path, file))
 }
 
 fn serve_file(path: &str, file: rust_embed::EmbeddedFile) -> axum::response::Response {
