@@ -20,7 +20,7 @@ pub struct LocalBackend {
 }
 
 impl LocalBackend {
-    pub fn open(db_path: &std::path::Path, cluster_id: Vec<u8>) -> Result<Self> {
+    pub async fn open(db_path: &std::path::Path, cluster_id: Vec<u8>) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -33,6 +33,12 @@ impl LocalBackend {
             vec![0u8; 32], // peer_id
             cluster_id,
         );
+        // Load or rebuild the text index from disk cache.
+        let cache_path = db_path.with_extension("text_index.json");
+        match client.load_or_rebuild_index(&cache_path).await {
+            Ok((d, e, a)) => tracing::info!("text index: {d} docs, {e} entities, {a} attachments"),
+            Err(e) => tracing::warn!("failed to load text index: {e}"),
+        }
         Ok(Self { client })
     }
 }

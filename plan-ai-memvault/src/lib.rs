@@ -59,7 +59,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             vec![0u8; 32]
         };
         tracing::info!("starting in local mode (db={})", db_path.display());
-        Arc::new(LocalBackend::open(db_path, cluster_id)?)
+        Arc::new(LocalBackend::open(db_path, cluster_id).await?)
     } else {
         // HTTP mode: talk to a running daemon.
         let token_path = cli.token_file.unwrap_or_else(default_token_path);

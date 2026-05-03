@@ -50,6 +50,13 @@ impl MemvaultHandle {
             cluster_id_from_dir(&data_dir),
         ));
 
+        // Load or rebuild the full-text search index.
+        let index_cache_path = data_dir.join("text_index.json");
+        match client.load_or_rebuild_index(&index_cache_path).await {
+            Ok((d, e, a)) => info!("text index ready: {d} docs, {e} entities, {a} attachments"),
+            Err(e) => warn!("failed to populate text index: {e}"),
+        }
+
         // Start the API server.
         let web_handle = if config.port > 0 {
             let port = config.port;
