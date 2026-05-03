@@ -131,15 +131,13 @@ impl HttpClient {
     pub async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
         let resp = self
             .client
-            .get(self.url(&format!("/attachments/{cid_hex}")))
+            .get(self.url(&format!("/attachments/{cid_hex}/manifest")))
             .send()
             .await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        // The manifest endpoint returns raw bytes; try to parse as JSON.
-        let bytes = resp.error_for_status()?.bytes().await?;
-        Ok(Some(serde_json::from_slice(&bytes)?))
+        Ok(Some(resp.error_for_status()?.json().await?))
     }
 
     // ── Graph ────────────────────────────────────────────────────────
