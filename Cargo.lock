@@ -8261,6 +8261,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "dioxus",
+ "dioxus-i18n",
  "hex",
  "http-body-util",
  "memvault-api",
@@ -8269,6 +8271,7 @@ dependencies = [
  "memvault-doc",
  "memvault-query",
  "plan-ai-design",
+ "pulldown-cmark 0.12.2",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -8277,6 +8280,9 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "unic-langid",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
