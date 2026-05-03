@@ -162,29 +162,9 @@ impl MemvaultHandle {
     }
 }
 
-/// Load the API bearer token from `data_dir/api.token`, generating a new
-/// random token on first run.  The file is created with mode 0600.
 fn load_or_generate_token(data_dir: &std::path::Path) -> Result<String> {
-    let token_path = data_dir.join("api.token");
-    if let Ok(token) = std::fs::read_to_string(&token_path) {
-        let token = token.trim().to_string();
-        if !token.is_empty() {
-            return Ok(token);
-        }
-    }
-    // Generate a 32-byte random token, hex-encoded (64 chars).
-    use rand::Rng;
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill(&mut bytes);
-    let token = hex::encode(bytes);
-    std::fs::write(&token_path, &token)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    info!("generated memvault API token at {}", token_path.display());
-    Ok(token)
+    memvault_web::load_or_generate_token(data_dir)
+        .map_err(|e| anyhow::anyhow!("token: {e}"))
 }
 
 fn default_data_dir() -> PathBuf {

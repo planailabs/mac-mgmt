@@ -8282,6 +8282,7 @@ dependencies = [
  "memvault-store",
  "plan-ai-design",
  "pulldown-cmark 0.12.2",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
