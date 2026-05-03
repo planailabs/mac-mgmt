@@ -252,10 +252,14 @@ pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
             }
 
             #[cfg(feature = "memvault")]
-            if memvault_cfg.enabled {
-                connectors.push(Box::new(memvault_openclaw::MemvaultOpenClaw {
-                    port: memvault_cfg.port,
-                }));
+            {
+                if memvault_cfg.enabled {
+                    connectors.push(Box::new(memvault_openclaw::MemvaultOpenClaw {
+                        port: memvault_cfg.port,
+                    }));
+                } else {
+                    connectors.push(Box::new(memvault_openclaw::MemvaultOpenClawCleanup));
+                }
             }
         }
         AgentProvider::Opencode => {

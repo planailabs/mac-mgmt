@@ -8,12 +8,14 @@ use crate::services::openclaw::{config_path, merge_and_validate};
 #[folder = "../extensions/memvault-memory/"]
 struct MemvaultExtension;
 
-/// Registers the memvault-memory plugin in OpenClaw.
+// ── Setup connector (memvault enabled) ─────────────────────────────────
+
+/// Registers the memvault-memory plugin and MCP server in OpenClaw.
 ///
 /// Materializes the embedded extension files to
 /// `~/.openclaw/extensions/memvault-memory/`, then patches
-/// `~/.openclaw/openclaw.json` with a `plugins.entries.memvault-memory`
-/// entry so OpenClaw can use memvault for persistent agent memory.
+/// `~/.openclaw/openclaw.json` with plugin config, load path,
+/// memory slot, and MCP server entry.
 pub struct MemvaultOpenClaw {
     pub port: u16,
 }
@@ -113,6 +115,92 @@ impl Connector for MemvaultOpenClaw {
 
         merge_and_validate(&path, &patch)?;
         tracing::info!("memvault→openclaw connected");
+        Ok(())
+    }
+}
+
+// ── Teardown connector (memvault disabled) ─────────────────────────────
+
+/// Removes memvault-memory plugin, MCP server, and load path from OpenClaw
+/// config when memvault is disabled.
+pub struct MemvaultOpenClawCleanup;
+
+impl Connector for MemvaultOpenClawCleanup {
+    fn name(&self) -> &str {
+        "memvault→openclaw (cleanup)"
+    }
+
+    fn phase(&self) -> ConnectorPhase {
+        ConnectorPhase::PreStart
+    }
+
+    fn depends_on(&self) -> &[&str] {
+        &["openclaw"]
+    }
+
+    fn connect(
+        &self,
+        _configs: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        let path = config_path()?;
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let config_raw = std::fs::read_to_string(&path)?;
+        let mut config: serde_json::Value = serde_json::from_str(&config_raw)?;
+
+        let mut changed = false;
+
+        // Remove MCP server entry.
+        if let Some(servers) = config.pointer_mut("/mcp/servers").and_then(|v| v.as_object_mut()) {
+            if servers.remove("plan-ai-memvault").is_some() {
+                changed = true;
+            }
+        }
+
+        // Remove plugin entry.
+        if let Some(entries) = config.pointer_mut("/plugins/entries").and_then(|v| v.as_object_mut()) {
+            if entries.remove("memvault-memory").is_some() {
+                changed = true;
+            }
+        }
+
+        // Reset memory slot if it points to memvault-memory.
+        if let Some(slot) = config.pointer("/plugins/slots/memory").and_then(|v| v.as_str()) {
+            if slot == "memvault-memory" {
+                if let Some(slots) = config.pointer_mut("/plugins/slots").and_then(|v| v.as_object_mut()) {
+                    slots.remove("memory");
+                    changed = true;
+                }
+            }
+        }
+
+        // Remove extension dir from load paths.
+        let ext_dir = dirs::home_dir()
+            .context("HOME not set")?
+            .join(".openclaw/extensions/memvault-memory");
+        let ext_dir_str = ext_dir.to_string_lossy().to_string();
+        if let Some(paths) = config.pointer_mut("/plugins/load/paths").and_then(|v| v.as_array_mut()) {
+            let before = paths.len();
+            paths.retain(|p| p.as_str() != Some(&ext_dir_str));
+            if paths.len() != before {
+                changed = true;
+            }
+        }
+
+        if changed {
+            tracing::info!("cleaning up memvault entries from openclaw config");
+            sentry_ext::breadcrumb(
+                "connector",
+                "memvault→openclaw cleanup",
+                &[("connector", "memvault→openclaw (cleanup)")],
+            );
+            let json = serde_json::to_string_pretty(&config)?;
+            std::fs::write(&path, json)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+        }
+
         Ok(())
     }
 }
