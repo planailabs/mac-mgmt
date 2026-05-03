@@ -61,7 +61,6 @@ impl MemvaultHandle {
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
             memvault_web::ui::state::set_client(Arc::clone(&client) as Arc<dyn memvault_api::MemvaultClient>);
-            memvault_web::prepare_public_dir();
             let router = memvault_web::build_fullstack_router(
                 app_state,
                 super::web_assets::try_serve,
