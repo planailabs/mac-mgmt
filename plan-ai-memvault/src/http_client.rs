@@ -162,44 +162,6 @@ impl HttpClient {
         Ok(resp.json().await?)
     }
 
-    pub async fn add_edge(
-        &self,
-        source_id: &str,
-        relation: &str,
-        target_id: &str,
-        weight: Option<f32>,
-    ) -> Result<serde_json::Value> {
-        let resp = self
-            .client
-            .post(self.url(&format!("/entities/{source_id}/edges")))
-            .json(&serde_json::json!({
-                "relation": relation,
-                "target": target_id,
-                "weight": weight,
-                "props": {},
-            }))
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(resp.json().await?)
-    }
-
-    pub async fn traverse(
-        &self,
-        entity_id: &str,
-        relation: Option<&str>,
-        max_depth: usize,
-    ) -> Result<serde_json::Value> {
-        let mut url = format!(
-            "{}?max_depth={max_depth}",
-            self.url(&format!("/entities/{entity_id}/traverse"))
-        );
-        if let Some(rel) = relation {
-            url.push_str(&format!("&relation={}", urlencoded(rel)));
-        }
-        let resp = self.client.get(&url).send().await?.error_for_status()?;
-        Ok(resp.json().await?)
-    }
 
     // ── Links (cross-type edges) ──────────────────────────────────────
 

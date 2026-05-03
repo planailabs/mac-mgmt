@@ -312,17 +312,15 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_graph_link",
-        description = "Add a directed edge between two entities in the knowledge graph. Returns the edge ID."
+        description = "Add a directed edge between two entities in the knowledge graph. \
+                       Source and target are hex-encoded entity IDs. Use memvault_link for cross-type linking."
     )]
     async fn graph_link(&self, Parameters(params): Parameters<GraphLinkParams>) -> String {
+        let source = format!("entity:{}", params.source_id);
+        let target = format!("entity:{}", params.target_id);
         match self
             .client
-            .add_edge(
-                &params.source_id,
-                &params.relation,
-                &params.target_id,
-                params.weight,
-            )
+            .add_link(&source, &target, &params.relation, params.weight)
             .await
         {
             Ok(resp) => {
@@ -338,21 +336,16 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_graph_query",
-        description = "Traverse the knowledge graph from a given entity. Returns connected entities up to max_depth."
+        description = "List all edges for a given entity. Returns connected nodes."
     )]
     async fn graph_query(&self, Parameters(params): Parameters<GraphQueryParams>) -> String {
-        let max_depth = params.max_depth.unwrap_or(2);
-
-        match self
-            .client
-            .traverse(&params.from_id, params.relation.as_deref(), max_depth)
-            .await
-        {
-            Ok(hits) => {
-                let results = hits.as_array().cloned().unwrap_or_default();
+        let node = format!("entity:{}", params.from_id);
+        match self.client.edges_of(&node).await {
+            Ok(edges) => {
+                let results = edges.as_array().cloned().unwrap_or_default();
                 serde_json::json!({
                     "count": results.len(),
-                    "hits": results,
+                    "edges": results,
                 })
                 .to_string()
             }
