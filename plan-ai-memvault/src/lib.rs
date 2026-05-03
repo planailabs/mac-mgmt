@@ -21,6 +21,14 @@ pub struct Cli {
     /// Path to the bearer token file.
     #[arg(long, env = "MEMVAULT_TOKEN_FILE")]
     pub token_file: Option<std::path::PathBuf>,
+
+    /// Default tags applied when the agent omits them (comma-separated, scope:label format).
+    #[arg(long, env = "MEMVAULT_DEFAULT_TAGS", value_delimiter = ',')]
+    pub default_tags: Vec<String>,
+
+    /// Default visibility when the agent omits it (internal, federated, public).
+    #[arg(long, env = "MEMVAULT_DEFAULT_VISIBILITY", default_value = "internal")]
+    pub default_visibility: String,
 }
 
 fn default_token_path() -> std::path::PathBuf {
@@ -41,7 +49,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         });
 
     let client = Arc::new(HttpClient::new(&cli.url, &token)?);
-    let server = MemvaultServer::new(client);
+    let server = MemvaultServer::new(client, cli.default_tags, cli.default_visibility);
 
     tracing::info!("starting plan-ai-memvault MCP server on stdio (api={})", cli.url);
 

@@ -71,8 +71,26 @@ impl Connector for MemvaultOpenClaw {
             load_paths.push(ext_dir_str);
         }
 
-        // Enable the plugin and register the load path.
+        // Register the memvault MCP server so all tools are available.
+        let bin = std::env::current_exe()
+            .context("failed to resolve current binary path")?;
+        let bin_str = bin.to_string_lossy().to_string();
+
+        // Enable the plugin, register the load path, and add the MCP server.
         let patch = serde_json::json!({
+            "mcp": {
+                "servers": {
+                    "plan-ai-memvault": {
+                        "command": bin_str,
+                        "args": ["mcp-memvault"],
+                        "env": {
+                            "MEMVAULT_URL": format!("http://127.0.0.1:{}", self.port),
+                            "MEMVAULT_DEFAULT_TAGS": "agent:openclaw",
+                            "MEMVAULT_DEFAULT_VISIBILITY": "internal",
+                        },
+                    }
+                }
+            },
             "plugins": {
                 "slots": {
                     "memory": "memvault-memory",
@@ -85,11 +103,8 @@ impl Connector for MemvaultOpenClaw {
                         "enabled": true,
                         "config": {
                             "apiUrl": format!("http://127.0.0.1:{}", self.port),
-                            "autoCapture": true,
                             "autoRecall": true,
                             "maxRecallResults": 5,
-                            "defaultVisibility": "internal",
-                            "defaultTags": ["agent:openclaw"],
                         },
                     }
                 }

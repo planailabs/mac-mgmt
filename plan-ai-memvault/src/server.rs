@@ -11,13 +11,17 @@ use crate::types::*;
 #[derive(Clone)]
 pub struct MemvaultServer {
     client: Arc<HttpClient>,
+    default_tags: Vec<String>,
+    default_visibility: String,
     tool_router: rmcp::handler::server::tool::ToolRouter<Self>,
 }
 
 impl MemvaultServer {
-    pub fn new(client: Arc<HttpClient>) -> Self {
+    pub fn new(client: Arc<HttpClient>, default_tags: Vec<String>, default_visibility: String) -> Self {
         Self {
             client,
+            default_tags,
+            default_visibility,
             tool_router: Self::tool_router(),
         }
     }
@@ -65,8 +69,13 @@ impl MemvaultServer {
             );
         }
 
-        let tags = parse_tags(&params.tags);
-        let vis = params.visibility.as_deref();
+        let tags_input = if params.tags.is_empty() {
+            &self.default_tags
+        } else {
+            &params.tags
+        };
+        let tags = parse_tags(tags_input);
+        let vis = params.visibility.as_deref().or(Some(self.default_visibility.as_str()));
 
         match self
             .client
@@ -278,7 +287,7 @@ impl MemvaultServer {
         description = "Add an entity to the knowledge graph. Returns the hex-encoded entity ID."
     )]
     async fn graph_add(&self, Parameters(params): Parameters<GraphAddParams>) -> String {
-        let vis = params.visibility.as_deref();
+        let vis = params.visibility.as_deref().or(Some(self.default_visibility.as_str()));
         let props: BTreeMap<String, serde_json::Value> = params
             .props
             .into_iter()
