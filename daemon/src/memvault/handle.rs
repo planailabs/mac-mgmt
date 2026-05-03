@@ -28,7 +28,7 @@ impl MemvaultHandle {
     ///
     /// Opens the store, creates the local client, starts the web server if
     /// configured, and returns the handle.
-    pub async fn init(config: &MemvaultConfig) -> Result<Self> {
+    pub async fn init(config: &MemvaultConfig, peer_id: Vec<u8>) -> Result<Self> {
         let data_dir = if config.data_dir.is_empty() {
             default_data_dir()
         } else {
@@ -46,7 +46,7 @@ impl MemvaultHandle {
             Arc::new(RwLock::new(memvault_query::TextIndex::new())),
             Arc::new(RwLock::new(memvault_query::QuotaManager::new(Default::default()))),
             Arc::new(memvault_api::EventBus::new(256)),
-            vec![0u8; 32], // TODO: derive from daemon host key
+            peer_id,
             cluster_id_from_dir(&data_dir),
         ));
 

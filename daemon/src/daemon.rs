@@ -1254,7 +1254,12 @@ pub async fn run(
     // Initialize memvault if enabled.
     #[cfg(feature = "memvault")]
     let memvault_handle = if cfg.memvault.enabled {
-        match crate::memvault::MemvaultHandle::init(&cfg.memvault).await {
+        let memvault_peer_id = {
+            use sha2::{Digest, Sha256};
+            use russh::keys::PublicKeyBase64;
+            Sha256::digest(&host_key.public_key_bytes()).to_vec()
+        };
+        match crate::memvault::MemvaultHandle::init(&cfg.memvault, memvault_peer_id).await {
             Ok(h) => {
                 tracing::info!("memvault subsystem active");
                 Some(h)
