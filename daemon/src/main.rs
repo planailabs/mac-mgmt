@@ -426,8 +426,7 @@ async fn main() -> Result<()> {
             // Run connectors after all services are installed.
             if !failed {
                 let cfg = config::load().await?;
-                let connectors =
-                    connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.litellm, &cfg.cloud, &cfg.backup);
+                let connectors = connectors::build_connectors(&cfg);
 
                 let configs = std::collections::HashMap::new();
                 for c in &connectors {

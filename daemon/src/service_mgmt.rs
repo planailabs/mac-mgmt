@@ -173,62 +173,37 @@ impl ServiceManager {
         // `mac-mgmt install` (OS unit); the client retries until the socket
         // shows up.
 
-        let global_cfg = std::mem::take(&mut cfg.global);
-        let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
-        let opencode_cfg = std::mem::take(&mut cfg.opencode);
-        let ollama_cfg = std::mem::take(&mut cfg.ollama);
-        let lms_cfg = std::mem::take(&mut cfg.lms);
-        let unsloth_cfg = std::mem::take(&mut cfg.unsloth);
-        let litellm_cfg = std::mem::take(&mut cfg.litellm);
-        let cloud_cfgs = std::mem::take(&mut cfg.cloud);
-        let backup_cfg = std::mem::take(&mut cfg.backup);
-
         let cache_dir = crate::config::config_dir().join("config_providers.json");
         let mut config_store = ConfigStore::new(Some(cache_dir));
 
-        if let Ok(v) = serde_json::to_value(&ollama_cfg) {
+        if let Ok(v) = serde_json::to_value(&cfg.ollama) {
             config_store.set("ollama", v);
         }
-        if let Ok(v) = serde_json::to_value(&lms_cfg) {
+        if let Ok(v) = serde_json::to_value(&cfg.lms) {
             config_store.set("lms", v);
         }
-        if let Ok(v) = serde_json::to_value(&unsloth_cfg) {
+        if let Ok(v) = serde_json::to_value(&cfg.unsloth) {
             config_store.set("unsloth", v);
         }
-        if let Ok(v) = serde_json::to_value(&litellm_cfg) {
+        if let Ok(v) = serde_json::to_value(&cfg.litellm) {
             config_store.set("litellm", v);
         }
-        if let Ok(v) = serde_json::to_value(&openclaw_cfg) {
+        if let Ok(v) = serde_json::to_value(&cfg.openclaw) {
             config_store.set("openclaw", v);
         }
-        if let Ok(v) = serde_json::to_value(&opencode_cfg) {
+        if let Ok(v) = serde_json::to_value(&cfg.opencode) {
             config_store.set("opencode", v);
         }
-        if let Ok(v) = serde_json::to_value(&cloud_cfgs) {
+        if let Ok(v) = serde_json::to_value(&cfg.cloud) {
             config_store.set("cloud", v);
         }
-        if let Ok(v) = serde_json::to_value(&backup_cfg) {
+        if let Ok(v) = serde_json::to_value(&cfg.backup) {
             config_store.set("backup", v);
         }
 
-        let connectors =
-            connectors::build_connectors(&global_cfg, &ollama_cfg, &lms_cfg, &unsloth_cfg, &litellm_cfg, &cloud_cfgs, &backup_cfg);
+        let connectors = connectors::build_connectors(&cfg);
 
-        let custom_services = std::mem::take(&mut cfg.custom_services);
-        let all_services = connectors::build_services(
-            &global_cfg,
-            openclaw_cfg,
-            opencode_cfg,
-            ollama_cfg,
-            lms_cfg,
-            unsloth_cfg,
-            litellm_cfg,
-            cloud_cfgs,
-            backup_cfg,
-            &cfg.ai_proxy,
-            &cfg.memvault,
-            custom_services,
-        );
+        let all_services = connectors::build_services(cfg);
 
         let mut install_only: Vec<Box<dyn ManagedService>> = Vec::new();
         let mut services: Vec<ServiceState> = Vec::new();
@@ -1027,8 +1002,7 @@ impl ServiceManager {
         Self::update_backup_paths(&mut self.config_store, &self.services, &self.install_only);
 
         // Rebuild the connector list from current config.
-        let new_connectors =
-            connectors::build_connectors(&cfg.global, &cfg.ollama, &cfg.lms, &cfg.unsloth, &cfg.litellm, &cfg.cloud, &cfg.backup);
+        let new_connectors = connectors::build_connectors(&cfg);
         self.connectors = new_connectors
             .into_iter()
             .map(|c| ConnectorState {

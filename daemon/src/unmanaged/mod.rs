@@ -56,22 +56,7 @@ impl UnmanagedService {
 /// existing `build_services()` to get the same set the daemon would
 /// manage, then wraps each with strategy + detection paths.
 pub fn build_unmanaged(cfg: &mut mac_mgmt_common::DaemonConfig) -> Vec<UnmanagedService> {
-    use crate::connectors::build_services;
-
-    let services = build_services(
-        &cfg.global,
-        std::mem::take(&mut cfg.openclaw),
-        std::mem::take(&mut cfg.opencode),
-        std::mem::take(&mut cfg.ollama),
-        std::mem::take(&mut cfg.lms),
-        std::mem::take(&mut cfg.unsloth),
-        std::mem::take(&mut cfg.litellm),
-        std::mem::take(&mut cfg.cloud),
-        std::mem::take(&mut cfg.backup),
-        &cfg.ai_proxy,
-        &cfg.memvault,
-        std::mem::take(&mut cfg.custom_services),
-    );
+    let services = crate::connectors::build_services(cfg);
 
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
 

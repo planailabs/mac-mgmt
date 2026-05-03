@@ -4,6 +4,8 @@ pub mod cloud_opencode;
 pub mod litellm_openclaw;
 pub mod litellm_opencode;
 pub mod lms_openclaw;
+#[cfg(feature = "memvault")]
+pub mod memvault_openclaw;
 pub mod lms_opencode;
 pub mod ollama_openclaw;
 pub mod ollama_opencode;
@@ -25,9 +27,7 @@ use crate::services::{
 #[cfg(feature = "memvault")]
 use crate::services::memvault_svc::MemvaultService;
 use mac_mgmt_common::{
-    AgentProvider, AiProxyConfig, BackupConfig, CloudConfig, GlobalConfig, LitellmConfig,
-    LlmProvider, LmsConfig, MemvaultConfig, OllamaConfig, OpenClawConfig, OpencodeConfig,
-    UnslothConfig,
+    AgentProvider, CloudConfig, DaemonConfig, LlmProvider,
 };
 
 /// When a connector runs relative to service startup.
@@ -68,20 +68,19 @@ pub trait Connector: Send + Sync {
 }
 
 /// Build the list of managed services based on per-provider `enabled` flags.
-pub fn build_services(
-    _global: &GlobalConfig,
-    openclaw_cfg: OpenClawConfig,
-    opencode_cfg: OpencodeConfig,
-    ollama_cfg: OllamaConfig,
-    lms_cfg: LmsConfig,
-    unsloth_cfg: UnslothConfig,
-    litellm_cfg: LitellmConfig,
-    cloud_cfgs: Vec<CloudConfig>,
-    backup_cfg: BackupConfig,
-    ai_proxy_cfg: &AiProxyConfig,
-    memvault_cfg: &MemvaultConfig,
-    custom_services: Vec<mac_mgmt_common::custom_service::CustomServiceConfig>,
-) -> Vec<Box<dyn ManagedService>> {
+/// Takes ownership of config fields via `std::mem::take`.
+pub fn build_services(cfg: &mut DaemonConfig) -> Vec<Box<dyn ManagedService>> {
+    let openclaw_cfg = std::mem::take(&mut cfg.openclaw);
+    let opencode_cfg = std::mem::take(&mut cfg.opencode);
+    let ollama_cfg = std::mem::take(&mut cfg.ollama);
+    let lms_cfg = std::mem::take(&mut cfg.lms);
+    let unsloth_cfg = std::mem::take(&mut cfg.unsloth);
+    let litellm_cfg = std::mem::take(&mut cfg.litellm);
+    let cloud_cfgs = std::mem::take(&mut cfg.cloud);
+    let backup_cfg = std::mem::take(&mut cfg.backup);
+    let ai_proxy_cfg = &cfg.ai_proxy;
+    let memvault_cfg = &cfg.memvault;
+    let custom_services = std::mem::take(&mut cfg.custom_services);
     let mut services: Vec<Box<dyn ManagedService>> = Vec::new();
 
     if openclaw_cfg.enabled {
@@ -176,15 +175,16 @@ pub fn build_services(
 /// Connectors are run after all managed services have had their post_start.
 /// Uses `default_llm` / `default_agent` to decide which LLM↔agent wiring
 /// to apply, and the first enabled cloud entry when the default is `Cloud`.
-pub fn build_connectors(
-    global: &GlobalConfig,
-    ollama_cfg: &OllamaConfig,
-    lms_cfg: &LmsConfig,
-    unsloth_cfg: &UnslothConfig,
-    litellm_cfg: &LitellmConfig,
-    cloud_cfgs: &[CloudConfig],
-    backup_cfg: &BackupConfig,
-) -> Vec<Box<dyn Connector>> {
+pub fn build_connectors(cfg: &DaemonConfig) -> Vec<Box<dyn Connector>> {
+    let global = &cfg.global;
+    let ollama_cfg = &cfg.ollama;
+    let lms_cfg = &cfg.lms;
+    let unsloth_cfg = &cfg.unsloth;
+    let litellm_cfg = &cfg.litellm;
+    let cloud_cfgs = &cfg.cloud;
+    let backup_cfg = &cfg.backup;
+    let memvault_cfg = &cfg.memvault;
+
     let mut connectors: Vec<Box<dyn Connector>> = Vec::new();
 
     // Relay→ollama connector: sets OLLAMA_ORIGINS for the tunnel proxy.
@@ -248,6 +248,13 @@ pub fn build_connectors(
             } else if has_enabled_cloud {
                 connectors.push(Box::new(cloud_openclaw::CloudOpenClaw {
                     set_default: global.default_llm == LlmProvider::Cloud,
+                }));
+            }
+
+            #[cfg(feature = "memvault")]
+            if memvault_cfg.enabled {
+                connectors.push(Box::new(memvault_openclaw::MemvaultOpenClaw {
+                    port: memvault_cfg.port,
                 }));
             }
         }
