@@ -60,7 +60,9 @@ impl MemvaultHandle {
                 auth_token,
                 metrics: Arc::new(memvault_api::metrics::Metrics::new()),
             });
-            let router = memvault_web::build_router(app_state);
+            let router = memvault_web::build_fullstack_router(app_state, |router| {
+                router.fallback(super::web_assets::serve_embedded)
+            });
             let handle = tokio::spawn(async move {
                 let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
                 let listener = match tokio::net::TcpListener::bind(addr).await {

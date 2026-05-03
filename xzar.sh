@@ -13,7 +13,10 @@ export ENVIRONMENT=production
 # index it and the daemon can `nix-store --realise` it on update.
 
 DAEMON_VERSION="$(grep '^version' "$SCRIPT_DIR/daemon/Cargo.toml" | head -1 | cut -d'"' -f2)"
-FEATURES="self-update,services,relay"
+FEATURES="self-update,services,relay,memvault"
+
+# ── Build memvault-web frontend assets ──────────────────────────────────
+"$SCRIPT_DIR/build-memvault.sh"
 
 upload() {
   ~/.cargo/bin/xzar --server planai upload --pin "$1" --desc $(readlink -f "$2") --leave-after-abandon 1m "$2"

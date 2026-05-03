@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+RELEASE=0 ./build-memvault.sh
 cargo build -p mac-mgmt
 cp target/debug/mac-mgmt /tmp/mac-mgmt
 chmod 755 /tmp/mac-mgmt
