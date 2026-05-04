@@ -110,10 +110,9 @@ impl HttpClient {
             .file_name(filename.to_string())
             .mime_str(content_type)?;
         let form = reqwest::multipart::Form::new().part("file", part);
-        // The doc ID in the URL is unused by the server, use a placeholder.
         let resp = self
             .client
-            .post(self.url("/docs/00000000000000000000000000000000/attachments"))
+            .post(self.url("/attachments"))
             .multipart(form)
             .send()
             .await?
