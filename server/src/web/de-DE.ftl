@@ -814,6 +814,7 @@ config-editor-add-entry = + Eintrag hinzufügen
 config-add-cloud = + Cloud-LLM-Anbieter hinzufügen
 config-add-custom-service = + Benutzerdef. Dienst hinzufügen
 config-editor-reset-default = auf Standard zurücksetzen
+config-editor-discard-field = ungespeicherte Änderungen verwerfen
 config-editor-add-item = Element hinzufügen...
 config-editor-select = -- auswählen --
 config-editor-secret-placeholder = secret:NAME oder Rohwert

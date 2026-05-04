@@ -1576,20 +1576,36 @@ fn SectionFieldRow(
                         field_name.clone(),
                     )}
                 }
-                // Reset column. Reset-to-default is offered whenever
-                // the live value differs from the schema default — that
-                // includes already-saved customizations (where the
-                // brand "unsaved" dot is intentionally absent).
+                // Reset column. The arrow does the *most useful* thing
+                // for the field's current state:
+                //   * if the field has unsaved edits — discard them by
+                //     reverting to the saved baseline value;
+                //   * else (saved-but-customized) — set the schema
+                //     default so the next save wipes the customization.
+                //
+                // The first branch fixes a sharp edge: schemars emits
+                // `null` as the default for `Option<T>` fields, so the
+                // legacy "set schema default" reset would write
+                // `field: null` into form_values when the saved JSON
+                // had the field absent — leaving the editor permanently
+                // dirty even though the user's intent was "undo".
                 div { class: "flex justify-end pt-1",
-                    if differs_from_default {
+                    if is_modified || differs_from_default {
                         button {
                             r#type: "button",
                             class: "text-fg-faint hover:text-danger text-xs",
-                            title: t!("config-editor-reset-default"),
+                            title: if is_modified {
+                                t!("config-editor-discard-field")
+                            } else {
+                                t!("config-editor-reset-default")
+                            },
                             onclick: move |evt| {
                                 evt.prevent_default();
                                 evt.stop_propagation();
-                                if let Some(ref def) = reset_default {
+                                if is_modified {
+                                    let baseline = baseline_sig.read().clone();
+                                    revert_field_to_saved(&mut form_values, &baseline, &reset_path);
+                                } else if let Some(ref def) = reset_default {
                                     set_at_path(&mut form_values, &reset_path, def.clone());
                                 } else {
                                     remove_at_path(&mut form_values, &reset_path);
@@ -2283,6 +2299,45 @@ pub(super) fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: 
     if let Some(last) = path.last() {
         if let serde_json::Value::Object(obj) = current {
             obj.remove(last);
+        }
+    }
+}
+
+/// Restore one field to its saved-baseline value, undoing any unsaved
+/// edits. If the saved baseline doesn't contain the field, the field
+/// is removed; we then walk up the parent path and prune any object
+/// that became empty *and* was also absent in the baseline. Without
+/// the cleanup walk, a single `healer.auto_approve` edit followed by
+/// reset would leave `healer: {}` in the form state — which the saved
+/// JSON doesn't have, so the editor would still be dirty. Arrays are
+/// left alone (an empty `cloud[0]` slot is a real entry, not noise).
+pub(super) fn revert_field_to_saved(
+    form_values: &mut Signal<serde_json::Value>,
+    baseline: &serde_json::Value,
+    path: &[String],
+) {
+    if path.is_empty() {
+        return;
+    }
+    match get_at_path(baseline, path) {
+        Some(v) => set_at_path(form_values, path, v),
+        None => {
+            remove_at_path(form_values, path);
+            let mut prefix: Vec<String> = path.to_vec();
+            prefix.pop();
+            while !prefix.is_empty() {
+                let cur_empty_object = get_at_path(&form_values.read(), &prefix)
+                    .as_ref()
+                    .and_then(|v| v.as_object())
+                    .is_some_and(|o| o.is_empty());
+                let baseline_absent = get_at_path(baseline, &prefix).is_none();
+                if cur_empty_object && baseline_absent {
+                    remove_at_path(form_values, &prefix);
+                    prefix.pop();
+                } else {
+                    break;
+                }
+            }
         }
     }
 }

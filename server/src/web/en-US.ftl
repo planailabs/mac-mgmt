@@ -814,6 +814,7 @@ config-editor-add-entry = + Add entry
 config-add-cloud = + Add cloud LLM provider
 config-add-custom-service = + Add custom service
 config-editor-reset-default = reset to default
+config-editor-discard-field = discard unsaved changes to this field
 config-editor-add-item = Add item...
 config-editor-select = -- select --
 config-editor-secret-placeholder = secret:NAME or raw value
