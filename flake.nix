@@ -68,6 +68,7 @@
             pkg-config
             openssl
             nodejs
+            tailwindcss_3
 
             # Dev tools
             overmind
