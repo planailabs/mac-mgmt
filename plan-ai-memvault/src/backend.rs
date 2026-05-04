@@ -23,6 +23,8 @@ pub trait Backend: Send + Sync {
 
     async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>>;
 
+    async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>>;
+
     async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>>;
 
     async fn add_entity(

@@ -9900,6 +9900,7 @@ dependencies = [
  "memvault-api",
  "memvault-core",
  "memvault-doc",
+ "memvault-extract",
  "memvault-query",
  "memvault-store",
  "mime_guess",

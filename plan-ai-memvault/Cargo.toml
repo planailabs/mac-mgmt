@@ -31,6 +31,7 @@ memvault-doc = { path = "../memvault/crates/memvault-doc" }
 memvault-store = { path = "../memvault/crates/memvault-store" }
 memvault-query = { path = "../memvault/crates/memvault-query" }
 memvault-api = { path = "../memvault/crates/memvault-api" }
+memvault-extract = { path = "../memvault/crates/memvault-extract" }
 base64 = "0.22"
 hex = "0.4"
 mime_guess = "2"

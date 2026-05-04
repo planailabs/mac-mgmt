@@ -252,23 +252,18 @@ impl MemvaultServer {
         description = "Extract text content from an attachment (supports PDF, DOCX, HTML, Markdown, plain text)."
     )]
     async fn extract_text(&self, Parameters(params): Parameters<ExtractTextParams>) -> String {
-        // Text extraction happens server-side; download and return as-is.
-        match self.client.download_attachment(&params.manifest_cid).await {
-            Ok(data) => {
-                match String::from_utf8(data) {
-                    Ok(text) => serde_json::json!({
-                        "manifest_cid": params.manifest_cid,
-                        "text": text,
-                    })
-                    .to_string(),
-                    Err(_) => serde_json::json!({
-                        "manifest_cid": params.manifest_cid,
-                        "text": null,
-                        "note": "binary content, cannot extract text"
-                    })
-                    .to_string(),
-                }
-            }
+        match self.client.extract_text(&params.manifest_cid).await {
+            Ok(Some(text)) => serde_json::json!({
+                "manifest_cid": params.manifest_cid,
+                "text": text,
+            })
+            .to_string(),
+            Ok(None) => serde_json::json!({
+                "manifest_cid": params.manifest_cid,
+                "text": null,
+                "note": "unsupported format or extraction failed"
+            })
+            .to_string(),
             Err(e) => format!("error: {e}"),
         }
     }

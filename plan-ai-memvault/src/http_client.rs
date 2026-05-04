@@ -241,6 +241,20 @@ impl Backend for HttpClient {
     async fn list_docs(&self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value> { self.list_docs(tag_ns, tag_val, limit).await }
     async fn attach_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> { self.attach_file(data, filename, content_type).await }
     async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>> { self.download_attachment(cid_hex).await }
+    async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>> {
+        // Call the server's extract endpoint, or download + extract locally.
+        // For HTTP mode, download the raw bytes and extract locally.
+        let data = self.download_attachment(cid_hex).await?;
+        let manifest = self.get_attachment_manifest(cid_hex).await?;
+        let mime = manifest
+            .and_then(|m| m.get("mime_type").and_then(|v| v.as_str()).map(String::from))
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let registry = memvault_extract::ExtractionRegistry::with_defaults();
+        match registry.extract(&data, &mime, &memvault_extract::ExtractionHints::default()) {
+            Ok(extracted) => Ok(Some(extracted.text)),
+            Err(_) => Ok(None),
+        }
+    }
     async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> { self.get_attachment_manifest(cid_hex).await }
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> { self.add_entity(kind, props, visibility).await }
     async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> { self.add_link(source, target, relation, weight).await }

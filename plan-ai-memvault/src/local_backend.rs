@@ -119,6 +119,11 @@ impl Backend for LocalBackend {
         self.client.read_attachment(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
+    async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>> {
+        let cid_bytes = hex::decode(cid_hex)?;
+        self.client.read_extracted_text(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
     async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
         let cid_bytes = hex::decode(cid_hex)?;
         let data = self.client.get_attachment_manifest(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))?;
