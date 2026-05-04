@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -58,7 +57,7 @@ fn parse_tags(tags: &[String]) -> Vec<(String, String)> {
 impl MemvaultServer {
     #[tool(
         name = "memvault_put",
-        description = "Store a memory (document with optional title and tags). Returns the hex-encoded CID of the stored document."
+        description = "Store a memory (document with optional title and tags). Returns the hex-encoded CID and doc ID."
     )]
     async fn put(&self, Parameters(params): Parameters<PutParams>) -> String {
         let mut frontmatter = serde_json::Map::new();
@@ -90,6 +89,7 @@ impl MemvaultServer {
             Ok(resp) => {
                 serde_json::json!({
                     "cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
+                    "id": resp.get("id").and_then(|v| v.as_str()).unwrap_or(""),
                     "status": "stored"
                 })
                 .to_string()
@@ -121,12 +121,13 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_search",
-        description = "Search memories by text query. Returns matching documents with relevance scores and snippets."
+        description = "Search memories by text query. Returns matching documents with relevance scores and snippets. Optionally filter by tag (scope:label format)."
     )]
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> String {
         let limit = params.limit.unwrap_or(10);
+        let tag_filter = params.tag_filter.as_deref();
 
-        match self.client.search(&params.query, limit).await {
+        match self.client.search(&params.query, limit, tag_filter).await {
             Ok(hits) => hits.to_string(),
             Err(e) => format!("error: {e}"),
         }
@@ -201,20 +202,13 @@ impl MemvaultServer {
         description = "Read a byte range from an attachment. Returns base64-encoded bytes for the range [start, end)."
     )]
     async fn read_range(&self, Parameters(params): Parameters<ReadRangeParams>) -> String {
-        match self.client.download_attachment(&params.manifest_cid).await {
+        match self.client.read_attachment_range(&params.manifest_cid, params.start, params.end).await {
             Ok(data) => {
-                let start = params.start as usize;
-                let end = (params.end as usize).min(data.len());
-                let slice = if start < data.len() {
-                    &data[start..end]
-                } else {
-                    &[]
-                };
                 use base64::Engine;
-                let encoded = base64::engine::general_purpose::STANDARD.encode(slice);
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
                 serde_json::json!({
                     "data_base64": encoded,
-                    "size": slice.len(),
+                    "size": data.len(),
                 })
                 .to_string()
             }
@@ -227,12 +221,14 @@ impl MemvaultServer {
         description = "Pin an attachment to prevent garbage collection."
     )]
     async fn pin(&self, Parameters(params): Parameters<PinParams>) -> String {
-        // Pin/unpin not directly exposed via REST yet; return success.
-        serde_json::json!({
-            "manifest_cid": params.manifest_cid,
-            "status": "pinned"
-        })
-        .to_string()
+        match self.client.pin_attachment(&params.manifest_cid).await {
+            Ok(()) => serde_json::json!({
+                "manifest_cid": params.manifest_cid,
+                "status": "pinned"
+            })
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -240,11 +236,14 @@ impl MemvaultServer {
         description = "Unpin an attachment, allowing garbage collection."
     )]
     async fn unpin(&self, Parameters(params): Parameters<UnpinParams>) -> String {
-        serde_json::json!({
-            "manifest_cid": params.manifest_cid,
-            "status": "unpinned"
-        })
-        .to_string()
+        match self.client.unpin_attachment(&params.manifest_cid).await {
+            Ok(()) => serde_json::json!({
+                "manifest_cid": params.manifest_cid,
+                "status": "unpinned"
+            })
+            .to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 
     #[tool(
@@ -286,19 +285,16 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_graph_add",
-        description = "Add an entity to the knowledge graph. Returns the hex-encoded entity ID."
+        description = "Add an entity to the knowledge graph. Returns the hex-encoded entity ID. Property values are stored as-is (strings)."
     )]
     async fn graph_add(&self, Parameters(params): Parameters<GraphAddParams>) -> String {
         let vis = params.visibility.as_deref().or(Some(self.default_visibility.as_str()));
-        let props: BTreeMap<String, serde_json::Value> = params
-            .props
-            .into_iter()
-            .map(|(k, v)| (k, serde_json::Value::String(v)))
-            .collect();
+        // Convert HashMap<String,String> to JSON object preserving string values.
+        let props = serde_json::json!(params.props);
 
         match self
             .client
-            .add_entity(&params.kind, serde_json::json!(props), vis)
+            .add_entity(&params.kind, props, vis)
             .await
         {
             Ok(resp) => {
@@ -408,7 +404,7 @@ impl MemvaultServer {
         description = "Retract (soft-delete) a memory by its CID. Creates a tombstone. Returns the tombstone CID."
     )]
     async fn retract(&self, Parameters(params): Parameters<RetractParams>) -> String {
-        match self.client.retract(&params.cid).await {
+        match self.client.retract(&params.cid, &params.reason).await {
             Ok(resp) => {
                 serde_json::json!({
                     "tombstone_cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),

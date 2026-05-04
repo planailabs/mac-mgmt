@@ -13,7 +13,7 @@ pub trait Backend: Send + Sync {
 
     async fn get_doc(&self, id: &str) -> Result<Option<serde_json::Value>>;
 
-    async fn search(&self, query: &str, limit: usize) -> Result<serde_json::Value>;
+    async fn search(&self, query: &str, limit: usize, tag_filter: Option<&str>) -> Result<serde_json::Value>;
 
     async fn list_docs(
         &self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize,
@@ -23,9 +23,15 @@ pub trait Backend: Send + Sync {
 
     async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>>;
 
+    async fn read_attachment_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>>;
+
     async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>>;
 
     async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>>;
+
+    async fn pin_attachment(&self, cid_hex: &str) -> Result<()>;
+
+    async fn unpin_attachment(&self, cid_hex: &str) -> Result<()>;
 
     async fn add_entity(
         &self, kind: &str, props: serde_json::Value, visibility: Option<&str>,
@@ -39,7 +45,7 @@ pub trait Backend: Send + Sync {
 
     async fn delete_link(&self, edge_id: &str) -> Result<serde_json::Value>;
 
-    async fn retract(&self, cid_hex: &str) -> Result<serde_json::Value>;
+    async fn retract(&self, cid_hex: &str, reason: &str) -> Result<serde_json::Value>;
 
     async fn status(&self) -> Result<serde_json::Value>;
 }

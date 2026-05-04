@@ -90,7 +90,9 @@ impl Backend for LocalBackend {
         })))
     }
 
-    async fn search(&self, query: &str, limit: usize) -> Result<serde_json::Value> {
+    async fn search(&self, query: &str, limit: usize, _tag_filter: Option<&str>) -> Result<serde_json::Value> {
+        // Tag filtering is applied at the index level. For now, use the basic search.
+        // TODO: wire tag_filter through to SearchQuery when the MemvaultClient trait supports it.
         let hits = self.client.search(query, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(hits.iter().map(|h| serde_json::json!({
             "doc_id": hex::encode(h.doc_id.0),
@@ -99,8 +101,12 @@ impl Backend for LocalBackend {
         })).collect::<Vec<_>>()))
     }
 
-    async fn list_docs(&self, _tag_ns: Option<&str>, _tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value> {
-        let docs = self.client.list_docs(None, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    async fn list_docs(&self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value> {
+        let tag_filter = match (tag_ns, tag_val) {
+            (Some(ns), Some(val)) => Some((ns.to_string(), val.to_string())),
+            _ => None,
+        };
+        let docs = self.client.list_docs(tag_filter, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(docs.iter().map(|d| serde_json::json!({
             "id": hex::encode(d.id.0),
             "title": d.title,
@@ -119,6 +125,11 @@ impl Backend for LocalBackend {
         self.client.read_attachment(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
+    async fn read_attachment_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+        let cid_bytes = hex::decode(cid_hex)?;
+        self.client.read_attachment_range(&cid_bytes, start, end).await.map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
     async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>> {
         let cid_bytes = hex::decode(cid_hex)?;
         self.client.read_extracted_text(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
@@ -127,7 +138,24 @@ impl Backend for LocalBackend {
     async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
         let cid_bytes = hex::decode(cid_hex)?;
         let data = self.client.get_attachment_manifest(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(data.map(|bytes| serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)))
+        match data {
+            Some(bytes) => {
+                let val = serde_json::from_slice(&bytes)
+                    .map_err(|e| anyhow::anyhow!("corrupt manifest JSON: {e}"))?;
+                Ok(Some(val))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn pin_attachment(&self, cid_hex: &str) -> Result<()> {
+        let cid_bytes = hex::decode(cid_hex)?;
+        self.client.pin_attachment(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    async fn unpin_attachment(&self, cid_hex: &str) -> Result<()> {
+        let cid_bytes = hex::decode(cid_hex)?;
+        self.client.unpin_attachment(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> {
@@ -183,9 +211,9 @@ impl Backend for LocalBackend {
         Ok(serde_json::json!({ "status": "removed" }))
     }
 
-    async fn retract(&self, cid_hex: &str) -> Result<serde_json::Value> {
+    async fn retract(&self, cid_hex: &str, reason: &str) -> Result<serde_json::Value> {
         let cid_bytes = hex::decode(cid_hex)?;
-        let tombstone = self.client.retract(&cid_bytes, "retracted via MCP").await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let tombstone = self.client.retract(&cid_bytes, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&tombstone) }))
     }
 

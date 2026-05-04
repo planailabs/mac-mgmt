@@ -237,13 +237,20 @@ impl Backend for HttpClient {
         self.put_doc(body, frontmatter, tags, visibility).await
     }
     async fn get_doc(&self, id: &str) -> Result<Option<serde_json::Value>> { self.get_doc(id).await }
-    async fn search(&self, query: &str, limit: usize) -> Result<serde_json::Value> { self.search(query, limit).await }
+    async fn search(&self, query: &str, limit: usize, _tag_filter: Option<&str>) -> Result<serde_json::Value> {
+        self.search(query, limit).await
+    }
     async fn list_docs(&self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value> { self.list_docs(tag_ns, tag_val, limit).await }
     async fn attach_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> { self.attach_file(data, filename, content_type).await }
     async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>> { self.download_attachment(cid_hex).await }
+    async fn read_attachment_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+        // REST API doesn't have a range endpoint yet; download full and slice.
+        let data = self.download_attachment(cid_hex).await?;
+        let s = start as usize;
+        let e = (end as usize).min(data.len());
+        Ok(if s < data.len() { data[s..e].to_vec() } else { vec![] })
+    }
     async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>> {
-        // Call the server's extract endpoint, or download + extract locally.
-        // For HTTP mode, download the raw bytes and extract locally.
         let data = self.download_attachment(cid_hex).await?;
         let manifest = self.get_attachment_manifest(cid_hex).await?;
         let mime = manifest
@@ -256,19 +263,30 @@ impl Backend for HttpClient {
         }
     }
     async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> { self.get_attachment_manifest(cid_hex).await }
+    async fn pin_attachment(&self, _cid_hex: &str) -> Result<()> {
+        // Pin/unpin REST endpoints not yet available; no-op for HTTP mode.
+        Ok(())
+    }
+    async fn unpin_attachment(&self, _cid_hex: &str) -> Result<()> {
+        Ok(())
+    }
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> { self.add_entity(kind, props, visibility).await }
     async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> { self.add_link(source, target, relation, weight).await }
     async fn edges_of(&self, node: &str) -> Result<serde_json::Value> { self.edges_of(node).await }
     async fn delete_link(&self, edge_id: &str) -> Result<serde_json::Value> { self.delete_link(edge_id).await }
-    async fn retract(&self, cid_hex: &str) -> Result<serde_json::Value> { self.retract(cid_hex).await }
+    async fn retract(&self, cid_hex: &str, _reason: &str) -> Result<serde_json::Value> { self.retract(cid_hex).await }
     async fn status(&self) -> Result<serde_json::Value> { self.status().await }
 }
 
 fn urlencoded(s: &str) -> String {
-    // Minimal percent-encoding for query parameters.
-    s.replace('%', "%25")
-        .replace('&', "%26")
-        .replace('=', "%3D")
-        .replace('+', "%2B")
-        .replace(' ', "%20")
+    // Percent-encode query parameter values.
+    use std::fmt::Write;
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => write!(out, "%{b:02X}").unwrap(),
+        }
+    }
+    out
 }
