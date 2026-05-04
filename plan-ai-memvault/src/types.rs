@@ -190,6 +190,8 @@ pub struct EdgesOfParams {
 pub struct UnlinkParams {
     /// Hex-encoded edge ID to remove.
     pub edge_id: String,
+    /// Source node — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    pub source: String,
 }
 
 // -- memvault_retract --

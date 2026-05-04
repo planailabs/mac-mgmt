@@ -390,10 +390,10 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_unlink",
-        description = "Remove a link (edge) by its hex-encoded edge ID."
+        description = "Remove a link (edge) by its hex-encoded edge ID. Requires the source node."
     )]
     async fn unlink(&self, Parameters(params): Parameters<UnlinkParams>) -> String {
-        match self.client.delete_link(&params.edge_id).await {
+        match self.client.delete_link(&params.edge_id, &params.source).await {
             Ok(_) => serde_json::json!({ "edge_id": params.edge_id, "status": "removed" }).to_string(),
             Err(e) => format!("error: {e}"),
         }

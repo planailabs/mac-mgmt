@@ -205,9 +205,17 @@ impl Backend for LocalBackend {
         })).collect::<Vec<_>>()))
     }
 
-    async fn delete_link(&self, edge_id: &str) -> Result<serde_json::Value> {
+    async fn delete_link(&self, edge_id: &str, source: &str) -> Result<serde_json::Value> {
         let bytes = hex::decode(edge_id)?;
-        self.client.retract(&bytes, "deleted via MCP").await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        if bytes.len() != 32 {
+            anyhow::bail!("edge ID must be 32 bytes");
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        let eid = EdgeId(arr);
+        let source_ref = NodeRef::from_tag_label(source)
+            .ok_or_else(|| anyhow::anyhow!("invalid source: {source}"))?;
+        self.client.remove_link_from(&source_ref, &eid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "removed" }))
     }
 

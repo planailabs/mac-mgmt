@@ -196,16 +196,6 @@ impl HttpClient {
         Ok(resp.json().await?)
     }
 
-    pub async fn delete_link(&self, edge_id: &str) -> Result<serde_json::Value> {
-        self.client
-            .delete(self.url(&format!("/links/{edge_id}")))
-            .send()
-            .await?
-            .error_for_status()?;
-        // 204 No Content returns empty body
-        Ok(serde_json::json!({ "status": "removed" }))
-    }
-
     // ── Audit ────────────────────────────────────────────────────────
 
     pub async fn retract(&self, cid_hex: &str) -> Result<serde_json::Value> {
@@ -273,7 +263,11 @@ impl Backend for HttpClient {
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> { self.add_entity(kind, props, visibility).await }
     async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> { self.add_link(source, target, relation, weight).await }
     async fn edges_of(&self, node: &str) -> Result<serde_json::Value> { self.edges_of(node).await }
-    async fn delete_link(&self, edge_id: &str) -> Result<serde_json::Value> { self.delete_link(edge_id).await }
+    async fn delete_link(&self, edge_id: &str, source: &str) -> Result<serde_json::Value> {
+        let url = format!("{}?source={}", self.url(&format!("/links/{edge_id}")), urlencoded(source));
+        self.client.delete(url).send().await?.error_for_status()?;
+        Ok(serde_json::json!({ "status": "removed" }))
+    }
     async fn retract(&self, cid_hex: &str, _reason: &str) -> Result<serde_json::Value> { self.retract(cid_hex).await }
     async fn status(&self) -> Result<serde_json::Value> { self.status().await }
 }
