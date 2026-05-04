@@ -101,6 +101,26 @@ impl Backend for LocalBackend {
         })).collect::<Vec<_>>()))
     }
 
+    async fn edit_doc(&self, id: &str, patch_json: serde_json::Value) -> Result<serde_json::Value> {
+        let arr = hex_to_32(id)?;
+        let doc_id = DocId(arr);
+        // Parse patch from JSON: { "ops": [{"Retain": n}, {"Insert": "text"}, {"Delete": n}] }
+        let patch: memvault_doc::TextPatch = serde_json::from_value(patch_json)?;
+        let cid = self.client.edit_doc(&doc_id, patch).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "cid": hex::encode(&cid) }))
+    }
+
+    async fn history_of(&self, doc_id: &str) -> Result<serde_json::Value> {
+        let arr = hex_to_32(doc_id)?;
+        let did = DocId(arr);
+        let records = self.client.history_of(&did).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(records.iter().map(|r| serde_json::json!({
+            "cid": hex::encode(&r.cid),
+            "op_kind": format!("{:?}", r.op_kind),
+            "wall_ns": r.wall_ns,
+        })).collect::<Vec<_>>()))
+    }
+
     async fn list_docs(&self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value> {
         let tag_filter = match (tag_ns, tag_val) {
             (Some(ns), Some(val)) => Some((ns.to_string(), val.to_string())),
@@ -174,6 +194,55 @@ impl Backend for LocalBackend {
         Ok(serde_json::json!({ "id": hex::encode(id.0) }))
     }
 
+    async fn get_entity(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let arr = hex_to_32(id)?;
+        let eid = EntityId(arr);
+        let entity = self.client.get_entity(&eid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(entity.map(|e| serde_json::json!({
+            "id": hex::encode(e.id.0),
+            "kind": e.kind,
+            "props": e.props,
+            "edges": e.edges_out.iter().map(|edge| serde_json::json!({
+                "id": hex::encode(edge.id.0),
+                "relation": edge.relation,
+                "target": edge.target.tag_label(),
+                "weight": edge.weight,
+            })).collect::<Vec<_>>(),
+        })))
+    }
+
+    async fn list_entities(&self, limit: usize) -> Result<serde_json::Value> {
+        let entities = self.client.list_entities(limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(entities.iter().map(|e| serde_json::json!({
+            "id": hex::encode(e.id.0),
+            "kind": e.kind,
+            "label": e.props.get("name").or_else(|| e.props.get("title")).and_then(|v| v.as_str()).unwrap_or(&e.kind),
+            "edge_count": e.edges_out.len(),
+        })).collect::<Vec<_>>()))
+    }
+
+    async fn entity_history(&self, id: &str) -> Result<serde_json::Value> {
+        let arr = hex_to_32(id)?;
+        let eid = EntityId(arr);
+        let records = self.client.entity_history(&eid).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(records.iter().map(|r| serde_json::json!({
+            "cid": hex::encode(&r.cid),
+            "op_kind": format!("{:?}", r.op_kind),
+            "wall_ns": r.wall_ns,
+        })).collect::<Vec<_>>()))
+    }
+
+    async fn traverse_from(&self, from: &str, relation: Option<&str>, max_depth: usize) -> Result<serde_json::Value> {
+        let node_ref = NodeRef::from_tag_label(from)
+            .ok_or_else(|| anyhow::anyhow!("invalid node: {from}"))?;
+        let hits = self.client.traverse_from(&node_ref, relation, max_depth).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(hits.iter().map(|h| serde_json::json!({
+            "node": h.node.tag_label(),
+            "depth": h.depth,
+            "path": h.path.iter().map(|(eid, rel)| serde_json::json!({ "edge_id": hex::encode(eid.0), "relation": rel })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>()))
+    }
+
     async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> {
         let source_ref = NodeRef::from_tag_label(source)
             .ok_or_else(|| anyhow::anyhow!("invalid source: {source}"))?;
@@ -223,6 +292,22 @@ impl Backend for LocalBackend {
         let cid_bytes = hex::decode(cid_hex)?;
         let tombstone = self.client.retract(&cid_bytes, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&tombstone) }))
+    }
+
+    async fn search_unified(&self, query: &str, limit: usize) -> Result<serde_json::Value> {
+        let hits = self.client.search_unified(query, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(hits.iter().map(|h| serde_json::json!({
+            "node_id": h.node_id,
+            "node_type": h.node_type,
+            "label": h.label,
+            "score": h.score,
+            "snippet": h.snippet,
+            "match_contexts": h.match_contexts,
+        })).collect::<Vec<_>>()))
+    }
+
+    async fn resolve_label(&self, node_id: &str) -> Result<Option<String>> {
+        self.client.resolve_label(node_id).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn list_all(&self, view: Option<&str>, limit: usize) -> Result<serde_json::Value> {
@@ -281,6 +366,36 @@ impl Backend for LocalBackend {
     async fn retract_node(&self, node_id: &str, reason: &str) -> Result<serde_json::Value> {
         self.client.retract_node(node_id, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "node_id": node_id, "status": "retracted" }))
+    }
+
+    async fn view_members(&self, name: &str) -> Result<serde_json::Value> {
+        let members = self.client.view_members(name).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "view": name, "count": members.len(), "members": members }))
+    }
+
+    async fn audit(&self, limit: usize, op_kind: Option<&str>) -> Result<serde_json::Value> {
+        use memvault_query::AuditQuery;
+        let query = AuditQuery {
+            op_kind: op_kind.map(|k| match k {
+                "DocCreate" => memvault_query::OpKind::DocCreate,
+                "DocEdit" => memvault_query::OpKind::DocEdit,
+                "AttachFile" => memvault_query::OpKind::AttachFile,
+                "EntityCreate" => memvault_query::OpKind::EntityCreate,
+                "EdgeAdd" => memvault_query::OpKind::EdgeAdd,
+                "Retract" => memvault_query::OpKind::Retract,
+                other => memvault_query::OpKind::Other(other.to_string()),
+            }),
+            limit: Some(limit),
+            ..Default::default()
+        };
+        let records = self.client.audit(query).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(records.iter().map(|r| serde_json::json!({
+            "cid": hex::encode(&r.cid),
+            "op_kind": format!("{:?}", r.op_kind),
+            "author": hex::encode(&r.author),
+            "wall_ns": r.wall_ns,
+            "tags": r.tags,
+        })).collect::<Vec<_>>()))
     }
 
     async fn status(&self) -> Result<serde_json::Value> {

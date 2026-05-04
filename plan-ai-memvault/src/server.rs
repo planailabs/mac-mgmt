@@ -500,6 +500,78 @@ impl MemvaultServer {
     }
 
     #[tool(
+        name = "memvault_get_entity",
+        description = "Get a single entity by its hex-encoded ID. Returns kind, properties, and outgoing edges."
+    )]
+    async fn get_entity(&self, Parameters(params): Parameters<GetEntityParams>) -> String {
+        match self.client.get_entity(&params.id).await {
+            Ok(Some(entity)) => entity.to_string(),
+            Ok(None) => format!("error: entity not found: {}", params.id),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_list_entities",
+        description = "List knowledge graph entities with their kind and label."
+    )]
+    async fn list_entities(&self, Parameters(params): Parameters<ListEntitiesParams>) -> String {
+        let limit = params.limit.unwrap_or(50);
+        match self.client.list_entities(limit).await {
+            Ok(entities) => {
+                let arr = entities.as_array().cloned().unwrap_or_default();
+                serde_json::json!({ "count": arr.len(), "entities": arr }).to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_traverse",
+        description = "Traverse the knowledge graph from any node. Returns connected nodes up to max_depth. \
+                       Start node specified as 'entity:<hex>', 'doc:<hex>', or 'attachment:<hex>'."
+    )]
+    async fn traverse(&self, Parameters(params): Parameters<TraverseParams>) -> String {
+        let max_depth = params.max_depth.unwrap_or(2);
+        match self.client.traverse_from(&params.from, params.relation.as_deref(), max_depth).await {
+            Ok(hits) => {
+                let arr = hits.as_array().cloned().unwrap_or_default();
+                serde_json::json!({ "count": arr.len(), "hits": arr }).to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_audit",
+        description = "Query the audit log. Optionally filter by operation kind (DocCreate, EntityCreate, AttachFile, EdgeAdd, Retract)."
+    )]
+    async fn audit(&self, Parameters(params): Parameters<AuditParams>) -> String {
+        let limit = params.limit.unwrap_or(50);
+        match self.client.audit(limit, params.op_kind.as_deref()).await {
+            Ok(records) => {
+                let arr = records.as_array().cloned().unwrap_or_default();
+                serde_json::json!({ "count": arr.len(), "records": arr }).to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_doc_history",
+        description = "View the operation history for a document by its hex-encoded ID."
+    )]
+    async fn doc_history(&self, Parameters(params): Parameters<DocHistoryParams>) -> String {
+        match self.client.history_of(&params.doc_id).await {
+            Ok(history) => {
+                let arr = history.as_array().cloned().unwrap_or_default();
+                serde_json::json!({ "count": arr.len(), "history": arr }).to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
         name = "memvault_retract",
         description = "Retract (soft-delete) any node by its ID ('entity:<hex>', 'doc:<hex>', 'attachment:<hex>'). \
                        Removes it from search, graph, and all views."

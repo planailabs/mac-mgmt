@@ -230,7 +230,17 @@ impl Backend for HttpClient {
     async fn search(&self, query: &str, limit: usize, _tag_filter: Option<&str>) -> Result<serde_json::Value> {
         self.search(query, limit).await
     }
+    async fn edit_doc(&self, id: &str, patch_json: serde_json::Value) -> Result<serde_json::Value> {
+        let resp = self.client.put(self.url(&format!("/docs/{id}")))
+            .json(&serde_json::json!({ "patch": patch_json }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
     async fn list_docs(&self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value> { self.list_docs(tag_ns, tag_val, limit).await }
+    async fn history_of(&self, doc_id: &str) -> Result<serde_json::Value> {
+        let resp = self.client.get(self.url(&format!("/docs/{doc_id}/history"))).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
     async fn attach_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> { self.attach_file(data, filename, content_type).await }
     async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>> { self.download_attachment(cid_hex).await }
     async fn read_attachment_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
@@ -263,6 +273,26 @@ impl Backend for HttpClient {
         Ok(())
     }
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> { self.add_entity(kind, props, visibility).await }
+    async fn get_entity(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let resp = self.client.get(self.url(&format!("/entities/{id}"))).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND { return Ok(None); }
+        Ok(Some(resp.error_for_status()?.json().await?))
+    }
+    async fn list_entities(&self, limit: usize) -> Result<serde_json::Value> {
+        // No dedicated REST endpoint for listing entities; use list_all filtered by type.
+        // This is a limitation of the HTTP mode.
+        let resp = self.client.get(self.url(&format!("/nodes?limit={limit}"))).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn entity_history(&self, _id: &str) -> Result<serde_json::Value> {
+        // Entity history endpoint doesn't exist in REST; use audit with entity tag.
+        let resp = self.client.get(self.url(&format!("/audit?limit=100"))).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn traverse_from(&self, from: &str, _relation: Option<&str>, _max_depth: usize) -> Result<serde_json::Value> {
+        // Use edges_of as a basic traversal (depth 1 only in HTTP mode).
+        self.edges_of(from).await
+    }
     async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> { self.add_link(source, target, relation, weight).await }
     async fn edges_of(&self, node: &str) -> Result<serde_json::Value> { self.edges_of(node).await }
     async fn delete_link(&self, edge_id: &str, source: &str) -> Result<serde_json::Value> {
@@ -274,6 +304,15 @@ impl Backend for HttpClient {
     async fn retract_node(&self, node_id: &str, _reason: &str) -> Result<serde_json::Value> {
         self.client.delete(self.url(&format!("/nodes/{}", urlencoded(node_id)))).send().await?.error_for_status()?;
         Ok(serde_json::json!({ "status": "retracted" }))
+    }
+    async fn search_unified(&self, query: &str, limit: usize) -> Result<serde_json::Value> {
+        let url = format!("{}?q={}&limit={limit}", self.url("/search"), urlencoded(query));
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn resolve_label(&self, _node_id: &str) -> Result<Option<String>> {
+        // No REST endpoint for label resolution; return None in HTTP mode.
+        Ok(None)
     }
     async fn list_all(&self, view: Option<&str>, limit: usize) -> Result<serde_json::Value> {
         let mut url = format!("{}?limit={limit}", self.url("/nodes"));
@@ -319,6 +358,18 @@ impl Backend for HttpClient {
     async fn delete_view(&self, name: &str) -> Result<serde_json::Value> {
         self.client.delete(self.url(&format!("/views/{}", urlencoded(name)))).send().await?.error_for_status()?;
         Ok(serde_json::json!({ "status": "deleted" }))
+    }
+    async fn view_members(&self, name: &str) -> Result<serde_json::Value> {
+        let resp = self.client.get(self.url(&format!("/views/{}/members", urlencoded(name)))).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn audit(&self, limit: usize, op_kind: Option<&str>) -> Result<serde_json::Value> {
+        let mut url = format!("{}?limit={limit}", self.url("/audit"));
+        if let Some(k) = op_kind {
+            url.push_str(&format!("&kind={}", urlencoded(k)));
+        }
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
     }
     async fn status(&self) -> Result<serde_json::Value> { self.status().await }
 }

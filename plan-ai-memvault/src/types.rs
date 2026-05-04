@@ -265,6 +265,57 @@ pub struct ViewDeleteParams {
     pub name: String,
 }
 
+// -- memvault_get_entity --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct GetEntityParams {
+    /// Hex-encoded entity ID.
+    pub id: String,
+}
+
+// -- memvault_list_entities --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ListEntitiesParams {
+    /// Maximum number of results (default: 50).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+// -- memvault_traverse --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct TraverseParams {
+    /// Starting node — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    pub from: String,
+    /// Optional relation filter.
+    #[serde(default)]
+    pub relation: Option<String>,
+    /// Maximum traversal depth (default: 2).
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+}
+
+// -- memvault_audit --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct AuditParams {
+    /// Maximum number of results (default: 50).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Filter by operation kind (e.g. "DocCreate", "EntityCreate", "AttachFile").
+    #[serde(default)]
+    pub op_kind: Option<String>,
+}
+
+// -- memvault_doc_history --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct DocHistoryParams {
+    /// Hex-encoded document ID.
+    pub doc_id: String,
+}
+
 // -- memvault_retract --
 
 #[derive(Deserialize, JsonSchema)]
