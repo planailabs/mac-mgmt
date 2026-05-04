@@ -58,13 +58,27 @@ pub fn Pill(
     #[props(default)] mono: bool,
     #[props(default, into)] title: Option<String>,
     #[props(default, into)] class: String,
+    /// Custom color (CSS value). Overrides variant styling with inline color + tinted background.
+    #[props(default, into)] color: Option<String>,
     children: Element,
 ) -> Element {
     let mono_cls = if mono { "pill-mono" } else { "" };
-    let cls = format!("pill {} {} {}", variant.pill_class(), mono_cls, class);
-    rsx! {
-        span { class: "{cls}", title,
-            {children}
+    if let Some(ref c) = color {
+        let cls = format!("pill {} {}", mono_cls, class);
+        rsx! {
+            span {
+                class: "{cls}",
+                style: "background: {c}20; color: {c}; border-color: {c}40;",
+                title,
+                {children}
+            }
+        }
+    } else {
+        let cls = format!("pill {} {} {}", variant.pill_class(), mono_cls, class);
+        rsx! {
+            span { class: "{cls}", title,
+                {children}
+            }
         }
     }
 }
