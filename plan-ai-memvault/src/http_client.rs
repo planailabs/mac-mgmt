@@ -271,6 +271,20 @@ impl Backend for HttpClient {
         Ok(serde_json::json!({ "status": "removed" }))
     }
     async fn retract(&self, cid_hex: &str, _reason: &str) -> Result<serde_json::Value> { self.retract(cid_hex).await }
+    async fn list_views(&self) -> Result<serde_json::Value> {
+        let resp = self.client.get(self.url("/views")).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn create_view(&self, name: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+        let resp = self.client.post(self.url("/views"))
+            .json(&serde_json::json!({ "name": name, "tags": tags }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn delete_view(&self, name: &str) -> Result<serde_json::Value> {
+        self.client.delete(self.url(&format!("/views/{}", urlencoded(name)))).send().await?.error_for_status()?;
+        Ok(serde_json::json!({ "status": "deleted" }))
+    }
     async fn status(&self) -> Result<serde_json::Value> { self.status().await }
 }
 

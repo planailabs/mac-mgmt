@@ -194,6 +194,27 @@ pub struct UnlinkParams {
     pub source: String,
 }
 
+// -- memvault_view_list --
+// (no params)
+
+// -- memvault_view_create --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ViewCreateParams {
+    /// Name of the view.
+    pub name: String,
+    /// Required tags in "scope:label" format. Items must have ALL of these to appear.
+    pub tags: Vec<String>,
+}
+
+// -- memvault_view_delete --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ViewDeleteParams {
+    /// Name of the view to delete.
+    pub name: String,
+}
+
 // -- memvault_retract --
 
 #[derive(Deserialize, JsonSchema)]

@@ -225,6 +225,26 @@ impl Backend for LocalBackend {
         Ok(serde_json::json!({ "cid": hex::encode(&tombstone) }))
     }
 
+    async fn list_views(&self) -> Result<serde_json::Value> {
+        let views = self.client.list_views().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(views))
+    }
+
+    async fn create_view(&self, name: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+        let view = memvault_api::View {
+            name: name.to_string(),
+            tags,
+            created_ns: memvault_core::wall_ns(),
+        };
+        self.client.create_view(view).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "name": name, "status": "created" }))
+    }
+
+    async fn delete_view(&self, name: &str) -> Result<serde_json::Value> {
+        self.client.delete_view(name).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "name": name, "status": "deleted" }))
+    }
+
     async fn status(&self) -> Result<serde_json::Value> {
         let s = self.client.status().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(s))

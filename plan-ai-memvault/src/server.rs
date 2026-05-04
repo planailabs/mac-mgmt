@@ -400,6 +400,40 @@ impl MemvaultServer {
     }
 
     #[tool(
+        name = "memvault_view_list",
+        description = "List all saved views. Views are named tag filter sets that scope content."
+    )]
+    async fn view_list(&self) -> String {
+        match self.client.list_views().await {
+            Ok(views) => views.to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_view_create",
+        description = "Create a saved view. Items must have ALL the specified tags to appear. Tags in 'scope:label' format."
+    )]
+    async fn view_create(&self, Parameters(params): Parameters<ViewCreateParams>) -> String {
+        let tags = parse_tags(&params.tags);
+        match self.client.create_view(&params.name, tags).await {
+            Ok(resp) => resp.to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_view_delete",
+        description = "Delete a saved view by name."
+    )]
+    async fn view_delete(&self, Parameters(params): Parameters<ViewDeleteParams>) -> String {
+        match self.client.delete_view(&params.name).await {
+            Ok(resp) => resp.to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
         name = "memvault_retract",
         description = "Retract (soft-delete) a memory by its CID. Creates a tombstone. Returns the tombstone CID."
     )]
