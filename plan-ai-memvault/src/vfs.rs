@@ -132,6 +132,10 @@ impl<'a> Vfs<'a> {
         let arr = edges.as_array().unwrap_or(&empty);
         let mut best: Option<(String, String)> = None;
         for edge in arr {
+            // edges_of returns both directions; only process outgoing edges from parent.
+            if edge.get("source").and_then(|v| v.as_str()) != Some(parent) {
+                continue;
+            }
             if edge.get("relation").and_then(|v| v.as_str()) != Some(VFS_CHILD_REL) {
                 continue;
             }
@@ -306,6 +310,9 @@ impl<'a> Vfs<'a> {
             let arr = edges.as_array().unwrap_or(&empty);
             let mut entries = Vec::new();
             for edge in arr {
+                if edge.get("source").and_then(|v| v.as_str()) != Some(node_id) {
+                    continue;
+                }
                 if edge.get("relation").and_then(|v| v.as_str()) != Some(VFS_CHILD_REL) {
                     continue;
                 }
@@ -436,6 +443,9 @@ impl<'a> Vfs<'a> {
             let empty = vec![];
             let arr = edges.as_array().unwrap_or(&empty);
             for edge in arr {
+                if edge.get("source").and_then(|v| v.as_str()) != Some(current) {
+                    continue;
+                }
                 if edge.get("relation").and_then(|v| v.as_str()) != Some(VFS_CHILD_REL) {
                     continue;
                 }

@@ -12,3 +12,11 @@ table-per-page-100 = 100 per page
 # Dash component
 dash = -
 em-dash = —
+
+# Theme toggle
+theme-system = Using system theme. Click for light mode
+theme-light = Using light mode. Click for dark mode
+theme-dark = Using dark mode. Click for system theme
+
+# Language picker
+language-picker-label = Language

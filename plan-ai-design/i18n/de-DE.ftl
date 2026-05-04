@@ -11,3 +11,11 @@ table-per-page-100 = 100 pro Seite
 # Dash component
 dash = -
 em-dash = —
+
+# Design-Umschalter
+theme-system = Systemdesign aktiv. Klicken für helles Design
+theme-light = Helles Design aktiv. Klicken für dunkles Design
+theme-dark = Dunkles Design aktiv. Klicken für Systemdesign
+
+# Sprachauswahl
+language-picker-label = Sprache
