@@ -21,6 +21,7 @@
       <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-api/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-api/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-attach/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-attach/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-auth/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-core/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/memvault/crates/memvault-core/tests" isTestSource="true" />

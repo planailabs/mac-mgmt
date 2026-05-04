@@ -26,6 +26,7 @@ node_modules/
 
 # Generated CSS
 server/public/tailwind.css
+memvault/crates/memvault-web/public/tailwind.css
 
 # Config files (contain secrets)
 config.toml
