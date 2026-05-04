@@ -58,6 +58,7 @@ impl<'a> Vfs<'a> {
             .or_else(|| entities.get("nodes").and_then(|v| v.as_array()))
             .unwrap_or(&empty);
         let mut candidates: Vec<String> = Vec::new();
+        let mut fallback_candidates: Vec<String> = Vec::new();
         for e in arr {
             // Accept local ("kind") or HTTP ("node_type" == "entity") entries
             let kind_match = e.get("kind").and_then(|v| v.as_str()) == Some(VFS_DIR_KIND);
@@ -86,11 +87,27 @@ impl<'a> Vfs<'a> {
             if is_root {
                 candidates.push(id.to_string());
             }
+            // Fallback: detect root by name="/" prop (in case tags are stale).
+            let name_prop = e.get("props").and_then(|p| p.get("name")).and_then(|v| v.as_str())
+                .or_else(|| e.get("label").and_then(|v| v.as_str()));
+            if name_prop == Some("/") && kind_match {
+                fallback_candidates.push(id.to_string());
+            }
         }
 
         if !candidates.is_empty() {
             candidates.sort();
             return Ok(candidates.into_iter().next().unwrap());
+        }
+        // Fallback: root entity exists but tag wasn't indexed. Re-tag it.
+        if !fallback_candidates.is_empty() {
+            fallback_candidates.sort();
+            let id = fallback_candidates.into_iter().next().unwrap();
+            let node_id = format!("entity:{id}");
+            let _ = self.backend.add_tags(&node_id, vec![
+                (VFS_ROOT_TAG.0.to_string(), VFS_ROOT_TAG.1.to_string()),
+            ]).await;
+            return Ok(id);
         }
 
         // Create the root directory.
