@@ -3,6 +3,7 @@ pub mod http_client;
 pub mod local_backend;
 pub mod server;
 pub mod types;
+pub mod vfs;
 
 use std::sync::Arc;
 

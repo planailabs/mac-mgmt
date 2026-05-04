@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_json::Value;
 
 // -- memvault_put --
 
@@ -18,6 +19,9 @@ pub struct PutParams {
     /// Visibility level: "internal", "cluster", or "public". Defaults to "internal".
     #[serde(default)]
     pub visibility: Option<String>,
+    /// Optional VFS path to place the new document at (e.g. "/notes/my-doc").
+    #[serde(default)]
+    pub vfs_path: Option<String>,
 }
 
 // -- memvault_get --
@@ -72,6 +76,9 @@ pub struct AttachParams {
     /// Visibility level: "internal", "federated", or "public". Defaults to "internal".
     #[serde(default)]
     pub visibility: Option<String>,
+    /// Optional VFS path to place the new attachment at (e.g. "/assets/logo.png").
+    #[serde(default)]
+    pub vfs_path: Option<String>,
 }
 
 // -- memvault_read_range --
@@ -130,6 +137,9 @@ pub struct GraphAddParams {
     /// Visibility level. Defaults to "internal".
     #[serde(default)]
     pub visibility: Option<String>,
+    /// Optional VFS path to place the new entity at (e.g. "/projects/acme").
+    #[serde(default)]
+    pub vfs_path: Option<String>,
 }
 
 // -- memvault_graph_link --
@@ -145,6 +155,9 @@ pub struct GraphLinkParams {
     /// Optional edge weight (0.0 to 1.0).
     #[serde(default)]
     pub weight: Option<f32>,
+    /// Optional edge properties (key-value map).
+    #[serde(default)]
+    pub props: HashMap<String, Value>,
 }
 
 // -- memvault_graph_query --
@@ -174,6 +187,9 @@ pub struct LinkParams {
     /// Optional edge weight (0.0 to 1.0).
     #[serde(default)]
     pub weight: Option<f32>,
+    /// Optional edge properties (key-value map).
+    #[serde(default)]
+    pub props: HashMap<String, Value>,
 }
 
 // -- memvault_edges --
@@ -324,4 +340,65 @@ pub struct RetractParams {
     pub node: String,
     /// Reason for retraction.
     pub reason: String,
+}
+
+// ── VFS tools ───────────────────────────���──────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsLsParams {
+    /// Absolute VFS path to list (e.g. "/", "/projects").
+    pub path: String,
+    /// If true, list recursively. Defaults to false.
+    #[serde(default)]
+    pub recursive: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsResolveParams {
+    /// Absolute VFS path to resolve (e.g. "/projects/acme/spec.md").
+    pub path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsMkdirParams {
+    /// Absolute VFS path for the new directory (e.g. "/projects/acme"). Intermediate directories are created automatically.
+    pub path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsLinkParams {
+    /// Absolute VFS path where the node should appear (e.g. "/projects/acme/spec.md").
+    pub path: String,
+    /// Target node to place at the path — "doc:<hex>", "entity:<hex>", or "attachment:<hex>".
+    pub target: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsUnlinkParams {
+    /// Absolute VFS path to remove (e.g. "/projects/old-spec.md"). The underlying node is NOT deleted.
+    pub path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsMvParams {
+    /// Source VFS path.
+    pub from: String,
+    /// Destination VFS path.
+    pub to: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsTreeParams {
+    /// Root path for the tree (defaults to "/").
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Maximum depth to display (defaults to 5).
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct VfsFindParams {
+    /// Node ID to search for — "doc:<hex>", "entity:<hex>", or "attachment:<hex>".
+    pub node: String,
 }

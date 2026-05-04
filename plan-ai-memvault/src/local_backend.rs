@@ -207,6 +207,7 @@ impl Backend for LocalBackend {
                 "relation": edge.relation,
                 "target": edge.target.tag_label(),
                 "weight": edge.weight,
+                "props": edge.props,
             })).collect::<Vec<_>>(),
         })))
     }
@@ -243,7 +244,7 @@ impl Backend for LocalBackend {
         })).collect::<Vec<_>>()))
     }
 
-    async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> {
+    async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>, props: BTreeMap<String, serde_json::Value>) -> Result<serde_json::Value> {
         let source_ref = NodeRef::from_tag_label(source)
             .ok_or_else(|| anyhow::anyhow!("invalid source: {source}"))?;
         let target_ref = NodeRef::from_tag_label(target)
@@ -253,7 +254,7 @@ impl Backend for LocalBackend {
             relation: relation.to_string(),
             target: target_ref,
             weight,
-            props: BTreeMap::new(),
+            props,
             provenance: None,
         };
         let vis = Visibility::Internal;
@@ -271,6 +272,7 @@ impl Backend for LocalBackend {
             "target": edge.target.tag_label(),
             "relation": edge.relation,
             "weight": edge.weight,
+            "props": edge.props,
         })).collect::<Vec<_>>()))
     }
 

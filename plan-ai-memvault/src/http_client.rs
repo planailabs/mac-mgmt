@@ -173,6 +173,7 @@ impl HttpClient {
         target: &str,
         relation: &str,
         weight: Option<f32>,
+        props: std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
         let resp = self
             .client
@@ -182,7 +183,7 @@ impl HttpClient {
                 "target": target,
                 "relation": relation,
                 "weight": weight,
-                "props": {},
+                "props": props,
             }))
             .send()
             .await?
@@ -290,7 +291,7 @@ impl Backend for HttpClient {
     async fn traverse_from(&self, from: &str, _relation: Option<&str>, _max_depth: usize) -> Result<serde_json::Value> {
         self.edges_of(from).await
     }
-    async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> { self.add_link(source, target, relation, weight).await }
+    async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>, props: std::collections::BTreeMap<String, serde_json::Value>) -> Result<serde_json::Value> { self.add_link(source, target, relation, weight, props).await }
     async fn edges_of(&self, node: &str) -> Result<serde_json::Value> { self.edges_of(node).await }
     async fn delete_link(&self, edge_id: &str, source: &str) -> Result<serde_json::Value> {
         let url = format!("{}?source={}", self.url(&format!("/links/{edge_id}")), urlencoded(source));

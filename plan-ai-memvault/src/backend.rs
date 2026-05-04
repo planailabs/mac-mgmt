@@ -30,7 +30,7 @@ pub trait Backend: Send + Sync {
     async fn traverse_from(&self, from: &str, relation: Option<&str>, max_depth: usize) -> Result<serde_json::Value>;
 
     // -- Links --
-    async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value>;
+    async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>, props: std::collections::BTreeMap<String, serde_json::Value>) -> Result<serde_json::Value>;
     async fn edges_of(&self, node: &str) -> Result<serde_json::Value>;
     async fn delete_link(&self, edge_id: &str, source: &str) -> Result<serde_json::Value>;
 

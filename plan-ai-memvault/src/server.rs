@@ -6,6 +6,7 @@ use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 
 use crate::backend::Backend;
 use crate::types::*;
+use crate::vfs::Vfs;
 
 #[derive(Clone)]
 pub struct MemvaultServer {
@@ -33,7 +34,9 @@ impl ServerHandler for MemvaultServer {
             instructions: Some(
                 "Memvault MCP server — store, retrieve, search, and link memories in a \
                  local-first p2p knowledge base. Use memvault_put to store documents, \
-                 memvault_search to find them, and the graph tools to build a knowledge graph."
+                 memvault_search to find them, the graph tools to build a knowledge graph, \
+                 and the VFS tools (memvault_vfs_*) to organise nodes into a virtual \
+                 filesystem hierarchy with directories, paths, and tree views."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
@@ -83,11 +86,19 @@ impl MemvaultServer {
             Ok(resp) => {
                 let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let node_id = if raw_id.contains(':') { raw_id.to_string() } else { format!("doc:{raw_id}") };
-                serde_json::json!({
+                let mut result = serde_json::json!({
                     "node_id": node_id,
                     "cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
                     "status": "stored"
-                }).to_string()
+                });
+                if let Some(vfs_path) = &params.vfs_path {
+                    let vfs = Vfs::new(self.client.as_ref());
+                    match vfs.link(vfs_path, &node_id).await {
+                        Ok(_) => { result["vfs_path"] = serde_json::json!(vfs_path); }
+                        Err(e) => { result["vfs_error"] = serde_json::json!(e.to_string()); }
+                    }
+                }
+                result.to_string()
             }
             Err(e) => format!("error: {e}"),
         }
@@ -140,10 +151,18 @@ impl MemvaultServer {
             Ok(resp) => {
                 let raw_cid = resp.get("cid").and_then(|v| v.as_str()).unwrap_or("");
                 let node_id = if raw_cid.contains(':') { raw_cid.to_string() } else { format!("attachment:{raw_cid}") };
-                serde_json::json!({
+                let mut result = serde_json::json!({
                     "node_id": node_id, "filename": filename,
                     "size": data.len(), "mime_type": mime_type, "status": "attached"
-                }).to_string()
+                });
+                if let Some(vfs_path) = &params.vfs_path {
+                    let vfs = Vfs::new(self.client.as_ref());
+                    match vfs.link(vfs_path, &node_id).await {
+                        Ok(_) => { result["vfs_path"] = serde_json::json!(vfs_path); }
+                        Err(e) => { result["vfs_error"] = serde_json::json!(e.to_string()); }
+                    }
+                }
+                result.to_string()
             }
             Err(e) => format!("error: {e}"),
         }
@@ -207,7 +226,15 @@ impl MemvaultServer {
             Ok(resp) => {
                 let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let node_id = if raw_id.contains(':') { raw_id.to_string() } else { format!("entity:{raw_id}") };
-                serde_json::json!({ "node_id": node_id, "status": "created" }).to_string()
+                let mut result = serde_json::json!({ "node_id": node_id, "status": "created" });
+                if let Some(vfs_path) = &params.vfs_path {
+                    let vfs = Vfs::new(self.client.as_ref());
+                    match vfs.link(vfs_path, &node_id).await {
+                        Ok(_) => { result["vfs_path"] = serde_json::json!(vfs_path); }
+                        Err(e) => { result["vfs_error"] = serde_json::json!(e.to_string()); }
+                    }
+                }
+                result.to_string()
             }
             Err(e) => format!("error: {e}"),
         }
@@ -236,7 +263,8 @@ impl MemvaultServer {
     async fn graph_link(&self, Parameters(params): Parameters<GraphLinkParams>) -> String {
         let source = format!("entity:{}", params.source_id);
         let target = format!("entity:{}", params.target_id);
-        match self.client.add_link(&source, &target, &params.relation, params.weight).await {
+        let props = params.props.into_iter().map(|(k, v)| (k, v)).collect();
+        match self.client.add_link(&source, &target, &params.relation, params.weight, props).await {
             Ok(resp) => serde_json::json!({
                 "edge_id": resp.get("edge_id").and_then(|v| v.as_str()).unwrap_or(""),
                 "status": "linked"
@@ -254,7 +282,8 @@ impl MemvaultServer {
 
     #[tool(name = "memvault_link", description = "Link any two nodes (type:hex format). Returns the edge ID.")]
     async fn link(&self, Parameters(params): Parameters<LinkParams>) -> String {
-        match self.client.add_link(&params.source, &params.target, &params.relation, params.weight).await {
+        let props = params.props.into_iter().map(|(k, v)| (k, v)).collect();
+        match self.client.add_link(&params.source, &params.target, &params.relation, params.weight, props).await {
             Ok(resp) => serde_json::json!({
                 "edge_id": resp.get("edge_id").and_then(|v| v.as_str()).unwrap_or(""),
                 "status": "linked"
@@ -339,5 +368,133 @@ impl MemvaultServer {
     #[tool(name = "memvault_status", description = "Get node status (block count, doc count, peer count, uptime).")]
     async fn status(&self) -> String {
         ok_or_err!(self.client.status().await)
+    }
+
+    // ── VFS (Virtual Filesystem) ──────────────────────────────────
+
+    #[tool(
+        name = "memvault_vfs_ls",
+        description = "List directory contents at a VFS path. Shows name, type, and node ID for each entry."
+    )]
+    async fn vfs_ls(&self, Parameters(params): Parameters<VfsLsParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        let recursive = params.recursive.unwrap_or(false);
+        match vfs.ls(&params.path, recursive).await {
+            Ok(entries) => serde_json::json!({
+                "path": params.path,
+                "entries": entries,
+            }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_vfs_resolve",
+        description = "Resolve a VFS path to its target node ID (type:hex format)."
+    )]
+    async fn vfs_resolve(&self, Parameters(params): Parameters<VfsResolveParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        match vfs.resolve(&params.path).await {
+            Ok(Some((node_id, edge_id))) => serde_json::json!({
+                "path": params.path,
+                "node_id": node_id,
+                "edge_id": edge_id,
+            }).to_string(),
+            Ok(None) => serde_json::json!({ "path": params.path, "error": "not found" }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_vfs_mkdir",
+        description = "Create a directory at a VFS path. Intermediate directories are created automatically (like mkdir -p)."
+    )]
+    async fn vfs_mkdir(&self, Parameters(params): Parameters<VfsMkdirParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        match vfs.mkdir(&params.path).await {
+            Ok(entity_id) => serde_json::json!({
+                "path": params.path,
+                "entity_id": entity_id,
+                "status": "created",
+            }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_vfs_link",
+        description = "Place a node at a VFS path. Intermediate directories are created automatically. A node can appear at multiple paths."
+    )]
+    async fn vfs_link(&self, Parameters(params): Parameters<VfsLinkParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        match vfs.link(&params.path, &params.target).await {
+            Ok(edge_id) => serde_json::json!({
+                "path": params.path,
+                "target": params.target,
+                "edge_id": edge_id,
+                "status": "linked",
+            }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_vfs_unlink",
+        description = "Remove an entry from a VFS path. The underlying node is NOT deleted — only the VFS link is removed."
+    )]
+    async fn vfs_unlink(&self, Parameters(params): Parameters<VfsUnlinkParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        match vfs.unlink(&params.path).await {
+            Ok(()) => serde_json::json!({
+                "path": params.path,
+                "status": "unlinked",
+            }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_vfs_mv",
+        description = "Move or rename a VFS entry from one path to another."
+    )]
+    async fn vfs_mv(&self, Parameters(params): Parameters<VfsMvParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        match vfs.mv(&params.from, &params.to).await {
+            Ok(()) => serde_json::json!({
+                "from": params.from,
+                "to": params.to,
+                "status": "moved",
+            }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_vfs_tree",
+        description = "Display an ASCII tree view of the VFS hierarchy from a given path."
+    )]
+    async fn vfs_tree(&self, Parameters(params): Parameters<VfsTreeParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        let path = params.path.as_deref().unwrap_or("/");
+        let max_depth = params.max_depth.unwrap_or(5);
+        match vfs.tree(path, max_depth).await {
+            Ok(tree) => tree,
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_vfs_find",
+        description = "Find all VFS paths that link to a given node. Useful for discovering where a node is mounted."
+    )]
+    async fn vfs_find(&self, Parameters(params): Parameters<VfsFindParams>) -> String {
+        let vfs = Vfs::new(self.client.as_ref());
+        match vfs.find_paths(&params.node).await {
+            Ok(paths) => serde_json::json!({
+                "node": params.node,
+                "paths": paths,
+            }).to_string(),
+            Err(e) => format!("error: {e}"),
+        }
     }
 }
