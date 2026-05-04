@@ -400,6 +400,41 @@ impl MemvaultServer {
     }
 
     #[tool(
+        name = "memvault_tag",
+        description = "Add tags to an existing item (entity, document, or attachment). Tags in 'scope:label' format."
+    )]
+    async fn tag(&self, Parameters(params): Parameters<TagParams>) -> String {
+        let tags = parse_tags(&params.tags);
+        match self.client.add_tags(&params.node, tags).await {
+            Ok(resp) => resp.to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_untag",
+        description = "Remove tags from an existing item. Tags in 'scope:label' format."
+    )]
+    async fn untag(&self, Parameters(params): Parameters<UntagParams>) -> String {
+        let tags = parse_tags(&params.tags);
+        match self.client.remove_tags(&params.node, tags).await {
+            Ok(resp) => resp.to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        name = "memvault_get_tags",
+        description = "Get the effective tags for an item."
+    )]
+    async fn get_tags(&self, Parameters(params): Parameters<GetTagsParams>) -> String {
+        match self.client.get_tags(&params.node).await {
+            Ok(resp) => resp.to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
         name = "memvault_view_list",
         description = "List all saved views. Views are named tag filter sets that scope content."
     )]

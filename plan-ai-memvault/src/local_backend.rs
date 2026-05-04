@@ -225,6 +225,19 @@ impl Backend for LocalBackend {
         Ok(serde_json::json!({ "cid": hex::encode(&tombstone) }))
     }
 
+    async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+        self.client.add_tags(node_id, tags).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "status": "tags_added" }))
+    }
+    async fn remove_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+        self.client.remove_tags(node_id, tags).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "status": "tags_removed" }))
+    }
+    async fn get_tags(&self, node_id: &str) -> Result<serde_json::Value> {
+        let tags = self.client.get_tags(node_id).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "tags": tags }))
+    }
+
     async fn list_views(&self) -> Result<serde_json::Value> {
         let views = self.client.list_views().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(views))

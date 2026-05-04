@@ -271,6 +271,23 @@ impl Backend for HttpClient {
         Ok(serde_json::json!({ "status": "removed" }))
     }
     async fn retract(&self, cid_hex: &str, _reason: &str) -> Result<serde_json::Value> { self.retract(cid_hex).await }
+    async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+        let resp = self.client.put(self.url(&format!("/tags/{}", urlencoded(node_id))))
+            .json(&serde_json::json!({ "tags": tags }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn remove_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+        let resp = self.client.delete(self.url(&format!("/tags/{}", urlencoded(node_id))))
+            .json(&serde_json::json!({ "tags": tags }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
+    async fn get_tags(&self, node_id: &str) -> Result<serde_json::Value> {
+        let resp = self.client.get(self.url(&format!("/tags/{}", urlencoded(node_id))))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
     async fn list_views(&self) -> Result<serde_json::Value> {
         let resp = self.client.get(self.url("/views")).send().await?.error_for_status()?;
         Ok(resp.json().await?)

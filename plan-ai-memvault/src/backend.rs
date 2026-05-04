@@ -47,6 +47,10 @@ pub trait Backend: Send + Sync {
 
     async fn retract(&self, cid_hex: &str, reason: &str) -> Result<serde_json::Value>;
 
+    async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value>;
+    async fn remove_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value>;
+    async fn get_tags(&self, node_id: &str) -> Result<serde_json::Value>;
+
     async fn list_views(&self) -> Result<serde_json::Value>;
     async fn create_view(&self, name: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value>;
     async fn update_view(&self, name: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value>;

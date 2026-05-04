@@ -194,6 +194,34 @@ pub struct UnlinkParams {
     pub source: String,
 }
 
+// -- memvault_tag --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct TagParams {
+    /// Node to tag — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    pub node: String,
+    /// Tags to add in "scope:label" format.
+    pub tags: Vec<String>,
+}
+
+// -- memvault_untag --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct UntagParams {
+    /// Node to untag — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    pub node: String,
+    /// Tags to remove in "scope:label" format.
+    pub tags: Vec<String>,
+}
+
+// -- memvault_get_tags --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct GetTagsParams {
+    /// Node — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    pub node: String,
+}
+
 // -- memvault_view_list --
 // (no params)
 
