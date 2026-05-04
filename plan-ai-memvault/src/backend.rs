@@ -46,6 +46,7 @@ pub trait Backend: Send + Sync {
     async fn delete_link(&self, edge_id: &str, source: &str) -> Result<serde_json::Value>;
 
     async fn retract(&self, cid_hex: &str, reason: &str) -> Result<serde_json::Value>;
+    async fn retract_node(&self, node_id: &str, reason: &str) -> Result<serde_json::Value>;
 
     async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value>;
     async fn remove_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value>;

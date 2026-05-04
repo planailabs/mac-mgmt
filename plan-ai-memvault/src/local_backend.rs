@@ -268,6 +268,11 @@ impl Backend for LocalBackend {
         Ok(serde_json::json!({ "name": name, "status": "deleted" }))
     }
 
+    async fn retract_node(&self, node_id: &str, reason: &str) -> Result<serde_json::Value> {
+        self.client.retract_node(node_id, reason).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!({ "node_id": node_id, "status": "retracted" }))
+    }
+
     async fn status(&self) -> Result<serde_json::Value> {
         let s = self.client.status().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!(s))

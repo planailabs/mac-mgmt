@@ -482,18 +482,30 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_retract",
-        description = "Retract (soft-delete) a memory by its CID. Creates a tombstone. Returns the tombstone CID."
+        description = "Retract (soft-delete) any node by its ID ('entity:<hex>', 'doc:<hex>', 'attachment:<hex>'). \
+                       Removes it from search, graph, and all views."
     )]
     async fn retract(&self, Parameters(params): Parameters<RetractParams>) -> String {
-        match self.client.retract(&params.cid, &params.reason).await {
-            Ok(resp) => {
-                serde_json::json!({
-                    "tombstone_cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
-                    "status": "retracted"
-                })
-                .to_string()
+        // Support both node_id format and raw CID for backward compat.
+        let node_id = &params.cid;
+        if node_id.contains(':') {
+            // Node ID format
+            match self.client.retract_node(node_id, &params.reason).await {
+                Ok(resp) => resp.to_string(),
+                Err(e) => format!("error: {e}"),
             }
-            Err(e) => format!("error: {e}"),
+        } else {
+            // Legacy CID format
+            match self.client.retract(node_id, &params.reason).await {
+                Ok(resp) => {
+                    serde_json::json!({
+                        "tombstone_cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
+                        "status": "retracted"
+                    })
+                    .to_string()
+                }
+                Err(e) => format!("error: {e}"),
+            }
         }
     }
 

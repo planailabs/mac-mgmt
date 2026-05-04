@@ -271,6 +271,10 @@ impl Backend for HttpClient {
         Ok(serde_json::json!({ "status": "removed" }))
     }
     async fn retract(&self, cid_hex: &str, _reason: &str) -> Result<serde_json::Value> { self.retract(cid_hex).await }
+    async fn retract_node(&self, node_id: &str, _reason: &str) -> Result<serde_json::Value> {
+        self.client.delete(self.url(&format!("/nodes/{}", urlencoded(node_id)))).send().await?.error_for_status()?;
+        Ok(serde_json::json!({ "status": "retracted" }))
+    }
     async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
         let resp = self.client.put(self.url(&format!("/tags/{}", urlencoded(node_id))))
             .json(&serde_json::json!({ "tags": tags }))
