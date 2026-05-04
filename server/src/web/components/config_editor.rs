@@ -2196,25 +2196,106 @@ fn SecretField(
     }
 }
 
+/// Maximum characters shown in a placeholder before we add `…`.
+/// Wide enough for typical schema descriptions, narrow enough that the
+/// hint doesn't get clipped silently by the input width on desktop.
+const PLACEHOLDER_MAX_CHARS: usize = 80;
+
 /// Build the placeholder shown when a field has no schema `default`.
-/// Trims the description to its first sentence and caps at 60 chars so
-/// narrow input boxes stay legible; falls back to "Enter {field}" when
-/// the schema doesn't carry a description either. Both render paths
-/// (`render_field_input` and the legacy `render_section_fields` mirror)
-/// route through here so they stay in sync.
+/// Falls back to "Enter {field}" when the schema doesn't carry a
+/// description either. Long descriptions are truncated at the nearest
+/// word boundary with a trailing ellipsis — never mid-word, never at a
+/// stray abbreviation period (the previous "split on first `.`"
+/// heuristic chopped `(e.g. "/ip4/…")` after the `e`).
 fn placeholder_fallback(description: &str, field_label: &str) -> String {
     if description.is_empty() {
         return format!("Enter {field_label}");
     }
-    let first_sentence = description
-        .split(|c: char| c == '.' || c == '\n')
-        .next()
-        .unwrap_or(description)
-        .trim();
-    if first_sentence.chars().count() > 60 {
-        format!("{}…", first_sentence.chars().take(60).collect::<String>())
-    } else {
-        first_sentence.to_string()
+    let trimmed = description.trim();
+    // Collapse newlines + tabs to a single space so multi-line schema
+    // doc-comments stay legible inside a single-line input.
+    let one_line: String = trimmed
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ");
+    truncate_with_ellipsis(&one_line, PLACEHOLDER_MAX_CHARS)
+}
+
+/// Truncate `s` to at most `max_chars` Unicode characters, breaking on
+/// the last word boundary at or before the cut. Trailing punctuation
+/// is stripped before the ellipsis so we don't end up with `..,…` or
+/// `(e.g…`.
+fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s.to_string();
+    }
+    // Walk back from the cut to the last whitespace.
+    let mut cut = max_chars;
+    while cut > 0 && !chars[cut - 1].is_whitespace() && !chars[cut].is_whitespace() {
+        cut -= 1;
+    }
+    if cut == 0 {
+        // Single very long token — fall back to a hard cut.
+        cut = max_chars;
+    }
+    let head: String = chars[..cut].iter().collect();
+    let pruned = head.trim_end_matches([' ', '\t', '\n', '.', ',', ';', ':', '(', '/']);
+    format!("{pruned}…")
+}
+
+#[cfg(test)]
+mod placeholder_tests {
+    use super::*;
+
+    #[test]
+    fn empty_description_falls_back_to_field_label() {
+        assert_eq!(placeholder_fallback("", "host"), "Enter host");
+    }
+
+    #[test]
+    fn short_description_passes_through() {
+        let s = "Display name for this agent";
+        assert_eq!(placeholder_fallback(s, "agent_name"), s);
+    }
+
+    #[test]
+    fn description_with_inline_abbreviation_is_not_chopped_at_period() {
+        // The bug report: "(e." was the cut site under the old
+        // first-sentence heuristic.
+        let desc = "Relay node libp2p multiaddress for circuit relay";
+        assert_eq!(placeholder_fallback(desc, "relay_multiaddr"), desc);
+    }
+
+    #[test]
+    fn long_description_truncates_at_word_boundary_with_ellipsis() {
+        let desc = "Relay node libp2p multiaddress for circuit relay \
+                    (e.g. \"/dns4/relay.example.com/tcp/4001/wss\")";
+        let out = placeholder_fallback(desc, "relay_multiaddr");
+        assert!(out.ends_with('…'), "expected ellipsis, got: {out}");
+        assert!(
+            !out.contains("(e…") && !out.contains(" e…"),
+            "should not cut at the abbreviation period: {out}"
+        );
+        // Hard cap respected.
+        assert!(out.chars().count() <= PLACEHOLDER_MAX_CHARS + 1);
+    }
+
+    #[test]
+    fn newlines_collapse_to_single_spaces() {
+        let desc = "Line one\n\nLine two";
+        assert_eq!(placeholder_fallback(desc, "x"), "Line one Line two");
+    }
+
+    #[test]
+    fn very_long_single_token_falls_back_to_hard_cut() {
+        let desc = "a".repeat(200);
+        let out = placeholder_fallback(&desc, "x");
+        assert!(out.ends_with('…'));
+        assert_eq!(out.chars().count(), PLACEHOLDER_MAX_CHARS + 1);
     }
 }
 
