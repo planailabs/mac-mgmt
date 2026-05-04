@@ -281,6 +281,12 @@ impl Backend for HttpClient {
             .send().await?.error_for_status()?;
         Ok(resp.json().await?)
     }
+    async fn update_view(&self, name: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
+        let resp = self.client.put(self.url(&format!("/views/{}", urlencoded(name))))
+            .json(&serde_json::json!({ "name": name, "tags": tags }))
+            .send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
     async fn delete_view(&self, name: &str) -> Result<serde_json::Value> {
         self.client.delete(self.url(&format!("/views/{}", urlencoded(name)))).send().await?.error_for_status()?;
         Ok(serde_json::json!({ "status": "deleted" }))

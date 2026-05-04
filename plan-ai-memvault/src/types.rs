@@ -207,6 +207,16 @@ pub struct ViewCreateParams {
     pub tags: Vec<String>,
 }
 
+// -- memvault_view_update --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ViewUpdateParams {
+    /// Name of the view to update.
+    pub name: String,
+    /// New set of required tags in "scope:label" format.
+    pub tags: Vec<String>,
+}
+
 // -- memvault_view_delete --
 
 #[derive(Deserialize, JsonSchema)]

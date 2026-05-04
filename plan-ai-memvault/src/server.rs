@@ -423,6 +423,18 @@ impl MemvaultServer {
     }
 
     #[tool(
+        name = "memvault_view_update",
+        description = "Update a view's required tags."
+    )]
+    async fn view_update(&self, Parameters(params): Parameters<ViewUpdateParams>) -> String {
+        let tags = parse_tags(&params.tags);
+        match self.client.update_view(&params.name, tags).await {
+            Ok(resp) => resp.to_string(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
         name = "memvault_view_delete",
         description = "Delete a saved view by name."
     )]
