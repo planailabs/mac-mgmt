@@ -176,6 +176,14 @@
     background-color: rgb(var(--c-bg));
     color: rgb(var(--c-fg));
     font-family: var(--font-sans);
+    /* The app shell takes the full viewport via `.h-dvh` and scrolls
+       its `<main>` internally. Locking html/body to 100% with no
+       overflow prevents Safari from also scrolling the document
+       itself when the inner scroll container rubber-bands at the
+       bottom — which would otherwise drag the topbar off screen. */
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   /* Tailwind's `font-mono` utility points at the platform stack by
@@ -483,6 +491,53 @@
                                  hover:underline transition-colors; }
   .breadcrumb-current  { @apply text-fg-muted font-medium; }
   .breadcrumb-sep      { @apply text-fg-faint select-none; }
+
+  /* ── Cluster config page chrome ───────────────────────────────
+     Page-local affordances for `/clusters/:id/config`:
+       * `.config-strip`      — sticky filter strip under the page title
+       * `.config-chips`      — All / Enabled / Modified / Errors row
+       * `.config-chip*`      — pill-style chip with brand-active state
+       * `.config-right-rail` — desktop-only section index, sticky
+                                 against the viewport
+       * `.config-save-bar`   — floating "n unsaved changes" toast,
+                                 brand-bordered, centred at the bottom
+     None of these classes are referenced anywhere else in the app. */
+  /* Static (non-sticky) filter strip. Sits inline above the editor. */
+  .config-strip       { @apply py-2 mb-4 border-b border-line
+                                flex items-center gap-3 flex-wrap; }
+  .config-chips       { @apply inline-flex items-center gap-1 p-0.5 rounded-md
+                                border border-line bg-surface-2; }
+  .config-chip        { @apply px-3 py-1 rounded text-xs font-medium
+                                text-fg-muted hover:text-fg-strong
+                                transition-colors cursor-pointer; }
+  .config-chip-active { @apply bg-brand text-fg-invert hover:text-fg-invert; }
+
+  /* Right rail. Visually light: no panel background, no edge bleed —
+     just a column of section anchors that flows next to the editor.
+     A chunky panel made the layout feel orphaned because Secrets and
+     History below the editor are full-width and the panel ended
+     mid-page. Now the rail is "just text", so the transition out
+     reads as the nav ending naturally rather than a stripe getting
+     cut off. */
+  .config-right-rail  { @apply hidden xl:flex xl:flex-col w-60 shrink-0
+                                pl-5 border-l border-line
+                                self-start; }
+
+  /* Floating save bar.
+     Mobile: pinned to the bottom corners (`left-2 right-2`) so the bar
+     spans almost the full viewport with a tappable layout that wraps.
+     Desktop: width follows content (`sm:w-fit`) and the bar is
+     centred via `sm:left-1/2 sm:-translate-x-1/2`. The transform
+     applies to the bar itself (not an ancestor) so Safari's
+     containing-block rule for `position:fixed` is unaffected. */
+  .config-save-bar    { @apply fixed z-40
+                                bottom-3 left-2 right-2
+                                sm:bottom-5 sm:left-1/2 sm:right-auto sm:-translate-x-1/2
+                                flex flex-wrap items-center gap-2 sm:gap-3
+                                px-3 py-2 sm:px-4 sm:py-3
+                                bg-surface border border-brand rounded-xl
+                                shadow-pop ring-4 ring-brand/15
+                                sm:w-fit max-w-[calc(100vw-1rem)]; }
 
   /* ── Tile launcher ─────────────────────────────────────────────
      Square button used on the easy-access page. Pair the class

@@ -46,6 +46,14 @@ const fn cur_dyn(fallback: &'static str) -> Entry {
     Entry { label_key: fallback, link: None, dynamic: true }
 }
 
+/// Clickable parent crumb whose label resolves from `TopbarMeta.title`
+/// at render time. Used when an ancestor route is an entity-detail page
+/// (e.g. a specific cluster) and we want the entity's name in the chain
+/// rather than the static category label "Clusters" repeated twice.
+fn parent_dyn(fallback: &'static str, route: Route) -> Entry {
+    Entry { label_key: fallback, link: Some(route), dynamic: true }
+}
+
 /// Build the chain for a given route. Categories use the existing
 /// `nav-*` Fluent keys so translations stay in sync with the sidebar.
 fn chain_keys(route: &Route) -> Vec<Entry> {
@@ -67,13 +75,13 @@ fn chain_keys(route: &Route) -> Vec<Entry> {
         ClusterConfigPage { id } => vec![
             cat("nav-overview"),
             parent("nav-clusters", ClusterList {}),
-            parent("nav-clusters", ClusterDetail { id: id.clone() }),
+            parent_dyn("nav-clusters", ClusterDetail { id: id.clone() }),
             cur("breadcrumb-config"),
         ],
         ClusterPackagesPage { id } => vec![
             cat("nav-overview"),
             parent("nav-clusters", ClusterList {}),
-            parent("nav-clusters", ClusterDetail { id: id.clone() }),
+            parent_dyn("nav-clusters", ClusterDetail { id: id.clone() }),
             cur("breadcrumb-packages"),
         ],
         FleetDashboard { .. } => vec![cat("nav-overview"), cur("nav-fleet")],

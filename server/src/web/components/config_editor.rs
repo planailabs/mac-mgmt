@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use super::config_filter_chips::FilterChips;
+use super::config_save_bar::SaveBar;
 use super::extra_config_modal::{ExtraConfigField, ExtraConfigModalHost};
 use crate::models::ClusterConfig;
 #[cfg(feature = "server")]
@@ -156,6 +158,45 @@ async fn generate_ai_proxy_key() -> Result<(String, String), ServerFnError> {
     Ok((raw_key, key_hash))
 }
 
+/// One filter chip in the page-header strip. Drives which section
+/// cards the editor renders.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SectionFilter {
+    All,
+    Enabled,
+    Modified,
+    Errors,
+}
+
+/// Newtype for the active filter so child components can `use_context`
+/// without colliding with other `Signal<SectionFilter>` values.
+#[derive(Clone, Copy)]
+pub struct ActiveSectionFilter(pub Signal<SectionFilter>);
+
+/// Parsed last-saved snapshot — single source of truth for "is this
+/// field modified?" comparisons. Updated whenever `saved_text` changes
+/// (initial load, post-save, post-discard). Field rows and the
+/// per-section counter both read this baseline; "modified" everywhere
+/// in the UI means *diverges from the last saved value*, not *diverges
+/// from the schema default*. The two used to be conflated, which made
+/// already-saved customizations look unsaved.
+#[derive(Clone, Copy)]
+pub struct EditorBaseline(pub Signal<serde_json::Value>);
+
+/// Cross-component counters: how many fields are modified, how many
+/// sections are touched, and how many sections are currently enabled.
+/// Computed once per render in `StructuredEditor` and consumed by both
+/// the `SaveBar` toast ("N unsaved changes in M sections") and the
+/// `FilterChips` row (chip suffix counts: All 17, Enabled 12, …).
+#[derive(Clone, Copy, PartialEq, Default)]
+pub struct EditorStats {
+    pub modified_fields: Signal<usize>,
+    pub modified_sections: Signal<usize>,
+    pub total_sections: Signal<usize>,
+    pub enabled_sections: Signal<usize>,
+    pub error_sections: Signal<usize>,
+}
+
 #[component]
 pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let cid = cluster_id.clone();
@@ -167,25 +208,56 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     let schema = use_server_future(|| async { get_config_schema().await })?;
 
     let mut editor_text = use_signal(String::new);
+    let mut saved_text = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut initialized = use_signal(|| false);
     let mut raw_mode = use_signal(|| false);
+    let filter = use_signal(|| SectionFilter::All);
+    use_context_provider(|| ActiveSectionFilter(filter));
+    let stats = EditorStats {
+        modified_fields: use_signal(|| 0usize),
+        modified_sections: use_signal(|| 0usize),
+        total_sections: use_signal(|| 0usize),
+        enabled_sections: use_signal(|| 0usize),
+        error_sections: use_signal(|| 0usize),
+    };
+    use_context_provider(|| stats);
+
+    // Parsed mirror of `saved_text` — recomputed whenever the saved
+    // snapshot changes (initial load, post-save, discard). Provided as
+    // context so any field row can compute "am I unsaved?" against it
+    // without re-parsing the JSON itself.
+    let mut baseline_signal = use_signal(|| serde_json::Value::Null);
+    use_effect(move || {
+        let text = saved_text.read().clone();
+        let parsed = serde_json::from_str::<serde_json::Value>(&text)
+            .unwrap_or(serde_json::Value::Null);
+        if *baseline_signal.read() != parsed {
+            baseline_signal.set(parsed);
+        }
+    });
+    use_context_provider(|| EditorBaseline(baseline_signal));
 
     if !*initialized.read() {
         if let Some(Ok(Some(cfg))) = &*config.read() {
-            editor_text.set(serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default());
+            let pretty = serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default();
+            editor_text.set(pretty.clone());
+            saved_text.set(pretty);
             initialized.set(true);
         }
     }
 
     let cid_save = cluster_id.clone();
-    let do_save = move || {
+    // Cloneable so both the strip Save button and the floating SaveBar
+    // can hand-off to the same handler without re-allocating closures.
+    let do_save = std::rc::Rc::new(move || {
         let cid = cid_save.clone();
         let text = editor_text.read().clone();
         spawn(async move {
-            match save_config(cid, text).await {
+            match save_config(cid, text.clone()).await {
                 Ok(()) => {
                     error.set(None);
+                    saved_text.set(text);
                     config.restart();
                 }
                 Err(e) => {
@@ -193,6 +265,56 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                 }
             }
         });
+    });
+
+    let do_discard = move |_| {
+        let baseline = saved_text.read().clone();
+        editor_text.set(baseline);
+    };
+
+    // Diff-aware dirty flag — fast string compare, no JSON re-parse on
+    // every keystroke. `saved_text` only mutates after a successful save
+    // or a discard, so this stays O(1) on the typical input path.
+    let dirty = *editor_text.read() != *saved_text.read() && *initialized.read();
+
+    // Block accidental tab-close / hard-nav while there are unsaved
+    // changes. Two-step wiring so we don't churn `window.onbeforeunload`
+    // on every keystroke (rebinding the handler from inside an effect
+    // that tries to schedule a `document::eval` future caused a
+    // wasm-bindgen-futures `_was_scheduled` panic):
+    //   1. once on mount — install a permanent `beforeunload` that
+    //      reads a global `__configDirty` flag.
+    //   2. each render where `dirty` changes — update the flag.
+    use_effect(move || {
+        spawn(async move {
+            let _ = document::eval(
+                "if (!window.__configBeforeUnloadInstalled) { \
+                   window.__configDirty = false; \
+                   window.onbeforeunload = function(e) { \
+                     if (!window.__configDirty) return; \
+                     e.preventDefault(); e.returnValue = ''; return ''; \
+                   }; \
+                   window.__configBeforeUnloadInstalled = true; \
+                 }"
+            ).await;
+        });
+    });
+    use_effect(move || {
+        // Reading the signals INSIDE the effect makes Dioxus re-run
+        // the effect whenever any of them change.
+        let edit = editor_text.read();
+        let save = saved_text.read();
+        let init = *initialized.read();
+        let active = init && *edit != *save;
+        let val = if active { "true" } else { "false" };
+        spawn(async move {
+            let _ = document::eval(&format!("window.__configDirty = {val};")).await;
+        });
+    });
+
+    let last_saved_at: Option<String> = match &*config.read() {
+        Some(Ok(Some(cfg))) => Some(cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string()),
+        _ => None,
     };
 
     rsx! {
@@ -200,8 +322,14 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
             p { class: "text-danger text-sm mb-2", "{err}" }
         }
 
-        div { class: "flex items-center gap-2 mb-3",
-            label { class: "text-sm text-fg flex items-center gap-1 cursor-pointer",
+        // Filter / mode strip — under the page header. Mirrors the
+        // design's "All / Enabled / Modified / Errors" pill row.
+        // The Save action lives entirely in the floating SaveBar at
+        // the bottom of the viewport, so the strip stays focused on
+        // filtering and view modes.
+        div { class: "config-strip",
+            FilterChips { filter }
+            label { class: "ml-auto text-xs text-fg-muted flex items-center gap-1.5 cursor-pointer select-none",
                 input {
                     r#type: "checkbox",
                     checked: *raw_mode.read(),
@@ -242,35 +370,26 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                     None => rsx! { p { class: "text-sm", {t!("config-editor-loading-schema")} } },
                 }}
             }
-            if !read_only {
-                button {
-                    class: "btn btn-lg btn-primary",
-                    r#type: "button",
-                    onclick: move |evt| {
-                        evt.prevent_default();
-                        evt.stop_propagation();
-                        do_save();
-                    },
-                    {t!("config-editor-save")}
-                }
-            }
         }
 
-        {match &*config.read() {
-            Some(Ok(Some(cfg))) => {
-                let saved_at = cfg.created_at.format("%Y-%m-%d %H:%M:%S").to_string();
+        // Floating save bar. Visible only when the editor diverges from
+        // the last server snapshot. Centred at the bottom of the
+        // viewport with brand-orange ring.
+        if !read_only && dirty {
+            {
+                let do_save_bar = std::rc::Rc::clone(&do_save);
                 rsx! {
-                    div { class: "mt-4",
-                        p { class: "text-xs text-fg-muted", {t!("config-editor-last-saved", time: saved_at)} }
+                    SaveBar {
+                        last_saved: last_saved_at,
+                        editor_text,
+                        saved_text,
+                        on_save: move |_| do_save_bar(),
+                        on_discard: do_discard,
+                        stats,
                     }
                 }
             }
-            Some(Ok(None)) => rsx! {
-                p { class: "text-sm text-fg-muted mt-2", {t!("config-editor-no-config")} }
-            },
-            Some(Err(e)) => rsx! { p { class: "text-danger text-sm mt-2", {t!("error-message", message: e.to_string())} } },
-            None => rsx! { p { class: "text-sm mt-2", {t!("loading")} } },
-        }}
+        }
     }
 }
 
@@ -407,6 +526,153 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
         .collect();
     let total_sections: usize = sidebar_data.iter().map(|(_, items)| items.len()).sum();
 
+    // Read the page-level filter chip (All / Enabled / Modified /
+    // Errors). Hidden sections are dropped from the main column but
+    // STAY in the right rail — clicking a rail entry still expands and
+    // scrolls into view, matching the design's "rail is always
+    // complete" rule.
+    let ActiveSectionFilter(filter_sig) = use_context::<ActiveSectionFilter>();
+    let active_filter = *filter_sig.read();
+    let form_snapshot = form_values.read().clone();
+    let EditorBaseline(baseline_sig) = use_context::<EditorBaseline>();
+    let baseline_snapshot = baseline_sig.read().clone();
+
+    // Compute per-section modified counts once per render and publish
+    // through `EditorStats` so the floating save bar (rendered in the
+    // ConfigEditor parent) can read totals without re-walking the
+    // schema. Result is also reused below for the right-rail "N∆" pill.
+    //
+    // "Modified" means *diverges from the saved snapshot*, not *diverges
+    // from the schema default*. Comparing to the saved baseline is what
+    // the user expects: after a save the count drops to zero; before a
+    // save it reflects exactly the unsaved diff.
+    let modified_per_section: std::collections::HashMap<String, usize> = {
+        let mut out = std::collections::HashMap::new();
+        for (_, sections) in &categories {
+            for s in sections {
+                if s.is_array {
+                    continue;
+                }
+                let props = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                let count = props
+                    .keys()
+                    .filter(|fname| {
+                        if fname.as_str() == "enabled" {
+                            return false;
+                        }
+                        let path = [s.name.clone(), fname.to_string()];
+                        let current = get_at_path(&form_snapshot, &path);
+                        let saved = get_at_path(&baseline_snapshot, &path);
+                        current != saved
+                    })
+                    .count();
+                if count > 0 {
+                    out.insert(s.name.clone(), count);
+                }
+            }
+        }
+        out
+    };
+    let total_modified_fields: usize = modified_per_section.values().sum();
+    let touched_section_count = modified_per_section.len();
+    // Enabled count: a section "counts" if it's always_on, is an array,
+    // has no `enabled` property, or has `enabled = true` in the form.
+    // Mirrors the `SectionFilter::Enabled` logic so the chip and the
+    // filter agree on the count.
+    let enabled_section_count: usize = {
+        let mut count = 0usize;
+        for (_, sections) in &categories {
+            for s in sections {
+                if s.always_on || s.is_array {
+                    count += 1;
+                    continue;
+                }
+                let has_enabled = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.get("enabled"))
+                    .is_some();
+                if !has_enabled {
+                    count += 1;
+                    continue;
+                }
+                if get_at_path(&form_snapshot, &[s.name.clone()])
+                    .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                    .unwrap_or(false)
+                {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+    {
+        let stats = use_context::<EditorStats>();
+        let mut mf = stats.modified_fields;
+        let mut ms = stats.modified_sections;
+        let mut ts = stats.total_sections;
+        let mut es = stats.enabled_sections;
+        if *mf.read() != total_modified_fields {
+            mf.set(total_modified_fields);
+        }
+        if *ms.read() != touched_section_count {
+            ms.set(touched_section_count);
+        }
+        if *ts.read() != total_sections {
+            ts.set(total_sections);
+        }
+        if *es.read() != enabled_section_count {
+            es.set(enabled_section_count);
+        }
+    }
+    let section_passes_filter = move |s: &SectionMeta| -> bool {
+        match active_filter {
+            SectionFilter::All => true,
+            SectionFilter::Enabled => {
+                if s.always_on || s.is_array {
+                    return true;
+                }
+                let has_enabled = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.get("enabled"))
+                    .is_some();
+                if !has_enabled {
+                    return true;
+                }
+                get_at_path(&form_snapshot, &[s.name.clone()])
+                    .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                    .unwrap_or(false)
+            }
+            SectionFilter::Modified => {
+                // Same baseline as `modified_per_section` — a section
+                // counts as modified iff at least one of its fields
+                // differs from the saved snapshot.
+                let props = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                props.keys().any(|fname| {
+                    if fname == "enabled" {
+                        return false;
+                    }
+                    let path = [s.name.clone(), fname.clone()];
+                    let current = get_at_path(&form_snapshot, &path);
+                    let saved = get_at_path(&baseline_snapshot, &path);
+                    current != saved
+                })
+            }
+            SectionFilter::Errors => false, // Wired up when validation surfaces per-section errors.
+        }
+    };
+
     rsx! {
         ExtraConfigModalHost {
             open: extra_config_open,
@@ -416,7 +682,13 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
         div { class: "flex gap-6",
             // Main content
             div { class: "flex-1 min-w-0 space-y-8 mb-4",
-                {categories.into_iter().enumerate().map(|(cat_idx, (category_id, sections))| {
+                {categories.into_iter().filter_map(|(category_id, sections)| {
+                    let visible: Vec<SectionMeta> = sections.into_iter().filter(|s| section_passes_filter(s)).collect();
+                    if visible.is_empty() {
+                        return None;
+                    }
+                    Some((category_id, visible))
+                }).map(|(category_id, sections)| {
                     let cat_i18n_key = format!("category-{category_id}");
                     let enabled_count = sections.iter().filter(|s| {
                         if s.always_on { return true; }
@@ -436,13 +708,8 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
                         div { key: "{category_id}",
                             // Category header
                             div { class: "flex items-baseline justify-between mb-3 px-1",
-                                div { class: "flex items-baseline gap-3",
-                                    span { class: "kicker font-mono",
-                                        "§ {cat_idx + 1:02}"
-                                    }
-                                    h3 { class: "text-[15px] font-semibold text-fg-strong tracking-tight",
-                                        {t!(&cat_i18n_key)}
-                                    }
+                                h3 { class: "text-[15px] font-semibold text-fg-strong tracking-tight",
+                                    {t!(&cat_i18n_key)}
                                 }
                                 span { class: "text-xs text-fg-muted font-mono",
                                     "{enabled_count}/{total_count} "
@@ -519,8 +786,11 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
                     }
                 })}
             }
-            // Right sidebar - section navigation
-            aside { class: "hidden xl:block w-56 shrink-0 sticky top-20 self-start max-h-[calc(100vh-6rem)] overflow-y-auto",
+            // Right sidebar — page-local rail with the section index.
+            // Stays usable when the filter chip hides sections from the
+            // main column: clicking a rail entry still expands the
+            // matching card and scrolls into view.
+            aside { class: "config-right-rail",
                 div { class: "border-b border-line pb-3 mb-3",
                     div { class: "kicker mb-1", {t!("config-editor-on-this-page")} }
                     div { class: "text-sm text-fg-strong font-medium",
@@ -573,19 +843,41 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
                                         "dot dot-muted"
                                     };
                                     let name_display = name.clone();
+                                    let mod_count = modified_per_section.get(&name).copied().unwrap_or(0);
                                     rsx! {
                                         a {
                                             key: "{name}",
                                             href: "#sec-{name}",
                                             class: "flex items-center gap-2 px-2 py-1 rounded-md text-xs font-mono text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
                                             span { class: "{dot_cls}" }
-                                            span { class: "truncate", "{name_display}" }
+                                            span { class: "truncate flex-1", "{name_display}" }
+                                            if mod_count > 0 {
+                                                span { class: "text-[10px] font-mono text-brand", "{mod_count}∆" }
+                                            }
                                         }
                                     }
                                 })}
                             }
                         }
                     })}
+                }
+                // Footer anchors — surface the page-level sections that
+                // live below the schema-driven editor (Secrets, History).
+                // Without these entries the rail looks like it ends with
+                // the schema sections while the page continues underneath.
+                div { class: "border-t border-line pt-3 mt-3 space-y-0.5",
+                    a {
+                        href: "#sec-secrets",
+                        class: "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
+                        span { class: "dot dot-info" }
+                        span { class: "truncate flex-1", {t!("secrets-title")} }
+                    }
+                    a {
+                        href: "#sec-config-history",
+                        class: "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
+                        span { class: "dot dot-muted" }
+                        span { class: "truncate flex-1", {t!("cluster-detail-tab-config-history")} }
+                    }
                 }
             }
         }
@@ -608,11 +900,49 @@ fn ObjectSectionCard(
     let mut expanded = use_signal(|| false);
     let mut show_advanced = use_signal(|| false);
 
+    // First-paint expand decision:
+    //   1. URL `?expand=all` → expand everything (used by screenshot
+    //      automation; also a handy power-user toggle).
+    //   2. Otherwise read sessionStorage so the previous user's
+    //      open/closed state for THIS cluster is restored.
+    // Both reads happen in JS land via `document::eval` because
+    // session/local storage isn't available to WASM directly.
+    let cid_init = cluster_id.clone();
+    let sn_init = section_name.clone();
+    use_effect(move || {
+        let cid = cid_init.clone();
+        let sn = sn_init.clone();
+        spawn(async move {
+            let script = format!(
+                "try {{ \
+                  var u = new URL(window.location.href); \
+                  if (u.searchParams.get('expand') === 'all') return '1'; \
+                  var k = 'cluster-cfg.' + {cid:?} + '.expanded'; \
+                  var v = JSON.parse(sessionStorage.getItem(k) || '[]'); \
+                  return v.indexOf({sn:?}) !== -1 ? '1' : '0'; \
+                }} catch(e) {{ return '0'; }}",
+                cid = cid,
+                sn = sn
+            );
+            if let Ok(val) = document::eval(&script).await {
+                if val.as_str() == Some("1") {
+                    expanded.set(true);
+                }
+            }
+        });
+    });
+
     let sync_to_json = move || {
         let json = form_values.read().clone();
         let mut text = json_text;
         text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
     };
+
+    // Persistence helpers: cloned once so the inline onclick closure
+    // below can capture them by `move` without keeping the surrounding
+    // String props on its hot path.
+    let cid_persist = cluster_id.clone();
+    let sn_persist = section_name.clone();
 
     let properties = section_schema
         .get("properties")
@@ -636,17 +966,19 @@ fn ObjectSectionCard(
         .unwrap_or("")
         .to_string();
 
-    // Count modified fields (non-default)
-    let mod_count = properties.iter().filter(|(fname, fschema)| {
+    // Count fields that diverge from the saved snapshot — same
+    // baseline as `modified_per_section` in `StructuredEditor`. The
+    // pill in the section header now reads "N modified" only while
+    // there are unsaved edits in this section.
+    let EditorBaseline(baseline_sig) = use_context::<EditorBaseline>();
+    let baseline_snapshot = baseline_sig.read().clone();
+    let form_snapshot_card = form_values.read().clone();
+    let mod_count = properties.keys().filter(|fname| {
         if fname.as_str() == "enabled" { return false; }
-        let resolved = resolve_ref(fschema, &defs);
-        let schema_default = resolved.get("default");
-        let current = get_at_path(&form_values.read(), &[section_name.clone(), fname.to_string()]);
-        match (current, schema_default) {
-            (Some(cur), Some(def)) => &cur != def,
-            (Some(_), None) => true,
-            _ => false,
-        }
+        let path = [section_name.clone(), fname.to_string()];
+        let current = get_at_path(&form_snapshot_card, &path);
+        let saved = get_at_path(&baseline_snapshot, &path);
+        current != saved
     }).count();
 
     // Split fields into essential and advanced
@@ -675,7 +1007,12 @@ fn ObjectSectionCard(
         "dot dot-muted"
     };
 
-    let show_body = *expanded.read() && (always_on || is_enabled);
+    // Body visibility is decoupled from the `enabled` toggle: users
+    // need to inspect / edit the fields of disabled sections without
+    // having to flip the toggle on first (and risk mutating dependent
+    // services). The toggle only persists the `enabled` field;
+    // everything else stays exactly as it was.
+    let show_body = *expanded.read();
     let section_name_toggle = section_name.clone();
     let section_name_display = section_name.clone();
     let section_anchor = format!("sec-{section_name}");
@@ -685,7 +1022,28 @@ fn ObjectSectionCard(
             // Header
             div {
                 class: "flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-2 transition-colors",
-                onclick: move |_| { let v = *expanded.read(); expanded.set(!v); },
+                onclick: move |_| {
+                    let new_val = !*expanded.read();
+                    expanded.set(new_val);
+                    // Persist the new state so navigating away and
+                    // back restores the open / closed sections.
+                    let cid = cid_persist.clone();
+                    let sn = sn_persist.clone();
+                    let nv = if new_val { "true" } else { "false" };
+                    spawn(async move {
+                        let _ = document::eval(&format!(
+                            "try {{ \
+                              var k = 'cluster-cfg.' + {cid:?} + '.expanded'; \
+                              var v; try {{ v = JSON.parse(sessionStorage.getItem(k) || '[]'); }} catch(e) {{ v = []; }} \
+                              var idx = v.indexOf({sn:?}); \
+                              if ({nv} && idx === -1) v.push({sn:?}); \
+                              if (!{nv} && idx !== -1) v.splice(idx, 1); \
+                              sessionStorage.setItem(k, JSON.stringify(v)); \
+                            }} catch(e) {{}}",
+                            cid = cid, sn = sn, nv = nv,
+                        )).await;
+                    });
+                },
                 // Chevron
                 span { class: if *expanded.read() { "text-fg-faint text-[10px] font-mono transition-transform rotate-90" } else { "text-fg-faint text-[10px] font-mono transition-transform" },
                     "▶"
@@ -848,7 +1206,9 @@ fn ArrayEntrySectionCard(
         .collect();
 
     let dot_class = if is_enabled { "dot dot-ok" } else { "dot dot-muted" };
-    let show_body = *expanded.read() && is_enabled;
+    // Same rule as in `ObjectSectionCard`: expand state is independent
+    // of the enabled toggle so users can read disabled sections.
+    let show_body = *expanded.read();
     let section_name_toggle = section_name.clone();
     let path_remove = vec![section_name.clone()];
     let sync_remove = sync_to_json.clone();
@@ -977,7 +1337,10 @@ fn ArrayEntrySectionCard(
     }
 }
 
-/// Render the "+ Add entry" button for array sections.
+/// Render the "+ Add entry" button for array sections. The label is
+/// per-section so the affordance reads naturally — "+ Add cloud LLM
+/// provider" instead of the generic "+ Add entry". Section names that
+/// don't have a specific label fall back to the generic copy.
 fn render_add_entry_button(
     section_name: &str,
     items_schema: &serde_json::Value,
@@ -988,10 +1351,15 @@ fn render_add_entry_button(
     let path = vec![section_name.to_string()];
     let items_schema = items_schema.clone();
     let defs = defs.clone();
+    let label = match section_name {
+        "cloud" => t!("config-add-cloud"),
+        "custom-service" => t!("config-add-custom-service"),
+        _ => t!("config-editor-add-entry"),
+    };
     rsx! {
         button {
             r#type: "button",
-            class: "btn btn-sm btn-ghost w-full border border-dashed border-line text-fg-muted",
+            class: "btn btn-sm btn-ghost w-full border border-dashed border-line text-fg-muted hover:text-brand hover:border-brand transition-colors",
             onclick: move |_| {
                 let mut arr = get_at_path(&form_values.read(), &path)
                     .and_then(|v| v.as_array().cloned())
@@ -1001,7 +1369,7 @@ fn render_add_entry_button(
                 set_at_path(&mut form_values, &path, serde_json::Value::Array(arr));
                 json_text.set(serde_json::to_string_pretty(&*form_values.read()).unwrap_or_default());
             },
-            {t!("config-editor-add-entry")}
+            "{label}"
         }
     }
 }
@@ -1044,7 +1412,17 @@ fn SectionFieldRow(
     let current_value = get_at_path(&form_values.read(), &field_path);
     let schema_default = resolved.get("default").cloned();
 
-    let is_non_default = current_value.as_ref().is_some_and(|v| {
+    // Two orthogonal flags drive the field-row chrome:
+    //   * `is_modified` — diverges from the *saved* snapshot. Drives
+    //     the brand dot next to the label and contributes to the
+    //     section / page modified counters.
+    //   * `differs_from_default` — diverges from the *schema default*.
+    //     Drives the reset-to-default button. A field can be saved-but-
+    //     customized (no dot, but reset is still useful).
+    let EditorBaseline(baseline_sig) = use_context::<EditorBaseline>();
+    let saved_value = get_at_path(&baseline_sig.read(), &field_path);
+    let is_modified = current_value != saved_value;
+    let differs_from_default = current_value.as_ref().is_some_and(|v| {
         schema_default.as_ref().map_or(true, |d| v != d)
     });
 
@@ -1054,12 +1432,31 @@ fn SectionFieldRow(
         text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
     };
 
-    // Special-case: extra_config under openclaw
+    // Special-case: extra_config under openclaw — render in the same
+    // row layout as every other field so it visually aligns with the
+    // gateway / skills / telegram sub-cards below. Without the wrapper
+    // it sat flush against the openclaw card edges with its own
+    // bespoke alignment, which made the section feel "two-headed".
     if field_name == "extra_config" && section_name.contains("openclaw") {
         return rsx! {
-            ExtraConfigField {
-                form_values,
-                open: extra_config_open,
+            div { class: "px-4 py-3 border-t border-line",
+                div { class: "grid grid-cols-[1fr_28px] gap-2 items-start sm:grid-cols-[200px_1fr_28px] sm:gap-3",
+                    div { class: "pt-1.5",
+                        div { class: "flex items-center gap-1.5",
+                            span { class: "text-xs font-medium font-mono text-fg-strong", "{field_name}" }
+                        }
+                        if !description.is_empty() {
+                            p { class: "text-[11px] text-fg-faint mt-0.5 leading-tight", "{description}" }
+                        }
+                    }
+                    div { class: "min-w-0 col-span-2 sm:col-span-1",
+                        ExtraConfigField {
+                            form_values,
+                            open: extra_config_open,
+                        }
+                    }
+                    div { class: "flex justify-end pt-1" }
+                }
             }
         };
     }
@@ -1078,24 +1475,54 @@ fn SectionFieldRow(
     }
 
     if is_object {
-        // Render as a nested subsection
+        // Render as a nested sub-card. Tinted surface + rounded edges
+        // give subsections (gateway / skills / telegram inside openclaw)
+        // their own visual container without re-using the heavy outer
+        // section card chrome — keeps the hierarchy readable when an
+        // agent has many subsections. Sub-card fields are routed
+        // through `SectionFieldRow` (the same renderer used for
+        // top-level fields) so the "label · input · reset" 3-column
+        // grid is consistent at every depth — gateway.host now lines
+        // up with daemon.health_interval rather than stacking
+        // label-on-top via the legacy flat layout.
+        let nested_section = field_path.join(".");
+        let child_props = resolved
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .cloned()
+            .unwrap_or_default();
+        let defs_clone = defs.clone();
         return rsx! {
-            div { class: "border-t border-line px-4 py-3",
-                div { class: "border-l-2 border-info pl-3",
-                    label { class: "text-sm font-semibold text-info", "{field_name}" }
-                    if !description.is_empty() {
-                        p { class: "text-xs text-fg-muted mt-0.5", "{description}" }
+            div { class: "border-t border-line",
+                div { class: "m-3 rounded-lg bg-surface-2/60 border border-line-soft overflow-hidden",
+                    div { class: "px-4 py-2.5 border-b border-line-soft bg-surface-2/40",
+                        div { class: "flex items-center gap-2",
+                            span { class: "kicker text-info", "{field_name}" }
+                        }
+                        if !description.is_empty() {
+                            p { class: "text-xs text-fg-muted mt-0.5 leading-snug", "{description}" }
+                        }
                     }
-                    {render_section_fields(
-                        &resolved,
-                        &defs,
-                        field_path,
-                        form_values,
-                        json_text,
-                        extra_config_open,
-                        cluster_id,
-                        sync,
-                    )}
+                    div {
+                        for (cname, cschema) in child_props.into_iter() {
+                            {
+                                let key = format!("{nested_section}.{cname}");
+                                rsx! {
+                                    SectionFieldRow {
+                                        key: "{key}",
+                                        section_name: nested_section.clone(),
+                                        field_name: cname,
+                                        field_schema: cschema,
+                                        defs: defs_clone.clone(),
+                                        form_values,
+                                        json_text,
+                                        extra_config_open,
+                                        cluster_id: cluster_id.clone(),
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         };
@@ -1109,30 +1536,40 @@ fn SectionFieldRow(
 
     rsx! {
         div { class: "px-4 py-3 border-t border-line",
-            div { class: "grid grid-cols-[200px_1fr_28px] gap-3 items-start",
+            // Two-track layout on phones (label on top, input below) so
+            // the schema's verbose snake_case field names don't get
+            // crushed into a 200px column. Switches to the desktop
+            // 3-column grid at `sm+`.
+            div { class: "grid grid-cols-[1fr_28px] gap-2 items-start sm:grid-cols-[200px_1fr_28px] sm:gap-3",
                 // Label column
                 div { class: if field_type == "boolean" { "pt-0" } else { "pt-1.5" },
                     div { class: "flex items-center gap-1.5",
                         span { class: "text-xs font-medium font-mono text-fg-strong", "{field_name}" }
-                        if is_non_default {
-                            span { class: "w-1.5 h-1.5 rounded-full bg-brand", title: "modified" }
+                        if is_modified {
+                            span { class: "w-1.5 h-1.5 rounded-full bg-brand", title: "unsaved" }
                         }
                     }
                     if !description.is_empty() {
                         p { class: "text-[11px] text-fg-faint mt-0.5 leading-tight", "{description}" }
                     }
                 }
-                // Input column
-                div { class: "min-w-0",
+                // Input column. On phones it spans both grid columns
+                // (under the label) so the field gets the full row
+                // width; on `sm+` it sits as the middle column.
+                div { class: "min-w-0 col-span-2 sm:col-span-1",
                     {render_field_input(
                         &field_type,
                         &resolved,
                         &defs,
                         is_secret,
                         current_value.clone(),
+                        schema_default.as_ref(),
+                        &description,
+                        &field_name,
                         fp.clone(),
                         fp2.clone(),
                         form_values,
+                        baseline_sig,
                         json_text,
                         extra_config_open,
                         cluster_id.clone(),
@@ -1140,17 +1577,36 @@ fn SectionFieldRow(
                         field_name.clone(),
                     )}
                 }
-                // Reset column
+                // Reset column. The arrow does the *most useful* thing
+                // for the field's current state:
+                //   * if the field has unsaved edits — discard them by
+                //     reverting to the saved baseline value;
+                //   * else (saved-but-customized) — set the schema
+                //     default so the next save wipes the customization.
+                //
+                // The first branch fixes a sharp edge: schemars emits
+                // `null` as the default for `Option<T>` fields, so the
+                // legacy "set schema default" reset would write
+                // `field: null` into form_values when the saved JSON
+                // had the field absent — leaving the editor permanently
+                // dirty even though the user's intent was "undo".
                 div { class: "flex justify-end pt-1",
-                    if is_non_default {
+                    if is_modified || differs_from_default {
                         button {
                             r#type: "button",
                             class: "text-fg-faint hover:text-danger text-xs",
-                            title: t!("config-editor-reset-default"),
+                            title: if is_modified {
+                                t!("config-editor-discard-field")
+                            } else {
+                                t!("config-editor-reset-default")
+                            },
                             onclick: move |evt| {
                                 evt.prevent_default();
                                 evt.stop_propagation();
-                                if let Some(ref def) = reset_default {
+                                if is_modified {
+                                    let baseline = baseline_sig.read().clone();
+                                    revert_field_to_saved(&mut form_values, &baseline, &reset_path);
+                                } else if let Some(ref def) = reset_default {
                                     set_at_path(&mut form_values, &reset_path, def.clone());
                                 } else {
                                     remove_at_path(&mut form_values, &reset_path);
@@ -1167,6 +1623,18 @@ fn SectionFieldRow(
 }
 
 /// Render the appropriate input widget for a field based on its schema type.
+///
+/// `schema_default` is used as a visual fall-back when the user hasn't set
+/// a value yet: text/number inputs show it as a `placeholder`, booleans
+/// flip ON when the schema default is `true`, and selects pre-highlight
+/// the matching option. The form state itself stays empty, so saving a
+/// pristine field keeps the JSON sparse — serde will re-apply the default
+/// on read either way.
+///
+/// When the schema has no `default`, the placeholder falls back to the
+/// field's `description` (truncated) so every input gives the user *some*
+/// hint about what to enter — addressing the "every field needs a
+/// placeholder" UX request.
 #[allow(clippy::too_many_arguments)]
 fn render_field_input(
     field_type: &str,
@@ -1174,20 +1642,33 @@ fn render_field_input(
     defs: &serde_json::Value,
     is_secret: bool,
     current_value: Option<serde_json::Value>,
+    schema_default: Option<&serde_json::Value>,
+    description: &str,
+    field_label: &str,
     fp: Vec<String>,
     fp2: Vec<String>,
     mut form_values: Signal<serde_json::Value>,
+    baseline: Signal<serde_json::Value>,
     json_text: Signal<String>,
     extra_config_open: Signal<bool>,
     cluster_id: String,
     sync: impl Fn() + Clone + 'static,
     field_name: String,
 ) -> Element {
+    // Build a fallback placeholder for fields without a schema default
+    // — see `placeholder_fallback`. Computed once here so each match
+    // arm can reuse it without re-parsing the description.
+    let description_placeholder = placeholder_fallback(description, field_label);
     match field_type {
         "boolean" => {
+            // Visual fall-back: when the field hasn't been explicitly set,
+            // surface the schema default so toggles look correct on a
+            // sparse config. Serde would apply the same default on read,
+            // so the toggle's "off without user input" state is misleading.
             let checked = current_value
                 .as_ref()
                 .and_then(|v| v.as_bool())
+                .or_else(|| schema_default.and_then(|d| d.as_bool()))
                 .unwrap_or(false);
             let sync_c = sync.clone();
             rsx! {
@@ -1213,14 +1694,31 @@ fn render_field_input(
                 .and_then(|v| v.as_i64())
                 .map(|n| n.to_string())
                 .unwrap_or_default();
+            let placeholder_str = schema_default
+                .and_then(|d| d.as_i64())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| description_placeholder.clone());
             let sync_c = sync.clone();
+            let fp_clear = fp.clone();
             rsx! {
                 input {
                     r#type: "number",
                     class: "input input-sm font-mono",
                     value: val_str,
+                    placeholder: placeholder_str,
                     oninput: move |evt| {
-                        if let Ok(n) = evt.value().parse::<i64>() {
+                        let v = evt.value();
+                        if v.is_empty() {
+                            remove_at_path(&mut form_values, &fp_clear);
+                            // Walk up: prune any parent object the
+                            // user implicitly created while typing
+                            // that's now empty *and* absent in the
+                            // saved baseline. Keeps "type then
+                            // backspace" idempotent.
+                            let bsl = baseline.read().clone();
+                            cleanup_empty_parents(&mut form_values, &bsl, &fp_clear);
+                            sync_c();
+                        } else if let Ok(n) = v.parse::<i64>() {
                             set_at_path(&mut form_values, &fp,
                                 serde_json::json!(n));
                             sync_c();
@@ -1423,20 +1921,34 @@ fn render_field_input(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let default_str = schema_default
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
             let sync_c = sync.clone();
             if !enum_values.is_empty() {
-                let selected_val = val_str.clone();
+                // For selects, fall back to the default option when the
+                // form value is unset, so the user sees the active default
+                // rather than a meaningless "Select…" prompt.
+                let effective_val = if val_str.is_empty() && !default_str.is_empty() {
+                    default_str.clone()
+                } else {
+                    val_str.clone()
+                };
+                let selected_val = effective_val.clone();
                 rsx! {
                     div { class: "relative",
                         select {
                             class: "input input-sm font-mono appearance-none pr-8",
-                            value: val_str,
+                            value: effective_val,
                             onchange: move |evt| {
                                 set_at_path(&mut form_values, &fp,
                                     serde_json::Value::String(evt.value()));
                                 sync_c();
                             },
-                            option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
+                            if default_str.is_empty() {
+                                option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
+                            }
                             {enum_values.iter().map(|v| {
                                 let is_selected = *v == selected_val;
                                 let v = v.clone();
@@ -1462,15 +1974,29 @@ fn render_field_input(
                     }
                 }
             } else {
+                let placeholder_text = if !default_str.is_empty() {
+                    default_str.clone()
+                } else {
+                    description_placeholder.clone()
+                };
+                let fp_clear = fp2.clone();
                 rsx! {
                     input {
                         r#type: "text",
                         class: "input input-sm font-mono",
                         value: val_str,
+                        placeholder: placeholder_text,
                         oninput: move |evt| {
                             let v = evt.value();
                             if v.is_empty() {
-                                remove_at_path(&mut form_values, &fp2);
+                                remove_at_path(&mut form_values, &fp_clear);
+                                // Same cleanup as the integer branch:
+                                // a typed-then-backspaced text field
+                                // shouldn't leave its parent object
+                                // dangling as `{}` if the saved JSON
+                                // didn't have it.
+                                let bsl = baseline.read().clone();
+                                cleanup_empty_parents(&mut form_values, &bsl, &fp_clear);
                             } else {
                                 set_at_path(&mut form_values, &fp2,
                                     serde_json::Value::String(v));
@@ -1670,6 +2196,109 @@ fn SecretField(
     }
 }
 
+/// Maximum characters shown in a placeholder before we add `…`.
+/// Wide enough for typical schema descriptions, narrow enough that the
+/// hint doesn't get clipped silently by the input width on desktop.
+const PLACEHOLDER_MAX_CHARS: usize = 80;
+
+/// Build the placeholder shown when a field has no schema `default`.
+/// Falls back to "Enter {field}" when the schema doesn't carry a
+/// description either. Long descriptions are truncated at the nearest
+/// word boundary with a trailing ellipsis — never mid-word, never at a
+/// stray abbreviation period (the previous "split on first `.`"
+/// heuristic chopped `(e.g. "/ip4/…")` after the `e`).
+fn placeholder_fallback(description: &str, field_label: &str) -> String {
+    if description.is_empty() {
+        return format!("Enter {field_label}");
+    }
+    let trimmed = description.trim();
+    // Collapse newlines + tabs to a single space so multi-line schema
+    // doc-comments stay legible inside a single-line input.
+    let one_line: String = trimmed
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ");
+    truncate_with_ellipsis(&one_line, PLACEHOLDER_MAX_CHARS)
+}
+
+/// Truncate `s` to at most `max_chars` Unicode characters, breaking on
+/// the last word boundary at or before the cut. Trailing punctuation
+/// is stripped before the ellipsis so we don't end up with `..,…` or
+/// `(e.g…`.
+fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s.to_string();
+    }
+    // Walk back from the cut to the last whitespace.
+    let mut cut = max_chars;
+    while cut > 0 && !chars[cut - 1].is_whitespace() && !chars[cut].is_whitespace() {
+        cut -= 1;
+    }
+    if cut == 0 {
+        // Single very long token — fall back to a hard cut.
+        cut = max_chars;
+    }
+    let head: String = chars[..cut].iter().collect();
+    let pruned = head.trim_end_matches([' ', '\t', '\n', '.', ',', ';', ':', '(', '/']);
+    format!("{pruned}…")
+}
+
+#[cfg(test)]
+mod placeholder_tests {
+    use super::*;
+
+    #[test]
+    fn empty_description_falls_back_to_field_label() {
+        assert_eq!(placeholder_fallback("", "host"), "Enter host");
+    }
+
+    #[test]
+    fn short_description_passes_through() {
+        let s = "Display name for this agent";
+        assert_eq!(placeholder_fallback(s, "agent_name"), s);
+    }
+
+    #[test]
+    fn description_with_inline_abbreviation_is_not_chopped_at_period() {
+        // The bug report: "(e." was the cut site under the old
+        // first-sentence heuristic.
+        let desc = "Relay node libp2p multiaddress for circuit relay";
+        assert_eq!(placeholder_fallback(desc, "relay_multiaddr"), desc);
+    }
+
+    #[test]
+    fn long_description_truncates_at_word_boundary_with_ellipsis() {
+        let desc = "Relay node libp2p multiaddress for circuit relay \
+                    (e.g. \"/dns4/relay.example.com/tcp/4001/wss\")";
+        let out = placeholder_fallback(desc, "relay_multiaddr");
+        assert!(out.ends_with('…'), "expected ellipsis, got: {out}");
+        assert!(
+            !out.contains("(e…") && !out.contains(" e…"),
+            "should not cut at the abbreviation period: {out}"
+        );
+        // Hard cap respected.
+        assert!(out.chars().count() <= PLACEHOLDER_MAX_CHARS + 1);
+    }
+
+    #[test]
+    fn newlines_collapse_to_single_spaces() {
+        let desc = "Line one\n\nLine two";
+        assert_eq!(placeholder_fallback(desc, "x"), "Line one Line two");
+    }
+
+    #[test]
+    fn very_long_single_token_falls_back_to_hard_cut() {
+        let desc = "a".repeat(200);
+        let out = placeholder_fallback(&desc, "x");
+        assert!(out.ends_with('…'));
+        assert_eq!(out.chars().count(), PLACEHOLDER_MAX_CHARS + 1);
+    }
+}
+
 fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_json::Value {
     // Direct $ref
     if let Some(r) = schema.get("$ref").and_then(|r| r.as_str()) {
@@ -1693,453 +2322,6 @@ fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_js
     }
     schema.clone()
 }
-
-/// Render fields for one config section, including nested subsections.
-fn render_section_fields(
-    section_schema: &serde_json::Value,
-    defs: &serde_json::Value,
-    path: Vec<String>,
-    mut form_values: Signal<serde_json::Value>,
-    json_text: Signal<String>,
-    extra_config_open: Signal<bool>,
-    cluster_id: String,
-    sync_to_json: impl Fn() + Clone + 'static,
-) -> Element {
-    let properties = section_schema
-        .get("properties")
-        .and_then(|p| p.as_object())
-        .cloned()
-        .unwrap_or_default();
-
-    rsx! {
-        {properties.into_iter().map(|(field_name, field_schema)| {
-            // Special-case: extra_config under openclaw is rendered via the
-            // openclaw-baseline-driven modal, not the schemars schema.
-            if field_name == "extra_config" && path.last().map(|s| s.as_str()) == Some("openclaw") {
-                return rsx! {
-                    ExtraConfigField {
-                        key: "{field_name}",
-                        form_values,
-                        open: extra_config_open,
-                    }
-                };
-            }
-
-            // Special-case: key_hash under ai_proxy.keys gets a "Generate" button.
-            if field_name == "key_hash" && path.len() >= 2 && path.get(path.len() - 2).map(|s| s.as_str()) == Some("keys") {
-                let mut field_path = path.clone();
-                field_path.push(field_name.clone());
-                let key = field_path.join(".");
-                return rsx! {
-                    KeyHashField {
-                        key: "{key}",
-                        field_path,
-                        form_values,
-                        json_text,
-                    }
-                };
-            }
-
-            let resolved = resolve_ref(&field_schema, defs);
-            // Check x-secret extension (Secret type emits this in its JSON Schema)
-            let is_secret = resolved.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false)
-                || field_schema.get("x-secret").and_then(|v| v.as_bool()).unwrap_or(false);
-            // Description may be on the field schema itself (for $ref fields)
-            // or on the resolved type definition
-            let description = field_schema
-                .get("description")
-                .or_else(|| resolved.get("description"))
-                .and_then(|d| d.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let field_type = resolved
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("string")
-                .to_string();
-
-            // Check if this field is a nested object (subsection)
-            let is_object = field_type == "object"
-                || resolved.get("properties").is_some();
-
-            let mut field_path = path.clone();
-            field_path.push(field_name.clone());
-
-            let current_value = get_at_path(&form_values.read(), &field_path);
-
-            let key = field_path.join(".");
-            let sync = sync_to_json.clone();
-
-            if is_object {
-                // Render as a nested subsection
-                let defs_clone = defs.clone();
-                rsx! {
-                    div { class: "border-l-2 border-info pl-3 mt-2 mb-1",
-                        key: "{key}",
-                        label { class: "text-sm font-semibold text-info", "{field_name}" }
-                        if !description.is_empty() {
-                            p { class: "text-xs text-fg-muted", "{description}" }
-                        }
-                        {render_section_fields(
-                            &resolved,
-                            &defs_clone,
-                            field_path,
-                            form_values,
-                            json_text,
-                            extra_config_open,
-                            cluster_id.clone(),
-                            sync,
-                        )}
-                    }
-                }
-            } else {
-                let fp = field_path.clone();
-                let fp2 = field_path.clone();
-                let schema_default = resolved.get("default").cloned();
-                let is_non_default = current_value.as_ref().is_some_and(|v| {
-                    schema_default.as_ref().map_or(true, |d| v != d)
-                });
-                let reset_path = field_path.clone();
-                let reset_default = schema_default.clone();
-                let sync_reset = sync_to_json.clone();
-                rsx! {
-                    div { class: "flex flex-col gap-0.5",
-                        key: "{key}",
-                        div { class: "flex items-center justify-between gap-2",
-                            label { class: "text-sm font-medium text-fg-strong", "{field_name}" }
-                            if is_non_default {
-                                button {
-                                    r#type: "button",
-                                    class: "text-xs text-fg-muted hover:text-danger underline",
-                                    onclick: move |evt| {
-                                        evt.prevent_default();
-                                        evt.stop_propagation();
-                                        if let Some(ref def) = reset_default {
-                                            set_at_path(&mut form_values, &reset_path, def.clone());
-                                        } else {
-                                            remove_at_path(&mut form_values, &reset_path);
-                                        }
-                                        sync_reset();
-                                    },
-                                    {t!("config-editor-reset-default")}
-                                }
-                            }
-                        }
-                        if !description.is_empty() {
-                            p { class: "text-xs text-fg-muted", "{description}" }
-                        }
-                        {match field_type.as_str() {
-                            "boolean" => {
-                                let checked = current_value
-                                    .as_ref()
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                let fp = fp.clone();
-                                let sync_c = sync.clone();
-                                rsx! {
-                                    input {
-                                        r#type: "checkbox",
-                                        class: "h-4 w-4",
-                                        checked: checked,
-                                        onchange: move |evt| {
-                                            set_at_path(&mut form_values, &fp,
-                                                serde_json::Value::Bool(evt.checked()));
-                                            sync_c();
-                                        },
-                                    }
-                                }
-                            }
-                            "integer" => {
-                                let val_str = current_value
-                                    .as_ref()
-                                    .and_then(|v| v.as_i64())
-                                    .map(|n| n.to_string())
-                                    .unwrap_or_default();
-                                let fp = fp.clone();
-                                let sync_c = sync.clone();
-                                rsx! {
-                                    input {
-                                        r#type: "number",
-                                        class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
-                                        value: val_str,
-                                        oninput: move |evt| {
-                                            if let Ok(n) = evt.value().parse::<i64>() {
-                                                set_at_path(&mut form_values, &fp,
-                                                    serde_json::json!(n));
-                                                sync_c();
-                                            }
-                                        },
-                                    }
-                                }
-                            }
-                            "array" => {
-                                // Resolve items schema to distinguish string arrays from object arrays.
-                                let items_schema = resolved.get("items")
-                                    .map(|s| resolve_ref(s, defs))
-                                    .unwrap_or_default();
-                                let is_object_array = items_schema.get("properties").is_some();
-
-                                if is_object_array {
-                                    // ── Array of objects (e.g. cloud providers list) ──
-                                    let entries: Vec<serde_json::Value> = current_value
-                                        .as_ref()
-                                        .and_then(|v| v.as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
-                                    let fp_remove = fp.clone();
-                                    let fp_add = fp.clone();
-                                    let sync_remove = sync.clone();
-                                    let sync_add = sync.clone();
-                                    let items_schema_add = items_schema.clone();
-                                    let defs_add = defs.clone();
-                                    rsx! {
-                                        div { class: "space-y-2",
-                                            for (idx, _entry) in entries.iter().enumerate() {
-                                                {
-                                                    let defs_c = defs.clone();
-                                                    let items_c = items_schema.clone();
-                                                    let fp_r = fp_remove.clone();
-                                                    let sync_r = sync_remove.clone();
-                                                    let mut entry_path = fp_remove.clone();
-                                                    entry_path.push(format!("{idx}"));
-                                                    rsx! {
-                                                        div { class: "border border-line rounded p-2 relative",
-                                                            key: "{idx}",
-                                                            div { class: "flex justify-between items-center mb-1",
-                                                                span { class: "text-xs font-semibold text-fg-muted", "#{idx}" }
-                                                                button {
-                                                                    class: "link-danger text-xs px-1",
-                                                                    r#type: "button",
-                                                                    onclick: move |_| {
-                                                                        let mut arr = get_at_path(&form_values.read(), &fp_r)
-                                                                            .and_then(|v| v.as_array().cloned())
-                                                                            .unwrap_or_default();
-                                                                        if idx < arr.len() {
-                                                                            arr.remove(idx);
-                                                                        }
-                                                                        set_at_path(&mut form_values, &fp_r,
-                                                                            serde_json::Value::Array(arr));
-                                                                        sync_r();
-                                                                    },
-                                                                    "Remove"
-                                                                }
-                                                            }
-                                                            {render_object_array_entry(
-                                                                &items_c,
-                                                                &defs_c,
-                                                                entry_path,
-                                                                form_values,
-                                                                json_text,
-                                                                extra_config_open,
-                                                                cluster_id.clone(),
-                                                                sync_remove.clone(),
-                                                            )}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            button {
-                                                r#type: "button",
-                                                class: "btn btn-xs btn-success-soft",
-                                                onclick: move |_| {
-                                                    let mut arr = get_at_path(&form_values.read(), &fp_add)
-                                                        .and_then(|v| v.as_array().cloned())
-                                                        .unwrap_or_default();
-                                                    // Add an empty object; defaults come from schema.
-                                                    let new_obj = build_default_object(&items_schema_add, &defs_add);
-                                                    arr.push(new_obj);
-                                                    set_at_path(&mut form_values, &fp_add,
-                                                        serde_json::Value::Array(arr));
-                                                    sync_add();
-                                                },
-                                                {t!("config-editor-add-entry")}
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    // ── Array of primitives (strings, numbers) ──
-                                    let items: Vec<String> = current_value
-                                        .as_ref()
-                                        .and_then(|v| v.as_array())
-                                        .map(|arr| {
-                                            arr.iter()
-                                                .map(|v| match v {
-                                                    serde_json::Value::String(s) => s.clone(),
-                                                    other => other.to_string(),
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default();
-                                    let fp_add = fp.clone();
-                                    let fp_remove = fp.clone();
-                                    let sync_add = sync.clone();
-                                    let sync_remove = sync.clone();
-                                    rsx! {
-                                        div { class: "space-y-1",
-                                            for (idx, item) in items.iter().enumerate() {
-                                                div {
-                                                    key: "{idx}",
-                                                    class: "flex items-center gap-1",
-                                                    span { class: "flex-1 text-sm font-mono bg-surface-2 border border-line-soft rounded px-2 py-0.5 truncate",
-                                                        "{item}"
-                                                    }
-                                                    button {
-                                                        class: "link-danger text-xs px-1",
-                                                        r#type: "button",
-                                                        onclick: {
-                                                            let fp = fp_remove.clone();
-                                                            let sync_c = sync_remove.clone();
-                                                            move |_| {
-                                                                let mut arr = get_at_path(&form_values.read(), &fp)
-                                                                    .and_then(|v| v.as_array().cloned())
-                                                                    .unwrap_or_default();
-                                                                if idx < arr.len() {
-                                                                    arr.remove(idx);
-                                                                }
-                                                                set_at_path(&mut form_values, &fp,
-                                                                    serde_json::Value::Array(arr));
-                                                                sync_c();
-                                                            }
-                                                        },
-                                                        "x"
-                                                    }
-                                                }
-                                            }
-                                            // Add new item
-                                            {
-                                                let fp = fp_add.clone();
-                                                let sync_c = sync_add.clone();
-                                                let mut new_val = use_signal(String::new);
-                                                rsx! {
-                                                    div { class: "flex gap-1",
-                                                        input {
-                                                            r#type: "text",
-                                                            class: "flex-1 border border-line rounded px-2 py-0.5 text-sm dark:bg-surface-2 dark:text-fg",
-                                                            placeholder: t!("config-editor-add-item"),
-                                                            value: "{new_val}",
-                                                            oninput: move |e| new_val.set(e.value()),
-                                                            onkeypress: {
-                                                                let fp = fp.clone();
-                                                                let sync_c = sync_c.clone();
-                                                                move |e: KeyboardEvent| {
-                                                                    if e.key() == Key::Enter {
-                                                                        let val = new_val.read().clone();
-                                                                        if !val.trim().is_empty() {
-                                                                            let mut arr = get_at_path(&form_values.read(), &fp)
-                                                                                .and_then(|v| v.as_array().cloned())
-                                                                                .unwrap_or_default();
-                                                                            arr.push(serde_json::Value::String(val.trim().to_string()));
-                                                                            set_at_path(&mut form_values, &fp,
-                                                                                serde_json::Value::Array(arr));
-                                                                            sync_c();
-                                                                            new_val.set(String::new());
-                                                                        }
-                                                                    }
-                                                                }
-                                                            },
-                                                        }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "btn btn-xs btn-primary",
-                                                            onclick: {
-                                                                let fp = fp.clone();
-                                                                let sync_c = sync_c.clone();
-                                                                move |_| {
-                                                                    let val = new_val.read().clone();
-                                                                    if !val.trim().is_empty() {
-                                                                        let mut arr = get_at_path(&form_values.read(), &fp)
-                                                                            .and_then(|v| v.as_array().cloned())
-                                                                            .unwrap_or_default();
-                                                                        arr.push(serde_json::Value::String(val.trim().to_string()));
-                                                                        set_at_path(&mut form_values, &fp,
-                                                                            serde_json::Value::Array(arr));
-                                                                        sync_c();
-                                                                        new_val.set(String::new());
-                                                                    }
-                                                                }
-                                                            },
-                                                            "+"
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-                                let enum_values: Vec<String> = resolved
-                                    .get("enum")
-                                    .and_then(|e| e.as_array())
-                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                                    .unwrap_or_default();
-                                let val_str = current_value
-                                    .as_ref()
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let sync_c = sync.clone();
-                                if !enum_values.is_empty() {
-                                    let fp = fp.clone();
-                                    let selected_val = val_str.clone();
-                                    rsx! {
-                                        select {
-                                            class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
-                                            value: val_str,
-                                            onchange: move |evt| {
-                                                set_at_path(&mut form_values, &fp,
-                                                    serde_json::Value::String(evt.value()));
-                                                sync_c();
-                                            },
-                                            option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
-                                            {enum_values.iter().map(|v| {
-                                                let is_selected = *v == selected_val;
-                                                let v = v.clone();
-                                                rsx! { option { value: "{v}", selected: is_selected, "{v}" } }
-                                            })}
-                                        }
-                                    }
-                                } else if is_secret {
-                                    let secret_key = field_path.join(".");
-                                    rsx! {
-                                        SecretField {
-                                            key: "{secret_key}",
-                                            cluster_id: cluster_id.clone(),
-                                            field_name: field_name.clone(),
-                                            field_path,
-                                            form_values,
-                                            json_text,
-                                        }
-                                    }
-                                } else {
-                                    rsx! {
-                                        input {
-                                            r#type: "text",
-                                            class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
-                                            value: val_str,
-                                            oninput: move |evt| {
-                                                let v = evt.value();
-                                                if v.is_empty() {
-                                                    remove_at_path(&mut form_values, &fp2);
-                                                } else {
-                                                    set_at_path(&mut form_values, &fp2,
-                                                        serde_json::Value::String(v));
-                                                }
-                                                sync_c();
-                                            },
-                                        }
-                                    }
-                                }
-                            }
-                        }}
-                    }
-                }
-            }
-        })}
-    }
-}
-
 /// Get a value at a nested JSON path. Numeric segments index into arrays.
 pub(super) fn get_at_path(root: &serde_json::Value, path: &[String]) -> Option<serde_json::Value> {
     let mut current = root;
@@ -2220,9 +2402,72 @@ pub(super) fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: 
     }
 }
 
-/// Render a single entry inside an object array (e.g. one cloud provider entry).
-/// Re-uses the same field-rendering logic as `render_section_fields` but rooted
-/// at the array-element path (e.g. `["cloud", "0"]`).
+/// Walk up the parent path of `path`, pruning any object that became
+/// empty *and* was also absent in the saved baseline. Stops at the
+/// first non-empty / baseline-present parent so intentional empty
+/// objects in the saved JSON (e.g. `global: {}`, `cloud: []`) are
+/// preserved. Arrays are deliberately left alone — an empty `cloud[0]`
+/// slot is a real entry, not noise.
+///
+/// Used by both the reset arrow (after reverting a field) and the
+/// regular oninput-empty handler (after the user types into a field
+/// and backspaces it clean) so neither leaves orphan parent objects
+/// that would keep the editor falsely dirty.
+pub(super) fn cleanup_empty_parents(
+    form_values: &mut Signal<serde_json::Value>,
+    baseline: &serde_json::Value,
+    path: &[String],
+) {
+    let mut prefix: Vec<String> = path.to_vec();
+    prefix.pop();
+    while !prefix.is_empty() {
+        let cur_empty_object = get_at_path(&form_values.read(), &prefix)
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .is_some_and(|o| o.is_empty());
+        let baseline_absent = get_at_path(baseline, &prefix).is_none();
+        if cur_empty_object && baseline_absent {
+            remove_at_path(form_values, &prefix);
+            prefix.pop();
+        } else {
+            break;
+        }
+    }
+}
+
+/// Restore one field to its saved-baseline value, undoing any unsaved
+/// edits. If the saved baseline doesn't contain the field, the field
+/// is removed and any newly-empty parent objects absent in baseline
+/// are pruned via `cleanup_empty_parents`. Without the cleanup, a
+/// single `healer.auto_approve` edit followed by reset would leave
+/// `healer: {}` in the form state — which the saved JSON doesn't
+/// have, so the editor would still be dirty.
+pub(super) fn revert_field_to_saved(
+    form_values: &mut Signal<serde_json::Value>,
+    baseline: &serde_json::Value,
+    path: &[String],
+) {
+    if path.is_empty() {
+        return;
+    }
+    match get_at_path(baseline, path) {
+        Some(v) => set_at_path(form_values, path, v),
+        None => {
+            remove_at_path(form_values, path);
+            cleanup_empty_parents(form_values, baseline, path);
+        }
+    }
+}
+
+/// Render a single entry inside an object array (e.g. one cloud
+/// provider entry, or one ai_proxy.keys entry). Iterates the items
+/// schema's properties and routes each child field through the same
+/// `SectionFieldRow` used everywhere else, so array-entry fields share
+/// the layout, `EditorBaseline` baseline, and reactivity rules with
+/// top-level / subsection fields. Replaces the bespoke
+/// `render_section_fields` path that compared against schema defaults
+/// instead of the saved snapshot.
+#[allow(clippy::too_many_arguments)]
 fn render_object_array_entry(
     items_schema: &serde_json::Value,
     defs: &serde_json::Value,
@@ -2231,18 +2476,35 @@ fn render_object_array_entry(
     json_text: Signal<String>,
     extra_config_open: Signal<bool>,
     cluster_id: String,
-    sync_to_json: impl Fn() + Clone + 'static,
+    _sync_to_json: impl Fn() + Clone + 'static,
 ) -> Element {
-    render_section_fields(
-        items_schema,
-        defs,
-        entry_path,
-        form_values,
-        json_text,
-        extra_config_open,
-        cluster_id,
-        sync_to_json,
-    )
+    let properties = items_schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let nested_section = entry_path.join(".");
+    let defs_clone = defs.clone();
+    rsx! {
+        for (cname, cschema) in properties.into_iter() {
+            {
+                let key = format!("{nested_section}.{cname}");
+                rsx! {
+                    SectionFieldRow {
+                        key: "{key}",
+                        section_name: nested_section.clone(),
+                        field_name: cname,
+                        field_schema: cschema,
+                        defs: defs_clone.clone(),
+                        form_values,
+                        json_text,
+                        extra_config_open,
+                        cluster_id: cluster_id.clone(),
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Build a default JSON object from a schema (one level deep, for "add entry").
