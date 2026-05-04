@@ -1569,6 +1569,7 @@ fn SectionFieldRow(
                         fp.clone(),
                         fp2.clone(),
                         form_values,
+                        baseline_sig,
                         json_text,
                         extra_config_open,
                         cluster_id.clone(),
@@ -1647,6 +1648,7 @@ fn render_field_input(
     fp: Vec<String>,
     fp2: Vec<String>,
     mut form_values: Signal<serde_json::Value>,
+    baseline: Signal<serde_json::Value>,
     json_text: Signal<String>,
     extra_config_open: Signal<bool>,
     cluster_id: String,
@@ -1697,6 +1699,7 @@ fn render_field_input(
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| description_placeholder.clone());
             let sync_c = sync.clone();
+            let fp_clear = fp.clone();
             rsx! {
                 input {
                     r#type: "number",
@@ -1706,7 +1709,14 @@ fn render_field_input(
                     oninput: move |evt| {
                         let v = evt.value();
                         if v.is_empty() {
-                            remove_at_path(&mut form_values, &fp);
+                            remove_at_path(&mut form_values, &fp_clear);
+                            // Walk up: prune any parent object the
+                            // user implicitly created while typing
+                            // that's now empty *and* absent in the
+                            // saved baseline. Keeps "type then
+                            // backspace" idempotent.
+                            let bsl = baseline.read().clone();
+                            cleanup_empty_parents(&mut form_values, &bsl, &fp_clear);
                             sync_c();
                         } else if let Ok(n) = v.parse::<i64>() {
                             set_at_path(&mut form_values, &fp,
@@ -1969,6 +1979,7 @@ fn render_field_input(
                 } else {
                     description_placeholder.clone()
                 };
+                let fp_clear = fp2.clone();
                 rsx! {
                     input {
                         r#type: "text",
@@ -1978,7 +1989,14 @@ fn render_field_input(
                         oninput: move |evt| {
                             let v = evt.value();
                             if v.is_empty() {
-                                remove_at_path(&mut form_values, &fp2);
+                                remove_at_path(&mut form_values, &fp_clear);
+                                // Same cleanup as the integer branch:
+                                // a typed-then-backspaced text field
+                                // shouldn't leave its parent object
+                                // dangling as `{}` if the saved JSON
+                                // didn't have it.
+                                let bsl = baseline.read().clone();
+                                cleanup_empty_parents(&mut form_values, &bsl, &fp_clear);
                             } else {
                                 set_at_path(&mut form_values, &fp2,
                                     serde_json::Value::String(v));
@@ -2303,14 +2321,46 @@ pub(super) fn remove_at_path(form_values: &mut Signal<serde_json::Value>, path: 
     }
 }
 
+/// Walk up the parent path of `path`, pruning any object that became
+/// empty *and* was also absent in the saved baseline. Stops at the
+/// first non-empty / baseline-present parent so intentional empty
+/// objects in the saved JSON (e.g. `global: {}`, `cloud: []`) are
+/// preserved. Arrays are deliberately left alone — an empty `cloud[0]`
+/// slot is a real entry, not noise.
+///
+/// Used by both the reset arrow (after reverting a field) and the
+/// regular oninput-empty handler (after the user types into a field
+/// and backspaces it clean) so neither leaves orphan parent objects
+/// that would keep the editor falsely dirty.
+pub(super) fn cleanup_empty_parents(
+    form_values: &mut Signal<serde_json::Value>,
+    baseline: &serde_json::Value,
+    path: &[String],
+) {
+    let mut prefix: Vec<String> = path.to_vec();
+    prefix.pop();
+    while !prefix.is_empty() {
+        let cur_empty_object = get_at_path(&form_values.read(), &prefix)
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .is_some_and(|o| o.is_empty());
+        let baseline_absent = get_at_path(baseline, &prefix).is_none();
+        if cur_empty_object && baseline_absent {
+            remove_at_path(form_values, &prefix);
+            prefix.pop();
+        } else {
+            break;
+        }
+    }
+}
+
 /// Restore one field to its saved-baseline value, undoing any unsaved
 /// edits. If the saved baseline doesn't contain the field, the field
-/// is removed; we then walk up the parent path and prune any object
-/// that became empty *and* was also absent in the baseline. Without
-/// the cleanup walk, a single `healer.auto_approve` edit followed by
-/// reset would leave `healer: {}` in the form state — which the saved
-/// JSON doesn't have, so the editor would still be dirty. Arrays are
-/// left alone (an empty `cloud[0]` slot is a real entry, not noise).
+/// is removed and any newly-empty parent objects absent in baseline
+/// are pruned via `cleanup_empty_parents`. Without the cleanup, a
+/// single `healer.auto_approve` edit followed by reset would leave
+/// `healer: {}` in the form state — which the saved JSON doesn't
+/// have, so the editor would still be dirty.
 pub(super) fn revert_field_to_saved(
     form_values: &mut Signal<serde_json::Value>,
     baseline: &serde_json::Value,
@@ -2323,21 +2373,7 @@ pub(super) fn revert_field_to_saved(
         Some(v) => set_at_path(form_values, path, v),
         None => {
             remove_at_path(form_values, path);
-            let mut prefix: Vec<String> = path.to_vec();
-            prefix.pop();
-            while !prefix.is_empty() {
-                let cur_empty_object = get_at_path(&form_values.read(), &prefix)
-                    .as_ref()
-                    .and_then(|v| v.as_object())
-                    .is_some_and(|o| o.is_empty());
-                let baseline_absent = get_at_path(baseline, &prefix).is_none();
-                if cur_empty_object && baseline_absent {
-                    remove_at_path(form_values, &prefix);
-                    prefix.pop();
-                } else {
-                    break;
-                }
-            }
+            cleanup_empty_parents(form_values, baseline, path);
         }
     }
 }
