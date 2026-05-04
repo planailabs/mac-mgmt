@@ -80,11 +80,15 @@ impl MemvaultServer {
         let tags = parse_tags(tags_input);
         let vis = params.visibility.as_deref().or(Some(self.default_visibility.as_str()));
         match self.client.put_doc(&params.text, serde_json::Value::Object(frontmatter), tags, vis).await {
-            Ok(resp) => serde_json::json!({
-                "cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
-                "id": resp.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                "status": "stored"
-            }).to_string(),
+            Ok(resp) => {
+                let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let node_id = if raw_id.contains(':') { raw_id.to_string() } else { format!("doc:{raw_id}") };
+                serde_json::json!({
+                    "node_id": node_id,
+                    "cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
+                    "status": "stored"
+                }).to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }
@@ -133,10 +137,14 @@ impl MemvaultServer {
             mime_guess::from_path(path).first_raw().unwrap_or("application/octet-stream")
         });
         match self.client.attach_file(&data, filename, mime_type).await {
-            Ok(resp) => serde_json::json!({
-                "manifest_cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
-                "filename": filename, "size": data.len(), "mime_type": mime_type, "status": "attached"
-            }).to_string(),
+            Ok(resp) => {
+                let raw_cid = resp.get("cid").and_then(|v| v.as_str()).unwrap_or("");
+                let node_id = if raw_cid.contains(':') { raw_cid.to_string() } else { format!("attachment:{raw_cid}") };
+                serde_json::json!({
+                    "node_id": node_id, "filename": filename,
+                    "size": data.len(), "mime_type": mime_type, "status": "attached"
+                }).to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }
@@ -196,10 +204,11 @@ impl MemvaultServer {
         let vis = params.visibility.as_deref().or(Some(self.default_visibility.as_str()));
         let props = serde_json::json!(params.props);
         match self.client.add_entity(&params.kind, props, vis).await {
-            Ok(resp) => serde_json::json!({
-                "entity_id": resp.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                "status": "created"
-            }).to_string(),
+            Ok(resp) => {
+                let raw_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let node_id = if raw_id.contains(':') { raw_id.to_string() } else { format!("entity:{raw_id}") };
+                serde_json::json!({ "node_id": node_id, "status": "created" }).to_string()
+            }
             Err(e) => format!("error: {e}"),
         }
     }
