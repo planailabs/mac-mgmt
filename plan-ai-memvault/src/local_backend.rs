@@ -225,6 +225,16 @@ impl Backend for LocalBackend {
         Ok(serde_json::json!({ "cid": hex::encode(&tombstone) }))
     }
 
+    async fn list_all(&self, view: Option<&str>, limit: usize) -> Result<serde_json::Value> {
+        let items = self.client.list_all(view, limit).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(serde_json::json!(items.iter().map(|(id, nt, label, tags)| serde_json::json!({
+            "node_id": id,
+            "node_type": nt,
+            "label": label,
+            "tags": tags,
+        })).collect::<Vec<_>>()))
+    }
+
     async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
         self.client.add_tags(node_id, tags).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "status": "tags_added" }))

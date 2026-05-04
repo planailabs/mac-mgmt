@@ -194,6 +194,18 @@ pub struct UnlinkParams {
     pub source: String,
 }
 
+// -- memvault_list_all --
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ListAllParams {
+    /// Maximum number of results (default: 100).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Optional view name to filter by.
+    #[serde(default)]
+    pub view: Option<String>,
+}
+
 // -- memvault_tag --
 
 #[derive(Deserialize, JsonSchema)]

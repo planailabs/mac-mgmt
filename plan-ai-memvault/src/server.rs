@@ -400,6 +400,25 @@ impl MemvaultServer {
     }
 
     #[tool(
+        name = "memvault_list_all",
+        description = "List all nodes (documents, entities, and attachments). Optionally filter by a saved view name."
+    )]
+    async fn list_all(&self, Parameters(params): Parameters<ListAllParams>) -> String {
+        let limit = params.limit.unwrap_or(100);
+        match self.client.list_all(params.view.as_deref(), limit).await {
+            Ok(nodes) => {
+                let results = nodes.as_array().cloned().unwrap_or_default();
+                serde_json::json!({
+                    "count": results.len(),
+                    "nodes": results,
+                })
+                .to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
         name = "memvault_tag",
         description = "Add tags to an existing item (entity, document, or attachment). Tags in 'scope:label' format."
     )]

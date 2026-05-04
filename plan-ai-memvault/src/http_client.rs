@@ -275,6 +275,14 @@ impl Backend for HttpClient {
         self.client.delete(self.url(&format!("/nodes/{}", urlencoded(node_id)))).send().await?.error_for_status()?;
         Ok(serde_json::json!({ "status": "retracted" }))
     }
+    async fn list_all(&self, view: Option<&str>, limit: usize) -> Result<serde_json::Value> {
+        let mut url = format!("{}?limit={limit}", self.url("/nodes"));
+        if let Some(v) = view {
+            url.push_str(&format!("&view={}", urlencoded(v)));
+        }
+        let resp = self.client.get(&url).send().await?.error_for_status()?;
+        Ok(resp.json().await?)
+    }
     async fn add_tags(&self, node_id: &str, tags: Vec<(String, String)>) -> Result<serde_json::Value> {
         let resp = self.client.put(self.url(&format!("/tags/{}", urlencoded(node_id))))
             .json(&serde_json::json!({ "tags": tags }))
