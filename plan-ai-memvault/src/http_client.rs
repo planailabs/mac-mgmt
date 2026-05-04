@@ -246,10 +246,12 @@ impl Backend for HttpClient {
         let mime = manifest
             .and_then(|m| m.get("mime_type").and_then(|v| v.as_str()).map(String::from))
             .unwrap_or_else(|| "application/octet-stream".to_string());
-        let registry = memvault_extract::ExtractionRegistry::with_defaults();
-        match registry.extract(&data, &mime, &memvault_extract::ExtractionHints::default()) {
-            Ok(extracted) => Ok(Some(extracted.text)),
-            Err(_) => Ok(None),
+        match std::panic::catch_unwind(move || {
+            let registry = memvault_extract::ExtractionRegistry::with_defaults();
+            registry.extract(&data, &mime, &memvault_extract::ExtractionHints::default())
+        }) {
+            Ok(Ok(extracted)) => Ok(Some(extracted.text)),
+            Ok(Err(_)) | Err(_) => Ok(None),
         }
     }
     async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> { self.get_attachment_manifest(cid_hex).await }
