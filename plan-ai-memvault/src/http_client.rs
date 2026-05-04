@@ -274,23 +274,20 @@ impl Backend for HttpClient {
     }
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> { self.add_entity(kind, props, visibility).await }
     async fn get_entity(&self, id: &str) -> Result<Option<serde_json::Value>> {
-        let resp = self.client.get(self.url(&format!("/entities/{id}"))).send().await?;
+        let node_id = if id.contains(':') { id.to_string() } else { format!("entity:{id}") };
+        let resp = self.client.get(self.url(&format!("/nodes/{}", urlencoded(&node_id)))).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND { return Ok(None); }
         Ok(Some(resp.error_for_status()?.json().await?))
     }
     async fn list_entities(&self, limit: usize) -> Result<serde_json::Value> {
-        // No dedicated REST endpoint for listing entities; use list_all filtered by type.
-        // This is a limitation of the HTTP mode.
         let resp = self.client.get(self.url(&format!("/nodes?limit={limit}"))).send().await?.error_for_status()?;
         Ok(resp.json().await?)
     }
     async fn entity_history(&self, _id: &str) -> Result<serde_json::Value> {
-        // Entity history endpoint doesn't exist in REST; use audit with entity tag.
         let resp = self.client.get(self.url(&format!("/audit?limit=100"))).send().await?.error_for_status()?;
         Ok(resp.json().await?)
     }
     async fn traverse_from(&self, from: &str, _relation: Option<&str>, _max_depth: usize) -> Result<serde_json::Value> {
-        // Use edges_of as a basic traversal (depth 1 only in HTTP mode).
         self.edges_of(from).await
     }
     async fn add_link(&self, source: &str, target: &str, relation: &str, weight: Option<f32>) -> Result<serde_json::Value> { self.add_link(source, target, relation, weight).await }
