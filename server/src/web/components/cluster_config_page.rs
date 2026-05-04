@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 use serde::{Deserialize, Serialize};
 
-use crate::web::app::Route;
 use crate::web::components::ui::{
     Button, ButtonSize, ErrorText, HelpText, PageHeader, SectionHeading,
 };
@@ -35,6 +34,7 @@ fn encrypt_secret_value(plaintext: &[u8]) -> Result<Vec<u8>, String> {
 
 use super::config_editor::ConfigEditor;
 use super::config_history::ConfigHistory;
+use super::topbar::use_topbar;
 
 // ── Server functions ────────────────────────────────────────────────────
 
@@ -273,31 +273,36 @@ pub fn ClusterConfigPage(id: String) -> Element {
         _ => String::new(),
     };
 
+    // Publish the cluster name to TopbarMeta so the breadcrumb's
+    // `parent_dyn` for `ClusterDetail` resolves to the cluster's name
+    // instead of repeating the static "Clusters" label twice.
+    use_topbar(name.clone(), Some(t!("cluster-detail-tab-config").to_string()));
+
     rsx! {
-        // Back-link sits above the headline so the cluster context is
-        // discoverable without taking up a full breadcrumb row (the
-        // app-level breadcrumbs from `Layout` already cover navigation).
-        Link { to: Route::ClusterDetail { id: id.clone() }, class: "link text-sm",
-            {t!("cluster-config-back")}
-        }
-        if !name.is_empty() {
-            PageHeader { class: "mt-1 mb-4", "{name} — {t!(\"cluster-detail-tab-config\")}" }
-        }
-
-        ConfigEditor { cluster_id: id.clone(), read_only }
-
-        // Secrets + history land below the editor as full-width
-        // sections (the right rail handles drill-down navigation, no
-        // need for a side-by-side grid here).
-        div { class: "space-y-6 mt-10",
-            div {
-                SectionHeading { {t!("secrets-title")} }
-                p { class: "help mb-3", {t!("secrets-description")} }
-                SecretsEditor { cluster_id: id.clone(), read_only }
+        // The trailing `pb-32` reserves vertical space below the last
+        // section so the floating SaveBar (`fixed bottom-5 …`) never
+        // overlaps Config History / Secrets / the final field row when
+        // the user scrolls to the very bottom of the page.
+        div { class: "pb-32",
+            if !name.is_empty() {
+                PageHeader { class: "mb-4", "{name} — {t!(\"cluster-detail-tab-config\")}" }
             }
-            div { id: "sec-config-history",
-                SectionHeading { {t!("cluster-detail-tab-config-history")} }
-                ConfigHistory { cluster_id: id.clone() }
+
+            ConfigEditor { cluster_id: id.clone(), read_only }
+
+            // Secrets + history land below the editor as full-width
+            // sections (the right rail handles drill-down navigation,
+            // no need for a side-by-side grid here).
+            div { class: "space-y-6 mt-10",
+                div { id: "sec-secrets",
+                    SectionHeading { {t!("secrets-title")} }
+                    p { class: "help mb-3", {t!("secrets-description")} }
+                    SecretsEditor { cluster_id: id.clone(), read_only }
+                }
+                div { id: "sec-config-history",
+                    SectionHeading { {t!("cluster-detail-tab-config-history")} }
+                    ConfigHistory { cluster_id: id.clone() }
+                }
             }
         }
     }
@@ -357,125 +362,143 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
         }
 
         if entries.is_empty() {
-            HelpText { class: "mb-3", {t!("secrets-empty")} }
+            div { class: "rounded-lg border border-dashed border-line bg-surface-2/40 px-5 py-6 mb-4 text-center",
+                div { class: "text-fg-faint text-2xl mb-1", "🔑" }
+                HelpText { class: "max-w-sm mx-auto", {t!("secrets-empty")} }
+            }
         } else {
-            div { class: "border border-line rounded overflow-x-auto mb-3",
-                table { class: "w-full text-sm",
-                    thead {
-                        tr { class: "bg-surface-2 text-left",
-                            th { class: "px-3 py-2 font-medium text-fg-strong", {t!("secrets-col-name")} }
-                            th { class: "px-3 py-2 font-medium text-fg-strong", {t!("secrets-col-reference")} }
-                            th { class: "px-3 py-2 font-medium text-fg-strong", {t!("secrets-col-created")} }
-                            if !read_only {
-                                th { class: "px-3 py-2 font-medium text-fg-strong w-32", {t!("secrets-col-actions")} }
-                            }
-                        }
-                    }
-                    tbody {
-                        for entry in &entries {
-                            {
-                                let name = entry.name.clone();
-                                let created = entry.created_at.clone();
-                                let reference = format!("secret:{name}");
-                                let name_edit = name.clone();
-                                let name_del = name.clone();
-                                let name_del2 = name.clone();
-                                let cid_upd = cluster_id.clone();
-                                let cid_del = cluster_id.clone();
-                                let is_editing = editing.read().as_deref() == Some(name.as_str());
-                                let is_confirming = confirm_delete.read().as_deref() == Some(name.as_str());
+            // Card grid: secrets show as cards with key glyph, name,
+            // reference (click-to-copy), created date and inline
+            // edit/delete actions. Replaces the dense table with a
+            // touch-friendly layout that scales to mobile.
+            div { class: "grid gap-2 sm:grid-cols-2 mb-4",
+                for entry in &entries {
+                    {
+                        let name = entry.name.clone();
+                        let created = entry.created_at.clone();
+                        let reference = format!("secret:{name}");
+                        let reference_copy = reference.clone();
+                        let name_edit = name.clone();
+                        let name_del = name.clone();
+                        let name_del2 = name.clone();
+                        let cid_upd = cluster_id.clone();
+                        let cid_del = cluster_id.clone();
+                        let is_editing = editing.read().as_deref() == Some(name.as_str());
+                        let is_confirming = confirm_delete.read().as_deref() == Some(name.as_str());
 
-                                rsx! {
-                                    tr { class: "border-t border-line-soft",
-                                        key: "{name}",
-                                        td { class: "px-3 py-2 font-mono", "{name}" }
-                                        td { class: "px-3 py-2 font-mono text-fg-muted select-all", "{reference}" }
-                                        td { class: "px-3 py-2 text-fg-muted", "{created}" }
-                                        if !read_only {
-                                            td { class: "px-3 py-2",
-                                                if is_editing {
-                                                    div { class: "flex gap-1",
-                                                        input {
-                                                            r#type: "password",
-                                                            class: "input input-xs w-32",
-                                                            placeholder: t!("secrets-new-value"),
-                                                            value: "{edit_value}",
-                                                            oninput: move |e| edit_value.set(e.value()),
-                                                        }
-                                                        button { r#type: "button",
-                                                            class: "text-success hover:opacity-80 text-xs",
-                                                            onclick: move |_| {
-                                                                let cid = cid_upd.clone();
-                                                                let n = name_edit.clone();
-                                                                let v = edit_value.read().clone();
-                                                                spawn(async move {
-                                                                    match update_secret(cid, n, v).await {
-                                                                        Ok(()) => {
-                                                                            error.set(None);
-                                                                            editing.set(None);
-                                                                            edit_value.set(String::new());
-                                                                            secrets.restart();
-                                                                        }
-                                                                        Err(e) => error.set(Some(e.to_string())),
-                                                                    }
-                                                                });
-                                                            },
-                                                            {t!("save")}
-                                                        }
-                                                        button { r#type: "button",
-                                                            class: "text-fg-muted hover:text-fg-strong text-xs",
-                                                            onclick: move |_| {
-                                                                editing.set(None);
-                                                                edit_value.set(String::new());
-                                                            },
-                                                            {t!("cancel")}
-                                                        }
-                                                    }
-                                                } else if is_confirming {
-                                                    div { class: "flex gap-1 items-center",
-                                                        span { class: "text-danger text-xs", {t!("secrets-confirm-delete")} }
-                                                        button { r#type: "button",
-                                                            class: "link-danger text-xs font-semibold",
-                                                            onclick: move |_| {
-                                                                let cid = cid_del.clone();
-                                                                let n = name_del.clone();
-                                                                spawn(async move {
-                                                                    match delete_secret(cid, n).await {
-                                                                        Ok(()) => {
-                                                                            error.set(None);
-                                                                            confirm_delete.set(None);
-                                                                            secrets.restart();
-                                                                        }
-                                                                        Err(e) => error.set(Some(e.to_string())),
-                                                                    }
-                                                                });
-                                                            },
-                                                            {t!("delete")}
-                                                        }
-                                                        button { r#type: "button",
-                                                            class: "text-fg-muted hover:text-fg-strong text-xs",
-                                                            onclick: move |_| confirm_delete.set(None),
-                                                            {t!("cancel")}
-                                                        }
-                                                    }
-                                                } else {
-                                                    div { class: "flex gap-2",
-                                                        button { r#type: "button",
-                                                            class: "link text-xs",
-                                                            onclick: move |_| {
-                                                                editing.set(Some(name.clone()));
-                                                                edit_value.set(String::new());
-                                                            },
-                                                            {t!("secrets-update")}
-                                                        }
-                                                        button { r#type: "button",
-                                                            class: "link-danger text-xs",
-                                                            onclick: move |_| {
-                                                                confirm_delete.set(Some(name_del2.clone()));
-                                                            },
-                                                            {t!("delete")}
-                                                        }
-                                                    }
+                        rsx! {
+                            div { class: "card p-3 flex flex-col gap-2",
+                                key: "{name}",
+                                div { class: "flex items-start gap-3",
+                                    span { class: "shrink-0 w-9 h-9 rounded-lg bg-brand-soft text-brand flex items-center justify-center text-base",
+                                        "🔑"
+                                    }
+                                    div { class: "min-w-0 flex-1",
+                                        div { class: "flex items-center justify-between gap-2",
+                                            div { class: "font-mono text-sm text-fg-strong truncate", "{name}" }
+                                            span { class: "kicker text-fg-faint shrink-0", "{created}" }
+                                        }
+                                        button {
+                                            class: "mt-1 text-[11px] font-mono text-fg-muted hover:text-brand transition-colors flex items-center gap-1 truncate",
+                                            r#type: "button",
+                                            title: t!("secrets-click-to-copy"),
+                                            onclick: move |_| {
+                                                let r = reference_copy.clone();
+                                                spawn(async move {
+                                                    let _ = document::eval(&format!(
+                                                        "navigator.clipboard.writeText({r:?}).catch(function(){{}});"
+                                                    )).await;
+                                                });
+                                            },
+                                            span { class: "select-all truncate", "{reference}" }
+                                            span { class: "text-fg-faint shrink-0", "⧉" }
+                                        }
+                                    }
+                                }
+                                if !read_only {
+                                    div { class: "border-t border-line-soft pt-2",
+                                        if is_editing {
+                                            div { class: "flex flex-wrap gap-1.5 items-center",
+                                                input {
+                                                    r#type: "password",
+                                                    class: "input input-xs flex-1 min-w-[120px]",
+                                                    placeholder: t!("secrets-new-value"),
+                                                    value: "{edit_value}",
+                                                    oninput: move |e| edit_value.set(e.value()),
+                                                }
+                                                button { r#type: "button",
+                                                    class: "btn btn-xs btn-primary",
+                                                    onclick: move |_| {
+                                                        let cid = cid_upd.clone();
+                                                        let n = name_edit.clone();
+                                                        let v = edit_value.read().clone();
+                                                        spawn(async move {
+                                                            match update_secret(cid, n, v).await {
+                                                                Ok(()) => {
+                                                                    error.set(None);
+                                                                    editing.set(None);
+                                                                    edit_value.set(String::new());
+                                                                    secrets.restart();
+                                                                }
+                                                                Err(e) => error.set(Some(e.to_string())),
+                                                            }
+                                                        });
+                                                    },
+                                                    {t!("save")}
+                                                }
+                                                button { r#type: "button",
+                                                    class: "btn btn-xs btn-ghost",
+                                                    onclick: move |_| {
+                                                        editing.set(None);
+                                                        edit_value.set(String::new());
+                                                    },
+                                                    {t!("cancel")}
+                                                }
+                                            }
+                                        } else if is_confirming {
+                                            div { class: "flex flex-wrap gap-1.5 items-center",
+                                                span { class: "text-xs text-danger flex-1", {t!("secrets-confirm-delete")} }
+                                                button { r#type: "button",
+                                                    class: "btn btn-xs btn-danger",
+                                                    onclick: move |_| {
+                                                        let cid = cid_del.clone();
+                                                        let n = name_del.clone();
+                                                        spawn(async move {
+                                                            match delete_secret(cid, n).await {
+                                                                Ok(()) => {
+                                                                    error.set(None);
+                                                                    confirm_delete.set(None);
+                                                                    secrets.restart();
+                                                                }
+                                                                Err(e) => error.set(Some(e.to_string())),
+                                                            }
+                                                        });
+                                                    },
+                                                    {t!("delete")}
+                                                }
+                                                button { r#type: "button",
+                                                    class: "btn btn-xs btn-ghost",
+                                                    onclick: move |_| confirm_delete.set(None),
+                                                    {t!("cancel")}
+                                                }
+                                            }
+                                        } else {
+                                            div { class: "flex gap-3 items-center",
+                                                button { r#type: "button",
+                                                    class: "link text-xs",
+                                                    onclick: move |_| {
+                                                        editing.set(Some(name.clone()));
+                                                        edit_value.set(String::new());
+                                                    },
+                                                    {t!("secrets-update")}
+                                                }
+                                                span { class: "text-fg-faint text-xs", "·" }
+                                                button { r#type: "button",
+                                                    class: "link-danger text-xs",
+                                                    onclick: move |_| {
+                                                        confirm_delete.set(Some(name_del2.clone()));
+                                                    },
+                                                    {t!("delete")}
                                                 }
                                             }
                                         }
@@ -489,14 +512,17 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
         }
 
         if !read_only {
-            div { class: "border border-line rounded p-3",
-                h4 { class: "text-sm font-semibold text-fg-strong mb-2", {t!("secrets-add")} }
-                div { class: "flex gap-2 items-end flex-wrap",
+            div { class: "rounded-xl border border-line bg-surface-2/30 p-4",
+                div { class: "flex items-center gap-2 mb-3",
+                    span { class: "kicker", {t!("secrets-add")} }
+                    span { class: "text-xs text-fg-muted", {t!("secrets-add-hint")} }
+                }
+                div { class: "grid gap-2 sm:grid-cols-[1fr_2fr_auto] items-end",
                     div { class: "flex flex-col gap-1",
                         label { class: "help-xs", {t!("secrets-col-name")} }
                         input {
                             r#type: "text",
-                            class: "input input-sm w-48",
+                            class: "input input-sm font-mono",
                             placeholder: "MY_API_KEY",
                             value: "{new_name}",
                             oninput: move |e| new_name.set(e.value()),
@@ -506,7 +532,7 @@ fn SecretsEditor(cluster_id: String, read_only: bool) -> Element {
                         label { class: "help-xs", {t!("secrets-col-value")} }
                         input {
                             r#type: "password",
-                            class: "input input-sm w-64",
+                            class: "input input-sm",
                             placeholder: t!("secrets-value-placeholder"),
                             value: "{new_value}",
                             oninput: move |e| new_value.set(e.value()),

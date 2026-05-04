@@ -177,15 +177,18 @@ pub struct ActiveSectionFilter(pub Signal<SectionFilter>);
 #[derive(Clone, Default)]
 pub struct SavedConfigBaseline(pub Signal<String>);
 
-/// Cross-component counters: how many fields are modified, and across
-/// how many sections. Computed once per render in `StructuredEditor`
-/// and consumed by the `SaveBar` so the toast can read like
-/// "N unsaved changes in M sections".
+/// Cross-component counters: how many fields are modified, how many
+/// sections are touched, and how many sections are currently enabled.
+/// Computed once per render in `StructuredEditor` and consumed by both
+/// the `SaveBar` toast ("N unsaved changes in M sections") and the
+/// `FilterChips` row (chip suffix counts: All 17, Enabled 12, …).
 #[derive(Clone, Copy, PartialEq, Default)]
 pub struct EditorStats {
     pub modified_fields: Signal<usize>,
     pub modified_sections: Signal<usize>,
     pub total_sections: Signal<usize>,
+    pub enabled_sections: Signal<usize>,
+    pub error_sections: Signal<usize>,
 }
 
 #[component]
@@ -209,6 +212,8 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
         modified_fields: use_signal(|| 0usize),
         modified_sections: use_signal(|| 0usize),
         total_sections: use_signal(|| 0usize),
+        enabled_sections: use_signal(|| 0usize),
+        error_sections: use_signal(|| 0usize),
     };
     use_context_provider(|| stats);
 
@@ -222,7 +227,9 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     }
 
     let cid_save = cluster_id.clone();
-    let do_save = move || {
+    // Cloneable so both the strip Save button and the floating SaveBar
+    // can hand-off to the same handler without re-allocating closures.
+    let do_save = std::rc::Rc::new(move || {
         let cid = cid_save.clone();
         let text = editor_text.read().clone();
         spawn(async move {
@@ -237,7 +244,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
                 }
             }
         });
-    };
+    });
 
     let do_discard = move |_| {
         let baseline = saved_text.read().clone();
@@ -294,8 +301,11 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
             p { class: "text-danger text-sm mb-2", "{err}" }
         }
 
-        // Sticky filter / mode strip — under the page header. Mirrors
-        // the design's "All / Enabled / Modified / Errors" pill row.
+        // Filter / mode strip — under the page header. Mirrors the
+        // design's "All / Enabled / Modified / Errors" pill row.
+        // The Save action lives entirely in the floating SaveBar at
+        // the bottom of the viewport, so the strip stays focused on
+        // filtering and view modes.
         div { class: "config-strip",
             FilterChips { filter }
             label { class: "ml-auto text-xs text-fg-muted flex items-center gap-1.5 cursor-pointer select-none",
@@ -308,7 +318,7 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
             }
         }
 
-        div { class: "pb-32",
+        div {
             if *raw_mode.read() {
                 textarea {
                     class: "w-full h-64 font-mono text-sm border border-line rounded-md p-2 mb-2 dark:bg-surface-2 dark:text-fg",
@@ -343,14 +353,20 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
 
         // Floating save bar. Visible only when the editor diverges from
         // the last server snapshot. Centred at the bottom of the
-        // viewport with brand-orange ring, mirroring the Cmd+S
-        // affordance described in the design.
+        // viewport with brand-orange ring.
         if !read_only && dirty {
-            SaveBar {
-                last_saved: last_saved_at,
-                on_save: do_save,
-                on_discard: do_discard,
-                stats,
+            {
+                let do_save_bar = std::rc::Rc::clone(&do_save);
+                rsx! {
+                    SaveBar {
+                        last_saved: last_saved_at,
+                        editor_text,
+                        saved_text,
+                        on_save: move |_| do_save_bar(),
+                        on_discard: do_discard,
+                        stats,
+                    }
+                }
             }
         }
     }
@@ -359,27 +375,42 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
 #[component]
 fn FilterChips(filter: Signal<SectionFilter>) -> Element {
     let cur = *filter.read();
-    let chip = |opt: SectionFilter, label_key: &'static str| {
+    let stats = use_context::<EditorStats>();
+    let total = *stats.total_sections.read();
+    let enabled = *stats.enabled_sections.read();
+    let modified = *stats.modified_sections.read();
+    let errors = *stats.error_sections.read();
+    let chip = |opt: SectionFilter, label_key: &'static str, count: usize| {
         let active = cur == opt;
         let cls = if active {
             "config-chip config-chip-active"
         } else {
             "config-chip"
         };
+        // The count badge inside each chip mirrors the design's
+        // "All 17 / Enabled 12 / Modified 3 / Errors 0" treatment.
+        // Active chips render the count on a translucent dark pill so
+        // it stays legible on the brand-orange background.
+        let count_cls = if active {
+            "ml-1.5 px-1.5 py-px text-[10px] font-mono rounded-full bg-black/25"
+        } else {
+            "ml-1.5 px-1.5 py-px text-[10px] font-mono rounded-full bg-surface-3 text-fg-muted"
+        };
         rsx! {
             button {
                 class: "{cls}",
                 onclick: move |_| filter.set(opt),
                 {t!(label_key)}
+                span { class: "{count_cls}", "{count}" }
             }
         }
     };
     rsx! {
         div { class: "config-chips",
-            {chip(SectionFilter::All, "config-filter-all")}
-            {chip(SectionFilter::Enabled, "config-filter-enabled")}
-            {chip(SectionFilter::Modified, "config-filter-modified")}
-            {chip(SectionFilter::Errors, "config-filter-errors")}
+            {chip(SectionFilter::All, "config-filter-all", total)}
+            {chip(SectionFilter::Enabled, "config-filter-enabled", enabled)}
+            {chip(SectionFilter::Modified, "config-filter-modified", modified)}
+            {chip(SectionFilter::Errors, "config-filter-errors", errors)}
         }
     }
 }
@@ -387,12 +418,15 @@ fn FilterChips(filter: Signal<SectionFilter>) -> Element {
 #[component]
 fn SaveBar(
     last_saved: Option<String>,
+    editor_text: Signal<String>,
+    saved_text: Signal<String>,
     on_save: EventHandler<()>,
     on_discard: EventHandler<MouseEvent>,
     stats: EditorStats,
 ) -> Element {
     let fields = *stats.modified_fields.read();
     let sections = *stats.modified_sections.read();
+    let mut diff_open = use_signal(|| false);
     let summary = if fields == 0 {
         t!("config-save-unsaved")
     } else {
@@ -400,8 +434,15 @@ fn SaveBar(
     };
     rsx! {
         div { class: "config-save-bar",
-            span { class: "dot dot-accent" }
+            // Pulsing dot — draws the eye when changes are unsaved so
+            // the user doesn't think edits are auto-committed. The dot
+            // is purely decorative; the bar itself only renders when
+            // dirty=true so its presence already implies "draft state".
+            span { class: "dot dot-accent animate-pulse" }
             div { class: "min-w-0",
+                div { class: "flex items-center gap-2",
+                    span { class: "kicker text-brand", {t!("config-save-draft")} }
+                }
                 div { class: "text-sm font-semibold text-fg-strong", "{summary}" }
                 if let Some(t) = last_saved {
                     div { class: "text-[11px] text-fg-faint mt-0.5",
@@ -409,7 +450,13 @@ fn SaveBar(
                     }
                 }
             }
-            div { class: "h-7 w-px bg-line mx-1" }
+            div { class: "h-8 w-px bg-line mx-1" }
+            button {
+                class: "btn btn-md btn-ghost",
+                r#type: "button",
+                onclick: move |_| diff_open.set(true),
+                {t!("config-save-review-diff")}
+            }
             button {
                 class: "btn btn-md btn-secondary",
                 r#type: "button",
@@ -421,10 +468,158 @@ fn SaveBar(
                 r#type: "button",
                 onclick: move |_| on_save.call(()),
                 {t!("config-editor-save")}
-                span { class: "ml-1.5 text-[10px] font-mono opacity-70", "⌘S" }
+            }
+        }
+        if *diff_open.read() {
+            ReviewDiffModal {
+                editor_text,
+                saved_text,
+                open: diff_open,
             }
         }
     }
+}
+
+/// Modal showing the JSON diff between the last saved snapshot
+/// (`saved_text`) and the in-flight editor state (`editor_text`).
+/// Cheap unified-diff implementation done line-by-line — sufficient for
+/// reviewing config changes; if we ever need word-level diffs we can
+/// pull in `similar` (already a transitive dep).
+#[component]
+fn ReviewDiffModal(
+    editor_text: Signal<String>,
+    saved_text: Signal<String>,
+    open: Signal<bool>,
+) -> Element {
+    let saved = saved_text.read().clone();
+    let draft = editor_text.read().clone();
+    let saved_lines: Vec<&str> = saved.lines().collect();
+    let draft_lines: Vec<&str> = draft.lines().collect();
+    let diff = unified_line_diff(&saved_lines, &draft_lines);
+
+    rsx! {
+        div {
+            class: "fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm",
+            onclick: move |_| open.set(false),
+            div {
+                class: "bg-surface border border-line rounded-xl shadow-pop max-w-4xl w-full max-h-[80vh] flex flex-col overflow-hidden",
+                onclick: move |evt| evt.stop_propagation(),
+                div { class: "flex items-center justify-between px-4 py-3 border-b border-line",
+                    div {
+                        div { class: "text-sm font-semibold text-fg-strong", {t!("config-save-review-diff-title")} }
+                        div { class: "text-xs text-fg-muted", {t!("config-save-review-diff-help")} }
+                    }
+                    button {
+                        class: "btn btn-sm btn-ghost",
+                        r#type: "button",
+                        onclick: move |_| open.set(false),
+                        "✕"
+                    }
+                }
+                div { class: "flex-1 overflow-auto font-mono text-xs leading-snug",
+                    if diff.is_empty() {
+                        div { class: "p-6 text-center text-fg-muted",
+                            {t!("config-save-review-diff-empty")}
+                        }
+                    } else {
+                        pre { class: "p-3 whitespace-pre-wrap break-all",
+                            for (kind, line) in diff.iter() {
+                                {
+                                    let cls = match kind {
+                                        DiffKind::Add => "block bg-success/10 text-success-strong px-2",
+                                        DiffKind::Remove => "block bg-danger/10 text-danger-strong px-2",
+                                        DiffKind::Context => "block text-fg-muted px-2",
+                                    };
+                                    let prefix = match kind {
+                                        DiffKind::Add => "+ ",
+                                        DiffKind::Remove => "- ",
+                                        DiffKind::Context => "  ",
+                                    };
+                                    rsx! { span { class: cls, "{prefix}{line}" } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum DiffKind {
+    Add,
+    Remove,
+    Context,
+}
+
+/// Naïve unified diff: walks both line lists in parallel, emitting
+/// removed-then-added blocks where they diverge. Good enough for
+/// human-readable JSON config diffs (line-aligned, modest size). Not
+/// LCS — but the editor's JSON is `to_string_pretty`'d so untouched
+/// regions stay byte-identical, which keeps the diff readable.
+fn unified_line_diff(saved: &[&str], draft: &[&str]) -> Vec<(DiffKind, String)> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < saved.len() || j < draft.len() {
+        match (saved.get(i), draft.get(j)) {
+            (Some(a), Some(b)) if a == b => {
+                out.push((DiffKind::Context, (*a).to_string()));
+                i += 1;
+                j += 1;
+            }
+            (Some(a), Some(b)) => {
+                // Look ahead a small window to find the closest re-sync.
+                let mut found = None;
+                let win = 8usize;
+                for k in 1..=win {
+                    if let Some(future) = draft.get(j + k) {
+                        if future == a {
+                            found = Some(("draft_ahead", k));
+                            break;
+                        }
+                    }
+                    if let Some(future) = saved.get(i + k) {
+                        if future == b {
+                            found = Some(("saved_ahead", k));
+                            break;
+                        }
+                    }
+                }
+                match found {
+                    Some(("draft_ahead", k)) => {
+                        for n in 0..k {
+                            out.push((DiffKind::Add, draft[j + n].to_string()));
+                        }
+                        j += k;
+                    }
+                    Some(("saved_ahead", k)) => {
+                        for n in 0..k {
+                            out.push((DiffKind::Remove, saved[i + n].to_string()));
+                        }
+                        i += k;
+                    }
+                    _ => {
+                        out.push((DiffKind::Remove, (*a).to_string()));
+                        out.push((DiffKind::Add, (*b).to_string()));
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            (Some(a), None) => {
+                out.push((DiffKind::Remove, (*a).to_string()));
+                i += 1;
+            }
+            (None, Some(b)) => {
+                out.push((DiffKind::Add, (*b).to_string()));
+                j += 1;
+            }
+            (None, None) => break,
+        }
+    }
+    out
 }
 
 /// Category ordering used by the structured editor.
@@ -613,11 +808,43 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
     };
     let total_modified_fields: usize = modified_per_section.values().sum();
     let touched_section_count = modified_per_section.len();
+    // Enabled count: a section "counts" if it's always_on, is an array,
+    // has no `enabled` property, or has `enabled = true` in the form.
+    // Mirrors the `SectionFilter::Enabled` logic so the chip and the
+    // filter agree on the count.
+    let enabled_section_count: usize = {
+        let mut count = 0usize;
+        for (_, sections) in &categories {
+            for s in sections {
+                if s.always_on || s.is_array {
+                    count += 1;
+                    continue;
+                }
+                let has_enabled = s
+                    .resolved
+                    .get("properties")
+                    .and_then(|p| p.get("enabled"))
+                    .is_some();
+                if !has_enabled {
+                    count += 1;
+                    continue;
+                }
+                if get_at_path(&form_snapshot, &[s.name.clone()])
+                    .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                    .unwrap_or(false)
+                {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
     {
         let stats = use_context::<EditorStats>();
         let mut mf = stats.modified_fields;
         let mut ms = stats.modified_sections;
         let mut ts = stats.total_sections;
+        let mut es = stats.enabled_sections;
         if *mf.read() != total_modified_fields {
             mf.set(total_modified_fields);
         }
@@ -626,6 +853,9 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
         }
         if *ts.read() != total_sections {
             ts.set(total_sections);
+        }
+        if *es.read() != enabled_section_count {
+            es.set(enabled_section_count);
         }
     }
     let section_passes_filter = move |s: &SectionMeta| -> bool {
@@ -866,14 +1096,22 @@ fn StructuredEditor(cluster_id: String, schema: serde_json::Value, json_text: Si
                         }
                     })}
                 }
-                // Footer — config history shortcut. The right rail
-                // mirrors the design's bottom-of-rail tools strip.
-                div { class: "border-t border-line pt-3 mt-3 px-2",
+                // Footer anchors — surface the page-level sections that
+                // live below the schema-driven editor (Secrets, History).
+                // Without these entries the rail looks like it ends with
+                // the schema sections while the page continues underneath.
+                div { class: "border-t border-line pt-3 mt-3 space-y-0.5",
+                    a {
+                        href: "#sec-secrets",
+                        class: "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
+                        span { class: "dot dot-info" }
+                        span { class: "truncate flex-1", {t!("secrets-title")} }
+                    }
                     a {
                         href: "#sec-config-history",
                         class: "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-fg-muted hover:text-fg-strong hover:bg-surface-2 transition-colors",
-                        span { "⟲" }
-                        span { {t!("cluster-detail-tab-config-history")} }
+                        span { class: "dot dot-muted" }
+                        span { class: "truncate flex-1", {t!("cluster-detail-tab-config-history")} }
                     }
                 }
             }
@@ -1332,7 +1570,10 @@ fn ArrayEntrySectionCard(
     }
 }
 
-/// Render the "+ Add entry" button for array sections.
+/// Render the "+ Add entry" button for array sections. The label is
+/// per-section so the affordance reads naturally — "+ Add cloud LLM
+/// provider" instead of the generic "+ Add entry". Section names that
+/// don't have a specific label fall back to the generic copy.
 fn render_add_entry_button(
     section_name: &str,
     items_schema: &serde_json::Value,
@@ -1343,10 +1584,15 @@ fn render_add_entry_button(
     let path = vec![section_name.to_string()];
     let items_schema = items_schema.clone();
     let defs = defs.clone();
+    let label = match section_name {
+        "cloud" => t!("config-add-cloud"),
+        "custom-service" => t!("config-add-custom-service"),
+        _ => t!("config-editor-add-entry"),
+    };
     rsx! {
         button {
             r#type: "button",
-            class: "btn btn-sm btn-ghost w-full border border-dashed border-line text-fg-muted",
+            class: "btn btn-sm btn-ghost w-full border border-dashed border-line text-fg-muted hover:text-brand hover:border-brand transition-colors",
             onclick: move |_| {
                 let mut arr = get_at_path(&form_values.read(), &path)
                     .and_then(|v| v.as_array().cloned())
@@ -1356,7 +1602,7 @@ fn render_add_entry_button(
                 set_at_path(&mut form_values, &path, serde_json::Value::Array(arr));
                 json_text.set(serde_json::to_string_pretty(&*form_values.read()).unwrap_or_default());
             },
-            {t!("config-editor-add-entry")}
+            "{label}"
         }
     }
 }
@@ -1409,12 +1655,31 @@ fn SectionFieldRow(
         text.set(serde_json::to_string_pretty(&json).unwrap_or_default());
     };
 
-    // Special-case: extra_config under openclaw
+    // Special-case: extra_config under openclaw — render in the same
+    // row layout as every other field so it visually aligns with the
+    // gateway / skills / telegram sub-cards below. Without the wrapper
+    // it sat flush against the openclaw card edges with its own
+    // bespoke alignment, which made the section feel "two-headed".
     if field_name == "extra_config" && section_name.contains("openclaw") {
         return rsx! {
-            ExtraConfigField {
-                form_values,
-                open: extra_config_open,
+            div { class: "px-4 py-3 border-t border-line",
+                div { class: "grid grid-cols-[1fr_28px] gap-2 items-start sm:grid-cols-[200px_1fr_28px] sm:gap-3",
+                    div { class: "pt-1.5",
+                        div { class: "flex items-center gap-1.5",
+                            span { class: "text-xs font-medium font-mono text-fg-strong", "{field_name}" }
+                        }
+                        if !description.is_empty() {
+                            p { class: "text-[11px] text-fg-faint mt-0.5 leading-tight", "{description}" }
+                        }
+                    }
+                    div { class: "min-w-0 col-span-2 sm:col-span-1",
+                        ExtraConfigField {
+                            form_values,
+                            open: extra_config_open,
+                        }
+                    }
+                    div { class: "flex justify-end pt-1" }
+                }
             }
         };
     }
@@ -1433,24 +1698,54 @@ fn SectionFieldRow(
     }
 
     if is_object {
-        // Render as a nested subsection
+        // Render as a nested sub-card. Tinted surface + rounded edges
+        // give subsections (gateway / skills / telegram inside openclaw)
+        // their own visual container without re-using the heavy outer
+        // section card chrome — keeps the hierarchy readable when an
+        // agent has many subsections. Sub-card fields are routed
+        // through `SectionFieldRow` (the same renderer used for
+        // top-level fields) so the "label · input · reset" 3-column
+        // grid is consistent at every depth — gateway.host now lines
+        // up with daemon.health_interval rather than stacking
+        // label-on-top via the legacy flat layout.
+        let nested_section = field_path.join(".");
+        let child_props = resolved
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .cloned()
+            .unwrap_or_default();
+        let defs_clone = defs.clone();
         return rsx! {
-            div { class: "border-t border-line px-4 py-3",
-                div { class: "border-l-2 border-info pl-3",
-                    label { class: "text-sm font-semibold text-info", "{field_name}" }
-                    if !description.is_empty() {
-                        p { class: "text-xs text-fg-muted mt-0.5", "{description}" }
+            div { class: "border-t border-line",
+                div { class: "m-3 rounded-lg bg-surface-2/60 border border-line-soft overflow-hidden",
+                    div { class: "px-4 py-2.5 border-b border-line-soft bg-surface-2/40",
+                        div { class: "flex items-center gap-2",
+                            span { class: "kicker text-info", "{field_name}" }
+                        }
+                        if !description.is_empty() {
+                            p { class: "text-xs text-fg-muted mt-0.5 leading-snug", "{description}" }
+                        }
                     }
-                    {render_section_fields(
-                        &resolved,
-                        &defs,
-                        field_path,
-                        form_values,
-                        json_text,
-                        extra_config_open,
-                        cluster_id,
-                        sync,
-                    )}
+                    div {
+                        for (cname, cschema) in child_props.into_iter() {
+                            {
+                                let key = format!("{nested_section}.{cname}");
+                                rsx! {
+                                    SectionFieldRow {
+                                        key: "{key}",
+                                        section_name: nested_section.clone(),
+                                        field_name: cname,
+                                        field_schema: cschema,
+                                        defs: defs_clone.clone(),
+                                        form_values,
+                                        json_text,
+                                        extra_config_open,
+                                        cluster_id: cluster_id.clone(),
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         };
@@ -1464,7 +1759,11 @@ fn SectionFieldRow(
 
     rsx! {
         div { class: "px-4 py-3 border-t border-line",
-            div { class: "grid grid-cols-[200px_1fr_28px] gap-3 items-start",
+            // Two-track layout on phones (label on top, input below) so
+            // the schema's verbose snake_case field names don't get
+            // crushed into a 200px column. Switches to the desktop
+            // 3-column grid at `sm+`.
+            div { class: "grid grid-cols-[1fr_28px] gap-2 items-start sm:grid-cols-[200px_1fr_28px] sm:gap-3",
                 // Label column
                 div { class: if field_type == "boolean" { "pt-0" } else { "pt-1.5" },
                     div { class: "flex items-center gap-1.5",
@@ -1477,14 +1776,19 @@ fn SectionFieldRow(
                         p { class: "text-[11px] text-fg-faint mt-0.5 leading-tight", "{description}" }
                     }
                 }
-                // Input column
-                div { class: "min-w-0",
+                // Input column. On phones it spans both grid columns
+                // (under the label) so the field gets the full row
+                // width; on `sm+` it sits as the middle column.
+                div { class: "min-w-0 col-span-2 sm:col-span-1",
                     {render_field_input(
                         &field_type,
                         &resolved,
                         &defs,
                         is_secret,
                         current_value.clone(),
+                        schema_default.as_ref(),
+                        &description,
+                        &field_name,
                         fp.clone(),
                         fp2.clone(),
                         form_values,
@@ -1522,6 +1826,18 @@ fn SectionFieldRow(
 }
 
 /// Render the appropriate input widget for a field based on its schema type.
+///
+/// `schema_default` is used as a visual fall-back when the user hasn't set
+/// a value yet: text/number inputs show it as a `placeholder`, booleans
+/// flip ON when the schema default is `true`, and selects pre-highlight
+/// the matching option. The form state itself stays empty, so saving a
+/// pristine field keeps the JSON sparse — serde will re-apply the default
+/// on read either way.
+///
+/// When the schema has no `default`, the placeholder falls back to the
+/// field's `description` (truncated) so every input gives the user *some*
+/// hint about what to enter — addressing the "every field needs a
+/// placeholder" UX request.
 #[allow(clippy::too_many_arguments)]
 fn render_field_input(
     field_type: &str,
@@ -1529,6 +1845,9 @@ fn render_field_input(
     defs: &serde_json::Value,
     is_secret: bool,
     current_value: Option<serde_json::Value>,
+    schema_default: Option<&serde_json::Value>,
+    description: &str,
+    field_label: &str,
     fp: Vec<String>,
     fp2: Vec<String>,
     mut form_values: Signal<serde_json::Value>,
@@ -1538,11 +1857,20 @@ fn render_field_input(
     sync: impl Fn() + Clone + 'static,
     field_name: String,
 ) -> Element {
+    // Build a fallback placeholder for fields without a schema default
+    // — see `placeholder_fallback`. Computed once here so each match
+    // arm can reuse it without re-parsing the description.
+    let description_placeholder = placeholder_fallback(description, field_label);
     match field_type {
         "boolean" => {
+            // Visual fall-back: when the field hasn't been explicitly set,
+            // surface the schema default so toggles look correct on a
+            // sparse config. Serde would apply the same default on read,
+            // so the toggle's "off without user input" state is misleading.
             let checked = current_value
                 .as_ref()
                 .and_then(|v| v.as_bool())
+                .or_else(|| schema_default.and_then(|d| d.as_bool()))
                 .unwrap_or(false);
             let sync_c = sync.clone();
             rsx! {
@@ -1568,14 +1896,23 @@ fn render_field_input(
                 .and_then(|v| v.as_i64())
                 .map(|n| n.to_string())
                 .unwrap_or_default();
+            let placeholder_str = schema_default
+                .and_then(|d| d.as_i64())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| description_placeholder.clone());
             let sync_c = sync.clone();
             rsx! {
                 input {
                     r#type: "number",
                     class: "input input-sm font-mono",
                     value: val_str,
+                    placeholder: placeholder_str,
                     oninput: move |evt| {
-                        if let Ok(n) = evt.value().parse::<i64>() {
+                        let v = evt.value();
+                        if v.is_empty() {
+                            remove_at_path(&mut form_values, &fp);
+                            sync_c();
+                        } else if let Ok(n) = v.parse::<i64>() {
                             set_at_path(&mut form_values, &fp,
                                 serde_json::json!(n));
                             sync_c();
@@ -1778,20 +2115,34 @@ fn render_field_input(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let default_str = schema_default
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
             let sync_c = sync.clone();
             if !enum_values.is_empty() {
-                let selected_val = val_str.clone();
+                // For selects, fall back to the default option when the
+                // form value is unset, so the user sees the active default
+                // rather than a meaningless "Select…" prompt.
+                let effective_val = if val_str.is_empty() && !default_str.is_empty() {
+                    default_str.clone()
+                } else {
+                    val_str.clone()
+                };
+                let selected_val = effective_val.clone();
                 rsx! {
                     div { class: "relative",
                         select {
                             class: "input input-sm font-mono appearance-none pr-8",
-                            value: val_str,
+                            value: effective_val,
                             onchange: move |evt| {
                                 set_at_path(&mut form_values, &fp,
                                     serde_json::Value::String(evt.value()));
                                 sync_c();
                             },
-                            option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
+                            if default_str.is_empty() {
+                                option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
+                            }
                             {enum_values.iter().map(|v| {
                                 let is_selected = *v == selected_val;
                                 let v = v.clone();
@@ -1817,11 +2168,17 @@ fn render_field_input(
                     }
                 }
             } else {
+                let placeholder_text = if !default_str.is_empty() {
+                    default_str.clone()
+                } else {
+                    description_placeholder.clone()
+                };
                 rsx! {
                     input {
                         r#type: "text",
                         class: "input input-sm font-mono",
                         value: val_str,
+                        placeholder: placeholder_text,
                         oninput: move |evt| {
                             let v = evt.value();
                             if v.is_empty() {
@@ -2025,6 +2382,28 @@ fn SecretField(
     }
 }
 
+/// Build the placeholder shown when a field has no schema `default`.
+/// Trims the description to its first sentence and caps at 60 chars so
+/// narrow input boxes stay legible; falls back to "Enter {field}" when
+/// the schema doesn't carry a description either. Both render paths
+/// (`render_field_input` and the legacy `render_section_fields` mirror)
+/// route through here so they stay in sync.
+fn placeholder_fallback(description: &str, field_label: &str) -> String {
+    if description.is_empty() {
+        return format!("Enter {field_label}");
+    }
+    let first_sentence = description
+        .split(|c: char| c == '.' || c == '\n')
+        .next()
+        .unwrap_or(description)
+        .trim();
+    if first_sentence.chars().count() > 60 {
+        format!("{}…", first_sentence.chars().take(60).collect::<String>())
+    } else {
+        first_sentence.to_string()
+    }
+}
+
 fn resolve_ref(schema: &serde_json::Value, defs: &serde_json::Value) -> serde_json::Value {
     // Direct $ref
     if let Some(r) = schema.get("$ref").and_then(|r| r.as_str()) {
@@ -2189,6 +2568,7 @@ fn render_section_fields(
                                 let checked = current_value
                                     .as_ref()
                                     .and_then(|v| v.as_bool())
+                                    .or_else(|| schema_default.as_ref().and_then(|d| d.as_bool()))
                                     .unwrap_or(false);
                                 let fp = fp.clone();
                                 let sync_c = sync.clone();
@@ -2211,15 +2591,27 @@ fn render_section_fields(
                                     .and_then(|v| v.as_i64())
                                     .map(|n| n.to_string())
                                     .unwrap_or_default();
+                                let placeholder_str = schema_default
+                                    .as_ref()
+                                    .and_then(|d| d.as_i64())
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| placeholder_fallback(&description, &field_name));
                                 let fp = fp.clone();
+                                let fp_clear = fp.clone();
                                 let sync_c = sync.clone();
+                                let sync_clear = sync.clone();
                                 rsx! {
                                     input {
                                         r#type: "number",
                                         class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
                                         value: val_str,
+                                        placeholder: placeholder_str,
                                         oninput: move |evt| {
-                                            if let Ok(n) = evt.value().parse::<i64>() {
+                                            let v = evt.value();
+                                            if v.is_empty() {
+                                                remove_at_path(&mut form_values, &fp_clear);
+                                                sync_clear();
+                                            } else if let Ok(n) = v.parse::<i64>() {
                                                 set_at_path(&mut form_values, &fp,
                                                     serde_json::json!(n));
                                                 sync_c();
@@ -2434,20 +2826,32 @@ fn render_section_fields(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string();
+                                let default_str = schema_default
+                                    .as_ref()
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 let sync_c = sync.clone();
                                 if !enum_values.is_empty() {
                                     let fp = fp.clone();
-                                    let selected_val = val_str.clone();
+                                    let effective_val = if val_str.is_empty() && !default_str.is_empty() {
+                                        default_str.clone()
+                                    } else {
+                                        val_str.clone()
+                                    };
+                                    let selected_val = effective_val.clone();
                                     rsx! {
                                         select {
                                             class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
-                                            value: val_str,
+                                            value: effective_val,
                                             onchange: move |evt| {
                                                 set_at_path(&mut form_values, &fp,
                                                     serde_json::Value::String(evt.value()));
                                                 sync_c();
                                             },
-                                            option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
+                                            if default_str.is_empty() {
+                                                option { value: "", selected: selected_val.is_empty(), {t!("config-editor-select")} }
+                                            }
                                             {enum_values.iter().map(|v| {
                                                 let is_selected = *v == selected_val;
                                                 let v = v.clone();
@@ -2468,11 +2872,17 @@ fn render_section_fields(
                                         }
                                     }
                                 } else {
+                                    let placeholder_text = if !default_str.is_empty() {
+                                        default_str.clone()
+                                    } else {
+                                        placeholder_fallback(&description, &field_name)
+                                    };
                                     rsx! {
                                         input {
                                             r#type: "text",
                                             class: "border border-line rounded px-2 dark:bg-surface-2 dark:text-fg py-1 text-sm w-full",
                                             value: val_str,
+                                            placeholder: placeholder_text,
                                             oninput: move |evt| {
                                                 let v = evt.value();
                                                 if v.is_empty() {

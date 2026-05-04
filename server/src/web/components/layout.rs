@@ -167,7 +167,11 @@ pub fn Layout() -> Element {
         // right segment carries the controls + the hairline border-b
         // that separates chrome from content. Sidebar + main share
         // the row beneath.
-        div { class: "h-screen w-full flex flex-col overflow-hidden",
+        // `h-dvh` resolves to `100dvh` (dynamic viewport height): in iOS
+        // Safari it tracks the URL bar so the shell never overflows the
+        // visible viewport. We keep `h-screen` as the fallback for older
+        // browsers that don't know about `dvh`.
+        div { class: "h-screen h-dvh w-full flex flex-col overflow-hidden",
             Topbar {
                 display_name: display_name.clone(),
                 is_drawer_open: drawer_open,
@@ -192,7 +196,10 @@ pub fn Layout() -> Element {
                         }
                     }
 
-                    main { class: "flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8",
+                    // `overscroll-contain` traps rubber-band scrolls in
+                    // Safari to this element so the document body doesn't
+                    // chain-scroll out from under the topbar.
+                    main { class: "flex-1 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain p-4 sm:p-6 lg:p-8",
                         Breadcrumbs {}
                         SuspenseBoundary {
                             fallback: |_| rsx! { LoadingSpinner {} },

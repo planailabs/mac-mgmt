@@ -798,6 +798,11 @@ config-save-summary = { $fields ->
    *[other] { $sections } sections
 }
 config-save-discard = Discard
+config-save-draft = Draft
+config-save-review-diff = Review diff
+config-save-review-diff-title = Review unsaved changes
+config-save-review-diff-help = Diff against the last server snapshot. Click outside to close.
+config-save-review-diff-empty = No textual changes detected.
 config-editor-last-saved = Last saved: { $time }
 config-editor-no-config = No config saved yet.
 config-editor-key-hash = key_hash
@@ -806,6 +811,8 @@ config-editor-generate = Generate
 config-editor-key-warning = Save this key now — it will not be shown again:
 config-editor-dismiss = Dismiss
 config-editor-add-entry = + Add entry
+config-add-cloud = + Add cloud LLM provider
+config-add-custom-service = + Add custom service
 config-editor-reset-default = reset to default
 config-editor-add-item = Add item...
 config-editor-select = -- select --
@@ -996,13 +1003,15 @@ cluster-packages-no-manual = No manual packages added.
 
 secrets-title = Secrets Vault
 secrets-description = Secrets are encrypted at rest and can be referenced in config fields as secret:NAME.
-secrets-empty = No secrets stored yet.
+secrets-empty = No secrets stored yet. Add one to reference it from any config field with secret:NAME.
 secrets-col-name = Name
 secrets-col-reference = Config Reference
 secrets-col-value = Value
 secrets-col-created = Created
 secrets-col-actions = Actions
 secrets-add = Add Secret
+secrets-add-hint = encrypted at rest
+secrets-click-to-copy = Click to copy reference
 secrets-update = Update
 secrets-new-value = New value...
 secrets-value-placeholder = Secret value...

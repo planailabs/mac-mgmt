@@ -798,6 +798,11 @@ config-save-summary = { $fields ->
    *[other] { $sections } Abschnitten
 }
 config-save-discard = Verwerfen
+config-save-draft = Entwurf
+config-save-review-diff = Änderungen prüfen
+config-save-review-diff-title = Ungespeicherte Änderungen prüfen
+config-save-review-diff-help = Vergleich mit dem letzten Server-Stand. Klick außerhalb zum Schließen.
+config-save-review-diff-empty = Keine textuellen Änderungen.
 config-editor-last-saved = Zuletzt gespeichert: { $time }
 config-editor-no-config = Noch keine Konfiguration gespeichert.
 config-editor-key-hash = key_hash
@@ -806,6 +811,8 @@ config-editor-generate = Generieren
 config-editor-key-warning = Diesen Schlüssel jetzt speichern — er wird nicht erneut angezeigt:
 config-editor-dismiss = Schließen
 config-editor-add-entry = + Eintrag hinzufügen
+config-add-cloud = + Cloud-LLM-Anbieter hinzufügen
+config-add-custom-service = + Benutzerdef. Dienst hinzufügen
 config-editor-reset-default = auf Standard zurücksetzen
 config-editor-add-item = Element hinzufügen...
 config-editor-select = -- auswählen --
@@ -996,13 +1003,15 @@ cluster-packages-no-manual = Keine manuellen Pakete hinzugefügt.
 
 secrets-title = Secret-Vault
 secrets-description = Secrets werden verschlüsselt gespeichert und können in Konfigurationsfeldern als secret:NAME referenziert werden.
-secrets-empty = Noch keine Secrets gespeichert.
+secrets-empty = Noch keine Secrets gespeichert. Füge eines hinzu, um es als secret:NAME in beliebigen Config-Feldern zu referenzieren.
 secrets-col-name = Name
 secrets-col-reference = Konfig-Referenz
 secrets-col-value = Wert
 secrets-col-created = Erstellt
 secrets-col-actions = Aktionen
 secrets-add = Secret hinzufügen
+secrets-add-hint = verschlüsselt gespeichert
+secrets-click-to-copy = Klicken zum Kopieren
 secrets-update = Aktualisieren
 secrets-new-value = Neuer Wert...
 secrets-value-placeholder = Secret-Wert...

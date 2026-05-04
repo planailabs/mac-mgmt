@@ -163,6 +163,11 @@ fn sort_tree(node: &mut Node) {
 /// Inline trigger button shown inside the structured config form. The
 /// modal itself is rendered at a higher level (StructuredEditor) so it
 /// stays mounted regardless of whether the openclaw section is collapsed.
+///
+/// The label + description are rendered by the caller (the field-row
+/// grid in `render_one_field`), so this component only emits the
+/// "Edit…" button + key-count chip — that way `extra_config` lines up
+/// with every other field in the openclaw card.
 #[component]
 pub fn ExtraConfigField(form_values: Signal<serde_json::Value>, mut open: Signal<bool>) -> Element {
     let path = vec!["openclaw".to_string(), "extra_config".to_string()];
@@ -173,22 +178,18 @@ pub fn ExtraConfigField(form_values: Signal<serde_json::Value>, mut open: Signal
         .unwrap_or(0);
 
     rsx! {
-        div { class: "flex flex-col gap-0.5",
-            label { class: "text-sm font-medium text-fg-strong", {t!("extra-config-label")} }
-            p { class: "text-xs text-fg-muted",
-                {t!("extra-config-help")}
+        div { class: "flex items-center gap-2 flex-wrap",
+            button { r#type: "button",
+                class: "btn btn-sm btn-primary",
+                onclick: move |evt| {
+                    evt.prevent_default();
+                    evt.stop_propagation();
+                    open.set(true);
+                },
+                {t!("extra-config-edit")}
             }
-            div {
-                button { r#type: "button",
-                    class: "btn btn-md btn-primary",
-                    onclick: move |evt| {
-                        evt.prevent_default();
-                        evt.stop_propagation();
-                        open.set(true);
-                    },
-                    {t!("extra-config-edit")}
-                }
-                span { class: "ml-2 text-xs text-fg-muted", {t!("extra-config-values-set", count: key_count)} }
+            span { class: "text-xs text-fg-muted",
+                {t!("extra-config-values-set", count: key_count)}
             }
         }
     }
