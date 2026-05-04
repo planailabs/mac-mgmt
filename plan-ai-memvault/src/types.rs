@@ -320,8 +320,8 @@ pub struct DocHistoryParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct RetractParams {
-    /// Hex-encoded CID of the memory to retract.
-    pub cid: String,
+    /// Node to retract — "doc:<hex>", "entity:<hex>", or "attachment:<hex>".
+    pub node: String,
     /// Reason for retraction.
     pub reason: String,
 }

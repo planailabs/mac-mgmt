@@ -274,20 +274,9 @@ impl MemvaultServer {
         ok_or_err!(self.client.list_all(params.view.as_deref(), params.limit.unwrap_or(100)).await)
     }
 
-    #[tool(name = "memvault_retract", description = "Retract any node by type:hex ID or raw CID. Removes from search, graph, and views.")]
+    #[tool(name = "memvault_retract", description = "Retract (soft-delete) any node. Node must be in type:hex format: doc:<hex>, entity:<hex>, or attachment:<hex>.")]
     async fn retract(&self, Parameters(params): Parameters<RetractParams>) -> String {
-        let node_id = &params.cid;
-        if node_id.contains(':') {
-            ok_or_err!(self.client.retract_node(node_id, &params.reason).await)
-        } else {
-            match self.client.retract(node_id, &params.reason).await {
-                Ok(resp) => serde_json::json!({
-                    "tombstone_cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
-                    "status": "retracted"
-                }).to_string(),
-                Err(e) => format!("error: {e}"),
-            }
-        }
+        ok_or_err!(self.client.retract_node(&params.node, &params.reason).await)
     }
 
     // ── Tags ───────────────────────────────────────────────────────
