@@ -52,19 +52,39 @@ impl<'a> Vfs<'a> {
     async fn find_or_create_root(&self) -> Result<String> {
         let entities = self.backend.list_entities(500).await?;
         let empty = vec![];
-        let arr = entities.as_array().unwrap_or(&empty);
+        // Handle both: plain array (local backend) or {"nodes":[...]} (HTTP backend)
+        let arr = entities
+            .as_array()
+            .or_else(|| entities.get("nodes").and_then(|v| v.as_array()))
+            .unwrap_or(&empty);
         let mut candidates: Vec<String> = Vec::new();
         for e in arr {
-            if e.get("kind").and_then(|v| v.as_str()) == Some(VFS_DIR_KIND) {
-                let id = e.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-                if id.is_empty() {
-                    continue;
-                }
+            // Accept local ("kind") or HTTP ("node_type" == "entity") entries
+            let kind_match = e.get("kind").and_then(|v| v.as_str()) == Some(VFS_DIR_KIND);
+            let is_entity = e.get("node_type").and_then(|v| v.as_str()) == Some("entity");
+            if !kind_match && !is_entity {
+                continue;
+            }
+            // Get bare hex ID: "id" (local) or "node_id" with prefix (HTTP)
+            let raw_id = e
+                .get("id")
+                .or_else(|| e.get("node_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let id = raw_id.strip_prefix("entity:").unwrap_or(raw_id);
+            if id.is_empty() {
+                continue;
+            }
+            // Check for root tag — try inline tags first, fall back to API
+            let is_root = if let Some(tags) = e.get("tags").and_then(|v| v.as_array()) {
+                has_tag_inline(tags, VFS_ROOT_TAG.0, VFS_ROOT_TAG.1)
+            } else {
                 let node_id = format!("entity:{id}");
                 let tags_val = self.backend.get_tags(&node_id).await?;
-                if has_tag(&tags_val, VFS_ROOT_TAG.0, VFS_ROOT_TAG.1) {
-                    candidates.push(id.to_string());
-                }
+                has_tag(&tags_val, VFS_ROOT_TAG.0, VFS_ROOT_TAG.1)
+            };
+            if is_root {
+                candidates.push(id.to_string());
             }
         }
 
@@ -195,10 +215,12 @@ impl<'a> Vfs<'a> {
             .backend
             .add_entity(VFS_DIR_KIND, serde_json::json!({ "name": name }), None)
             .await?;
-        resp.get("id")
+        let raw = resp
+            .get("id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .context("add_entity did not return id")
+            .context("add_entity did not return id")?;
+        // Strip prefix if present (HTTP backend may include it)
+        Ok(raw.strip_prefix("entity:").unwrap_or(raw).to_string())
     }
 
     async fn create_child_edge(
@@ -488,16 +510,22 @@ fn node_type_prefix(node_id: &str) -> &'static str {
 
 fn has_tag(tags_val: &serde_json::Value, scope: &str, label: &str) -> bool {
     if let Some(tags) = tags_val.get("tags").and_then(|v| v.as_array()) {
-        for tag in tags {
-            let ts = tag.as_array().map(|a| {
-                (
-                    a.first().and_then(|v| v.as_str()).unwrap_or_default(),
-                    a.get(1).and_then(|v| v.as_str()).unwrap_or_default(),
-                )
-            });
-            if ts == Some((scope, label)) {
-                return true;
-            }
+        return has_tag_inline(tags, scope, label);
+    }
+    false
+}
+
+/// Check tags from an inline array (as returned in list_all / list_entities responses).
+fn has_tag_inline(tags: &[serde_json::Value], scope: &str, label: &str) -> bool {
+    for tag in tags {
+        let ts = tag.as_array().map(|a| {
+            (
+                a.first().and_then(|v| v.as_str()).unwrap_or_default(),
+                a.get(1).and_then(|v| v.as_str()).unwrap_or_default(),
+            )
+        });
+        if ts == Some((scope, label)) {
+            return true;
         }
     }
     false
