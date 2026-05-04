@@ -134,20 +134,20 @@ impl Backend for LocalBackend {
         })).collect::<Vec<_>>()))
     }
 
-    async fn attach_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> {
-        let cid = self.client.attach_file(data, Some(filename), content_type, vec![], "internal").await
+    async fn upload_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> {
+        let cid = self.client.upload_file(data, Some(filename), content_type, vec![], "internal").await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(serde_json::json!({ "cid": hex::encode(&cid) }))
     }
 
-    async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>> {
+    async fn download_file(&self, cid_hex: &str) -> Result<Vec<u8>> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.read_attachment(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client.read_file(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    async fn read_attachment_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+    async fn read_file_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.read_attachment_range(&cid_bytes, start, end).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client.read_file_range(&cid_bytes, start, end).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>> {
@@ -155,9 +155,9 @@ impl Backend for LocalBackend {
         self.client.read_extracted_text(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
+    async fn get_file_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
         let cid_bytes = hex::decode(cid_hex)?;
-        let data = self.client.get_attachment_manifest(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let data = self.client.get_file_manifest(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         match data {
             Some(bytes) => {
                 let val = serde_json::from_slice(&bytes)
@@ -168,14 +168,14 @@ impl Backend for LocalBackend {
         }
     }
 
-    async fn pin_attachment(&self, cid_hex: &str) -> Result<()> {
+    async fn pin_file(&self, cid_hex: &str) -> Result<()> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.pin_attachment(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client.pin_file(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    async fn unpin_attachment(&self, cid_hex: &str) -> Result<()> {
+    async fn unpin_file(&self, cid_hex: &str) -> Result<()> {
         let cid_bytes = hex::decode(cid_hex)?;
-        self.client.unpin_attachment(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
+        self.client.unpin_file(&cid_bytes).await.map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> {

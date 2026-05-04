@@ -13,14 +13,14 @@ pub trait Backend: Send + Sync {
     async fn list_docs(&self, tag_ns: Option<&str>, tag_val: Option<&str>, limit: usize) -> Result<serde_json::Value>;
     async fn history_of(&self, doc_id: &str) -> Result<serde_json::Value>;
 
-    // -- Attachments --
-    async fn attach_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value>;
-    async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>>;
-    async fn read_attachment_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>>;
+    // -- Files --
+    async fn upload_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value>;
+    async fn download_file(&self, cid_hex: &str) -> Result<Vec<u8>>;
+    async fn read_file_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>>;
     async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>>;
-    async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>>;
-    async fn pin_attachment(&self, cid_hex: &str) -> Result<()>;
-    async fn unpin_attachment(&self, cid_hex: &str) -> Result<()>;
+    async fn get_file_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>>;
+    async fn pin_file(&self, cid_hex: &str) -> Result<()>;
+    async fn unpin_file(&self, cid_hex: &str) -> Result<()>;
 
     // -- Graph --
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value>;

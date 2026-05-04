@@ -98,9 +98,9 @@ impl HttpClient {
         Ok(resp.json().await?)
     }
 
-    // ── Attachments ──────────────────────────────────────────────────
+    // ── Files ────────────────────────────────────────────────────────
 
-    pub async fn attach_file(
+    pub async fn upload_file(
         &self,
         data: &[u8],
         filename: &str,
@@ -112,7 +112,7 @@ impl HttpClient {
         let form = reqwest::multipart::Form::new().part("file", part);
         let resp = self
             .client
-            .post(self.url("/attachments"))
+            .post(self.url("/files"))
             .multipart(form)
             .send()
             .await?
@@ -120,20 +120,20 @@ impl HttpClient {
         Ok(resp.json().await?)
     }
 
-    pub async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>> {
+    pub async fn download_file(&self, cid_hex: &str) -> Result<Vec<u8>> {
         let resp = self
             .client
-            .get(self.url(&format!("/attachments/{cid_hex}")))
+            .get(self.url(&format!("/files/{cid_hex}")))
             .send()
             .await?
             .error_for_status()?;
         Ok(resp.bytes().await?.to_vec())
     }
 
-    pub async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn get_file_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> {
         let resp = self
             .client
-            .get(self.url(&format!("/attachments/{cid_hex}/manifest")))
+            .get(self.url(&format!("/files/{cid_hex}/manifest")))
             .send()
             .await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
@@ -242,18 +242,18 @@ impl Backend for HttpClient {
         let resp = self.client.get(self.url(&format!("/docs/{doc_id}/history"))).send().await?.error_for_status()?;
         Ok(resp.json().await?)
     }
-    async fn attach_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> { self.attach_file(data, filename, content_type).await }
-    async fn download_attachment(&self, cid_hex: &str) -> Result<Vec<u8>> { self.download_attachment(cid_hex).await }
-    async fn read_attachment_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+    async fn upload_file(&self, data: &[u8], filename: &str, content_type: &str) -> Result<serde_json::Value> { self.upload_file(data, filename, content_type).await }
+    async fn download_file(&self, cid_hex: &str) -> Result<Vec<u8>> { self.download_file(cid_hex).await }
+    async fn read_file_range(&self, cid_hex: &str, start: u64, end: u64) -> Result<Vec<u8>> {
         // REST API doesn't have a range endpoint yet; download full and slice.
-        let data = self.download_attachment(cid_hex).await?;
+        let data = self.download_file(cid_hex).await?;
         let s = start as usize;
         let e = (end as usize).min(data.len());
         Ok(if s < data.len() { data[s..e].to_vec() } else { vec![] })
     }
     async fn extract_text(&self, cid_hex: &str) -> Result<Option<String>> {
-        let data = self.download_attachment(cid_hex).await?;
-        let manifest = self.get_attachment_manifest(cid_hex).await?;
+        let data = self.download_file(cid_hex).await?;
+        let manifest = self.get_file_manifest(cid_hex).await?;
         let mime = manifest
             .and_then(|m| m.get("mime_type").and_then(|v| v.as_str()).map(String::from))
             .unwrap_or_else(|| "application/octet-stream".to_string());
@@ -265,12 +265,12 @@ impl Backend for HttpClient {
             Ok(Err(_)) | Err(_) => Ok(None),
         }
     }
-    async fn get_attachment_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> { self.get_attachment_manifest(cid_hex).await }
-    async fn pin_attachment(&self, _cid_hex: &str) -> Result<()> {
+    async fn get_file_manifest(&self, cid_hex: &str) -> Result<Option<serde_json::Value>> { self.get_file_manifest(cid_hex).await }
+    async fn pin_file(&self, _cid_hex: &str) -> Result<()> {
         // Pin/unpin REST endpoints not yet available; no-op for HTTP mode.
         Ok(())
     }
-    async fn unpin_attachment(&self, _cid_hex: &str) -> Result<()> {
+    async fn unpin_file(&self, _cid_hex: &str) -> Result<()> {
         Ok(())
     }
     async fn add_entity(&self, kind: &str, props: serde_json::Value, visibility: Option<&str>) -> Result<serde_json::Value> { self.add_entity(kind, props, visibility).await }

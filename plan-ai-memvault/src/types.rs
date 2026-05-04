@@ -61,10 +61,10 @@ pub struct ListParams {
     pub tag_label: Option<String>,
 }
 
-// -- memvault_attach --
+// -- memvault_upload_file --
 
 #[derive(Deserialize, JsonSchema)]
-pub struct AttachParams {
+pub struct UploadFileParams {
     /// Absolute path to the file on the local filesystem.
     pub path: String,
     /// MIME content type. If omitted, guessed from the file extension.
@@ -76,7 +76,7 @@ pub struct AttachParams {
     /// Visibility level: "internal", "federated", or "public". Defaults to "internal".
     #[serde(default)]
     pub visibility: Option<String>,
-    /// Optional VFS path to place the new attachment at (e.g. "/assets/logo.png").
+    /// Optional VFS path to place the new file at (e.g. "/assets/logo.png").
     #[serde(default)]
     pub vfs_path: Option<String>,
 }
@@ -97,7 +97,7 @@ pub struct ReadRangeParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct PinParams {
-    /// Hex-encoded manifest CID of the attachment to pin.
+    /// Hex-encoded manifest CID of the file to pin.
     pub manifest_cid: String,
 }
 
@@ -105,7 +105,7 @@ pub struct PinParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct UnpinParams {
-    /// Hex-encoded manifest CID of the attachment to unpin.
+    /// Hex-encoded manifest CID of the file to unpin.
     pub manifest_cid: String,
 }
 
@@ -113,15 +113,15 @@ pub struct UnpinParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExtractTextParams {
-    /// Hex-encoded manifest CID of the attachment to extract text from.
+    /// Hex-encoded manifest CID of the file to extract text from.
     pub manifest_cid: String,
 }
 
-// -- memvault_attachment_info --
+// -- memvault_file_info --
 
 #[derive(Deserialize, JsonSchema)]
-pub struct AttachmentInfoParams {
-    /// Hex-encoded manifest CID of the attachment.
+pub struct FileInfoParams {
+    /// Hex-encoded manifest CID of the file.
     pub manifest_cid: String,
 }
 
@@ -178,9 +178,9 @@ pub struct GraphQueryParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct LinkParams {
-    /// Source node as "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    /// Source node as "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub source: String,
-    /// Target node — same format as source.
+    /// Target node as "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub target: String,
     /// Relation type (e.g. "references", "evidence_for", "related_to").
     pub relation: String,
@@ -196,7 +196,7 @@ pub struct LinkParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct EdgesOfParams {
-    /// Node to query — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    /// Node to query — "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub node: String,
 }
 
@@ -206,7 +206,7 @@ pub struct EdgesOfParams {
 pub struct UnlinkParams {
     /// Hex-encoded edge ID to remove.
     pub edge_id: String,
-    /// Source node — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    /// Source node — "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub source: String,
 }
 
@@ -226,7 +226,7 @@ pub struct ListAllParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct TagParams {
-    /// Node to tag — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    /// Node to tag — "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub node: String,
     /// Tags to add in "scope:label" format.
     pub tags: Vec<String>,
@@ -236,7 +236,7 @@ pub struct TagParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct UntagParams {
-    /// Node to untag — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    /// Node to untag — "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub node: String,
     /// Tags to remove in "scope:label" format.
     pub tags: Vec<String>,
@@ -246,7 +246,7 @@ pub struct UntagParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct GetTagsParams {
-    /// Node — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    /// Node — "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub node: String,
 }
 
@@ -302,7 +302,7 @@ pub struct ListEntitiesParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct TraverseParams {
-    /// Starting node — "entity:<hex>", "doc:<hex>", or "attachment:<hex>".
+    /// Starting node — "entity:<hex>", "doc:<hex>", or "file:<hex>".
     pub from: String,
     /// Optional relation filter.
     #[serde(default)]
@@ -336,7 +336,7 @@ pub struct DocHistoryParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct RetractParams {
-    /// Node to retract — "doc:<hex>", "entity:<hex>", or "attachment:<hex>".
+    /// Node to retract — "doc:<hex>", "entity:<hex>", or "file:<hex>".
     pub node: String,
     /// Reason for retraction.
     pub reason: String,
@@ -369,7 +369,7 @@ pub struct VfsMkdirParams {
 pub struct VfsLinkParams {
     /// Absolute VFS path where the node should appear (e.g. "/projects/acme/spec.md").
     pub path: String,
-    /// Target node to place at the path — "doc:<hex>", "entity:<hex>", or "attachment:<hex>".
+    /// Target node to place at the path — "doc:<hex>", "entity:<hex>", or "file:<hex>".
     pub target: String,
 }
 
@@ -399,6 +399,6 @@ pub struct VfsTreeParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct VfsFindParams {
-    /// Node ID to search for — "doc:<hex>", "entity:<hex>", or "attachment:<hex>".
+    /// Node ID to search for — "doc:<hex>", "entity:<hex>", or "file:<hex>".
     pub node: String,
 }

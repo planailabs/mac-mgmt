@@ -8238,6 +8238,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "blake3",
+ "memvault-core",
  "redb",
  "serde",
  "serde_json",

@@ -136,8 +136,8 @@ impl MemvaultServer {
 
     // ── Attachments ────────────────────────────────────────────────
 
-    #[tool(name = "memvault_attach", description = "Attach a local file to memvault by its absolute path. Returns the manifest CID.")]
-    async fn attach(&self, Parameters(params): Parameters<AttachParams>) -> String {
+    #[tool(name = "memvault_upload_file", description = "Upload a local file to memvault by its absolute path. Returns the manifest CID.")]
+    async fn upload_file(&self, Parameters(params): Parameters<UploadFileParams>) -> String {
         let path = std::path::Path::new(&params.path);
         let data = match std::fs::read(path) {
             Ok(d) => d,
@@ -147,13 +147,13 @@ impl MemvaultServer {
         let mime_type = params.content_type.as_deref().unwrap_or_else(|| {
             mime_guess::from_path(path).first_raw().unwrap_or("application/octet-stream")
         });
-        match self.client.attach_file(&data, filename, mime_type).await {
+        match self.client.upload_file(&data, filename, mime_type).await {
             Ok(resp) => {
                 let raw_cid = resp.get("cid").and_then(|v| v.as_str()).unwrap_or("");
-                let node_id = if raw_cid.contains(':') { raw_cid.to_string() } else { format!("attachment:{raw_cid}") };
+                let node_id = if raw_cid.contains(':') { raw_cid.to_string() } else { format!("file:{raw_cid}") };
                 let mut result = serde_json::json!({
                     "node_id": node_id, "filename": filename,
-                    "size": data.len(), "mime_type": mime_type, "status": "attached"
+                    "size": data.len(), "mime_type": mime_type, "status": "uploaded"
                 });
                 if let Some(vfs_path) = &params.vfs_path {
                     let vfs = Vfs::new(self.client.as_ref());
@@ -168,9 +168,9 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_read_range", description = "Read a byte range [start, end) from an attachment. Returns base64-encoded bytes.")]
+    #[tool(name = "memvault_read_range", description = "Read a byte range [start, end) from a file. Returns base64-encoded bytes.")]
     async fn read_range(&self, Parameters(params): Parameters<ReadRangeParams>) -> String {
-        match self.client.read_attachment_range(&params.manifest_cid, params.start, params.end).await {
+        match self.client.read_file_range(&params.manifest_cid, params.start, params.end).await {
             Ok(data) => {
                 use base64::Engine;
                 serde_json::json!({
@@ -182,23 +182,23 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_pin", description = "Pin an attachment to prevent garbage collection.")]
+    #[tool(name = "memvault_pin", description = "Pin a file to prevent garbage collection.")]
     async fn pin(&self, Parameters(params): Parameters<PinParams>) -> String {
-        match self.client.pin_attachment(&params.manifest_cid).await {
+        match self.client.pin_file(&params.manifest_cid).await {
             Ok(()) => serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "pinned" }).to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
 
-    #[tool(name = "memvault_unpin", description = "Unpin an attachment, allowing garbage collection.")]
+    #[tool(name = "memvault_unpin", description = "Unpin a file, allowing garbage collection.")]
     async fn unpin(&self, Parameters(params): Parameters<UnpinParams>) -> String {
-        match self.client.unpin_attachment(&params.manifest_cid).await {
+        match self.client.unpin_file(&params.manifest_cid).await {
             Ok(()) => serde_json::json!({ "manifest_cid": params.manifest_cid, "status": "unpinned" }).to_string(),
             Err(e) => format!("error: {e}"),
         }
     }
 
-    #[tool(name = "memvault_extract_text", description = "Extract text from an attachment (PDF, DOCX, HTML, Markdown, plain text).")]
+    #[tool(name = "memvault_extract_text", description = "Extract text from a file (PDF, DOCX, HTML, Markdown, plain text).")]
     async fn extract_text(&self, Parameters(params): Parameters<ExtractTextParams>) -> String {
         match self.client.extract_text(&params.manifest_cid).await {
             Ok(Some(text)) => serde_json::json!({ "manifest_cid": params.manifest_cid, "text": text }).to_string(),
@@ -207,9 +207,9 @@ impl MemvaultServer {
         }
     }
 
-    #[tool(name = "memvault_attachment_info", description = "Get manifest metadata for an attachment.")]
-    async fn attachment_info(&self, Parameters(params): Parameters<AttachmentInfoParams>) -> String {
-        match self.client.get_attachment_manifest(&params.manifest_cid).await {
+    #[tool(name = "memvault_file_info", description = "Get manifest metadata for a file.")]
+    async fn file_info(&self, Parameters(params): Parameters<FileInfoParams>) -> String {
+        match self.client.get_file_manifest(&params.manifest_cid).await {
             Ok(Some(m)) => m.to_string(),
             Ok(None) => format!("error: manifest not found for cid {}", params.manifest_cid),
             Err(e) => format!("error: {e}"),
@@ -307,12 +307,12 @@ impl MemvaultServer {
 
     // ── Nodes (universal) ──────────────────────────────────────────
 
-    #[tool(name = "memvault_list_all", description = "List all nodes (docs, entities, attachments). Optionally filter by view name.")]
+    #[tool(name = "memvault_list_all", description = "List all nodes (docs, entities, files). Optionally filter by view name.")]
     async fn list_all(&self, Parameters(params): Parameters<ListAllParams>) -> String {
         ok_or_err!(self.client.list_all(params.view.as_deref(), params.limit.unwrap_or(100)).await)
     }
 
-    #[tool(name = "memvault_retract", description = "Retract (soft-delete) any node. Node must be in type:hex format: doc:<hex>, entity:<hex>, or attachment:<hex>.")]
+    #[tool(name = "memvault_retract", description = "Retract (soft-delete) any node. Node must be in type:hex format: doc:<hex>, entity:<hex>, or file:<hex>.")]
     async fn retract(&self, Parameters(params): Parameters<RetractParams>) -> String {
         ok_or_err!(self.client.retract_node(&params.node, &params.reason).await)
     }
