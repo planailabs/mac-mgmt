@@ -90,6 +90,35 @@ pub async fn get_self(
     }))
 }
 
+// ── Public server info ────────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ServerInfo {
+    /// External web UI URL (e.g. "https://plan.ai").
+    web_url: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/server-info",
+    tag = "Common",
+    summary = "Get public server information",
+    description = "Returns the server's external web URL. No authentication required.",
+    responses(
+        (status = 200, description = "Server info", body = ServerInfo),
+    ),
+)]
+#[rocket::get("/server-info")]
+pub async fn get_server_info() -> Json<ServerInfo> {
+    let cfg = crate::config::config();
+    let web_url = cfg
+        .auth
+        .as_ref()
+        .map(|a| a.external_url.clone())
+        .unwrap_or_else(|| cfg.api.external_url.clone());
+    Json(ServerInfo { web_url })
+}
+
 // ── Existing sync routes ───────────────────────────────────────────────
 
 /// Aggregate skills from remote skill centers for a cluster.

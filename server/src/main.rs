@@ -531,13 +531,22 @@ fn main() {
                 router = router
                     .route("/auth/login", axum::routing::get(web::auth::login_page))
                     .route("/auth/logout", axum::routing::get(web::auth::logout_handler))
+                    .route(
+                        "/easy-access/direct/{machine}/{tunnel}",
+                        axum::routing::get(web::components::easy_access::easy_access_direct),
+                    )
                     .layer(axum::middleware::from_fn(web::auth::require_auth));
                 for layer in auth_layers {
                     router = router.layer(layer);
                 }
             } else if dev_no_auth {
                 // DEV mode: add require_auth middleware (for dev user injection) without OIDC layer
-                router = router.layer(axum::middleware::from_fn(web::auth::require_auth));
+                router = router
+                    .route(
+                        "/easy-access/direct/{machine}/{tunnel}",
+                        axum::routing::get(web::components::easy_access::easy_access_direct),
+                    )
+                    .layer(axum::middleware::from_fn(web::auth::require_auth));
             }
 
             Ok(router)

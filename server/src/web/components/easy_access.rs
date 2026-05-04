@@ -299,3 +299,126 @@ pub fn EasyAccess() -> Element {
         },
     }
 }
+
+// ── Direct-access redirect (plain axum handler, not Dioxus) ──────────
+
+/// Axum handler for `/easy-access/direct/:machine/:tunnel`.
+///
+/// Creates a proxy token on behalf of the authenticated user and redirects
+/// to the relay tunnel URL. Used by the relay's "Log in" page so the user
+/// can authenticate via the server and land on the tunnel automatically.
+#[cfg(feature = "server")]
+pub async fn easy_access_direct(
+    dioxus::fullstack::axum::extract::Path((machine, tunnel)): dioxus::fullstack::axum::extract::Path<(String, String)>,
+    request: dioxus::fullstack::axum::extract::Request,
+) -> dioxus::fullstack::axum::response::Response {
+    use dioxus::fullstack::axum::{http::StatusCode, response::IntoResponse};
+    use rand::Rng;
+    use sha2::{Digest, Sha256};
+
+    let Some(user) = request.extensions().get::<crate::web::user::WebUser>().cloned() else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+
+    let Ok(pool) = crate::server_pool() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "database unavailable").into_response();
+    };
+
+    // Look up the machine by instance_id prefix.
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        instance_id: String,
+        cluster_id: uuid::Uuid,
+        tunnels: serde_json::Value,
+        relay_proxy_url: Option<String>,
+    }
+
+    let accessible = match user.accessible_cluster_ids(&pool).await {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let row = if let Some(ref ids) = accessible {
+        sqlx::query_as::<_, Row>(
+            "SELECT instance_id, cluster_id, tunnels, relay_proxy_url \
+             FROM daemon_heartbeats \
+             WHERE instance_id LIKE $1 || '%' AND cluster_id = ANY($2) \
+             LIMIT 1",
+        )
+        .bind(&machine)
+        .bind(ids)
+        .fetch_optional(&pool)
+        .await
+    } else {
+        sqlx::query_as::<_, Row>(
+            "SELECT instance_id, cluster_id, tunnels, relay_proxy_url \
+             FROM daemon_heartbeats \
+             WHERE instance_id LIKE $1 || '%' \
+             LIMIT 1",
+        )
+        .bind(&machine)
+        .fetch_optional(&pool)
+        .await
+    };
+
+    let row = match row {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "machine not found").into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    // Verify the tunnel exists.
+    let tunnel_exists = row
+        .tunnels
+        .as_array()
+        .map(|arr| arr.iter().any(|t| t.get("name").and_then(|v| v.as_str()) == Some(&tunnel)))
+        .unwrap_or(false);
+    if !tunnel_exists {
+        return (StatusCode::NOT_FOUND, "tunnel not found").into_response();
+    }
+
+    let Some(relay_proxy_url) = row.relay_proxy_url else {
+        return (StatusCode::BAD_GATEWAY, "no relay proxy URL").into_response();
+    };
+
+    // Check that the user has write access to the machine's cluster (needed to create tokens).
+    let writable = match user.writable_cluster_ids(&pool).await {
+        Ok(v) => v,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if let Some(ref ids) = writable {
+        if !ids.contains(&row.cluster_id) {
+            return (StatusCode::FORBIDDEN, "write access required").into_response();
+        }
+    }
+
+    // Create a proxy token (same logic as create_proxy_token server fn).
+    let raw_token: String = hex::encode(rand::rng().random::<[u8; 32]>());
+    let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
+    let scopes = serde_json::json!(["tcp:*"]);
+
+    if sqlx::query(
+        "INSERT INTO tokens (cluster_id, token_hash, label, kind, expires_at, scopes) \
+         VALUES ($1, $2, 'proxy', 'proxy', $3, $4)",
+    )
+    .bind(row.cluster_id)
+    .bind(&hash)
+    .bind(expires_at)
+    .bind(&scopes)
+    .execute(&pool)
+    .await
+    .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    // Build tunnel URL and redirect.
+    let prefix = format!(
+        "{}-{}",
+        &row.instance_id[..std::cmp::min(12, row.instance_id.len())],
+        tunnel
+    );
+    let url = super::fleet_detail::build_tunnel_url(&relay_proxy_url, &prefix, &raw_token);
+    dioxus::fullstack::axum::response::Redirect::to(&url).into_response()
+}

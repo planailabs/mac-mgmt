@@ -58,6 +58,10 @@ pub struct ProxyState {
     pub cors_origins: Vec<String>,
     /// libp2p relay swarm for sending control requests to daemons via p2p.
     pub relay_swarm: Option<Arc<crate::p2p::RelaySwarm>>,
+    /// External web URL of the management server (e.g. "https://plan.ai").
+    /// Fetched from `/api/server-info` at startup. When set, the relay shows
+    /// a "Log in" button on the unauthorized page instead of a plain 401.
+    pub server_web_url: Option<String>,
 }
 
 /// Shared CORS config passed via axum Extension.
@@ -372,16 +376,13 @@ async fn proxy_bootstrap(
         .status(StatusCode::OK)
         .header("set-cookie", cookie)
         .header("content-type", "text/html; charset=utf-8")
-        .body(Body::from(PROXY_BOOTSTRAP_HTML))
+        .body(Body::from(bootstrap_html()))
         .unwrap()
         .into_response()
 }
 
-const PROXY_BOOTSTRAP_HTML: &str = r#"<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="0;url=/">
-<style>
+/// Shared CSS for the dark-themed tunnel pages (loading spinner, auth error).
+const SHARED_STYLE: &str = r#"
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     height: 100vh;
@@ -394,22 +395,69 @@ const PROXY_BOOTSTRAP_HTML: &str = r#"<!DOCTYPE html>
     color: #cdd6f4;
     font-family: system-ui, -apple-system, sans-serif;
   }
-  .spinner {
+  .text { font-size: 14px; color: #6c7086; letter-spacing: 0.02em; }
+"#;
+
+/// Build the "connecting to tunnel" bootstrap HTML with the shared style inlined.
+fn bootstrap_html() -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0;url=/">
+<style>{SHARED_STYLE}
+  .spinner {{
     width: 48px; height: 48px;
     border: 3px solid #313244;
     border-top-color: #89b4fa;
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .text { font-size: 14px; color: #6c7086; letter-spacing: 0.02em; }
+  }}
+  @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
 </style>
 </head>
 <body>
   <div class="spinner"></div>
   <div class="text">Connecting to tunnel...</div>
 </body>
-</html>"#;
+</html>"#,
+    )
+}
+
+/// Build the "authentication required" HTML page with a sign-in button.
+fn unauthorized_html(login_url: &str) -> axum::response::Response {
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<style>{SHARED_STYLE}
+  .login-btn {{
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    background: #1e293b;
+    color: #e2e8f0;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    border: 1px solid #334155;
+    font-size: 1rem;
+    transition: background 0.15s;
+  }}
+  .login-btn:hover {{ background: #334155; }}
+</style>
+</head>
+<body>
+  <div class="text">Authentication required to access this tunnel</div>
+  <a href="{login_url}" class="login-btn">Log in to plan.ai</a>
+</body>
+</html>"#,
+    );
+    axum::response::Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("content-type", "text/html; charset=utf-8")
+        .body(Body::from(html))
+        .unwrap()
+        .into_response()
+}
 
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
 
@@ -431,6 +479,15 @@ async fn proxy_catchall(
     let Some((instance_id, tunnel_name)) = parse_subdomain(&headers, &state.proxy_hostname) else {
         return (StatusCode::BAD_REQUEST, "Invalid proxy hostname").into_response();
     };
+
+    // If no token at all, show a styled "sign in" page instead of a plain 401.
+    if extract_token(&headers).is_none() {
+        if let Some(web_url) = &state.server_web_url {
+            let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
+            let login_url = format!("{web_url}/easy-access/direct/{prefix}/{tunnel_name}");
+            return unauthorized_html(&login_url);
+        }
+    }
 
     let self_info = match authenticate_proxy(&headers, &state, &instance_id).await {
         Ok(info) => info,

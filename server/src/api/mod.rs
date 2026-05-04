@@ -227,6 +227,8 @@ pub fn build_rocket(
         routes::setting_list_ssh_keys,
         routes::setting_add_ssh_key,
         routes::setting_remove_ssh_key,
+        // Public server info (unauthenticated)
+        routes::get_server_info,
         // Daemon binary download (public)
         routes::download_daemon,
         // Nixpkgs source archive (public)

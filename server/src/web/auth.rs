@@ -7,11 +7,13 @@ use axum_oidc_client::{
     sql_cache::{SqlAuthCache, SqlCacheConfig},
 };
 use dioxus::fullstack::axum::{
+    self as axum,
     body::Body,
     extract::Request,
     middleware::Next,
     response::{Html, IntoResponse, Redirect, Response},
 };
+use serde::Deserialize;
 use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
@@ -313,12 +315,29 @@ async fn try_impersonate(
     }
 }
 
-/// Return the redirect target for unauthenticated requests.
-fn login_redirect() -> Redirect {
+/// Return the redirect target for unauthenticated requests, optionally
+/// preserving the original path so the user is sent back after login.
+fn login_redirect(return_to: Option<&str>) -> Redirect {
     let providers = AUTH_PROVIDERS.get();
+    // Only encode safe relative paths (not protocol-relative "//...").
+    let redirect_param = return_to
+        .filter(|p| p.starts_with('/') && !p.starts_with("//"))
+        .map(|p| format!("?redirect={}", percent_encoding::utf8_percent_encode(
+            p,
+            percent_encoding::NON_ALPHANUMERIC,
+        )));
     match providers.map(|p| p.as_slice()) {
-        Some([only]) => Redirect::to(&format!("/auth/{}", only.slug)),
-        _ => Redirect::to("/auth/login"),
+        Some([only]) => {
+            let base = format!("/auth/{}", only.slug);
+            match &redirect_param {
+                Some(q) => Redirect::to(&format!("{base}{q}")),
+                None => Redirect::to(&base),
+            }
+        }
+        _ => match &redirect_param {
+            Some(q) => Redirect::to(&format!("/auth/login{q}")),
+            None => Redirect::to("/auth/login"),
+        },
     }
 }
 
@@ -461,23 +480,47 @@ pub async fn require_auth(mut request: Request<Body>, next: Next) -> Response {
         }
     }
 
-    login_redirect().into_response()
+    let return_to = request.uri().path_and_query().map(|pq| pq.as_str().to_string());
+    login_redirect(return_to.as_deref()).into_response()
+}
+
+/// Query parameters for the login page.
+#[derive(Deserialize, Default)]
+pub struct LoginQuery {
+    /// Optional post-login redirect path, forwarded to the OIDC provider route.
+    #[serde(default)]
+    redirect: Option<String>,
 }
 
 /// Login page shown when multiple OIDC providers are configured.
-pub async fn login_page() -> impl IntoResponse {
+pub async fn login_page(
+    axum::extract::Query(query): axum::extract::Query<LoginQuery>,
+) -> impl IntoResponse {
     let providers = AUTH_PROVIDERS.get().map(|p| p.as_slice()).unwrap_or(&[]);
+
+    // Build the redirect suffix once: "?redirect=<encoded_path>" or "".
+    let redirect_suffix = query
+        .redirect
+        .as_deref()
+        .filter(|p| p.starts_with('/') && !p.starts_with("//"))
+        .map(|p| {
+            format!(
+                "?redirect={}",
+                percent_encoding::utf8_percent_encode(p, percent_encoding::NON_ALPHANUMERIC)
+            )
+        })
+        .unwrap_or_default();
 
     // Single provider: skip the page and redirect directly.
     if let [only] = providers {
-        return Redirect::to(&format!("/auth/{}", only.slug)).into_response();
+        return Redirect::to(&format!("/auth/{}{redirect_suffix}", only.slug)).into_response();
     }
 
     let buttons: String = providers
         .iter()
         .map(|p| {
             format!(
-                r#"<a href="/auth/{slug}" class="login-btn">{name}</a>"#,
+                r#"<a href="/auth/{slug}{redirect_suffix}" class="login-btn">{name}</a>"#,
                 slug = p.slug,
                 name = p.name,
             )
@@ -544,8 +587,8 @@ pub async fn logout_handler(request: Request<Body>) -> Response {
                 .secure(true),
         );
 
-        return (jar, login_redirect()).into_response();
+        return (jar, login_redirect(None)).into_response();
     }
 
-    login_redirect().into_response()
+    login_redirect(None).into_response()
 }

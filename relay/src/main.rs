@@ -100,6 +100,18 @@ async fn main() -> Result<()> {
         batch_token,
     );
 
+    // Fetch the server's external web URL for the proxy "sign in" page.
+    let server_web_url = match fetch_server_web_url(&cfg.server_api_url).await {
+        Ok(url) => {
+            tracing::info!("server web URL: {url}");
+            Some(url)
+        }
+        Err(e) => {
+            tracing::warn!("failed to fetch server web URL: {e} — sign-in button will be unavailable");
+            None
+        }
+    };
+
     // Proxy router (if proxy_hostname is configured)
     let proxy_router = cfg.proxy_hostname.as_ref().map(|proxy_hostname| {
         tracing::info!("proxy hostname configured: *.{proxy_hostname}");
@@ -109,6 +121,7 @@ async fn main() -> Result<()> {
             proxy_hostname: proxy_hostname.clone(),
             cors_origins: cfg.cors_origins.clone(),
             relay_swarm: Some(relay_swarm.clone()),
+            server_web_url: server_web_url.clone(),
         };
         (proxy_hostname.clone(), proxy_handler::router(proxy_state))
     });
@@ -213,4 +226,22 @@ async fn main() -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+/// Fetch the server's external web URL from `/api/server-info`.
+async fn fetch_server_web_url(server_api_url: &str) -> Result<String> {
+    #[derive(serde::Deserialize)]
+    struct ServerInfo {
+        web_url: String,
+    }
+    let url = format!("{}/api/server-info", server_api_url.trim_end_matches('/'));
+    let resp: ServerInfo = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(resp.web_url.trim_end_matches('/').to_string())
 }

@@ -7795,6 +7795,7 @@ dependencies = [
  "mac-mgmt-common",
  "mac-mgmt-healer",
  "multihash",
+ "percent-encoding",
  "plan-ai-design",
  "pulldown-cmark 0.12.2",
  "rand 0.9.4",
