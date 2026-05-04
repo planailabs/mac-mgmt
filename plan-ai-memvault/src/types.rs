@@ -61,11 +61,9 @@ pub struct ListParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AttachParams {
-    /// Filename for the attachment.
-    pub filename: String,
-    /// Base64-encoded file content.
-    pub content_base64: String,
-    /// MIME content type (default: "application/octet-stream").
+    /// Absolute path to the file on the local filesystem.
+    pub path: String,
+    /// MIME content type. If omitted, guessed from the file extension.
     #[serde(default)]
     pub content_type: Option<String>,
     /// Tags in "scope:label" format.

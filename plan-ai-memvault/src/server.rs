@@ -156,31 +156,38 @@ impl MemvaultServer {
 
     #[tool(
         name = "memvault_attach",
-        description = "Attach a file to memvault. Content must be base64-encoded. Returns the manifest CID."
+        description = "Attach a local file to memvault by its absolute path. Returns the manifest CID."
     )]
     async fn attach(&self, Parameters(params): Parameters<AttachParams>) -> String {
-        let data = match base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &params.content_base64,
-        ) {
+        let path = std::path::Path::new(&params.path);
+
+        let data = match std::fs::read(path) {
             Ok(d) => d,
-            Err(e) => return format!("error: invalid base64: {e}"),
+            Err(e) => return format!("error: cannot read {}: {e}", params.path),
         };
 
-        let mime_type = params
-            .content_type
-            .as_deref()
-            .unwrap_or("application/octet-stream");
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unnamed");
+
+        let mime_type = params.content_type.as_deref().unwrap_or_else(|| {
+            mime_guess::from_path(path)
+                .first_raw()
+                .unwrap_or("application/octet-stream")
+        });
 
         match self
             .client
-            .attach_file(&data, &params.filename, mime_type)
+            .attach_file(&data, filename, mime_type)
             .await
         {
             Ok(resp) => {
                 serde_json::json!({
                     "manifest_cid": resp.get("cid").and_then(|v| v.as_str()).unwrap_or(""),
-                    "filename": params.filename,
+                    "filename": filename,
+                    "size": data.len(),
+                    "mime_type": mime_type,
                     "status": "attached"
                 })
                 .to_string()

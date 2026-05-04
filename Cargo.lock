@@ -9902,6 +9902,7 @@ dependencies = [
  "memvault-doc",
  "memvault-query",
  "memvault-store",
+ "mime_guess",
  "reqwest 0.12.28",
  "rmcp",
  "schemars",
