@@ -59,6 +59,13 @@ struct DomainOption {
     id: Uuid,
     name: String,
     cloudflare_zone_id: Option<String>,
+    subdomains: Vec<SubdomainOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SubdomainOption {
+    id: Uuid,
+    name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,7 +182,19 @@ async fn list_domains_for_binding(webspace_id: Uuid) -> Result<Vec<DomainOption>
     )
     .bind(org_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(rows.into_iter().map(|(id, name, cloudflare_zone_id)| DomainOption { id, name, cloudflare_zone_id }).collect())
+    let mut domains = Vec::new();
+    for (id, name, cloudflare_zone_id) in rows {
+        let subs = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT id, name FROM subdomains WHERE domain_id = $1 ORDER BY name",
+        ).bind(id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        domains.push(DomainOption {
+            id, name, cloudflare_zone_id,
+            subdomains: subs.into_iter().map(|(sid, sname)| SubdomainOption { id: sid, name: sname }).collect(),
+        });
+    }
+
+    Ok(domains)
 }
 
 /// Deploy a CF Pages project for this webspace.
@@ -294,9 +313,9 @@ async fn connect_git_repo(
     Ok(())
 }
 
-/// Bind a domain to this webspace. For CF Pages webspaces, adds the custom domain.
+/// Bind a domain (or subdomain) to this webspace. For CF Pages, adds the custom domain.
 #[server]
-async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, hostname: String) -> Result<(), ServerFnError> {
+async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid>, hostname: String) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
@@ -309,11 +328,10 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, hostname: String) -> Re
         return Err(ServerFnError::new("write access required"));
     }
 
-    // Insert binding
     sqlx::query(
-        "INSERT INTO webspace_domains (webspace_id, domain_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        "INSERT INTO webspace_domains (webspace_id, domain_id, subdomain_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
     )
-    .bind(webspace_id).bind(domain_id)
+    .bind(webspace_id).bind(domain_id).bind(subdomain_id)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // For CF Pages webspaces, add as custom domain
@@ -325,8 +343,7 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, hostname: String) -> Re
     if let (Some(project_name), Some(cred_id)) = ws {
         let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
         if let Err(e) = client.add_pages_custom_domain(&account_id, &project_name, &hostname).await {
-            tracing::warn!("failed to add custom domain {hostname} to Pages project {project_name}: {e}");
-            // Don't fail the binding — CF custom domain can be added later
+            tracing::warn!("failed to add custom domain {hostname} to Pages: {e}");
         } else {
             tracing::info!("added custom domain {hostname} to Pages project {project_name}");
         }
@@ -851,17 +868,31 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                 }
             }
 
-            // Add binding form
+            // Add binding form — select encodes "domain_id|subdomain_id_or_none|hostname"
             div { class: "p-4 border-t border-line-soft",
                 div { class: "flex items-end gap-3",
-                    FormField { label: "Add Domain",
+                    FormField { label: "Bind Domain / Subdomain",
                         select {
                             class: "input",
                             value: "{selected_domain}",
                             oninput: move |evt| selected_domain.set(evt.value()),
-                            option { value: "", "Select a domain..." }
+                            option { value: "", "Select..." }
                             for d in &domain_list {
-                                option { value: "{d.id}|{d.name}", "{d.name}" }
+                                // Root domain option
+                                option { value: "{d.id}||{d.name}", "{d.name} (root)" }
+                                // Subdomain options
+                                for s in &d.subdomains {
+                                    {
+                                        let hostname = if s.name == "@" {
+                                            d.name.clone()
+                                        } else {
+                                            format!("{}.{}", s.name, d.name)
+                                        };
+                                        rsx! {
+                                            option { value: "{d.id}|{s.id}|{hostname}", "  {hostname}" }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -876,12 +907,15 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                 adding.set(true);
                                 error.set(None);
                                 spawn(async move {
-                                    if let Some((id_str, hostname)) = sel.split_once('|') {
-                                        if let Ok(did) = uuid::Uuid::parse_str(id_str) {
-                                            match bind_domain(wid, did, hostname.to_string()).await {
-                                                Ok(()) => {
-                                                    navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
-                                                }
+                                    // Parse "domain_id|subdomain_id_or_empty|hostname"
+                                    let parts: Vec<&str> = sel.splitn(3, '|').collect();
+                                    if parts.len() == 3 {
+                                        let did = uuid::Uuid::parse_str(parts[0]).ok();
+                                        let sid = if parts[1].is_empty() { None } else { uuid::Uuid::parse_str(parts[1]).ok() };
+                                        let hostname = parts[2].to_string();
+                                        if let Some(did) = did {
+                                            match bind_domain(wid, did, sid, hostname).await {
+                                                Ok(()) => { navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() }); }
                                                 Err(e) => error.set(Some(format!("{e}"))),
                                             }
                                         }
@@ -890,7 +924,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                 });
                             }
                         },
-                        if *adding.read() { "Adding..." } else { "Bind Domain" }
+                        if *adding.read() { "Adding..." } else { "Bind" }
                     }
                 }
                 if let Some(err) = &*error.read() {
