@@ -220,9 +220,32 @@ async fn upload_deploy(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    // If no branch specified, fetch the production branch from the CF Pages project
+    let branch = if query.branch.is_some() {
+        query.branch
+    } else {
+        let account_id = get_cf_account_id(&state.pool, cred_id).await.unwrap_or_default();
+        if !account_id.is_empty() {
+            let client = cloudflare_api::Client::new(&cf_token);
+            match client.get_pages_project(&account_id, &project_name).await {
+                Ok(project) => {
+                    let pb = project.production_branch.unwrap_or_else(|| "main".into());
+                    tracing::info!(deployment_id = %deployment_id, branch = %pb, "using production branch from CF Pages project");
+                    Some(pb)
+                }
+                Err(e) => {
+                    tracing::warn!(deployment_id = %deployment_id, error = %e, "could not fetch production branch, defaulting to 'main'");
+                    Some("main".into())
+                }
+            }
+        } else {
+            tracing::warn!(deployment_id = %deployment_id, "no account_id in credential, defaulting branch to 'main'");
+            Some("main".into())
+        }
+    };
+
     let pool = state.pool.clone();
     let active = state.active_deploys.clone();
-    let branch = query.branch;
     active.fetch_add(1, Ordering::Relaxed);
     tokio::spawn(async move {
         run_wrangler_deploy(pool, deployment_id, project_name, cf_token, branch, body).await;
@@ -277,6 +300,17 @@ async fn get_cf_token(pool: &PgPool, cred_id: Uuid) -> Result<String, String> {
     let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| format!("decryption: {e}"))?;
     let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| format!("parse: {e}"))?;
     data["api_token"].as_str().map(String::from).ok_or_else(|| "missing api_token".into())
+}
+
+async fn get_cf_account_id(pool: &PgPool, cred_id: Uuid) -> Result<String, String> {
+    let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
+        "SELECT encrypted_data FROM credentials WHERE id = $1",
+    )
+    .bind(cred_id).fetch_one(pool).await.map_err(|e| e.to_string())?;
+
+    let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| format!("decryption: {e}"))?;
+    let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| format!("parse: {e}"))?;
+    Ok(data["account_id"].as_str().unwrap_or("").to_string())
 }
 
 async fn run_wrangler_deploy(
