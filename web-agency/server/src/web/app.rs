@@ -1,6 +1,9 @@
 use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, unic_langid::langid};
 
+use super::components::billing_log::BillingLog;
+use super::components::contact_form::ContactForm;
+use super::components::contact_list::ContactList;
 use super::components::credential_form::CredentialForm;
 use super::components::credential_list::CredentialList;
 use super::components::dashboard::Dashboard;
@@ -30,6 +33,12 @@ pub enum Route {
     WebspaceList {},
     #[route("/webspaces/new")]
     WebspaceForm {},
+    #[route("/contacts")]
+    ContactList {},
+    #[route("/contacts/new")]
+    ContactForm {},
+    #[route("/billing")]
+    BillingLog {},
 }
 
 #[component]
