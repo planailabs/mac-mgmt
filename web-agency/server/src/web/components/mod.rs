@@ -7,3 +7,5 @@ pub mod domain_list;
 pub mod layout;
 pub mod navbar;
 pub mod ui;
+pub mod webspace_form;
+pub mod webspace_list;

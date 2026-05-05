@@ -8,6 +8,8 @@ use super::components::domain_add::DomainAdd;
 use super::components::domain_detail::DomainDetail;
 use super::components::domain_list::DomainList;
 use super::components::layout::Layout;
+use super::components::webspace_form::WebspaceForm;
+use super::components::webspace_list::WebspaceList;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 pub enum Route {
@@ -24,6 +26,10 @@ pub enum Route {
     DomainAdd {},
     #[route("/domains/:id")]
     DomainDetail { id: String },
+    #[route("/webspaces")]
+    WebspaceList {},
+    #[route("/webspaces/new")]
+    WebspaceForm {},
 }
 
 #[component]

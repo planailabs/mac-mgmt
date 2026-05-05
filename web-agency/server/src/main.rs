@@ -4,6 +4,8 @@ mod config;
 mod crypto;
 #[cfg(feature = "server")]
 mod db;
+#[cfg(feature = "server")]
+mod local_hosting;
 #[cfg(feature = "webui")]
 mod web;
 
