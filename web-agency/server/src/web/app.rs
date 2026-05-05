@@ -9,6 +9,7 @@ use super::components::credential_list::CredentialList;
 use super::components::dashboard::Dashboard;
 use super::components::domain_add::DomainAdd;
 use super::components::domain_detail::DomainDetail;
+use super::components::domain_import::DomainImport;
 use super::components::domain_list::DomainList;
 use super::components::layout::Layout;
 use super::components::organization_form::OrganizationForm;
@@ -31,6 +32,8 @@ pub enum Route {
     DomainList {},
     #[route("/domains/add")]
     DomainAdd {},
+    #[route("/domains/import")]
+    DomainImport {},
     #[route("/domains/:id")]
     DomainDetail { id: String },
     #[route("/webspaces")]

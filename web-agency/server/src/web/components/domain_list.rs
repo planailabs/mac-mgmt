@@ -75,7 +75,12 @@ pub fn DomainList() -> Element {
     rsx! {
         PageHeader { "Domains" }
 
-        div { class: "mt-4 flex justify-end mb-4",
+        div { class: "mt-4 flex justify-end gap-3 mb-4",
+            Link {
+                to: crate::web::app::Route::DomainImport {},
+                class: "btn btn-secondary",
+                "Import from Credential"
+            }
             Link {
                 to: crate::web::app::Route::DomainAdd {},
                 class: "btn btn-primary",

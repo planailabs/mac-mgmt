@@ -6,6 +6,7 @@ pub mod credential_list;
 pub mod dashboard;
 pub mod domain_add;
 pub mod domain_detail;
+pub mod domain_import;
 pub mod domain_list;
 pub mod layout;
 pub mod navbar;
