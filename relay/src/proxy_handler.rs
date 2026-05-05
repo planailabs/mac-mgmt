@@ -59,9 +59,10 @@ pub struct ProxyState {
     /// libp2p relay swarm for sending control requests to daemons via p2p.
     pub relay_swarm: Option<Arc<crate::p2p::RelaySwarm>>,
     /// External web URL of the management server (e.g. "https://plan.ai").
-    /// Fetched from `/api/server-info` at startup. When set, the relay shows
-    /// a "Log in" button on the unauthorized page instead of a plain 401.
-    pub server_web_url: Option<String>,
+    /// Initialised from `/api/server-info` at startup or lazily on first
+    /// unauthenticated request. When set, the relay shows a "Log in" button
+    /// on the unauthorized page.
+    pub server_web_url: Arc<tokio::sync::OnceCell<String>>,
 }
 
 /// Shared CORS config passed via axum Extension.
@@ -462,6 +463,24 @@ fn unauthorized_html(login_url: Option<&str>) -> axum::response::Response {
         .into_response()
 }
 
+/// Fetch the server's external web URL from `/api/server-info`.
+pub(crate) async fn fetch_server_web_url(server_api_url: &str) -> Result<String, anyhow::Error> {
+    #[derive(serde::Deserialize)]
+    struct ServerInfo {
+        web_url: String,
+    }
+    let url = format!("{}/api/server-info", server_api_url.trim_end_matches('/'));
+    let resp: ServerInfo = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(resp.web_url.trim_end_matches('/').to_string())
+}
+
 // ── Catch-all: reverse proxy ───────────────────────────────────────────
 
 /// Handles all non-special requests by proxying them to the daemon's tunnel
@@ -485,9 +504,15 @@ async fn proxy_catchall(
 
     // If no token at all, show a styled "sign in" page instead of a plain 401.
     if extract_token(&headers).is_none() {
-        let login_url = state.server_web_url.as_ref().map(|web_url| {
+        // Lazily resolve the server web URL if it wasn't available at startup.
+        let web_url = state
+            .server_web_url
+            .get_or_try_init(|| fetch_server_web_url(&state.server_api_url))
+            .await
+            .ok();
+        let login_url = web_url.map(|url| {
             let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
-            format!("{web_url}/easy-access/direct/{prefix}/{tunnel_name}")
+            format!("{url}/easy-access/direct/{prefix}/{tunnel_name}")
         });
         return unauthorized_html(login_url.as_deref());
     }
