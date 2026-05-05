@@ -8,12 +8,12 @@ port = 7380
 # Generate with: openssl rand -base64 32
 encryption_key = "CHANGE_ME_base64_encoded_32_byte_key"
 
-[auth]
+# [auth]
 # Generate with: openssl rand -hex 32
-cookie_secret = "CHANGE_ME_64_hex_chars"
-external_url = "http://localhost:7380"
+# cookie_secret = "CHANGE_ME_64_hex_chars"
+# external_url = "http://localhost:7380"
 # redis_url = "redis://localhost:6379"
-admin_emails = ["admin@example.com"]
+# admin_emails = ["admin@example.com"]
 
 # [[auth.providers]]
 # slug = "google"
