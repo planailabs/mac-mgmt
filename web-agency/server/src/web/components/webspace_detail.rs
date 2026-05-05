@@ -174,7 +174,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
                     for binding in &mut bindings {
                         let hostname_lower = binding.hostname.to_lowercase();
                         if let Some(cf_dom) = cf_domains.iter().find(|d| d.name.to_lowercase() == hostname_lower) {
-                            binding.cf_domain_status = Some(format!("{:?}", cf_dom.status).to_lowercase());
+                            binding.cf_domain_status = cf_dom.status.clone();
                         } else {
                             tracing::debug!(hostname = %binding.hostname, "no CF Pages domain match found");
                         }
@@ -517,14 +517,14 @@ async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<St
 
     match client.retry_pages_custom_domain(&account_id, &project_name, &hostname).await {
         Ok(dom) => {
-            let status = {let s = format!("{:?}", dom.status); s.trim_matches('"').to_lowercase()};
+            let status = dom.status.as_deref().unwrap_or("pending").to_string();
             Ok(format!("Validation retried — status: {status}"))
         }
         Err(e) => {
             // Domain might not exist on CF yet — try adding it
             match client.add_pages_custom_domain(&account_id, &project_name, &hostname).await {
                 Ok(dom) => {
-                    let status = {let s = format!("{:?}", dom.status); s.trim_matches('"').to_lowercase()};
+                    let status = dom.status.as_deref().unwrap_or("pending").to_string();
                     Ok(format!("Domain added — status: {status}"))
                 }
                 Err(_) => Err(ServerFnError::new(format!("retry failed: {e}"))),

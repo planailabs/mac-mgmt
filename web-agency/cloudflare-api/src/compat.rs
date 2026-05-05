@@ -4,7 +4,20 @@
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde::de::DeserializeOwned;
 
-pub use crate::types::PagesDomain as PagesCustomDomain;
+/// Custom domain on a CF Pages project. Uses permissive deserialization
+/// since the CF API may omit fields for domains in certain states.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PagesCustomDomain {
+    #[serde(default)] pub id: Option<String>,
+    #[serde(default)] pub name: String,
+    #[serde(default)] pub status: Option<String>,
+    #[serde(default)] pub certificate_authority: Option<String>,
+    #[serde(default)] pub created_on: Option<String>,
+    #[serde(default)] pub domain_id: Option<String>,
+    #[serde(default)] pub zone_tag: Option<String>,
+    #[serde(default)] pub validation_data: Option<serde_json::Value>,
+    #[serde(default)] pub verification_data: Option<serde_json::Value>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
