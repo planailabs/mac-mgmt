@@ -231,6 +231,11 @@ impl Client {
         self.get(&format!("/accounts/{account_id}/pages/projects/{project_name}")).await
     }
 
+    /// Update a Pages project (source, build config, production branch).
+    pub async fn update_pages_project(&self, account_id: &str, project_name: &str, update: &UpdatePagesProject) -> Result<PagesProject, Error> {
+        self.patch(&format!("/accounts/{account_id}/pages/projects/{project_name}"), update).await
+    }
+
     /// Delete a Pages project.
     pub async fn delete_pages_project(&self, account_id: &str, project_name: &str) -> Result<(), Error> {
         self.delete_req(&format!("/accounts/{account_id}/pages/projects/{project_name}")).await

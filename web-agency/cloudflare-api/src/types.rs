@@ -154,4 +154,44 @@ pub struct PagesProject {
     pub production_branch: Option<String>,
     pub created_on: Option<String>,
     pub status: Option<String>,
+    pub source: Option<PagesSource>,
+    pub build_config: Option<PagesBuildConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagesSource {
+    #[serde(rename = "type")]
+    pub source_type: Option<String>, // "github" or "gitlab"
+    pub config: Option<PagesSourceConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagesSourceConfig {
+    pub owner: Option<String>,
+    pub repo_name: Option<String>,
+    pub production_branch: Option<String>,
+    pub pr_comments_enabled: Option<bool>,
+    pub production_deployments_enabled: Option<bool>,
+    pub preview_deployment_setting: Option<String>, // "all", "none", "custom"
+    pub preview_branch_includes: Option<Vec<String>>,
+    pub preview_branch_excludes: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagesBuildConfig {
+    pub build_command: Option<String>,
+    pub destination_dir: Option<String>,
+    pub root_dir: Option<String>,
+    pub build_caching: Option<bool>,
+}
+
+/// Request body for updating a Pages project (PATCH).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdatePagesProject {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub production_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<PagesSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_config: Option<PagesBuildConfig>,
 }

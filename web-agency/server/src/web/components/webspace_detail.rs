@@ -17,6 +17,25 @@ struct WebspaceData {
     local_status: Option<String>,
     organization_name: String,
     bindings: Vec<DomainBinding>,
+    // Live CF Pages info
+    pages_subdomain: Option<String>,
+    git_source: Option<GitRepoInfo>,
+    build_config: Option<BuildConfigInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct GitRepoInfo {
+    provider: String, // "github" or "gitlab"
+    owner: String,
+    repo: String,
+    production_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct BuildConfigInfo {
+    build_command: Option<String>,
+    destination_dir: Option<String>,
+    root_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,10 +110,41 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     })
     .collect();
 
+    // Fetch live CF Pages info
+    let mut pages_subdomain = None;
+    let mut git_source = None;
+    let mut build_config_info = None;
+
+    if let (Some(project_name), Some(cred_id)) = (&cf_project, cf_cred_id) {
+        if let Ok((client, account_id)) = build_cf_pages_client(&pool, cred_id).await {
+            if let Ok(project) = client.get_pages_project(&account_id, project_name).await {
+                pages_subdomain = project.subdomain;
+                if let Some(src) = &project.source {
+                    if let Some(cfg) = &src.config {
+                        git_source = Some(GitRepoInfo {
+                            provider: src.source_type.clone().unwrap_or_default(),
+                            owner: cfg.owner.clone().unwrap_or_default(),
+                            repo: cfg.repo_name.clone().unwrap_or_default(),
+                            production_branch: cfg.production_branch.clone().unwrap_or_else(|| "main".into()),
+                        });
+                    }
+                }
+                if let Some(bc) = &project.build_config {
+                    build_config_info = Some(BuildConfigInfo {
+                        build_command: bc.build_command.clone(),
+                        destination_dir: bc.destination_dir.clone(),
+                        root_dir: bc.root_dir.clone(),
+                    });
+                }
+            }
+        }
+    }
+
     Ok(WebspaceData {
         id, name, hosting_type, cloudflare_pages_project: cf_project,
         cloudflare_credential_id: cf_cred_id, runtime, local_status,
         organization_name: org_name, bindings,
+        pages_subdomain, git_source, build_config: build_config_info,
     })
 }
 
@@ -177,6 +227,71 @@ async fn deploy_pages_project(webspace_id: Uuid, credential_id: Uuid) -> Result<
         project_name: ws_name,
         subdomain: project.subdomain,
     })
+}
+
+/// Connect a git repo to the CF Pages project.
+#[server]
+async fn connect_git_repo(
+    webspace_id: Uuid,
+    provider: String,
+    owner: String,
+    repo_name: String,
+    production_branch: String,
+    build_command: String,
+    destination_dir: String,
+    root_dir: String,
+) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>, Uuid)>(
+        "SELECT cloudflare_pages_project, cloudflare_credential_id, organization_id FROM webspaces WHERE id = $1",
+    )
+    .bind(webspace_id).fetch_optional(&pool).await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
+
+    let (project_name, cred_id, org_id) = row;
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    let project_name = project_name.ok_or_else(|| ServerFnError::new("Pages project not deployed yet"))?;
+    let cred_id = cred_id.ok_or_else(|| ServerFnError::new("no Cloudflare credential"))?;
+
+    let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
+
+    let update = cloudflare_api::UpdatePagesProject {
+        production_branch: Some(production_branch.clone()),
+        source: Some(cloudflare_api::PagesSource {
+            source_type: Some(provider.clone()),
+            config: Some(cloudflare_api::PagesSourceConfig {
+                owner: Some(owner),
+                repo_name: Some(repo_name),
+                production_branch: Some(production_branch),
+                pr_comments_enabled: Some(true),
+                production_deployments_enabled: Some(true),
+                preview_deployment_setting: Some("all".into()),
+                preview_branch_includes: None,
+                preview_branch_excludes: None,
+            }),
+        }),
+        build_config: Some(cloudflare_api::PagesBuildConfig {
+            build_command: if build_command.is_empty() { None } else { Some(build_command) },
+            destination_dir: if destination_dir.is_empty() { None } else { Some(destination_dir) },
+            root_dir: if root_dir.is_empty() { None } else { Some(root_dir) },
+            build_caching: Some(true),
+        }),
+    };
+
+    client.update_pages_project(&account_id, &project_name, &update).await
+        .map_err(|e| ServerFnError::new(format!(
+            "failed to connect git repo: {e}. \
+             Ensure the GitHub/GitLab integration is authorized in your Cloudflare dashboard"
+        )))?;
+
+    tracing::info!("connected git repo to Pages project {project_name}");
+    Ok(())
 }
 
 /// Bind a domain to this webspace. For CF Pages webspaces, adds the custom domain.
@@ -352,12 +467,216 @@ pub fn WebspaceDetail(id: String) -> Element {
             PagesDeploySection { webspace_id: data.id }
         }
 
+        // Git repo connection (only for deployed CF Pages projects)
+        if is_pages && has_project {
+            SectionHeading { class: "mt-6", "Git Repository" }
+            GitRepoSection {
+                webspace_id: data.id,
+                git_source: data.git_source.clone(),
+                build_config: data.build_config.clone(),
+                pages_subdomain: data.pages_subdomain.clone(),
+            }
+        }
+
         // Domain bindings
         SectionHeading { class: "mt-6", "Domain Bindings" }
         DomainBindingsSection {
             webspace_id: data.id,
             bindings: data.bindings.clone(),
             is_pages,
+        }
+    }
+}
+
+/// Git repo connection / display section.
+#[component]
+fn GitRepoSection(
+    webspace_id: Uuid,
+    git_source: Option<GitRepoInfo>,
+    build_config: Option<BuildConfigInfo>,
+    pages_subdomain: Option<String>,
+) -> Element {
+    if let Some(ref git) = git_source {
+        // Already connected — show info
+        let repo_url = match git.provider.as_str() {
+            "github" => format!("https://github.com/{}/{}", git.owner, git.repo),
+            "gitlab" => format!("https://gitlab.com/{}/{}", git.owner, git.repo),
+            _ => format!("{}/{}", git.owner, git.repo),
+        };
+        return rsx! {
+            Card {
+                div { class: "p-6 space-y-3",
+                    div { class: "flex items-center gap-2",
+                        Badge { variant: BadgeVariant::Success, "Connected" }
+                        span { class: "font-mono text-sm", "{git.provider}" }
+                    }
+                    div { class: "flex items-center gap-2",
+                        span { class: "text-sm text-fg-muted", "Repository:" }
+                        a {
+                            href: "{repo_url}",
+                            target: "_blank",
+                            class: "font-mono text-sm text-brand underline",
+                            "{git.owner}/{git.repo}"
+                        }
+                    }
+                    div { class: "flex items-center gap-2",
+                        span { class: "text-sm text-fg-muted", "Branch:" }
+                        span { class: "font-mono text-sm", "{git.production_branch}" }
+                    }
+                    if let Some(ref bc) = build_config {
+                        if bc.build_command.is_some() || bc.destination_dir.is_some() {
+                            div { class: "border-t border-line-soft pt-3 mt-3",
+                                div { class: "text-sm text-fg-muted mb-1", "Build Settings" }
+                                if let Some(ref cmd) = bc.build_command {
+                                    div { class: "flex items-center gap-2",
+                                        span { class: "text-sm text-fg-muted", "Command:" }
+                                        span { class: "font-mono text-sm bg-surface-2 px-2 py-0.5 rounded", "{cmd}" }
+                                    }
+                                }
+                                if let Some(ref dir) = bc.destination_dir {
+                                    div { class: "flex items-center gap-2",
+                                        span { class: "text-sm text-fg-muted", "Output:" }
+                                        span { class: "font-mono text-sm", "{dir}" }
+                                    }
+                                }
+                                if let Some(ref root) = bc.root_dir {
+                                    div { class: "flex items-center gap-2",
+                                        span { class: "text-sm text-fg-muted", "Root:" }
+                                        span { class: "font-mono text-sm", "{root}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(ref sub) = pages_subdomain {
+                        div { class: "flex items-center gap-2",
+                            span { class: "text-sm text-fg-muted", "Preview:" }
+                            a {
+                                href: "https://{sub}",
+                                target: "_blank",
+                                class: "font-mono text-sm text-brand underline",
+                                "https://{sub}"
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    // Not connected — show form
+    let mut provider = use_signal(|| "github".to_string());
+    let mut owner = use_signal(String::new);
+    let mut repo_name = use_signal(String::new);
+    let mut branch = use_signal(|| "main".to_string());
+    let mut build_cmd = use_signal(String::new);
+    let mut dest_dir = use_signal(String::new);
+    let mut root_dir = use_signal(String::new);
+    let mut connecting = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let mut success = use_signal(|| false);
+
+    if *success.read() {
+        return rsx! {
+            Card {
+                div { class: "p-6",
+                    Badge { variant: BadgeVariant::Success, "Git repository connected" }
+                    div { class: "mt-2 text-sm text-fg-muted", "Reload the page to see deployment details." }
+                }
+            }
+        };
+    }
+
+    rsx! {
+        Card {
+            div { class: "p-6 space-y-4",
+                p { class: "text-fg-muted text-sm mb-2",
+                    "Connect a GitHub or GitLab repository. The Cloudflare GitHub/GitLab integration must be "
+                    a { href: "https://dash.cloudflare.com/?to=/:account/pages", target: "_blank", class: "text-brand underline", "authorized in your Cloudflare dashboard" }
+                    " first."
+                }
+
+                div { class: "grid grid-cols-1 md:grid-cols-2 gap-4",
+                    FormField { label: "Provider",
+                        select {
+                            class: "input",
+                            value: "{provider}",
+                            oninput: move |evt| provider.set(evt.value()),
+                            option { value: "github", "GitHub" }
+                            option { value: "gitlab", "GitLab" }
+                        }
+                    }
+                    FormField { label: "Production Branch",
+                        input { class: "input", r#type: "text", value: "{branch}",
+                            placeholder: "main",
+                            oninput: move |evt| branch.set(evt.value()) }
+                    }
+                }
+
+                div { class: "grid grid-cols-1 md:grid-cols-2 gap-4",
+                    FormField { label: "Owner (user or org)",
+                        input { class: "input", r#type: "text", required: true,
+                            placeholder: "my-github-org",
+                            value: "{owner}", oninput: move |evt| owner.set(evt.value()) }
+                    }
+                    FormField { label: "Repository Name",
+                        input { class: "input", r#type: "text", required: true,
+                            placeholder: "my-website",
+                            value: "{repo_name}", oninput: move |evt| repo_name.set(evt.value()) }
+                    }
+                }
+
+                SectionHeading { "Build Settings (optional)" }
+                div { class: "grid grid-cols-1 md:grid-cols-3 gap-4",
+                    FormField { label: "Build Command",
+                        input { class: "input font-mono text-sm", r#type: "text",
+                            placeholder: "npm run build",
+                            value: "{build_cmd}", oninput: move |evt| build_cmd.set(evt.value()) }
+                    }
+                    FormField { label: "Output Directory",
+                        input { class: "input font-mono text-sm", r#type: "text",
+                            placeholder: "dist",
+                            value: "{dest_dir}", oninput: move |evt| dest_dir.set(evt.value()) }
+                    }
+                    FormField { label: "Root Directory",
+                        help: "Subdirectory where the project lives (leave empty for repo root)",
+                        input { class: "input font-mono text-sm", r#type: "text",
+                            placeholder: "/",
+                            value: "{root_dir}", oninput: move |evt| root_dir.set(evt.value()) }
+                    }
+                }
+
+                if let Some(err) = &*error.read() {
+                    div { class: "text-danger text-sm", "{err}" }
+                }
+
+                Button {
+                    variant: ButtonVariant::Primary,
+                    disabled: owner.read().is_empty() || repo_name.read().is_empty() || *connecting.read(),
+                    onclick: {
+                        let wid = webspace_id;
+                        move |_| {
+                            let p = provider.read().clone();
+                            let o = owner.read().clone();
+                            let r = repo_name.read().clone();
+                            let b = branch.read().clone();
+                            let bc = build_cmd.read().clone();
+                            let dd = dest_dir.read().clone();
+                            let rd = root_dir.read().clone();
+                            connecting.set(true);
+                            error.set(None);
+                            spawn(async move {
+                                match connect_git_repo(wid, p, o, r, b, bc, dd, rd).await {
+                                    Ok(()) => success.set(true),
+                                    Err(e) => error.set(Some(format!("{e}"))),
+                                }
+                                connecting.set(false);
+                            });
+                        }
+                    },
+                    if *connecting.read() { "Connecting..." } else { "Connect Repository" }
+                }
+            }
         }
     }
 }
