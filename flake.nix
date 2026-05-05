@@ -75,7 +75,7 @@
             cargo-watch
             xz  # for nixpkgs archive generation
 
-            # web-app-agency
+            # web-agency (cargo-progenitor installed via: cargo install cargo-progenitor)
             wrangler
 
             # For WASM
