@@ -4,6 +4,9 @@ use dioxus_i18n::{prelude::*, unic_langid::langid};
 use super::components::credential_form::CredentialForm;
 use super::components::credential_list::CredentialList;
 use super::components::dashboard::Dashboard;
+use super::components::domain_add::DomainAdd;
+use super::components::domain_detail::DomainDetail;
+use super::components::domain_list::DomainList;
 use super::components::layout::Layout;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -15,6 +18,12 @@ pub enum Route {
     CredentialList {},
     #[route("/credentials/new")]
     CredentialForm {},
+    #[route("/domains")]
+    DomainList {},
+    #[route("/domains/add")]
+    DomainAdd {},
+    #[route("/domains/:id")]
+    DomainDetail { id: String },
 }
 
 #[component]
