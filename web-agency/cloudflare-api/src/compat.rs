@@ -250,51 +250,23 @@ impl SimpleClient {
 
     pub async fn list_pages_custom_domains(&self, account_id: &str, project_name: &str) -> Result<Vec<PagesCustomDomain>, Error> {
         let path = format!("/accounts/{account_id}/pages/projects/{project_name}/domains");
-        let url = format!("{}{path}", self.base_url);
-        tracing::debug!(url = %url, "fetching Pages custom domains");
-        let resp = self.http.get(&url).send().await?;
-        let status = resp.status();
-        let body_text = resp.text().await?;
-        tracing::debug!(
-            http_status = %status,
-            body_len = body_text.len(),
-            body_preview = %&body_text[..body_text.len().min(500)],
-            "Pages custom domains raw response"
-        );
-        let body: serde_json::Value = serde_json::from_str(&body_text)
-            .map_err(|e| Error::Unexpected(format!("JSON parse error: {e}")))?;
-        let success = body.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-        if !success {
+        let resp = self.http.get(format!("{}{path}", self.base_url)).send().await?;
+        let body: serde_json::Value = resp.json().await?;
+        if !body.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
             let errors: Vec<ApiError> = body.get("errors").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-            tracing::warn!(success = false, errors = ?errors, "CF API returned failure");
             return Err(Error::Api(errors));
         }
-        let result = body.get("result");
-        tracing::debug!(
-            result_type = ?result.map(|r| match r { serde_json::Value::Array(a) => format!("array[{}]", a.len()), _ => format!("{}", r) }),
-            "Pages domains result field"
-        );
-        let arr = result.and_then(|r| r.as_array()).cloned().unwrap_or_default();
+        let arr = body.get("result").and_then(|r| r.as_array()).cloned().unwrap_or_default();
         let mut domains = Vec::new();
-        for (i, item) in arr.iter().enumerate() {
-            tracing::debug!(index = i, raw = %item, "parsing Pages domain entry");
+        for item in &arr {
             match serde_json::from_value::<PagesCustomDomain>(item.clone()) {
-                Ok(d) => {
-                    tracing::debug!(index = i, name = %d.name, status = ?d.status, "parsed domain OK");
-                    domains.push(d);
-                }
-                Err(e) => {
-                    tracing::warn!(index = i, error = %e, raw = %item, "failed to parse Pages domain entry");
-                }
+                Ok(d) => domains.push(d),
+                Err(e) => tracing::warn!(error = %e, raw = %item, "skipping unparseable Pages domain"),
             }
         }
-        tracing::info!(
-            project = %project_name,
-            total_from_api = arr.len(),
-            parsed_ok = domains.len(),
-            names = ?domains.iter().map(|d| &d.name).collect::<Vec<_>>(),
-            "list_pages_custom_domains result"
-        );
+        if domains.len() != arr.len() {
+            tracing::warn!(project = %project_name, total = arr.len(), parsed = domains.len(), "some Pages domains failed to parse");
+        }
         Ok(domains)
     }
 

@@ -137,15 +137,6 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     let mut build_config_info = None;
 
     if let (Some(project_name), Some(cred_id)) = (&cf_project, cf_cred_id) {
-        tracing::debug!(project = %project_name, cred_id = %cred_id, "loading CF Pages info");
-        match build_cf_pages_client(&pool, cred_id).await {
-            Ok((client, ref account_id)) => {
-                tracing::debug!(account_id = %account_id, "CF Pages client built");
-            }
-            Err(ref e) => {
-                tracing::error!(error = %e, "failed to build CF Pages client");
-            }
-        }
         if let Ok((client, account_id)) = build_cf_pages_client(&pool, cred_id).await {
             if let Ok(project) = client.get_pages_project(&account_id, project_name).await {
                 pages_subdomain = project.subdomain;
@@ -173,24 +164,15 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
             // Fetch custom domain verification statuses
             match client.list_pages_custom_domains(&account_id, project_name).await {
                 Ok(cf_domains) => {
-                    tracing::info!(
-                        project = %project_name,
-                        cf_count = cf_domains.len(),
-                        cf_names = ?cf_domains.iter().map(|d| &d.name).collect::<Vec<_>>(),
-                        binding_names = ?bindings.iter().map(|b| &b.hostname).collect::<Vec<_>>(),
-                        "matching CF Pages custom domains to bindings"
-                    );
                     for binding in &mut bindings {
                         let hostname_lower = binding.hostname.to_lowercase();
                         if let Some(cf_dom) = cf_domains.iter().find(|d| d.name.to_lowercase() == hostname_lower) {
                             binding.cf_domain_status = cf_dom.status.clone();
-                        } else {
-                            tracing::debug!(hostname = %binding.hostname, "no CF Pages domain match found");
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!(project = %project_name, error = %e, "failed to fetch Pages custom domains — all bindings will show 'Not on CF'");
+                    tracing::error!(project = %project_name, error = %e, "failed to fetch Pages custom domains");
                 }
             }
         }
