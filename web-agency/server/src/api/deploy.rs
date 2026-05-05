@@ -392,7 +392,7 @@ async fn run_wrangler_deploy(
     }
 
     let mut wrangler_args = vec![
-        "wrangler".to_string(), "pages".to_string(), "deploy".to_string(),
+        "pages".to_string(), "deploy".to_string(),
         ".".to_string(), format!("--project-name={project_name}"),
     ];
     if let Some(ref branch) = branch {
@@ -408,7 +408,7 @@ async fn run_wrangler_deploy(
     );
     let wrangler_start = std::time::Instant::now();
 
-    let wrangler_result = tokio::process::Command::new("npx")
+    let wrangler_result = tokio::process::Command::new("wrangler")
         .args(&wrangler_args)
         .current_dir(&extract_dir)
         .env("CLOUDFLARE_API_TOKEN", &cf_token)
@@ -449,7 +449,7 @@ async fn run_wrangler_deploy(
             tracing::error!(
                 deployment_id = %deployment_id,
                 error = %e,
-                "failed to execute wrangler (is npx/wrangler installed?)"
+                "failed to execute wrangler (is wrangler installed and in PATH?)"
             );
             set_failed(&pool, deployment_id, &format!("wrangler exec: {e}")).await;
         }

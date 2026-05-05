@@ -157,7 +157,7 @@ The deploy token is scoped to a different webspace. Create a new token scoped to
 The webspace needs a Cloudflare Pages project first. Go to the webspace detail page and create a Pages project with **Direct Upload** as the deployment source.
 
 ### Deployment stuck in "deploying"
-The wrangler process may have hung. Check server logs. Ensure `npx` and `wrangler` are installed on the server. The server runs `npx wrangler pages deploy` with `CLOUDFLARE_API_TOKEN` set from the linked credential.
+The wrangler process may have hung. Check server logs. Ensure `wrangler` is installed and in `PATH` on the server. The server runs `wrangler pages deploy` with `CLOUDFLARE_API_TOKEN` set from the linked credential.
 
 ### "wrangler failed" error
 The Cloudflare API token in the linked credential may lack **Cloudflare Pages: Edit** permission. Update the token in the Cloudflare dashboard.
