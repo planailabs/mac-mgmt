@@ -19,6 +19,7 @@ struct WebspaceData {
     bindings: Vec<DomainBinding>,
     // Live CF Pages info
     pages_subdomain: Option<String>,
+    production_branch: Option<String>,
     git_source: Option<GitRepoInfo>,
     build_config: Option<BuildConfigInfo>,
 }
@@ -119,6 +120,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
 
     // Fetch live CF Pages info
     let mut pages_subdomain = None;
+    let mut production_branch = None;
     let mut git_source = None;
     let mut build_config_info = None;
 
@@ -126,6 +128,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
         if let Ok((client, account_id)) = build_cf_pages_client(&pool, cred_id).await {
             if let Ok(project) = client.get_pages_project(&account_id, project_name).await {
                 pages_subdomain = project.subdomain;
+                production_branch = project.production_branch;
                 if let Some(src) = &project.source {
                     if let Some(cfg) = &src.config {
                         git_source = Some(GitRepoInfo {
@@ -151,7 +154,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
         id, name, hosting_type, cloudflare_pages_project: cf_project,
         cloudflare_credential_id: cf_cred_id, runtime, local_status,
         organization_name: org_name, bindings,
-        pages_subdomain, git_source, build_config: build_config_info,
+        pages_subdomain, production_branch, git_source, build_config: build_config_info,
     })
 }
 
@@ -310,6 +313,42 @@ async fn connect_git_repo(
         )))?;
 
     tracing::info!("connected git repo to Pages project {project_name}");
+    Ok(())
+}
+
+/// Update the production branch for a direct-upload Pages project.
+#[server]
+async fn update_production_branch(webspace_id: Uuid, branch: String) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>, Uuid)>(
+        "SELECT cloudflare_pages_project, cloudflare_credential_id, organization_id FROM webspaces WHERE id = $1",
+    )
+    .bind(webspace_id).fetch_optional(&pool).await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("webspace not found"))?;
+
+    let (project_name, cred_id, org_id) = row;
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    let project_name = project_name.ok_or_else(|| ServerFnError::new("no Pages project"))?;
+    let cred_id = cred_id.ok_or_else(|| ServerFnError::new("no CF credential"))?;
+
+    let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
+
+    let update = cloudflare_api::UpdatePagesProject {
+        production_branch: Some(branch.clone()),
+        source: None,
+        build_config: None,
+    };
+
+    client.update_pages_project(&account_id, &project_name, &update).await
+        .map_err(|e| ServerFnError::new(format!("failed to update production branch: {e}")))?;
+
+    tracing::info!("updated production branch for {project_name} to {branch}");
     Ok(())
 }
 
@@ -499,6 +538,7 @@ pub fn WebspaceDetail(id: String) -> Element {
                 DirectUploadDisplay {
                     webspace_id: data.id,
                     project_name: data.cloudflare_pages_project.clone().unwrap_or_default(),
+                    production_branch: data.production_branch.clone().unwrap_or_else(|| "main".into()),
                     pages_subdomain: data.pages_subdomain.clone(),
                 }
             }
@@ -919,8 +959,12 @@ fn GitSourceDisplay(git_source: GitRepoInfo, build_config: Option<BuildConfigInf
 
 /// Display for a direct-upload Pages project with deploy API instructions.
 #[component]
-fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, pages_subdomain: Option<String>) -> Element {
+fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, production_branch: String, pages_subdomain: Option<String>) -> Element {
     let ws_id = webspace_id.to_string();
+
+    let mut branch_input = use_signal(move || production_branch.clone());
+    let mut saving_branch = use_signal(|| false);
+    let mut branch_msg = use_signal(|| None::<String>);
 
     rsx! {
         Card { div { class: "p-6 space-y-4",
@@ -929,8 +973,47 @@ fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, pages_subdomain:
                 span { class: "font-mono text-sm text-fg-muted", "{project_name}" }
             }
 
-            // API deploy method
+            // Production branch setting
             div {
+                div { class: "text-sm font-medium mb-1", "Production Branch" }
+                div { class: "text-sm text-fg-muted mb-2",
+                    "Deployments to this branch go live. Other branches create preview deployments."
+                }
+                div { class: "flex items-end gap-3",
+                    FormField { label: "Branch",
+                        input { class: "input w-48 font-mono text-sm", r#type: "text",
+                            value: "{branch_input}",
+                            oninput: move |evt| branch_input.set(evt.value()),
+                        }
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        disabled: *saving_branch.read(),
+                        onclick: {
+                            let wid = webspace_id;
+                            move |_| {
+                                let b = branch_input.read().clone();
+                                saving_branch.set(true);
+                                branch_msg.set(None);
+                                spawn(async move {
+                                    match update_production_branch(wid, b).await {
+                                        Ok(()) => branch_msg.set(Some("Production branch updated".into())),
+                                        Err(e) => branch_msg.set(Some(format!("Error: {e}"))),
+                                    }
+                                    saving_branch.set(false);
+                                });
+                            }
+                        },
+                        if *saving_branch.read() { "Saving..." } else { "Update Branch" }
+                    }
+                    if let Some(msg) = &*branch_msg.read() {
+                        span { class: "text-sm text-fg-muted", "{msg}" }
+                    }
+                }
+            }
+
+            // API deploy method
+            div { class: "border-t border-line-soft pt-4",
                 div { class: "text-sm font-medium mb-1", "Deploy via API" }
                 div { class: "text-sm text-fg-muted mb-2",
                     "Upload a tarball (.tar.gz) of your site. The server extracts it and deploys via Wrangler in the background."
