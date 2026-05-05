@@ -57,6 +57,7 @@ module.exports = {
       },
       boxShadow: {
         card: 'var(--shadow-card)',
+        pop:  'var(--shadow-pop)',
       },
     },
   },
