@@ -48,6 +48,8 @@ struct DomainBinding {
     subdomain_name: Option<String>,
     hostname: String,
     cname_ok: bool,
+    /// CF Pages custom domain verification status (active, pending, verifying, etc.)
+    cf_domain_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,7 +127,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
         .bind(domain_id).bind(sub_name)
         .fetch_one(&pool).await.unwrap_or(false);
 
-        bindings.push(DomainBinding { binding_id, domain_id, subdomain_id, domain_name, subdomain_name, hostname, cname_ok });
+        bindings.push(DomainBinding { binding_id, domain_id, subdomain_id, domain_name, subdomain_name, hostname, cname_ok, cf_domain_status: None });
     }
 
     // Fetch live CF Pages info
@@ -155,6 +157,15 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
                         destination_dir: bc.destination_dir.clone(),
                         root_dir: bc.root_dir.clone(),
                     });
+                }
+            }
+
+            // Fetch custom domain verification statuses
+            if let Ok(cf_domains) = client.list_pages_custom_domains(&account_id, project_name).await {
+                for binding in &mut bindings {
+                    if let Some(cf_dom) = cf_domains.iter().find(|d| d.name == binding.hostname) {
+                        binding.cf_domain_status = cf_dom.status.clone();
+                    }
                 }
             }
         }
@@ -460,6 +471,56 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
     }
 
     Ok(())
+}
+
+/// Trigger a recheck of a custom domain's verification status on CF Pages.
+/// Removes and re-adds the custom domain to force Cloudflare to re-verify.
+#[server]
+async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<String, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+        "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let (project_name, cred_id) = match ws {
+        (Some(p), Some(c)) => (p, c),
+        _ => return Err(ServerFnError::new("no Pages project")),
+    };
+
+    let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
+
+    // Re-fetch the domain status
+    match client.get_pages_custom_domain(&account_id, &project_name, &hostname).await {
+        Ok(dom) => {
+            let status = dom.status.as_deref().unwrap_or("unknown");
+            if status == "active" {
+                return Ok(format!("Domain is already active"));
+            }
+            // Remove and re-add to trigger re-verification
+            let _ = client.remove_pages_custom_domain(&account_id, &project_name, &hostname).await;
+            let result = client.add_pages_custom_domain(&account_id, &project_name, &hostname).await
+                .map_err(|e| ServerFnError::new(format!("re-add failed: {e}")))?;
+            let new_status = result.status.as_deref().unwrap_or("pending");
+            Ok(format!("Recheck triggered — status: {new_status}"))
+        }
+        Err(_) => {
+            // Domain not found on CF, try adding it
+            let result = client.add_pages_custom_domain(&account_id, &project_name, &hostname).await
+                .map_err(|e| ServerFnError::new(format!("add failed: {e}")))?;
+            let new_status = result.status.as_deref().unwrap_or("pending");
+            Ok(format!("Domain added — status: {new_status}"))
+        }
+    }
 }
 
 /// Re-create the CNAME record for a Pages domain binding.
@@ -1285,6 +1346,8 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
     let mut error = use_signal(|| None::<String>);
     let mut removing: Signal<Option<Uuid>> = use_signal(|| None);
     let mut fixing: Signal<Option<Uuid>> = use_signal(|| None);
+    let mut rechecking: Signal<Option<Uuid>> = use_signal(|| None);
+    let mut recheck_msg: Signal<Option<String>> = use_signal(|| None);
 
     rsx! {
         Card {
@@ -1296,6 +1359,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                             Th { "Domain" }
                             if is_pages {
                                 Th { "CNAME" }
+                                Th { "Verification" }
                             }
                             Th { "" }
                         }
@@ -1305,7 +1369,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                             tr {
                                 td {
                                     class: "td text-fg-muted text-center",
-                                    colspan: if is_pages { "4" } else { "3" },
+                                    colspan: if is_pages { "5" } else { "3" },
                                     "No domains bound"
                                 }
                             }
@@ -1316,8 +1380,10 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                 let did = b.domain_id;
                                 let hostname = b.hostname.clone();
                                 let cname_ok = b.cname_ok;
+                                let cf_status = b.cf_domain_status.clone();
                                 let is_removing = *removing.read() == Some(bid);
                                 let is_fixing = *fixing.read() == Some(bid);
+                                let is_rechecking = *rechecking.read() == Some(bid);
                                 rsx! {
                                     tr {
                                         Td { class: "font-mono", "{b.hostname}" }
@@ -1349,6 +1415,40 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                             if is_fixing { "Fixing..." } else { "Fix" }
                                                         }
                                                     }
+                                                }
+                                            }
+                                            // Verification status column
+                                            Td {
+                                                match cf_status.as_deref() {
+                                                    Some("active") => rsx! { Badge { variant: BadgeVariant::Success, "Active" } },
+                                                    Some("pending") | Some("verifying") => rsx! {
+                                                        div { class: "flex items-center gap-2",
+                                                            Badge { variant: BadgeVariant::Warn, {cf_status.as_deref().unwrap_or("pending")} }
+                                                            Button {
+                                                                variant: ButtonVariant::Secondary,
+                                                                disabled: is_rechecking,
+                                                                onclick: {
+                                                                    let wid = webspace_id;
+                                                                    let hostname = hostname.clone();
+                                                                    move |_| {
+                                                                        let hostname = hostname.clone();
+                                                                        rechecking.set(Some(bid));
+                                                                        recheck_msg.set(None);
+                                                                        spawn(async move {
+                                                                            match recheck_custom_domain(wid, hostname).await {
+                                                                                Ok(msg) => recheck_msg.set(Some(msg)),
+                                                                                Err(e) => recheck_msg.set(Some(format!("Error: {e}"))),
+                                                                            }
+                                                                            rechecking.set(None);
+                                                                        });
+                                                                    }
+                                                                },
+                                                                if is_rechecking { "..." } else { "Recheck" }
+                                                            }
+                                                        }
+                                                    },
+                                                    Some(s) => rsx! { Badge { "{s}" } },
+                                                    None => rsx! { span { class: "text-fg-muted", "-" } },
                                                 }
                                             }
                                         }

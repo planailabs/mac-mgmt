@@ -185,6 +185,18 @@ pub struct PagesBuildConfig {
     pub build_caching: Option<bool>,
 }
 
+/// Custom domain attached to a Pages project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagesCustomDomain {
+    pub id: Option<String>,
+    pub name: String,
+    pub status: Option<String>, // "active", "pending", "verifying", "moving", etc.
+    #[serde(default)]
+    pub verification_type: Option<String>,
+    #[serde(default)]
+    pub validation_data: Option<serde_json::Value>,
+}
+
 /// Request body for updating a Pages project (PATCH).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdatePagesProject {

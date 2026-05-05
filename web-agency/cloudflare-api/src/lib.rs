@@ -254,8 +254,18 @@ impl Client {
         self.delete_req(&format!("/accounts/{account_id}/pages/projects/{project_name}")).await
     }
 
+    /// List custom domains for a Pages project.
+    pub async fn list_pages_custom_domains(&self, account_id: &str, project_name: &str) -> Result<Vec<PagesCustomDomain>, Error> {
+        self.get(&format!("/accounts/{account_id}/pages/projects/{project_name}/domains")).await
+    }
+
+    /// Get a specific custom domain's status.
+    pub async fn get_pages_custom_domain(&self, account_id: &str, project_name: &str, domain: &str) -> Result<PagesCustomDomain, Error> {
+        self.get(&format!("/accounts/{account_id}/pages/projects/{project_name}/domains/{domain}")).await
+    }
+
     /// Add a custom domain to a Pages project.
-    pub async fn add_pages_custom_domain(&self, account_id: &str, project_name: &str, domain: &str) -> Result<serde_json::Value, Error> {
+    pub async fn add_pages_custom_domain(&self, account_id: &str, project_name: &str, domain: &str) -> Result<PagesCustomDomain, Error> {
         #[derive(Serialize)]
         struct Body<'a> { name: &'a str }
         self.post(&format!("/accounts/{account_id}/pages/projects/{project_name}/domains"), &Body { name: domain }).await
