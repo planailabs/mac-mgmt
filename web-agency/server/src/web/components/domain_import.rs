@@ -126,7 +126,7 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
                 .ok_or_else(|| ServerFnError::new("missing api_key"))?;
             let api_secret = data["api_secret"].as_str()
                 .ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::Client::new(api_key, api_secret);
+            let client = spaceship_api::compat::SimpleClient::new(api_key, api_secret);
 
             let domains = client.list_all_domains().await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;

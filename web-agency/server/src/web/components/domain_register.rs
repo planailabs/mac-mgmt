@@ -67,7 +67,7 @@ async fn check_domain_availability(credential_id: Uuid, domain: String) -> Resul
         "spaceship" => {
             let key = data["api_key"].as_str().ok_or_else(|| ServerFnError::new("missing api_key"))?;
             let secret = data["api_secret"].as_str().ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::Client::new(key, secret);
+            let client = spaceship_api::compat::SimpleClient::new(key, secret);
             let r = client.check_availability(&domain).await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API: {e}")))?;
             let available = r.status.as_deref() == Some("available");

@@ -455,8 +455,8 @@ async fn try_set_registrar_nameservers(pool: &sqlx::PgPool, domain_id: Uuid, dom
             let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
             let key = data["api_key"].as_str().ok_or_else(|| ServerFnError::new("missing api_key"))?;
             let secret = data["api_secret"].as_str().ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::Client::new(key, secret);
-            client.set_nameservers(domain_name, &spaceship_api::NameserverConfig {
+            let client = spaceship_api::compat::SimpleClient::new(key, secret);
+            client.set_nameservers(domain_name, &spaceship_api::compat::NameserverConfig {
                 provider: "custom".into(), hosts: Some(nameservers.to_vec()),
             }).await.map_err(|e| ServerFnError::new(format!("Spaceship NS: {e}")))?;
             Ok(true)

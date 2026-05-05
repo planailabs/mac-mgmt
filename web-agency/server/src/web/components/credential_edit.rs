@@ -109,7 +109,7 @@ async fn test_credential_conn(credential_id: Uuid) -> Result<String, ServerFnErr
         "spaceship" => {
             let key = data["api_key"].as_str().ok_or_else(|| ServerFnError::new("missing api_key"))?;
             let secret = data["api_secret"].as_str().ok_or_else(|| ServerFnError::new("missing api_secret"))?;
-            let client = spaceship_api::Client::new(key, secret);
+            let client = spaceship_api::compat::SimpleClient::new(key, secret);
             let resp = client.list_domains(0, 1).await.map_err(|e| ServerFnError::new(format!("SS: {e}")))?;
             Ok(format!("OK — {} domain(s)", resp.total_count.unwrap_or(0)))
         }
