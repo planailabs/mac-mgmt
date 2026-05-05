@@ -15229,14 +15229,17 @@ dependencies = [
  "percent-encoding",
  "plan-ai-auth",
  "plan-ai-design",
+ "pulldown-cmark 0.12.2",
  "rand 0.9.4",
  "reqwest 0.13.2",
+ "rust-embed",
  "rustls 0.23.38",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "spaceship-api",
  "sqlx",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml",
@@ -15246,6 +15249,19 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "web-agency-upload"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "flate2",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tar",
 ]
 
 [[package]]

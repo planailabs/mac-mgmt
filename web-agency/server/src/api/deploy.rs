@@ -26,6 +26,7 @@ pub struct DeployState {
 
 pub fn router(state: DeployState) -> Router<()> {
     Router::new()
+        .route("/api/v1/deploy/whoami", get(whoami))
         .route("/api/v1/deploy/{webspace_id}", post(upload_deploy))
         .route("/api/v1/deploy/{webspace_id}/status", get(deploy_status))
         .with_state(state)
@@ -72,6 +73,67 @@ async fn authenticate_deploy(pool: &PgPool, headers: &HeaderMap, webspace_id: Uu
     }
 
     Ok(())
+}
+
+// ── Whoami ────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct WhoamiResponse {
+    kind: String,
+    webspace_id: Option<String>,
+    webspace_name: Option<String>,
+}
+
+async fn whoami(
+    State(state): State<DeployState>,
+    headers: HeaderMap,
+) -> Result<Json<WhoamiResponse>, (StatusCode, String)> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or((StatusCode::UNAUTHORIZED, "missing Bearer token".into()))?;
+
+    use sha2::{Sha256, Digest};
+    let hash = hex::encode(Sha256::digest(token.as_bytes()));
+
+    let row = sqlx::query_as::<_, (String, Option<serde_json::Value>)>(
+        "SELECT kind, scopes FROM tokens WHERE token_hash = $1 AND NOT revoked AND (expires_at IS NULL OR expires_at > now())",
+    )
+    .bind(&hash)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::UNAUTHORIZED, "invalid token".into()))?;
+
+    let (kind, scopes) = row;
+
+    let ws_id = scopes
+        .as_ref()
+        .and_then(|s| s.get("webspace_id"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let ws_name = if let Some(ref wid) = ws_id {
+        if let Ok(uid) = uuid::Uuid::parse_str(wid) {
+            sqlx::query_scalar::<_, String>("SELECT name FROM webspaces WHERE id = $1")
+                .bind(uid)
+                .fetch_optional(&state.pool)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(WhoamiResponse {
+        kind,
+        webspace_id: ws_id,
+        webspace_name: ws_name,
+    }))
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
