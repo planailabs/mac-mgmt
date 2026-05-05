@@ -1012,31 +1012,40 @@ fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, production_branc
                 }
             }
 
-            // API deploy method
+            // Deploy instructions
             div { class: "border-t border-line-soft pt-4",
-                div { class: "text-sm font-medium mb-1", "Deploy via API" }
+                div { class: "text-sm font-medium mb-1", "Deploy" }
                 div { class: "text-sm text-fg-muted mb-2",
-                    "Upload a tarball (.tar.gz) of your site. The server extracts it and deploys via Wrangler in the background."
+                    "Create a deploy token at " span { class: "font-semibold", "Tokens → Create Token → Kind: Deploy" }
+                    ", then use the CLI to upload your build output."
                 }
-                div { class: "text-sm text-fg-muted mb-1", "1. Create a deploy token:" }
-                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded mb-2",
-                    "Go to Tokens → Create Token → Kind: Deploy → Webspace: {project_name}"
-                }
-                div { class: "text-sm text-fg-muted mb-1", "2. Upload and deploy:" }
-                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all mb-2 whitespace-pre",
-                    "tar czf site.tar.gz -C ./dist .\ncurl -X POST \\\n  -H 'Authorization: Bearer YOUR_TOKEN' \\\n  --data-binary @site.tar.gz \\\n  $SERVER_URL/api/v1/deploy/{ws_id}"
-                }
-                div { class: "text-sm text-fg-muted mb-1", "3. Check status:" }
-                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all",
-                    "curl -H 'Authorization: Bearer YOUR_TOKEN' \\\n  $SERVER_URL/api/v1/deploy/{ws_id}/status"
-                }
-            }
 
-            // Wrangler CLI alternative
-            div { class: "border-t border-line-soft pt-4",
-                div { class: "text-sm font-medium mb-1", "Or deploy directly via Wrangler CLI" }
+                div { class: "text-sm text-fg-muted mb-1", "Install:" }
+                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all mb-3",
+                    "cargo install --path web-agency/upload-cli"
+                }
+
+                div { class: "text-sm text-fg-muted mb-1", "Deploy:" }
+                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all mb-3 whitespace-pre",
+                    "export WEB_AGENCY_TOKEN=your-deploy-token\nexport WEB_AGENCY_URL=https://your-server.example.com\nweb-agency-upload ./dist"
+                }
+
+                div { class: "text-sm text-fg-muted mb-1", "Or with explicit arguments:" }
+                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all mb-3 whitespace-pre",
+                    "web-agency-upload ./dist \\\n  --token YOUR_TOKEN \\\n  --url https://your-server.example.com \\\n  --webspace-id {ws_id}"
+                }
+
+                div { class: "text-sm text-fg-muted mb-1", "Deploy to a preview branch:" }
                 div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all",
-                    "CLOUDFLARE_API_TOKEN=... npx wrangler pages deploy ./dist --project-name={project_name}"
+                    "web-agency-upload ./dist --branch preview"
+                }
+
+                div { class: "mt-3",
+                    Link {
+                        to: crate::web::app::Route::DocPage { slug: "upload-cli".into() },
+                        class: "text-sm text-brand underline",
+                        "Full CLI documentation →"
+                    }
                 }
             }
 
