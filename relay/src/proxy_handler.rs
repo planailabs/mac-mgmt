@@ -424,8 +424,11 @@ fn bootstrap_html() -> String {
     )
 }
 
-/// Build the "authentication required" HTML page with a sign-in button.
-fn unauthorized_html(login_url: &str) -> axum::response::Response {
+/// Build the "authentication required" HTML page, optionally with a sign-in button.
+fn unauthorized_html(login_url: Option<&str>) -> axum::response::Response {
+    let button = login_url
+        .map(|url| format!(r#"<a href="{url}" class="login-btn">Log in to plan.ai</a>"#))
+        .unwrap_or_default();
     let html = format!(
         r#"<!DOCTYPE html>
 <html><head>
@@ -447,7 +450,7 @@ fn unauthorized_html(login_url: &str) -> axum::response::Response {
 </head>
 <body>
   <div class="text">Authentication required to access this tunnel</div>
-  <a href="{login_url}" class="login-btn">Log in to plan.ai</a>
+  {button}
 </body>
 </html>"#,
     );
@@ -482,11 +485,11 @@ async fn proxy_catchall(
 
     // If no token at all, show a styled "sign in" page instead of a plain 401.
     if extract_token(&headers).is_none() {
-        if let Some(web_url) = &state.server_web_url {
+        let login_url = state.server_web_url.as_ref().map(|web_url| {
             let prefix = &instance_id[..std::cmp::min(12, instance_id.len())];
-            let login_url = format!("{web_url}/easy-access/direct/{prefix}/{tunnel_name}");
-            return unauthorized_html(&login_url);
-        }
+            format!("{web_url}/easy-access/direct/{prefix}/{tunnel_name}")
+        });
+        return unauthorized_html(login_url.as_deref());
     }
 
     let self_info = match authenticate_proxy(&headers, &state, &instance_id).await {
