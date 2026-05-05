@@ -10,8 +10,18 @@ use clap::Parser;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use serde::Deserialize;
-use std::io::Write;
 use std::path::PathBuf;
+
+fn urlencoding(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                String::from(b as char)
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
 
 #[derive(Parser)]
 #[command(name = "web-agency-upload", version, about = "Upload a site folder to a web-agency webspace")]
@@ -30,6 +40,11 @@ struct Cli {
     /// Webspace ID to deploy to. If omitted, uses the token's scoped webspace.
     #[arg(long, env = "WEB_AGENCY_WEBSPACE_ID")]
     webspace_id: Option<String>,
+
+    /// Branch name for the deployment (e.g. "main", "preview", "staging").
+    /// Maps to a Cloudflare Pages deployment branch.
+    #[arg(long, env = "WEB_AGENCY_BRANCH")]
+    branch: Option<String>,
 
     /// Poll interval in seconds when waiting for deployment
     #[arg(long, default_value = "3")]
@@ -114,9 +129,15 @@ fn main() -> Result<()> {
     eprintln!("Tarball size: {} bytes ({:.1} KB)", tarball.len(), tarball.len() as f64 / 1024.0);
 
     // Upload
-    eprintln!("Uploading to webspace {webspace_id}...");
+    let mut upload_url = format!("{base_url}/api/v1/deploy/{webspace_id}");
+    if let Some(ref branch) = cli.branch {
+        upload_url = format!("{upload_url}?branch={}", urlencoding(branch));
+        eprintln!("Uploading to webspace {webspace_id} (branch: {branch})...");
+    } else {
+        eprintln!("Uploading to webspace {webspace_id}...");
+    }
     let resp = client
-        .post(format!("{base_url}/api/v1/deploy/{webspace_id}"))
+        .post(&upload_url)
         .bearer_auth(&cli.token)
         .body(tarball)
         .send()

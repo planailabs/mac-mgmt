@@ -144,9 +144,16 @@ struct UploadResponse {
     status: String,
 }
 
+#[derive(serde::Deserialize, Default)]
+struct UploadQuery {
+    #[serde(default)]
+    branch: Option<String>,
+}
+
 async fn upload_deploy(
     State(state): State<DeployState>,
     Path(webspace_id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<UploadQuery>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<UploadResponse>, (StatusCode, String)> {
@@ -190,8 +197,9 @@ async fn upload_deploy(
 
     // Spawn background deploy task
     let pool = state.pool.clone();
+    let branch = query.branch;
     tokio::spawn(async move {
-        run_wrangler_deploy(pool, deployment_id, project_name, cf_token, body).await;
+        run_wrangler_deploy(pool, deployment_id, project_name, cf_token, branch, body).await;
     });
 
     Ok(Json(UploadResponse {
@@ -266,6 +274,7 @@ async fn run_wrangler_deploy(
     deployment_id: Uuid,
     project_name: String,
     cf_token: String,
+    branch: Option<String>,
     tarball: Bytes,
 ) {
     // Update status to deploying
@@ -314,8 +323,18 @@ async fn run_wrangler_deploy(
     }
 
     // Run wrangler pages deploy
+    let mut wrangler_args = vec![
+        "wrangler".to_string(),
+        "pages".to_string(),
+        "deploy".to_string(),
+        ".".to_string(),
+        format!("--project-name={project_name}"),
+    ];
+    if let Some(ref branch) = branch {
+        wrangler_args.push(format!("--branch={branch}"));
+    }
     let wrangler_result = tokio::process::Command::new("npx")
-        .args(["wrangler", "pages", "deploy", ".", &format!("--project-name={project_name}")])
+        .args(&wrangler_args)
         .current_dir(&extract_dir)
         .env("CLOUDFLARE_API_TOKEN", &cf_token)
         .output()
