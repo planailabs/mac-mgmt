@@ -44,6 +44,9 @@ async fn init_server() -> sqlx::PgPool {
         .await
         .expect("failed to run migrations");
 
+    // Mark any deployments left in-flight from a previous run as failed.
+    api::deploy::recover_interrupted_deployments(&pool).await;
+
     #[cfg(feature = "webui")]
     server_state::set_pool(pool.clone());
 
@@ -76,14 +79,40 @@ fn main() {
     #[cfg(all(feature = "server", feature = "webui"))]
     {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
-        use std::sync::OnceLock;
+        use std::sync::{Arc, OnceLock};
+        use std::sync::atomic::AtomicUsize;
 
         static INIT: OnceLock<Option<Vec<plan_ai_auth::AuthLayer>>> = OnceLock::new();
+        static ACTIVE_DEPLOYS: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
 
         if std::env::var("PORT").is_err() {
             let cfg = config::load();
             unsafe { std::env::set_var("PORT", cfg.web.port.to_string()) };
         }
+
+        // SIGTERM handler: drain active deployments before exit.
+        std::thread::spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .expect("failed to register SIGTERM handler")
+                        .recv()
+                        .await;
+                    tracing::info!("received SIGTERM, draining deployments...");
+                    if let Some(active) = ACTIVE_DEPLOYS.get() {
+                        crate::api::deploy::drain_active_deploys(
+                            active,
+                            std::time::Duration::from_secs(120),
+                        )
+                        .await;
+                    }
+                    tracing::info!("shutdown complete");
+                    std::process::exit(0);
+                });
+        });
 
         dioxus::serve(move || async move {
             let dev_no_auth = std::env::var("DEV_ONLY_NO_AUTH").as_deref() == Ok("1");
@@ -122,9 +151,13 @@ fn main() {
             let mut router = axum::Router::new()
                 .serve_dioxus_application(ServeConfig::new(), web::app::App);
 
-            // Mount deploy API (does not go through OIDC auth — uses its own Bearer token auth)
+            // Mount deploy API (uses its own Bearer token auth, not OIDC)
+            let active_deploys = ACTIVE_DEPLOYS
+                .get_or_init(|| Arc::new(AtomicUsize::new(0)))
+                .clone();
             let deploy_router = crate::api::deploy::router(crate::api::deploy::DeployState {
                 pool: crate::server_pool().expect("pool for deploy API"),
+                active_deploys,
             });
             router = router.merge(deploy_router);
 
