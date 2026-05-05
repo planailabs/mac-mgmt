@@ -9,6 +9,7 @@ struct CredentialRow {
     id: Uuid,
     name: String,
     credential_type: String,
+    organization_name: Option<String>,
     created_at: String,
 }
 
@@ -17,9 +18,10 @@ async fn list_credentials() -> Result<Vec<CredentialRow>, ServerFnError> {
     let _user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, name, credential_type, created_at \
-         FROM credentials ORDER BY created_at DESC",
+    let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
+        "SELECT c.id, c.name, c.credential_type, o.name, c.created_at \
+         FROM credentials c LEFT JOIN organizations o ON o.id = c.organization_id \
+         ORDER BY c.created_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -27,10 +29,11 @@ async fn list_credentials() -> Result<Vec<CredentialRow>, ServerFnError> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, name, credential_type, created_at)| CredentialRow {
+        .map(|(id, name, credential_type, organization_name, created_at)| CredentialRow {
             id,
             name,
             credential_type,
+            organization_name,
             created_at: created_at.format("%Y-%m-%d %H:%M").to_string(),
         })
         .collect())
@@ -63,13 +66,14 @@ pub fn CredentialList() -> Element {
                         tr {
                             Th { "Name" }
                             Th { "Type" }
+                            Th { "Organization" }
                             Th { "Created" }
                         }
                     }
                     tbody {
                         if rows.is_empty() {
                             tr {
-                                td { class: "td text-fg-muted text-center", colspan: "3", "No credentials yet" }
+                                td { class: "td text-fg-muted text-center", colspan: "4", "No credentials yet" }
                             }
                         }
                         for row in rows {
@@ -78,6 +82,7 @@ pub fn CredentialList() -> Element {
                                 Td {
                                     span { class: "badge badge-info", "{row.credential_type}" }
                                 }
+                                TdMuted { {row.organization_name.as_deref().unwrap_or("Global")} }
                                 TdMuted { "{row.created_at}" }
                             }
                         }
