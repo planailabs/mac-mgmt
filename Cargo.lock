@@ -8091,6 +8091,7 @@ dependencies = [
  "memvault-extract",
  "memvault-query",
  "memvault-store",
+ "mime_guess",
  "opentelemetry",
  "serde",
  "serde_json",
@@ -8107,7 +8108,11 @@ name = "memvault-attach"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "cid",
+ "memvault-core",
  "memvault-store",
+ "multihash",
+ "multihash-codetable",
  "prost",
  "serde",
  "serde_json",
@@ -8238,6 +8243,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "blake3",
+ "hex",
  "memvault-core",
  "redb",
  "serde",
