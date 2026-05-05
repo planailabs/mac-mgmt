@@ -200,6 +200,13 @@ async fn upload_deploy(
     let cred_id = cred_id.ok_or((StatusCode::BAD_REQUEST, "no Cloudflare credential linked".into()))?;
 
     let tarball_size = body.len() as i64;
+    tracing::info!(
+        webspace_id = %webspace_id,
+        project = %project_name,
+        tarball_bytes = tarball_size,
+        branch = ?query.branch,
+        "received deploy upload"
+    );
 
     let deployment_id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO deployments (webspace_id, status, tarball_size) VALUES ($1, 'uploading', $2) RETURNING id",
@@ -280,6 +287,16 @@ async fn run_wrangler_deploy(
     branch: Option<String>,
     tarball: Bytes,
 ) {
+    let branch_label = branch.as_deref().unwrap_or("production");
+    let tarball_len = tarball.len();
+    tracing::info!(
+        deployment_id = %deployment_id,
+        project = %project_name,
+        branch = %branch_label,
+        tarball_bytes = tarball_len,
+        "starting deployment"
+    );
+
     let _ = sqlx::query("UPDATE deployments SET status = 'deploying', updated_at = now() WHERE id = $1")
         .bind(deployment_id).execute(&pool).await;
 
@@ -287,12 +304,14 @@ async fn run_wrangler_deploy(
         Ok(d) => d,
         Err(e) => { set_failed(&pool, deployment_id, &format!("tempdir: {e}")).await; return; }
     };
+    tracing::debug!(deployment_id = %deployment_id, dir = %tmp_dir.path().display(), "created temp dir");
 
     let tarball_path = tmp_dir.path().join("upload.tar.gz");
     if let Err(e) = tokio::fs::write(&tarball_path, &tarball).await {
         set_failed(&pool, deployment_id, &format!("write tarball: {e}")).await;
         return;
     }
+    tracing::debug!(deployment_id = %deployment_id, bytes = tarball_len, "wrote tarball to disk");
 
     let extract_dir = tmp_dir.path().join("site");
     if let Err(e) = tokio::fs::create_dir_all(&extract_dir).await {
@@ -300,6 +319,8 @@ async fn run_wrangler_deploy(
         return;
     }
 
+    tracing::info!(deployment_id = %deployment_id, "extracting tarball");
+    let tar_start = std::time::Instant::now();
     let tar_status = tokio::process::Command::new("tar")
         .args(["xzf", tarball_path.to_str().unwrap_or("upload.tar.gz"), "-C"])
         .arg(&extract_dir)
@@ -308,11 +329,32 @@ async fn run_wrangler_deploy(
 
     match tar_status {
         Ok(out) if !out.status.success() => {
-            set_failed(&pool, deployment_id, &format!("tar: {}", String::from_utf8_lossy(&out.stderr))).await;
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            tracing::error!(deployment_id = %deployment_id, stderr = %stderr, "tar extraction failed");
+            set_failed(&pool, deployment_id, &format!("tar: {stderr}")).await;
             return;
         }
-        Err(e) => { set_failed(&pool, deployment_id, &format!("tar: {e}")).await; return; }
-        _ => {}
+        Err(e) => {
+            tracing::error!(deployment_id = %deployment_id, error = %e, "tar command failed to execute");
+            set_failed(&pool, deployment_id, &format!("tar: {e}")).await;
+            return;
+        }
+        _ => {
+            tracing::info!(
+                deployment_id = %deployment_id,
+                elapsed_ms = tar_start.elapsed().as_millis(),
+                "tarball extracted"
+            );
+        }
+    }
+
+    // Count extracted files for the log
+    if let Ok(mut entries) = tokio::fs::read_dir(&extract_dir).await {
+        let mut count = 0u32;
+        while entries.next_entry().await.ok().flatten().is_some() {
+            count += 1;
+        }
+        tracing::info!(deployment_id = %deployment_id, files = count, "extracted files in root");
     }
 
     let mut wrangler_args = vec![
@@ -323,6 +365,15 @@ async fn run_wrangler_deploy(
         wrangler_args.push(format!("--branch={branch}"));
     }
 
+    tracing::info!(
+        deployment_id = %deployment_id,
+        project = %project_name,
+        branch = %branch_label,
+        args = ?wrangler_args,
+        "running wrangler pages deploy"
+    );
+    let wrangler_start = std::time::Instant::now();
+
     let wrangler_result = tokio::process::Command::new("npx")
         .args(&wrangler_args)
         .current_dir(&extract_dir)
@@ -330,22 +381,52 @@ async fn run_wrangler_deploy(
         .output()
         .await;
 
+    let wrangler_elapsed = wrangler_start.elapsed();
+
     match wrangler_result {
         Ok(out) if out.status.success() => {
-            tracing::info!("deploy success for {project_name}");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            tracing::info!(
+                deployment_id = %deployment_id,
+                project = %project_name,
+                elapsed_ms = wrangler_elapsed.as_millis(),
+                stdout = %stdout.trim(),
+                "deployment succeeded"
+            );
             let _ = sqlx::query("UPDATE deployments SET status = 'success', updated_at = now() WHERE id = $1")
                 .bind(deployment_id).execute(&pool).await;
         }
         Ok(out) => {
-            let msg = format!("{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
-            set_failed(&pool, deployment_id, &format!("wrangler: {msg}")).await;
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let exit_code = out.status.code().unwrap_or(-1);
+            tracing::error!(
+                deployment_id = %deployment_id,
+                project = %project_name,
+                exit_code = exit_code,
+                elapsed_ms = wrangler_elapsed.as_millis(),
+                stderr = %stderr.trim(),
+                stdout = %stdout.trim(),
+                "wrangler deployment failed"
+            );
+            set_failed(&pool, deployment_id, &format!("wrangler exit {exit_code}: {}", stderr.trim())).await;
         }
-        Err(e) => { set_failed(&pool, deployment_id, &format!("wrangler exec: {e}")).await; }
+        Err(e) => {
+            tracing::error!(
+                deployment_id = %deployment_id,
+                error = %e,
+                "failed to execute wrangler (is npx/wrangler installed?)"
+            );
+            set_failed(&pool, deployment_id, &format!("wrangler exec: {e}")).await;
+        }
     }
+
+    tracing::debug!(deployment_id = %deployment_id, "cleaning up temp dir");
+    // tmp_dir dropped here, auto-cleaned
 }
 
 async fn set_failed(pool: &PgPool, deployment_id: Uuid, msg: &str) {
-    tracing::error!("deployment {deployment_id} failed: {msg}");
+    tracing::error!(deployment_id = %deployment_id, error = msg, "deployment failed");
     let _ = sqlx::query("UPDATE deployments SET status = 'failed', error_message = $1, updated_at = now() WHERE id = $2")
         .bind(msg).bind(deployment_id).execute(pool).await;
 }
