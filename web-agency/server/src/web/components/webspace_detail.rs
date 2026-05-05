@@ -43,10 +43,11 @@ struct BuildConfigInfo {
 struct DomainBinding {
     binding_id: Uuid,
     domain_id: Uuid,
+    subdomain_id: Option<Uuid>,
     domain_name: String,
     subdomain_name: Option<String>,
-    /// Full hostname: subdomain.domain or just domain
     hostname: String,
+    cname_ok: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,23 +101,32 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
         .bind(org_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let bindings = sqlx::query_as::<_, (Uuid, Uuid, String, Option<String>)>(
-        "SELECT wd.id, wd.domain_id, d.name, s.name \
+    let binding_rows = sqlx::query_as::<_, (Uuid, Uuid, Option<Uuid>, String, Option<String>)>(
+        "SELECT wd.id, wd.domain_id, wd.subdomain_id, d.name, s.name \
          FROM webspace_domains wd \
          JOIN domains d ON d.id = wd.domain_id \
          LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
          WHERE wd.webspace_id = $1 ORDER BY d.name",
     )
-    .bind(webspace_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
-    .into_iter()
-    .map(|(binding_id, domain_id, domain_name, subdomain_name)| {
+    .bind(webspace_id).fetch_all(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let mut bindings = Vec::new();
+    for (binding_id, domain_id, subdomain_id, domain_name, subdomain_name) in binding_rows {
         let hostname = match &subdomain_name {
             Some(sub) if sub != "@" => format!("{sub}.{domain_name}"),
             _ => domain_name.clone(),
         };
-        DomainBinding { binding_id, domain_id, domain_name, subdomain_name, hostname }
-    })
-    .collect();
+        // Check if a CNAME record pointing to *.pages.dev exists for this hostname
+        let sub_name = subdomain_name.as_deref().unwrap_or("@");
+        let cname_ok = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM dns_records WHERE domain_id = $1 AND name = $2 \
+             AND record_type = 'CNAME' AND record_value LIKE '%.pages.dev')",
+        )
+        .bind(domain_id).bind(sub_name)
+        .fetch_one(&pool).await.unwrap_or(false);
+
+        bindings.push(DomainBinding { binding_id, domain_id, subdomain_id, domain_name, subdomain_name, hostname, cname_ok });
+    }
 
     // Fetch live CF Pages info
     let mut pages_subdomain = None;
@@ -449,6 +459,86 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
         }
     }
 
+    Ok(())
+}
+
+/// Re-create the CNAME record for a Pages domain binding.
+#[server]
+async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid>, hostname: String) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+        "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
+    ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let (project_name, _) = match ws {
+        (Some(p), Some(c)) => (p, c),
+        _ => return Err(ServerFnError::new("webspace has no Pages project")),
+    };
+
+    let cname_target = format!("{project_name}.pages.dev");
+
+    let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+        "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let (zone_id, domain_cred_id) = match domain_cf {
+        (Some(z), Some(c)) => (z, c),
+        _ => return Err(ServerFnError::new("domain not deployed to Cloudflare")),
+    };
+
+    let client = build_domain_cf_client(&pool, domain_cred_id).await?;
+
+    let record = cloudflare_api::CreateDnsRecord {
+        record_type: "CNAME".into(),
+        name: hostname.clone(),
+        content: Some(cname_target.clone()),
+        data: None,
+        ttl: Some(1),
+        proxied: Some(true),
+        comment: Some(format!("Pages: {project_name}")),
+        priority: None,
+    };
+
+    let created = client.create_dns_record(&zone_id, &record).await
+        .map_err(|e| ServerFnError::new(format!("failed to create CNAME: {e}")))?;
+
+    // Store in dns_records
+    let sub_name = if let Some(sid) = subdomain_id {
+        sqlx::query_scalar::<_, String>("SELECT name FROM subdomains WHERE id = $1")
+            .bind(sid).fetch_optional(&pool).await.ok().flatten().unwrap_or_else(|| "@".into())
+    } else {
+        "@".into()
+    };
+
+    // Ensure subdomain entity exists
+    let sub_id = if let Some(sid) = subdomain_id {
+        sid
+    } else {
+        sqlx::query_scalar::<_, Uuid>(
+            "INSERT INTO subdomains (domain_id, name) VALUES ($1, '@') \
+             ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
+        ).bind(domain_id).fetch_one(&pool).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+    };
+
+    let _ = sqlx::query(
+        "INSERT INTO dns_records (subdomain_id, domain_id, name, record_type, record_value, proxied, cloudflare_record_id) \
+         VALUES ($1, $2, $3, 'CNAME', $4, true, $5) ON CONFLICT DO NOTHING",
+    )
+    .bind(sub_id).bind(domain_id).bind(&sub_name).bind(&cname_target).bind(&created.id)
+    .execute(&pool).await;
+
+    tracing::info!("fixed CNAME {hostname} → {cname_target} (CF record {})", created.id);
     Ok(())
 }
 
@@ -1194,6 +1284,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
     let mut adding = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut removing: Signal<Option<Uuid>> = use_signal(|| None);
+    let mut fixing: Signal<Option<Uuid>> = use_signal(|| None);
 
     rsx! {
         Card {
@@ -1204,7 +1295,7 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                             Th { "Hostname" }
                             Th { "Domain" }
                             if is_pages {
-                                Th { "CF Pages" }
+                                Th { "CNAME" }
                             }
                             Th { "" }
                         }
@@ -1222,14 +1313,44 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                         for b in &bindings {
                             {
                                 let bid = b.binding_id;
+                                let did = b.domain_id;
                                 let hostname = b.hostname.clone();
+                                let cname_ok = b.cname_ok;
                                 let is_removing = *removing.read() == Some(bid);
+                                let is_fixing = *fixing.read() == Some(bid);
                                 rsx! {
                                     tr {
                                         Td { class: "font-mono", "{b.hostname}" }
                                         TdMuted { "{b.domain_name}" }
                                         if is_pages {
-                                            Td { Badge { variant: BadgeVariant::Info, "Custom Domain" } }
+                                            Td {
+                                                if cname_ok {
+                                                    Badge { variant: BadgeVariant::Success, "OK" }
+                                                } else {
+                                                    div { class: "flex items-center gap-2",
+                                                        Badge { variant: BadgeVariant::Danger, "Missing" }
+                                                        Button {
+                                                            variant: ButtonVariant::Secondary,
+                                                            disabled: is_fixing,
+                                                            onclick: {
+                                                                let wid = webspace_id;
+                                                                let hostname = hostname.clone();
+                                                                let sub_id = b.subdomain_id;
+                                                                move |_| {
+                                                                    let hostname = hostname.clone();
+                                                                    fixing.set(Some(bid));
+                                                                    spawn(async move {
+                                                                        let _ = fix_cname(wid, did, sub_id, hostname).await;
+                                                                        fixing.set(None);
+                                                                        navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                                                    });
+                                                                }
+                                                            },
+                                                            if is_fixing { "Fixing..." } else { "Fix" }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                         Td {
                                             Button {
@@ -1244,7 +1365,6 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                         spawn(async move {
                                                             let _ = unbind_domain(wid, bid, hostname).await;
                                                             removing.set(None);
-                                                            // Trigger re-fetch by navigating to same page
                                                             navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
                                                         });
                                                     }
