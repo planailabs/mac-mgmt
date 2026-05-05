@@ -57,7 +57,11 @@ pub fn OrganizationList() -> Element {
                             tr { td { class: "td text-fg-muted text-center", colspan: "3", "No organizations" } }
                         }
                         for row in &rows {
-                            tr {
+                            tr { class: "cursor-pointer hover:bg-surface-2",
+                                onclick: {
+                                    let id = row.id.to_string();
+                                    move |_| { navigator().push(crate::web::app::Route::OrganizationDetail { id: id.clone() }); }
+                                },
                                 Td { "{row.name}" }
                                 Td { "{row.member_count}" }
                                 TdMuted { "{row.created_at}" }

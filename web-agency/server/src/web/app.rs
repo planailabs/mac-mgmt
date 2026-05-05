@@ -11,9 +11,12 @@ use super::components::domain_add::DomainAdd;
 use super::components::domain_detail::DomainDetail;
 use super::components::domain_import::DomainImport;
 use super::components::domain_list::DomainList;
+use super::components::domain_register::DomainRegister;
 use super::components::layout::Layout;
+use super::components::organization_detail::OrganizationDetail;
 use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
+use super::components::token_form::TokenForm;
 use super::components::token_list::TokenList;
 use super::components::user_list::UserList;
 use super::components::webspace_detail::WebspaceDetail;
@@ -35,6 +38,8 @@ pub enum Route {
     DomainAdd {},
     #[route("/domains/import")]
     DomainImport {},
+    #[route("/domains/register")]
+    DomainRegister {},
     #[route("/domains/:id")]
     DomainDetail { id: String },
     #[route("/webspaces")]
@@ -53,10 +58,14 @@ pub enum Route {
     OrganizationList {},
     #[route("/organizations/new")]
     OrganizationForm {},
+    #[route("/organizations/:id")]
+    OrganizationDetail { id: String },
     #[route("/users")]
     UserList {},
     #[route("/tokens")]
     TokenList {},
+    #[route("/tokens/new")]
+    TokenForm {},
 }
 
 #[component]
@@ -75,7 +84,6 @@ pub fn App() -> Element {
 
     let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
 
-    // Remove the pre-hydration loading banner once WASM has hydrated.
     use_effect(|| {
         document::eval("document.getElementById('wasm-loading')?.remove();");
     });

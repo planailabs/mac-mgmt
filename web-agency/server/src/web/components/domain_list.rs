@@ -77,6 +77,11 @@ pub fn DomainList() -> Element {
 
         div { class: "mt-4 flex justify-end gap-3 mb-4",
             Link {
+                to: crate::web::app::Route::DomainRegister {},
+                class: "btn btn-secondary",
+                "Register Domain"
+            }
+            Link {
                 to: crate::web::app::Route::DomainImport {},
                 class: "btn btn-secondary",
                 "Import from Credential"

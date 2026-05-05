@@ -24,7 +24,7 @@ struct DomainData {
     can_set_nameservers: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct SubdomainRow {
     id: Uuid,
     name: String,
@@ -337,6 +337,120 @@ async fn toggle_dnssec(domain_id: Uuid, enable: bool) -> Result<(), ServerFnErro
     Ok(())
 }
 
+/// Add a DNS record to both the local DB and Cloudflare (if deployed).
+#[server]
+async fn add_dns_record(
+    domain_id: Uuid,
+    name: String,
+    record_type: String,
+    record_value: String,
+    proxied: bool,
+) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>, Uuid)>(
+        "SELECT cloudflare_zone_id, cloudflare_credential_id, organization_id FROM domains WHERE id = $1",
+    )
+    .bind(domain_id).fetch_optional(&pool).await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("domain not found"))?;
+
+    let (zone_id, cred_id, org_id) = row;
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    let mut cf_record_id: Option<String> = None;
+
+    // Create on Cloudflare if deployed
+    if let (Some(zone_id), Some(cred_id)) = (&zone_id, cred_id) {
+        let client = build_cf_client(&pool, cred_id).await?;
+        let record = cloudflare_api::CreateDnsRecord {
+            record_type: record_type.clone(),
+            name: name.clone(),
+            content: Some(record_value.clone()),
+            data: None,
+            ttl: Some(1), // auto
+            proxied: Some(proxied),
+            comment: None,
+            priority: None,
+        };
+        let created = client.create_dns_record(zone_id, &record).await
+            .map_err(|e| ServerFnError::new(format!("Cloudflare DNS error: {e}")))?;
+        cf_record_id = Some(created.id);
+    }
+
+    sqlx::query(
+        "INSERT INTO subdomains (domain_id, name, record_type, record_value, proxied, cloudflare_record_id) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(domain_id).bind(&name).bind(&record_type).bind(&record_value).bind(proxied).bind(&cf_record_id)
+    .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+/// Delete a DNS record from the DB and Cloudflare.
+#[server]
+async fn delete_dns_record(domain_id: Uuid, record_id: Uuid) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    // Delete from Cloudflare if synced
+    let rec = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT cloudflare_record_id FROM subdomains WHERE id = $1 AND domain_id = $2",
+    ).bind(record_id).bind(domain_id).fetch_optional(&pool).await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if let Some((Some(cf_id),)) = rec {
+        let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+            "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
+        ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        if let (Some(zone_id), Some(cred_id)) = row {
+            let client = build_cf_client(&pool, cred_id).await?;
+            let _ = client.delete_dns_record(&zone_id, &cf_id).await;
+        }
+    }
+
+    sqlx::query("DELETE FROM subdomains WHERE id = $1 AND domain_id = $2")
+        .bind(record_id).bind(domain_id).execute(&pool).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+/// Delete a domain and all its records.
+#[server]
+async fn delete_domain(domain_id: Uuid) -> Result<(), ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT organization_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    // Cascade deletes subdomains and webspace_domains via FK
+    sqlx::query("DELETE FROM domains WHERE id = $1")
+        .bind(domain_id).execute(&pool).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "server")]
@@ -456,6 +570,33 @@ pub fn DomainDetail(id: String) -> Element {
 
         // DNS Records
         SectionHeading { class: "mt-6", "DNS Records" }
+        DnsRecordsSection { domain_id: data.id, records: data.records.clone() }
+
+        // Delete domain
+        SectionHeading { class: "mt-6", "Danger Zone" }
+        Card {
+            div { class: "p-6 flex items-center justify-between",
+                div {
+                    div { class: "font-medium text-danger", "Delete this domain" }
+                    div { class: "text-sm text-fg-muted", "This will remove the domain and all DNS records from the database." }
+                }
+                DeleteDomainButton { domain_id: data.id }
+            }
+        }
+    }
+}
+
+#[component]
+fn DnsRecordsSection(domain_id: Uuid, records: Vec<SubdomainRow>) -> Element {
+    let mut new_name = use_signal(String::new);
+    let mut new_type = use_signal(|| "A".to_string());
+    let mut new_value = use_signal(String::new);
+    let mut new_proxied = use_signal(|| true);
+    let mut adding = use_signal(|| false);
+    let mut deleting: Signal<Option<Uuid>> = use_signal(|| None);
+    let mut error = use_signal(|| None::<String>);
+
+    rsx! {
         Card {
             div { class: "overflow-x-auto",
                 table { class: "table w-full",
@@ -465,38 +606,166 @@ pub fn DomainDetail(id: String) -> Element {
                             Th { "Type" }
                             Th { "Value" }
                             Th { "Proxied" }
-                            Th { "CF Record" }
+                            Th { "CF" }
+                            Th { "" }
                         }
                     }
                     tbody {
-                        if data.records.is_empty() {
+                        if records.is_empty() {
                             tr {
-                                td { class: "td text-fg-muted text-center", colspan: "5", "No DNS records" }
+                                td { class: "td text-fg-muted text-center", colspan: "6", "No DNS records" }
                             }
                         }
-                        for rec in &data.records {
-                            tr {
-                                Td { "{rec.name}" }
-                                Td { Badge { "{rec.record_type}" } }
-                                Td { class: "font-mono text-sm", "{rec.record_value}" }
-                                Td {
-                                    if rec.proxied {
-                                        Badge { variant: BadgeVariant::Success, "Yes" }
-                                    } else {
-                                        span { class: "text-fg-muted", "No" }
-                                    }
-                                }
-                                Td {
-                                    if rec.cloudflare_record_id.is_some() {
-                                        Badge { variant: BadgeVariant::Info, "Synced" }
-                                    } else {
-                                        span { class: "text-fg-muted", "-" }
+                        for rec in &records {
+                            {
+                                let rid = rec.id;
+                                let is_deleting = *deleting.read() == Some(rid);
+                                let did = domain_id;
+                                rsx! {
+                                    tr {
+                                        Td { "{rec.name}" }
+                                        Td { Badge { "{rec.record_type}" } }
+                                        Td { class: "font-mono text-sm", "{rec.record_value}" }
+                                        Td {
+                                            if rec.proxied {
+                                                Badge { variant: BadgeVariant::Success, "Yes" }
+                                            } else {
+                                                span { class: "text-fg-muted", "No" }
+                                            }
+                                        }
+                                        Td {
+                                            if rec.cloudflare_record_id.is_some() {
+                                                Badge { variant: BadgeVariant::Info, "Synced" }
+                                            } else {
+                                                span { class: "text-fg-muted", "-" }
+                                            }
+                                        }
+                                        Td {
+                                            Button {
+                                                variant: ButtonVariant::Danger,
+                                                disabled: is_deleting,
+                                                onclick: move |_| {
+                                                    deleting.set(Some(rid));
+                                                    spawn(async move {
+                                                        let _ = delete_dns_record(did, rid).await;
+                                                        deleting.set(None);
+                                                        navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                                                    });
+                                                },
+                                                if is_deleting { "..." } else { "Delete" }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            // Add record form
+            div { class: "p-4 border-t border-line-soft",
+                div { class: "flex items-end gap-2 flex-wrap",
+                    FormField { label: "Name",
+                        input { class: "input w-40", r#type: "text", placeholder: "@ or www",
+                            value: "{new_name}", oninput: move |evt| new_name.set(evt.value()) }
+                    }
+                    FormField { label: "Type",
+                        select { class: "input w-24", value: "{new_type}",
+                            oninput: move |evt| new_type.set(evt.value()),
+                            option { value: "A", "A" }
+                            option { value: "AAAA", "AAAA" }
+                            option { value: "CNAME", "CNAME" }
+                            option { value: "MX", "MX" }
+                            option { value: "TXT", "TXT" }
+                            option { value: "NS", "NS" }
+                            option { value: "CAA", "CAA" }
+                            option { value: "SRV", "SRV" }
+                        }
+                    }
+                    FormField { label: "Value",
+                        input { class: "input w-56 font-mono text-sm", r#type: "text", placeholder: "1.2.3.4",
+                            value: "{new_value}", oninput: move |evt| new_value.set(evt.value()) }
+                    }
+                    FormField { label: "Proxied",
+                        input { class: "mt-2", r#type: "checkbox", checked: *new_proxied.read(),
+                            oninput: move |evt| new_proxied.set(evt.checked()) }
+                    }
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        disabled: new_name.read().is_empty() || new_value.read().is_empty() || *adding.read(),
+                        onclick: {
+                            let did = domain_id;
+                            move |_| {
+                                let n = new_name.read().clone();
+                                let t = new_type.read().clone();
+                                let v = new_value.read().clone();
+                                let p = *new_proxied.read();
+                                adding.set(true);
+                                error.set(None);
+                                spawn(async move {
+                                    match add_dns_record(did, n, t, v, p).await {
+                                        Ok(()) => {
+                                            new_name.set(String::new());
+                                            new_value.set(String::new());
+                                            navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                                        }
+                                        Err(e) => error.set(Some(format!("{e}"))),
+                                    }
+                                    adding.set(false);
+                                });
+                            }
+                        },
+                        if *adding.read() { "Adding..." } else { "Add Record" }
+                    }
+                }
+                if let Some(err) = &*error.read() {
+                    div { class: "mt-2 text-danger text-sm", "{err}" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DeleteDomainButton(domain_id: Uuid) -> Element {
+    let mut deleting = use_signal(|| false);
+    let mut confirm = use_signal(|| false);
+    let nav = use_navigator();
+
+    if !*confirm.read() {
+        return rsx! {
+            Button {
+                variant: ButtonVariant::Danger,
+                onclick: move |_| confirm.set(true),
+                "Delete Domain"
+            }
+        };
+    }
+
+    rsx! {
+        div { class: "flex items-center gap-2",
+            Button {
+                variant: ButtonVariant::Danger,
+                disabled: *deleting.read(),
+                onclick: {
+                    let did = domain_id;
+                    let nav = nav.clone();
+                    move |_| {
+                        let nav = nav.clone();
+                        deleting.set(true);
+                        spawn(async move {
+                            let _ = delete_domain(did).await;
+                            nav.push(crate::web::app::Route::DomainList {});
+                        });
+                    }
+                },
+                if *deleting.read() { "Deleting..." } else { "Confirm Delete" }
+            }
+            Button {
+                variant: ButtonVariant::Secondary,
+                onclick: move |_| confirm.set(false),
+                "Cancel"
             }
         }
     }

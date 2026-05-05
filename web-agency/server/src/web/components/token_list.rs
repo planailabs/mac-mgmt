@@ -46,6 +46,10 @@ pub fn TokenList() -> Element {
     rsx! {
         PageHeader { "API Tokens" }
 
+        div { class: "mt-4 flex justify-end mb-4",
+            Link { to: crate::web::app::Route::TokenForm {}, class: "btn btn-primary", "Create Token" }
+        }
+
         Card {
             div { class: "overflow-x-auto",
                 table { class: "table w-full",
