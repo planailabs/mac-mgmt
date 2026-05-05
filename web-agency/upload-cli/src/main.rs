@@ -10,18 +10,8 @@ use clap::Parser;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use serde::Deserialize;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use std::path::PathBuf;
-
-fn urlencoding(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                String::from(b as char)
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
-}
 
 #[derive(Parser)]
 #[command(name = "web-agency-upload", version, about = "Upload a site folder to a web-agency webspace")]
@@ -131,7 +121,7 @@ fn main() -> Result<()> {
     // Upload
     let mut upload_url = format!("{base_url}/api/v1/deploy/{webspace_id}");
     if let Some(ref branch) = cli.branch {
-        upload_url = format!("{upload_url}?branch={}", urlencoding(branch));
+        upload_url = format!("{upload_url}?branch={}", utf8_percent_encode(branch, NON_ALPHANUMERIC));
         eprintln!("Uploading to webspace {webspace_id} (branch: {branch})...");
     } else {
         eprintln!("Uploading to webspace {webspace_id}...");
