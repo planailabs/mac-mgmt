@@ -7,6 +7,7 @@ use super::components::contact_list::ContactList;
 use super::components::credential_form::CredentialForm;
 use super::components::credential_list::CredentialList;
 use super::components::dashboard::Dashboard;
+use super::components::docs::{DocList, DocPage};
 use super::components::domain_add::DomainAdd;
 use super::components::domain_detail::DomainDetail;
 use super::components::domain_import::DomainImport;
@@ -66,6 +67,10 @@ pub enum Route {
     TokenList {},
     #[route("/tokens/new")]
     TokenForm {},
+    #[route("/docs")]
+    DocList {},
+    #[route("/docs/:slug")]
+    DocPage { slug: String },
 }
 
 #[component]

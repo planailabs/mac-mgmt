@@ -4,6 +4,7 @@ pub mod contact_list;
 pub mod credential_form;
 pub mod credential_list;
 pub mod dashboard;
+pub mod docs;
 pub mod domain_add;
 pub mod domain_detail;
 pub mod domain_import;

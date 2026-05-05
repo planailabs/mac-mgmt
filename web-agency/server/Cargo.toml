@@ -6,8 +6,8 @@ edition = "2024"
 [features]
 default = ["web", "server", "webui"]
 web = ["webui", "dioxus/web"]
-webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-i18n", "dep:unic-langid", "dep:plan-ai-design"]
-server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:async-trait", "dep:tempfile", "plan-ai-auth/server"]
+webui = ["dep:dioxus", "dep:wasm-bindgen", "dep:web-sys", "dep:dioxus-i18n", "dep:unic-langid", "dep:plan-ai-design", "dep:pulldown-cmark"]
+server = ["webui", "dioxus/server", "dep:axum-oidc-client", "dep:axum-extra", "dep:percent-encoding", "dep:sqlx", "dep:tokio", "dep:sha2", "dep:hex", "dep:rand", "dep:tracing-subscriber", "dep:anyhow", "dep:toml", "dep:base64", "dep:reqwest", "dep:rustls", "dep:aes-gcm", "dep:thiserror", "dep:cloudflare-api", "dep:spaceship-api", "dep:async-trait", "dep:tempfile", "dep:rust-embed", "plan-ai-auth/server"]
 
 [dependencies]
 dioxus = { version = "0.7", features = ["fullstack", "router"], optional = true }
@@ -38,6 +38,8 @@ unic-langid = { version = "0.9", features = ["macros"], optional = true }
 aes-gcm = { version = "0.10", optional = true }
 async-trait = { version = "0.1", optional = true }
 tempfile = { version = "3", optional = true }
+pulldown-cmark = { version = "0.12", optional = true }
+rust-embed = { version = "8", features = ["include-exclude"], optional = true }
 thiserror = { version = "2", optional = true }
 plan-ai-auth = { path = "../../plan-ai-auth" }
 cloudflare-api = { path = "../cloudflare-api", optional = true }
