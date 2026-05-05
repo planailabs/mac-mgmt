@@ -11,6 +11,10 @@ use super::components::domain_add::DomainAdd;
 use super::components::domain_detail::DomainDetail;
 use super::components::domain_list::DomainList;
 use super::components::layout::Layout;
+use super::components::organization_form::OrganizationForm;
+use super::components::organization_list::OrganizationList;
+use super::components::token_list::TokenList;
+use super::components::user_list::UserList;
 use super::components::webspace_form::WebspaceForm;
 use super::components::webspace_list::WebspaceList;
 
@@ -39,6 +43,14 @@ pub enum Route {
     ContactForm {},
     #[route("/billing")]
     BillingLog {},
+    #[route("/organizations")]
+    OrganizationList {},
+    #[route("/organizations/new")]
+    OrganizationForm {},
+    #[route("/users")]
+    UserList {},
+    #[route("/tokens")]
+    TokenList {},
 }
 
 #[component]
