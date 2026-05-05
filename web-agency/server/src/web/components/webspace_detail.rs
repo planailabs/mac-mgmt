@@ -161,11 +161,24 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
             }
 
             // Fetch custom domain verification statuses
-            if let Ok(cf_domains) = client.list_pages_custom_domains(&account_id, project_name).await {
-                for binding in &mut bindings {
-                    if let Some(cf_dom) = cf_domains.iter().find(|d| d.name == binding.hostname) {
-                        binding.cf_domain_status = cf_dom.status.clone();
+            match client.list_pages_custom_domains(&account_id, project_name).await {
+                Ok(cf_domains) => {
+                    tracing::debug!(
+                        project = %project_name,
+                        cf_domains = ?cf_domains.iter().map(|d| format!("{}={}", d.name, d.status.as_deref().unwrap_or("?"))).collect::<Vec<_>>(),
+                        bindings = ?bindings.iter().map(|b| &b.hostname).collect::<Vec<_>>(),
+                        "matching CF Pages domains to bindings"
+                    );
+                    for binding in &mut bindings {
+                        // Match case-insensitively — CF may return different casing
+                        let hostname_lower = binding.hostname.to_lowercase();
+                        if let Some(cf_dom) = cf_domains.iter().find(|d| d.name.to_lowercase() == hostname_lower) {
+                            binding.cf_domain_status = cf_dom.status.clone();
+                        }
                     }
+                }
+                Err(e) => {
+                    tracing::warn!(project = %project_name, error = %e, "failed to fetch Pages custom domains");
                 }
             }
         }
@@ -1441,8 +1454,33 @@ fn DomainBindingsSection(webspace_id: Uuid, bindings: Vec<DomainBinding>, is_pag
                                                             }
                                                         }
                                                     },
+                                                    Some("initializing") | Some("deactivated") | Some("blocked") | Some("error") => rsx! {
+                                                        Badge { variant: BadgeVariant::Danger, {cf_status.as_deref().unwrap_or("error")} }
+                                                    },
                                                     Some(s) => rsx! { Badge { "{s}" } },
-                                                    None => rsx! { span { class: "text-fg-muted", "-" } },
+                                                    None => rsx! {
+                                                        div { class: "flex items-center gap-2",
+                                                            Badge { variant: BadgeVariant::Danger, "Not on CF" }
+                                                            Button {
+                                                                variant: ButtonVariant::Secondary,
+                                                                disabled: is_rechecking,
+                                                                onclick: {
+                                                                    let wid = webspace_id;
+                                                                    let hostname = hostname.clone();
+                                                                    move |_| {
+                                                                        let hostname = hostname.clone();
+                                                                        rechecking.set(Some(bid));
+                                                                        spawn(async move {
+                                                                            let _ = recheck_custom_domain(wid, hostname).await;
+                                                                            rechecking.set(None);
+                                                                            navigator().replace(crate::web::app::Route::WebspaceDetail { id: wid.to_string() });
+                                                                        });
+                                                                    }
+                                                                },
+                                                                if is_rechecking { "..." } else { "Register" }
+                                                            }
+                                                        }
+                                                    },
                                                 }
                                             }
                                         }
