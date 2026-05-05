@@ -1,6 +1,8 @@
 #[cfg(feature = "server")]
 mod config;
 #[cfg(feature = "server")]
+mod crypto;
+#[cfg(feature = "server")]
 mod db;
 #[cfg(feature = "webui")]
 mod web;

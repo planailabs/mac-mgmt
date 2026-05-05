@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 use dioxus_i18n::{prelude::*, unic_langid::langid};
 
+use super::components::credential_form::CredentialForm;
+use super::components::credential_list::CredentialList;
 use super::components::dashboard::Dashboard;
 use super::components::layout::Layout;
 
@@ -9,6 +11,10 @@ pub enum Route {
     #[layout(Layout)]
     #[route("/")]
     Dashboard {},
+    #[route("/credentials")]
+    CredentialList {},
+    #[route("/credentials/new")]
+    CredentialForm {},
 }
 
 #[component]
