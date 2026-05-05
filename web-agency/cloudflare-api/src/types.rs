@@ -189,12 +189,17 @@ pub struct PagesBuildConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PagesCustomDomain {
     pub id: Option<String>,
+    #[serde(default)]
     pub name: String,
-    pub status: Option<String>, // "active", "pending", "verifying", "moving", etc.
+    pub status: Option<String>, // "initializing", "pending", "active", "deactivated", "blocked", "error"
+    #[serde(default)]
+    pub certificate_authority: Option<String>,
     #[serde(default)]
     pub verification_type: Option<String>,
     #[serde(default)]
     pub validation_data: Option<serde_json::Value>,
+    #[serde(default)]
+    pub created_on: Option<String>,
 }
 
 /// Request body for updating a Pages project (PATCH).

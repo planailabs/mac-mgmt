@@ -255,8 +255,32 @@ impl Client {
     }
 
     /// List custom domains for a Pages project.
+    /// Uses lenient parsing so individual malformed entries don't fail the whole list.
     pub async fn list_pages_custom_domains(&self, account_id: &str, project_name: &str) -> Result<Vec<PagesCustomDomain>, Error> {
-        self.get(&format!("/accounts/{account_id}/pages/projects/{project_name}/domains")).await
+        let path = format!("/accounts/{account_id}/pages/projects/{project_name}/domains");
+        let resp = self.http.get(format!("{}{path}", self.base_url)).send().await?;
+        let body: serde_json::Value = resp.json().await?;
+        let success = body.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !success {
+            let errors: Vec<ApiError> = body.get("errors")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            return Err(Error::Api(errors));
+        }
+        let result = body.get("result").ok_or_else(|| Error::Unexpected("missing result".into()))?;
+        match result.as_array() {
+            Some(arr) => {
+                let mut domains = Vec::new();
+                for item in arr {
+                    match serde_json::from_value::<PagesCustomDomain>(item.clone()) {
+                        Ok(d) => domains.push(d),
+                        Err(e) => tracing::warn!("skipping unparseable Pages domain: {e}, raw: {item}"),
+                    }
+                }
+                Ok(domains)
+            }
+            None => Err(Error::Unexpected(format!("result is not an array: {result}"))),
+        }
     }
 
     /// Get a specific custom domain's status.
