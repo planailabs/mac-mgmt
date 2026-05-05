@@ -352,7 +352,8 @@ async fn update_production_branch(webspace_id: Uuid, branch: String) -> Result<(
     Ok(())
 }
 
-/// Bind a domain (or subdomain) to this webspace. For CF Pages, adds the custom domain.
+/// Bind a domain (or subdomain) to this webspace.
+/// For CF Pages: adds custom domain + creates CNAME record pointing to {project}.pages.dev.
 #[server]
 async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid>, hostname: String) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
@@ -373,7 +374,7 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
     .bind(webspace_id).bind(domain_id).bind(subdomain_id)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // For CF Pages webspaces, add as custom domain
+    // For CF Pages webspaces: add custom domain + create CNAME record
     let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
     )
@@ -381,17 +382,77 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
 
     if let (Some(project_name), Some(cred_id)) = ws {
         let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
+
+        // 1. Add custom domain to Pages project
         if let Err(e) = client.add_pages_custom_domain(&account_id, &project_name, &hostname).await {
             tracing::warn!("failed to add custom domain {hostname} to Pages: {e}");
         } else {
             tracing::info!("added custom domain {hostname} to Pages project {project_name}");
+        }
+
+        // 2. Create CNAME record on the domain's Cloudflare zone
+        let cname_target = format!("{project_name}.pages.dev");
+        let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+            "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
+        ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        if let (Some(zone_id), Some(domain_cred_id)) = domain_cf {
+            let domain_client = build_domain_cf_client(&pool, domain_cred_id).await?;
+            let record = cloudflare_api::CreateDnsRecord {
+                record_type: "CNAME".into(),
+                name: hostname.clone(),
+                content: Some(cname_target.clone()),
+                data: None,
+                ttl: Some(1),
+                proxied: Some(true),
+                comment: Some(format!("Pages: {project_name}")),
+                priority: None,
+            };
+            match domain_client.create_dns_record(&zone_id, &record).await {
+                Ok(created) => {
+                    tracing::info!("created CNAME {hostname} → {cname_target} (CF record {})", created.id);
+                    // Also store in dns_records if we have a subdomain
+                    if let Some(sub_id) = subdomain_id {
+                        let sub_name = sqlx::query_scalar::<_, String>(
+                            "SELECT name FROM subdomains WHERE id = $1",
+                        ).bind(sub_id).fetch_optional(&pool).await.ok().flatten();
+
+                        if let Some(sub_name) = sub_name {
+                            let _ = sqlx::query(
+                                "INSERT INTO dns_records (subdomain_id, domain_id, name, record_type, record_value, proxied, cloudflare_record_id) \
+                                 VALUES ($1, $2, $3, 'CNAME', $4, true, $5) ON CONFLICT DO NOTHING",
+                            )
+                            .bind(sub_id).bind(domain_id).bind(&sub_name).bind(&cname_target).bind(&created.id)
+                            .execute(&pool).await;
+                        }
+                    } else {
+                        // Root domain binding — ensure @ subdomain entity exists
+                        let sub_id = sqlx::query_scalar::<_, Uuid>(
+                            "INSERT INTO subdomains (domain_id, name) VALUES ($1, '@') \
+                             ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
+                        ).bind(domain_id).fetch_one(&pool).await.ok();
+
+                        if let Some(sub_id) = sub_id {
+                            let _ = sqlx::query(
+                                "INSERT INTO dns_records (subdomain_id, domain_id, name, record_type, record_value, proxied, cloudflare_record_id) \
+                                 VALUES ($1, $2, '@', 'CNAME', $3, true, $4) ON CONFLICT DO NOTHING",
+                            )
+                            .bind(sub_id).bind(domain_id).bind(&cname_target).bind(&created.id)
+                            .execute(&pool).await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("failed to create CNAME for {hostname}: {e}");
+                }
+            }
         }
     }
 
     Ok(())
 }
 
-/// Remove a domain binding. For CF Pages, removes the custom domain.
+/// Remove a domain binding. For CF Pages: removes custom domain + CNAME record.
 #[server]
 async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
@@ -406,15 +467,53 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
         return Err(ServerFnError::new("write access required"));
     }
 
-    // Remove CF Pages custom domain
+    // Get binding details before deleting
+    let binding = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
+        "SELECT domain_id, subdomain_id FROM webspace_domains WHERE id = $1",
+    ).bind(binding_id).fetch_optional(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Remove CF Pages custom domain + CNAME record
     let ws = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
     )
     .bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    if let (Some(project_name), Some(cred_id)) = ws {
-        let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
-        let _ = client.remove_pages_custom_domain(&account_id, &project_name, &hostname).await;
+    if let (Some(project_name), Some(cred_id)) = &ws {
+        if let Ok((client, account_id)) = build_cf_pages_client(&pool, *cred_id).await {
+            // Remove custom domain from Pages
+            let _ = client.remove_pages_custom_domain(&account_id, project_name, &hostname).await;
+
+            // Remove the CNAME record from the domain's CF zone
+            if let Some((domain_id, _)) = binding {
+                let cname_target = format!("{project_name}.pages.dev");
+                let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+                    "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
+                ).bind(domain_id).fetch_optional(&pool).await.ok().flatten();
+
+                if let Some((Some(zone_id), Some(domain_cred_id))) = domain_cf {
+                    if let Ok(domain_client) = build_domain_cf_client(&pool, domain_cred_id).await {
+                        // Find and delete the CNAME record
+                        if let Ok(records) = domain_client.list_dns_records(&zone_id).await {
+                            for rec in records {
+                                if rec.record_type == "CNAME"
+                                    && rec.content.as_deref() == Some(&cname_target)
+                                    && (rec.name == hostname || rec.name.ends_with(&format!(".{hostname}")))
+                                {
+                                    let _ = domain_client.delete_dns_record(&zone_id, &rec.id).await;
+                                    tracing::info!("removed CNAME {} → {cname_target}", rec.name);
+
+                                    // Also remove from dns_records table
+                                    let _ = sqlx::query(
+                                        "DELETE FROM dns_records WHERE cloudflare_record_id = $1",
+                                    ).bind(&rec.id).execute(&pool).await;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     sqlx::query("DELETE FROM webspace_domains WHERE id = $1")
@@ -446,6 +545,26 @@ async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cl
     }
 
     Ok((cloudflare_api::Client::new(token), account_id))
+}
+
+/// Build a CF client from a domain's credential (no account_id needed).
+#[cfg(feature = "server")]
+async fn build_domain_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::Client, ServerFnError> {
+    let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
+        "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
+    )
+    .bind(cred_id).fetch_optional(pool).await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("Cloudflare credential not found"))?;
+
+    let decrypted = crate::crypto::decrypt(&encrypted)
+        .map_err(|e| ServerFnError::new(format!("decryption: {e}")))?;
+    let data: serde_json::Value = serde_json::from_slice(&decrypted)
+        .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
+
+    let token = data["api_token"].as_str()
+        .ok_or_else(|| ServerFnError::new("missing api_token"))?;
+    Ok(cloudflare_api::Client::new(token))
 }
 
 // ── Component ─────────────────────────────────────────────────────────
