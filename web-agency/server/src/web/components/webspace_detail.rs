@@ -474,7 +474,7 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
 }
 
 /// Trigger a recheck of a custom domain's verification status on CF Pages.
-/// Removes and re-adds the custom domain to force Cloudflare to re-verify.
+/// Uses the PATCH endpoint which retries validation per the CF API spec.
 #[server]
 async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<String, ServerFnError> {
     let user = crate::web::user::current_user().await?;
@@ -499,26 +499,20 @@ async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<St
 
     let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
 
-    // Re-fetch the domain status
-    match client.get_pages_custom_domain(&account_id, &project_name, &hostname).await {
+    match client.retry_pages_custom_domain(&account_id, &project_name, &hostname).await {
         Ok(dom) => {
-            let status = dom.status.as_deref().unwrap_or("unknown");
-            if status == "active" {
-                return Ok(format!("Domain is already active"));
-            }
-            // Remove and re-add to trigger re-verification
-            let _ = client.remove_pages_custom_domain(&account_id, &project_name, &hostname).await;
-            let result = client.add_pages_custom_domain(&account_id, &project_name, &hostname).await
-                .map_err(|e| ServerFnError::new(format!("re-add failed: {e}")))?;
-            let new_status = result.status.as_deref().unwrap_or("pending");
-            Ok(format!("Recheck triggered — status: {new_status}"))
+            let status = dom.status.as_deref().unwrap_or("pending");
+            Ok(format!("Validation retried — status: {status}"))
         }
-        Err(_) => {
-            // Domain not found on CF, try adding it
-            let result = client.add_pages_custom_domain(&account_id, &project_name, &hostname).await
-                .map_err(|e| ServerFnError::new(format!("add failed: {e}")))?;
-            let new_status = result.status.as_deref().unwrap_or("pending");
-            Ok(format!("Domain added — status: {new_status}"))
+        Err(e) => {
+            // Domain might not exist on CF yet — try adding it
+            match client.add_pages_custom_domain(&account_id, &project_name, &hostname).await {
+                Ok(dom) => {
+                    let status = dom.status.as_deref().unwrap_or("pending");
+                    Ok(format!("Domain added — status: {status}"))
+                }
+                Err(_) => Err(ServerFnError::new(format!("retry failed: {e}"))),
+            }
         }
     }
 }

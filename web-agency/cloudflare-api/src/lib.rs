@@ -264,6 +264,12 @@ impl Client {
         self.get(&format!("/accounts/{account_id}/pages/projects/{project_name}/domains/{domain}")).await
     }
 
+    /// Retry validation for a custom domain (PATCH). Triggers Cloudflare to re-verify.
+    pub async fn retry_pages_custom_domain(&self, account_id: &str, project_name: &str, domain: &str) -> Result<PagesCustomDomain, Error> {
+        // Empty body PATCH triggers re-validation per CF API spec
+        self.patch(&format!("/accounts/{account_id}/pages/projects/{project_name}/domains/{domain}"), &serde_json::json!({})).await
+    }
+
     /// Add a custom domain to a Pages project.
     pub async fn add_pages_custom_domain(&self, account_id: &str, project_name: &str, domain: &str) -> Result<PagesCustomDomain, Error> {
         #[derive(Serialize)]
