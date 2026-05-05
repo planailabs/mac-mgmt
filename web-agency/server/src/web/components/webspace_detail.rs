@@ -1231,7 +1231,7 @@ fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, production_branc
 
                 div { class: "text-sm text-fg-muted mb-1", "Install:" }
                 div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all mb-3",
-                    "cargo install --path web-agency/upload-cli"
+                    "cargo install --git https://git.plan.ai/plan-ai/mac-mgmt web-agency-upload"
                 }
 
                 div { class: "text-sm text-fg-muted mb-1", "Deploy:" }

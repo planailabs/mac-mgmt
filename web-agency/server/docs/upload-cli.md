@@ -10,7 +10,7 @@ A tiny CLI tool for deploying site folders to Cloudflare Pages webspaces. It tar
 ## Installation
 
 ```bash
-cargo install --path web-agency/upload-cli
+cargo install --git https://git.plan.ai/plan-ai/mac-mgmt web-agency-upload
 ```
 
 ## Usage
