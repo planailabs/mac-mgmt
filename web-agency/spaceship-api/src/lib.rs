@@ -155,9 +155,26 @@ impl Client {
 
     // ── Domain Management ─────────────────────────────────────────────
 
-    /// List domains (paginated).
+    /// List domains (paginated). `take` must be 1-100.
     pub async fn list_domains(&self, skip: u32, take: u32) -> Result<DomainListResponse, Error> {
+        let take = take.min(100);
         self.get(&format!("/v1/domains?skip={skip}&take={take}")).await
+    }
+
+    /// List all domains by paginating automatically.
+    pub async fn list_all_domains(&self) -> Result<Vec<DomainInfo>, Error> {
+        let mut all = Vec::new();
+        let mut skip = 0u32;
+        loop {
+            let resp = self.list_domains(skip, 100).await?;
+            let count = resp.items.len() as u32;
+            all.extend(resp.items);
+            if count < 100 {
+                break;
+            }
+            skip += count;
+        }
+        Ok(all)
     }
 
     /// Get domain info.

@@ -128,10 +128,10 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
                 .ok_or_else(|| ServerFnError::new("missing api_secret"))?;
             let client = spaceship_api::Client::new(api_key, api_secret);
 
-            let resp = client.list_domains(0, 500).await
+            let domains = client.list_all_domains().await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
 
-            for domain in resp.items {
+            for domain in domains {
                 discovered.push(DiscoveredDomain {
                     already_imported: existing.contains(&domain.name),
                     name: domain.name,

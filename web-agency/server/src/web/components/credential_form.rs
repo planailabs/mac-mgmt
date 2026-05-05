@@ -103,7 +103,7 @@ async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
                 .ok_or_else(|| ServerFnError::new("missing api_secret in credential"))?;
             let client = spaceship_api::Client::new(api_key, api_secret);
             let domains = client
-                .list_domains(0, 1)
+                .list_domains(0, 1)  // take=1 is within allowed range (1-100)
                 .await
                 .map_err(|e| ServerFnError::new(format!("Spaceship API error: {e}")))?;
             Ok(format!(
