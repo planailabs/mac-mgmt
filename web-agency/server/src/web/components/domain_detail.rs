@@ -9,6 +9,7 @@ struct DomainData {
     id: Uuid,
     name: String,
     registrar_type: Option<String>,
+    registrar_credential_id: Option<Uuid>,
     ssl_mode: String,
     dnssec_enabled: bool,
     cloudflare_zone_id: Option<String>,
@@ -19,6 +20,8 @@ struct DomainData {
     expires_at: Option<String>,
     organization_name: String,
     records: Vec<SubdomainRow>,
+    /// Whether the registrar supports programmatic NS changes.
+    can_set_nameservers: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +45,7 @@ struct DeployResult {
     zone_id: String,
     status: String,
     nameservers: Vec<String>,
+    nameservers_set_at_registrar: bool,
 }
 
 // ── Server functions ──────────────────────────────────────────────────
@@ -51,8 +55,8 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, String, bool, Option<String>, Option<Uuid>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Uuid)>(
-        "SELECT d.id, d.name, d.registrar_type, d.ssl_mode, d.dnssec_enabled, d.cloudflare_zone_id, \
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, String, bool, Option<String>, Option<Uuid>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Uuid)>(
+        "SELECT d.id, d.name, d.registrar_type, d.registrar_credential_id, d.ssl_mode, d.dnssec_enabled, d.cloudflare_zone_id, \
          d.cloudflare_credential_id, d.registered_at, d.expires_at, d.organization_id \
          FROM domains d WHERE d.id = $1",
     )
@@ -62,7 +66,7 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("domain not found"))?;
 
-    let (id, name, registrar_type, ssl_mode, dnssec_enabled, cloudflare_zone_id, cf_cred_id, registered_at, expires_at, org_id) = row;
+    let (id, name, registrar_type, registrar_credential_id, ssl_mode, dnssec_enabled, cloudflare_zone_id, cf_cred_id, registered_at, expires_at, org_id) = row;
 
     if !user.is_admin && !user.org_ids().contains(&org_id) {
         return Err(ServerFnError::new("access denied"));
@@ -95,13 +99,17 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
     })
     .collect();
 
+    // Spaceship credentials can set nameservers programmatically
+    let can_set_ns = registrar_type.as_deref() == Some("spaceship") && registrar_credential_id.is_some();
+
     Ok(DomainData {
-        id, name, registrar_type, ssl_mode, dnssec_enabled,
+        id, name, registrar_type, registrar_credential_id, ssl_mode, dnssec_enabled,
         cloudflare_zone_id, cloudflare_credential_id: cf_cred_id,
         cloudflare_zone_status: cf_status, cloudflare_nameservers: cf_nameservers,
         registered_at: registered_at.map(|d| d.format("%Y-%m-%d").to_string()),
         expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
         organization_name: org_name, records,
+        can_set_nameservers: can_set_ns,
     })
 }
 
@@ -169,7 +177,95 @@ async fn deploy_to_cloudflare(domain_id: Uuid, credential_id: Uuid) -> Result<De
     .bind(&zone_id).bind(credential_id).bind(domain_id)
     .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(DeployResult { zone_id, status, nameservers })
+    // Auto-set nameservers at registrar if possible
+    let mut ns_set = false;
+    if !nameservers.is_empty() {
+        if let Ok(true) = try_set_registrar_nameservers(&pool, domain_id, &domain_name, &nameservers).await {
+            ns_set = true;
+        }
+    }
+
+    Ok(DeployResult { zone_id, status, nameservers, nameservers_set_at_registrar: ns_set })
+}
+
+/// Set nameservers at the registrar for a domain. Works for Spaceship domains.
+#[server]
+async fn set_nameservers_at_registrar(domain_id: Uuid, nameservers: Vec<String>) -> Result<String, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let row = sqlx::query_as::<_, (String, Option<Uuid>, Uuid)>(
+        "SELECT name, registrar_credential_id, organization_id FROM domains WHERE id = $1",
+    )
+    .bind(domain_id).fetch_optional(&pool).await
+    .map_err(|e| ServerFnError::new(e.to_string()))?
+    .ok_or_else(|| ServerFnError::new("domain not found"))?;
+
+    let (domain_name, _, org_id) = row;
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    match try_set_registrar_nameservers(&pool, domain_id, &domain_name, &nameservers).await {
+        Ok(true) => Ok("Nameservers updated at registrar".into()),
+        Ok(false) => Err(ServerFnError::new("No registrar credential configured or registrar does not support NS changes")),
+        Err(e) => Err(e),
+    }
+}
+
+/// Try to set nameservers at the registrar. Returns Ok(true) if successful, Ok(false) if not applicable.
+#[cfg(feature = "server")]
+async fn try_set_registrar_nameservers(
+    pool: &sqlx::PgPool,
+    domain_id: Uuid,
+    domain_name: &str,
+    nameservers: &[String],
+) -> Result<bool, ServerFnError> {
+    let row = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+        "SELECT registrar_type, registrar_credential_id FROM domains WHERE id = $1",
+    )
+    .bind(domain_id).fetch_optional(pool).await
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let (registrar_type, reg_cred_id) = match row {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+
+    match (registrar_type.as_deref(), reg_cred_id) {
+        (Some("spaceship"), Some(cred_id)) => {
+            let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
+                "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'spaceship'",
+            )
+            .bind(cred_id).fetch_optional(pool).await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("Spaceship credential not found"))?;
+
+            let decrypted = crate::crypto::decrypt(&encrypted)
+                .map_err(|e| ServerFnError::new(format!("decryption failed: {e}")))?;
+            let data: serde_json::Value = serde_json::from_slice(&decrypted)
+                .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
+
+            let api_key = data["api_key"].as_str()
+                .ok_or_else(|| ServerFnError::new("missing api_key"))?;
+            let api_secret = data["api_secret"].as_str()
+                .ok_or_else(|| ServerFnError::new("missing api_secret"))?;
+
+            let client = spaceship_api::Client::new(api_key, api_secret);
+            let ns_config = spaceship_api::NameserverConfig {
+                provider: "custom".into(),
+                hosts: Some(nameservers.to_vec()),
+            };
+            client.set_nameservers(domain_name, &ns_config).await
+                .map_err(|e| ServerFnError::new(format!("Spaceship NS update failed: {e}")))?;
+
+            tracing::info!("set nameservers for {domain_name} at Spaceship to {:?}", nameservers);
+            Ok(true)
+        }
+        // Cloudflare registrar doesn't have a nameserver update API
+        // (domains registered via CF automatically use CF nameservers)
+        _ => Ok(false),
+    }
 }
 
 /// Update SSL mode on Cloudflare and in the database.
@@ -348,9 +444,14 @@ pub fn DomainDetail(id: String) -> Element {
                 nameservers: data.cloudflare_nameservers.clone(),
                 ssl_mode: data.ssl_mode.clone(),
                 dnssec_enabled: data.dnssec_enabled,
+                can_set_nameservers: data.can_set_nameservers,
             }
         } else {
-            CloudflareDeployForm { domain_id: data.id, domain_name: data.name.clone() }
+            CloudflareDeployForm {
+                domain_id: data.id,
+                domain_name: data.name.clone(),
+                can_set_nameservers: data.can_set_nameservers,
+            }
         }
 
         // DNS Records
@@ -403,7 +504,7 @@ pub fn DomainDetail(id: String) -> Element {
 
 /// Shown when the domain is NOT yet deployed to Cloudflare.
 #[component]
-fn CloudflareDeployForm(domain_id: Uuid, domain_name: String) -> Element {
+fn CloudflareDeployForm(domain_id: Uuid, domain_name: String, can_set_nameservers: bool) -> Element {
     let creds = use_server_future(list_cf_credentials)?;
     let cred_list = match &*creds.read() {
         Some(Ok(c)) => c.clone(),
@@ -416,6 +517,8 @@ fn CloudflareDeployForm(domain_id: Uuid, domain_name: String) -> Element {
     let mut result = use_signal(|| None::<DeployResult>);
 
     if let Some(res) = &*result.read() {
+        let ns_set = res.nameservers_set_at_registrar;
+        let ns_list = res.nameservers.clone();
         return rsx! {
             Card {
                 div { class: "p-6",
@@ -431,11 +534,22 @@ fn CloudflareDeployForm(domain_id: Uuid, domain_name: String) -> Element {
                             s => rsx! { Badge { "{s}" } },
                         }
                     }
-                    if !res.nameservers.is_empty() {
+                    if !ns_list.is_empty() {
                         div { class: "mt-3",
-                            div { class: "text-sm text-fg-muted mb-1", "Point your domain to these nameservers:" }
-                            for ns in &res.nameservers {
+                            div { class: "text-sm text-fg-muted mb-1", "Cloudflare nameservers:" }
+                            for ns in &ns_list {
                                 div { class: "font-mono text-sm bg-surface-2 px-3 py-1 rounded mb-1", "{ns}" }
+                            }
+                        }
+                        if ns_set {
+                            div { class: "mt-2",
+                                Badge { variant: BadgeVariant::Success, "Nameservers automatically set at registrar" }
+                            }
+                        } else if can_set_nameservers {
+                            SetNameserversButton { domain_id, nameservers: ns_list.clone() }
+                        } else {
+                            div { class: "mt-2 text-sm text-fg-muted",
+                                "Update your nameservers at your registrar to point to the addresses above."
                             }
                         }
                     }
@@ -507,6 +621,42 @@ fn CloudflareDeployForm(domain_id: Uuid, domain_name: String) -> Element {
     }
 }
 
+/// Button to set nameservers at the registrar (e.g. Spaceship).
+#[component]
+fn SetNameserversButton(domain_id: Uuid, nameservers: Vec<String>) -> Element {
+    let mut setting = use_signal(|| false);
+    let mut msg = use_signal(|| None::<String>);
+
+    rsx! {
+        div { class: "mt-2 flex items-center gap-3",
+            Button {
+                variant: ButtonVariant::Secondary,
+                disabled: *setting.read(),
+                onclick: {
+                    let did = domain_id;
+                    let ns = nameservers.clone();
+                    move |_| {
+                        let ns = ns.clone();
+                        setting.set(true);
+                        msg.set(None);
+                        spawn(async move {
+                            match set_nameservers_at_registrar(did, ns).await {
+                                Ok(m) => msg.set(Some(m)),
+                                Err(e) => msg.set(Some(format!("Error: {e}"))),
+                            }
+                            setting.set(false);
+                        });
+                    }
+                },
+                if *setting.read() { "Setting nameservers..." } else { "Set Nameservers at Registrar" }
+            }
+            if let Some(m) = &*msg.read() {
+                span { class: "text-sm text-fg-muted", "{m}" }
+            }
+        }
+    }
+}
+
 /// Shown when the domain IS deployed to Cloudflare.
 #[component]
 fn CloudflareDeployed(
@@ -516,6 +666,7 @@ fn CloudflareDeployed(
     nameservers: Vec<String>,
     ssl_mode: String,
     dnssec_enabled: bool,
+    can_set_nameservers: bool,
 ) -> Element {
     let mut ssl = use_signal(move || ssl_mode.clone());
     let mut dnssec = use_signal(move || dnssec_enabled);
@@ -546,6 +697,9 @@ fn CloudflareDeployed(
                             for ns in &nameservers {
                                 span { class: "font-mono text-sm bg-surface-2 px-3 py-1 rounded", "{ns}" }
                             }
+                        }
+                        if can_set_nameservers && zone_status.as_deref() == Some("pending") {
+                            SetNameserversButton { domain_id, nameservers: nameservers.clone() }
                         }
                     }
                 }
