@@ -497,6 +497,7 @@ pub fn WebspaceDetail(id: String) -> Element {
             } else {
                 // Direct upload project
                 DirectUploadDisplay {
+                    webspace_id: data.id,
                     project_name: data.cloudflare_pages_project.clone().unwrap_or_default(),
                     pages_subdomain: data.pages_subdomain.clone(),
                 }
@@ -916,24 +917,48 @@ fn GitSourceDisplay(git_source: GitRepoInfo, build_config: Option<BuildConfigInf
     }
 }
 
-/// Display for a direct-upload Pages project.
+/// Display for a direct-upload Pages project with deploy API instructions.
 #[component]
-fn DirectUploadDisplay(project_name: String, pages_subdomain: Option<String>) -> Element {
+fn DirectUploadDisplay(webspace_id: Uuid, project_name: String, pages_subdomain: Option<String>) -> Element {
+    let ws_id = webspace_id.to_string();
+
     rsx! {
-        Card { div { class: "p-6 space-y-3",
+        Card { div { class: "p-6 space-y-4",
             div { class: "flex items-center gap-2",
                 Badge { variant: BadgeVariant::Accent, "Direct Upload" }
+                span { class: "font-mono text-sm text-fg-muted", "{project_name}" }
             }
-            div { class: "text-sm text-fg-muted mb-2", "Deploy using the Wrangler CLI:" }
-            div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all",
-                "npx wrangler pages deploy ./dist --project-name={project_name}"
+
+            // API deploy method
+            div {
+                div { class: "text-sm font-medium mb-1", "Deploy via API" }
+                div { class: "text-sm text-fg-muted mb-2",
+                    "Upload a tarball (.tar.gz) of your site. The server extracts it and deploys via Wrangler in the background."
+                }
+                div { class: "text-sm text-fg-muted mb-1", "1. Create a deploy token:" }
+                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded mb-2",
+                    "Go to Tokens → Create Token → Kind: Deploy → Webspace: {project_name}"
+                }
+                div { class: "text-sm text-fg-muted mb-1", "2. Upload and deploy:" }
+                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all mb-2 whitespace-pre",
+                    "tar czf site.tar.gz -C ./dist .\ncurl -X POST \\\n  -H 'Authorization: Bearer YOUR_TOKEN' \\\n  --data-binary @site.tar.gz \\\n  $SERVER_URL/api/v1/deploy/{ws_id}"
+                }
+                div { class: "text-sm text-fg-muted mb-1", "3. Check status:" }
+                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all",
+                    "curl -H 'Authorization: Bearer YOUR_TOKEN' \\\n  $SERVER_URL/api/v1/deploy/{ws_id}/status"
+                }
             }
-            div { class: "text-sm text-fg-muted mt-2",
-                "Replace " code { class: "font-mono bg-surface-2 px-1 rounded", "./dist" }
-                " with your build output directory."
+
+            // Wrangler CLI alternative
+            div { class: "border-t border-line-soft pt-4",
+                div { class: "text-sm font-medium mb-1", "Or deploy directly via Wrangler CLI" }
+                div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all",
+                    "CLOUDFLARE_API_TOKEN=... npx wrangler pages deploy ./dist --project-name={project_name}"
+                }
             }
+
             if let Some(ref sub) = pages_subdomain {
-                div { class: "mt-3",
+                div { class: "border-t border-line-soft pt-4",
                     span { class: "text-sm text-fg-muted", "Preview: " }
                     a { href: "https://{sub}", target: "_blank", class: "font-mono text-sm text-brand underline", "https://{sub}" }
                 }

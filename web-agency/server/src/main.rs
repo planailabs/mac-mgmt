@@ -1,4 +1,6 @@
 #[cfg(feature = "server")]
+mod api;
+#[cfg(feature = "server")]
 mod config;
 #[cfg(feature = "server")]
 mod crypto;
@@ -119,6 +121,12 @@ fn main() {
 
             let mut router = axum::Router::new()
                 .serve_dioxus_application(ServeConfig::new(), web::app::App);
+
+            // Mount deploy API (does not go through OIDC auth — uses its own Bearer token auth)
+            let deploy_router = crate::api::deploy::router(crate::api::deploy::DeployState {
+                pool: crate::server_pool().expect("pool for deploy API"),
+            });
+            router = router.merge(deploy_router);
 
             if let Some(auth_layers) = auth_layers {
                 router = router
