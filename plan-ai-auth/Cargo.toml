@@ -1,0 +1,32 @@
+[package]
+name = "plan-ai-auth"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+server = [
+    "dep:axum",
+    "dep:axum-oidc-client",
+    "dep:axum-extra",
+    "dep:percent-encoding",
+    "dep:base64",
+    "dep:tracing",
+    "dep:async-trait",
+    "dep:anyhow",
+]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Server-only dependencies
+axum = { version = "0.8", optional = true }
+axum-oidc-client = { version = "0.5", features = ["sql-cache-postgres", "redis"], optional = true }
+axum-extra = { version = "0.10", features = ["cookie-private"], optional = true }
+percent-encoding = { version = "2", optional = true }
+base64 = { version = "0.22", optional = true }
+tracing = { version = "0.1", optional = true }
+async-trait = { version = "0.1", optional = true }
+anyhow = { version = "1", optional = true }

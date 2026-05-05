@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::sync::OnceLock;
 
+pub use plan_ai_auth::AuthConfig;
+
 static CONFIG: OnceLock<ServerConfig> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
@@ -38,42 +40,6 @@ fn default_web_port() -> u16 {
 #[derive(Debug, Deserialize)]
 pub struct SecretsConfig {
     pub encryption_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuthConfig {
-    pub cookie_secret: String,
-    #[serde(default = "default_auth_external_url")]
-    pub external_url: String,
-    pub redis_url: Option<String>,
-    #[serde(default)]
-    pub admin_emails: Vec<String>,
-    pub providers: Vec<OidcProviderConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OidcProviderConfig {
-    pub slug: String,
-    pub name: String,
-    pub issuer: Option<String>,
-    pub client_id: String,
-    pub client_secret: String,
-    #[serde(default)]
-    pub allow_all: bool,
-    #[serde(default)]
-    pub allowed_domains: Vec<String>,
-    #[serde(default)]
-    pub allowed_emails: Vec<String>,
-    #[serde(default)]
-    pub scopes: Option<Vec<String>>,
-    #[serde(default)]
-    pub auto_join_orgs: Vec<String>,
-}
-
-fn default_auth_external_url() -> String {
-    "http://localhost:7380".to_string()
 }
 
 pub fn load() -> &'static ServerConfig {

@@ -16,6 +16,7 @@ struct UserRow {
 #[server]
 async fn list_users() -> Result<Vec<UserRow>, ServerFnError> {
     let user = crate::web::user::current_user().await?;
+    use crate::web::user::WebUserExt;
     user.require_admin()?;
     let pool = crate::server_pool()?;
 

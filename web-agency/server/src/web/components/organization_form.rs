@@ -5,6 +5,7 @@ use super::ui::{Button, ButtonKind, ButtonVariant, FormField, PageHeader};
 #[server]
 async fn create_organization(name: String) -> Result<uuid::Uuid, ServerFnError> {
     let user = crate::web::user::current_user().await?;
+    use crate::web::user::WebUserExt;
     user.require_admin()?;
     let pool = crate::server_pool()?;
 

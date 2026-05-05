@@ -9880,6 +9880,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "plan-ai-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-extra",
+ "axum-oidc-client",
+ "base64 0.22.1",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "plan-ai-cleaner"
 version = "0.1.0"
 dependencies = [
@@ -15199,6 +15216,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "async-trait",
  "axum-extra",
  "axum-oidc-client",
  "base64 0.22.1",
@@ -15209,6 +15227,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "percent-encoding",
+ "plan-ai-auth",
  "plan-ai-design",
  "rand 0.9.4",
  "reqwest 0.13.2",

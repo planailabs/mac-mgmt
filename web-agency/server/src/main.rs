@@ -45,6 +45,15 @@ async fn init_server() -> sqlx::PgPool {
     #[cfg(feature = "webui")]
     server_state::set_pool(pool.clone());
 
+    // Install the shared auth user resolver.
+    let admin_emails = cfg
+        .auth
+        .as_ref()
+        .map(|a| a.admin_emails.clone())
+        .unwrap_or_default();
+    let resolver = web::auth::PgUserResolver::new(pool.clone(), admin_emails);
+    plan_ai_auth::set_user_resolver(resolver);
+
     pool
 }
 
@@ -67,7 +76,7 @@ fn main() {
         use dioxus::server::{DioxusRouterExt, ServeConfig, axum};
         use std::sync::OnceLock;
 
-        static INIT: OnceLock<Option<Vec<axum_oidc_client::auth::AuthLayer>>> = OnceLock::new();
+        static INIT: OnceLock<Option<Vec<plan_ai_auth::AuthLayer>>> = OnceLock::new();
 
         if std::env::var("PORT").is_err() {
             let cfg = config::load();
@@ -95,8 +104,9 @@ fn main() {
                         }
                     }
                     None
-                } else if cfg.auth.is_some() {
-                    let (layers, _cache) = web::auth::build_auth_layers(&cfg.database.url).await;
+                } else if let Some(auth) = &cfg.auth {
+                    let (layers, _cache) =
+                        plan_ai_auth::build_auth_layers(auth, &cfg.database.url).await;
                     Some(layers)
                 } else {
                     tracing::warn!("[auth] not configured — web authentication disabled");
@@ -112,15 +122,15 @@ fn main() {
 
             if let Some(auth_layers) = auth_layers {
                 router = router
-                    .route("/auth/login", axum::routing::get(web::auth::login_page))
-                    .route("/auth/logout", axum::routing::get(web::auth::logout_handler))
-                    .layer(axum::middleware::from_fn(web::auth::require_auth));
+                    .route("/auth/login", axum::routing::get(plan_ai_auth::login_page))
+                    .route("/auth/logout", axum::routing::get(plan_ai_auth::logout_handler))
+                    .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
                 for layer in auth_layers {
                     router = router.layer(layer);
                 }
             } else if dev_no_auth {
                 router = router
-                    .layer(axum::middleware::from_fn(web::auth::require_auth));
+                    .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
             }
 
             Ok(router)
