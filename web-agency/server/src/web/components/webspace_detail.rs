@@ -148,6 +148,8 @@ async fn deploy_pages_project(webspace_id: Uuid, credential_id: Uuid) -> Result<
 
     let (client, account_id) = build_cf_pages_client(&pool, credential_id).await?;
 
+    tracing::info!("deploying Pages project {ws_name} to account {account_id}");
+
     // Check if project already exists
     let project = match client.get_pages_project(&account_id, &ws_name).await {
         Ok(p) => {
@@ -156,7 +158,10 @@ async fn deploy_pages_project(webspace_id: Uuid, credential_id: Uuid) -> Result<
         }
         Err(_) => {
             let p = client.create_pages_project(&account_id, &ws_name, "main").await
-                .map_err(|e| ServerFnError::new(format!("failed to create Pages project: {e}")))?;
+                .map_err(|e| ServerFnError::new(format!(
+                    "failed to create Pages project: {e}. \
+                     Ensure the API token has 'Cloudflare Pages:Edit' permission for account {account_id}"
+                )))?;
             tracing::info!("created Pages project {ws_name}");
             p
         }
