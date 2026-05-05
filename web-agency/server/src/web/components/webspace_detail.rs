@@ -137,6 +137,15 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     let mut build_config_info = None;
 
     if let (Some(project_name), Some(cred_id)) = (&cf_project, cf_cred_id) {
+        tracing::debug!(project = %project_name, cred_id = %cred_id, "loading CF Pages info");
+        match build_cf_pages_client(&pool, cred_id).await {
+            Ok((client, ref account_id)) => {
+                tracing::debug!(account_id = %account_id, "CF Pages client built");
+            }
+            Err(ref e) => {
+                tracing::error!(error = %e, "failed to build CF Pages client");
+            }
+        }
         if let Ok((client, account_id)) = build_cf_pages_client(&pool, cred_id).await {
             if let Ok(project) = client.get_pages_project(&account_id, project_name).await {
                 pages_subdomain = project.subdomain;
