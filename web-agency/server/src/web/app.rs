@@ -53,19 +53,6 @@ pub enum Route {
     TokenList {},
 }
 
-// Sets `.dark` class on `<html>` before any CSS loads so the right theme is
-// in place by the time the stylesheet arrives.
-const THEME_INIT_SCRIPT: &str = r#"
-(function(){
-  var d=document.documentElement.classList,s=localStorage.getItem('theme');
-  if(s==='dark'||(s!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches)){
-    d.add('dark');document.documentElement.style.backgroundColor='#0f172a';
-  } else {
-    d.remove('dark');document.documentElement.style.backgroundColor='#fff';
-  }
-})();
-"#;
-
 #[component]
 pub fn App() -> Element {
     use_init_i18n(|| {
@@ -82,9 +69,20 @@ pub fn App() -> Element {
 
     let css_href = format!("/tailwind.css?v={}", env!("BUILD_TIMESTAMP"));
 
+    // Remove the pre-hydration loading banner once WASM has hydrated.
+    use_effect(|| {
+        document::eval("document.getElementById('wasm-loading')?.remove();");
+    });
+
     rsx! {
-        script { dangerous_inner_html: THEME_INIT_SCRIPT }
+        script { dangerous_inner_html: plan_ai_design::THEME_INIT_SCRIPT }
         document::Link { rel: "stylesheet", href: "{css_href}" }
+
+        div { id: "wasm-loading",
+            style: plan_ai_design::WASM_LOADING_STYLE,
+            dangerous_inner_html: plan_ai_design::WASM_LOADING_INNER,
+        }
+
         Router::<Route> {}
     }
 }
