@@ -52,7 +52,7 @@ async fn check_domain_availability(credential_id: Uuid, domain: String) -> Resul
             if account_id.is_empty() {
                 return Err(ServerFnError::new("account_id required"));
             }
-            let client = cloudflare_api::Client::new(token);
+            let client = cloudflare_api::compat::SimpleClient::new(token);
             let results = client.check_domains(account_id, &[domain.clone()]).await
                 .map_err(|e| ServerFnError::new(format!("CF API: {e}")))?;
             let r = results.into_iter().next().ok_or_else(|| ServerFnError::new("no result"))?;

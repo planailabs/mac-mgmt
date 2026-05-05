@@ -226,7 +226,7 @@ async fn upload_deploy(
     } else {
         let account_id = get_cf_account_id(&state.pool, cred_id).await.unwrap_or_default();
         if !account_id.is_empty() {
-            let client = cloudflare_api::Client::new(&cf_token);
+            let client = cloudflare_api::compat::SimpleClient::new(&cf_token);
             match client.get_pages_project(&account_id, &project_name).await {
                 Ok(project) => {
                     let pb = project.production_branch.unwrap_or_else(|| "main".into());
@@ -312,7 +312,7 @@ async fn get_cf_account_id(pool: &PgPool, cred_id: Uuid) -> Result<String, Strin
     let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| format!("parse: {e}"))?;
     let token = data["api_token"].as_str().ok_or("missing api_token")?;
     let configured = data["account_id"].as_str().unwrap_or("");
-    let client = cloudflare_api::Client::new(token);
+    let client = cloudflare_api::compat::SimpleClient::new(token);
     client.resolve_account_id(configured).await
         .map_err(|e| format!("failed to resolve account ID: {e}"))
 }

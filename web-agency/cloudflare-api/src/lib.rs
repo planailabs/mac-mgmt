@@ -2,6 +2,9 @@
 use progenitor_client::{encode_path, ClientHooks, OperationInfo, RequestBuilderExt};
 #[allow(unused_imports)]
 pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};
+
+/// Compatibility wrapper providing the simple interface used by web-agency-server.
+pub mod compat;
 /// Types used as operation parameters and responses.
 #[allow(clippy::all)]
 pub mod types {

@@ -343,7 +343,7 @@ async fn add_dns_record(
             .bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let fqdn = if sub_name == "@" { domain_name } else { format!("{sub_name}.{domain_name}") };
-        let record = cloudflare_api::CreateDnsRecord {
+        let record = cloudflare_api::compat::CreateDnsRecord {
             record_type: record_type.clone(), name: fqdn,
             content: Some(record_value.clone()), data: None,
             ttl: Some(1), proxied: Some(proxied), comment: None, priority: None,
@@ -415,7 +415,7 @@ async fn delete_domain(domain_id: Uuid) -> Result<(), ServerFnError> {
 // ── Helpers ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "server")]
-async fn build_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::Client, ServerFnError> {
+async fn build_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
     let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
         "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
     ).bind(cred_id).fetch_optional(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?
@@ -423,7 +423,7 @@ async fn build_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflar
     let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
     let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
     let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
-    Ok(cloudflare_api::Client::new(token))
+    Ok(cloudflare_api::compat::SimpleClient::new(token))
 }
 
 #[cfg(feature = "server")]
@@ -434,7 +434,7 @@ async fn get_cf_account_id(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<String,
     let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
     let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
     let configured = data["account_id"].as_str().unwrap_or("");
-    let client = cloudflare_api::Client::new(token);
+    let client = cloudflare_api::compat::SimpleClient::new(token);
     client.resolve_account_id(configured).await
         .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))
 }

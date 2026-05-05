@@ -83,7 +83,7 @@ async fn add_domain(
             .ok_or_else(|| ServerFnError::new("missing api_token"))?;
         let configured_account_id = data["account_id"].as_str().unwrap_or("");
 
-        let client = cloudflare_api::Client::new(token);
+        let client = cloudflare_api::compat::SimpleClient::new(token);
         let account_id = client.resolve_account_id(configured_account_id).await
             .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))?;
 

@@ -102,7 +102,7 @@ async fn test_credential_conn(credential_id: Uuid) -> Result<String, ServerFnErr
     match cred_type.as_str() {
         "cloudflare" => {
             let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
-            let client = cloudflare_api::Client::new(token);
+            let client = cloudflare_api::compat::SimpleClient::new(token);
             let zones = client.list_zones(None).await.map_err(|e| ServerFnError::new(format!("CF: {e}")))?;
             Ok(format!("OK — {} zone(s) accessible", zones.len()))
         }

@@ -142,20 +142,21 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
                 pages_subdomain = project.subdomain;
                 production_branch = project.production_branch;
                 if let Some(src) = &project.source {
-                    if let Some(cfg) = &src.config {
+                    let cfg = src.get("config");
+                    if cfg.is_some() {
                         git_source = Some(GitRepoInfo {
-                            provider: src.source_type.clone().unwrap_or_default(),
-                            owner: cfg.owner.clone().unwrap_or_default(),
-                            repo: cfg.repo_name.clone().unwrap_or_default(),
-                            production_branch: cfg.production_branch.clone().unwrap_or_else(|| "main".into()),
+                            provider: src.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            owner: cfg.and_then(|c| c.get("owner")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            repo: cfg.and_then(|c| c.get("repo_name")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            production_branch: cfg.and_then(|c| c.get("production_branch")).and_then(|v| v.as_str()).unwrap_or("main").to_string(),
                         });
                     }
                 }
                 if let Some(bc) = &project.build_config {
                     build_config_info = Some(BuildConfigInfo {
-                        build_command: bc.build_command.clone(),
-                        destination_dir: bc.destination_dir.clone(),
-                        root_dir: bc.root_dir.clone(),
+                        build_command: bc.get("build_command").and_then(|v| v.as_str()).map(String::from),
+                        destination_dir: bc.get("destination_dir").and_then(|v| v.as_str()).map(String::from),
+                        root_dir: bc.get("root_dir").and_then(|v| v.as_str()).map(String::from),
                     });
                 }
             }
@@ -173,7 +174,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
                     for binding in &mut bindings {
                         let hostname_lower = binding.hostname.to_lowercase();
                         if let Some(cf_dom) = cf_domains.iter().find(|d| d.name.to_lowercase() == hostname_lower) {
-                            binding.cf_domain_status = cf_dom.status.clone();
+                            binding.cf_domain_status = Some(format!("{:?}", cf_dom.status).to_lowercase());
                         } else {
                             tracing::debug!(hostname = %binding.hostname, "no CF Pages domain match found");
                         }
@@ -319,11 +320,11 @@ async fn connect_git_repo(
 
     let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
 
-    let update = cloudflare_api::UpdatePagesProject {
+    let update = cloudflare_api::compat::UpdatePagesProject {
         production_branch: Some(production_branch.clone()),
-        source: Some(cloudflare_api::PagesSource {
+        source: Some(cloudflare_api::compat::PagesSource {
             source_type: Some(provider.clone()),
-            config: Some(cloudflare_api::PagesSourceConfig {
+            config: Some(cloudflare_api::compat::PagesSourceConfig {
                 owner: Some(owner),
                 repo_name: Some(repo_name),
                 production_branch: Some(production_branch),
@@ -334,7 +335,7 @@ async fn connect_git_repo(
                 preview_branch_excludes: None,
             }),
         }),
-        build_config: Some(cloudflare_api::PagesBuildConfig {
+        build_config: Some(cloudflare_api::compat::PagesBuildConfig {
             build_command: if build_command.is_empty() { None } else { Some(build_command) },
             destination_dir: if destination_dir.is_empty() { None } else { Some(destination_dir) },
             root_dir: if root_dir.is_empty() { None } else { Some(root_dir) },
@@ -375,7 +376,7 @@ async fn update_production_branch(webspace_id: Uuid, branch: String) -> Result<(
 
     let (client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
 
-    let update = cloudflare_api::UpdatePagesProject {
+    let update = cloudflare_api::compat::UpdatePagesProject {
         production_branch: Some(branch.clone()),
         source: None,
         build_config: None,
@@ -434,7 +435,7 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
 
         if let (Some(zone_id), Some(domain_cred_id)) = domain_cf {
             let domain_client = build_domain_cf_client(&pool, domain_cred_id).await?;
-            let record = cloudflare_api::CreateDnsRecord {
+            let record = cloudflare_api::compat::CreateDnsRecord {
                 record_type: "CNAME".into(),
                 name: hostname.clone(),
                 content: Some(cname_target.clone()),
@@ -516,14 +517,14 @@ async fn recheck_custom_domain(webspace_id: Uuid, hostname: String) -> Result<St
 
     match client.retry_pages_custom_domain(&account_id, &project_name, &hostname).await {
         Ok(dom) => {
-            let status = dom.status.as_deref().unwrap_or("pending");
+            let status = {let s = format!("{:?}", dom.status); s.trim_matches('"').to_lowercase()};
             Ok(format!("Validation retried — status: {status}"))
         }
         Err(e) => {
             // Domain might not exist on CF yet — try adding it
             match client.add_pages_custom_domain(&account_id, &project_name, &hostname).await {
                 Ok(dom) => {
-                    let status = dom.status.as_deref().unwrap_or("pending");
+                    let status = {let s = format!("{:?}", dom.status); s.trim_matches('"').to_lowercase()};
                     Ok(format!("Domain added — status: {status}"))
                 }
                 Err(_) => Err(ServerFnError::new(format!("retry failed: {e}"))),
@@ -568,7 +569,7 @@ async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid
 
     let client = build_domain_cf_client(&pool, domain_cred_id).await?;
 
-    let record = cloudflare_api::CreateDnsRecord {
+    let record = cloudflare_api::compat::CreateDnsRecord {
         record_type: "CNAME".into(),
         name: hostname.clone(),
         content: Some(cname_target.clone()),
@@ -683,7 +684,7 @@ async fn unbind_domain(webspace_id: Uuid, binding_id: Uuid, hostname: String) ->
 }
 
 #[cfg(feature = "server")]
-async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cloudflare_api::Client, String), ServerFnError> {
+async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cloudflare_api::compat::SimpleClient, String), ServerFnError> {
     let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
         "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
     )
@@ -700,7 +701,7 @@ async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cl
         .ok_or_else(|| ServerFnError::new("missing api_token"))?;
     let configured_account_id = data["account_id"].as_str().unwrap_or("");
 
-    let client = cloudflare_api::Client::new(token);
+    let client = cloudflare_api::compat::SimpleClient::new(token);
     let account_id = client.resolve_account_id(configured_account_id).await
         .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))?;
 
@@ -709,7 +710,7 @@ async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cl
 
 /// Build a CF client from a domain's credential (no account_id needed).
 #[cfg(feature = "server")]
-async fn build_domain_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::Client, ServerFnError> {
+async fn build_domain_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cloudflare_api::compat::SimpleClient, ServerFnError> {
     let encrypted = sqlx::query_scalar::<_, Vec<u8>>(
         "SELECT encrypted_data FROM credentials WHERE id = $1 AND credential_type = 'cloudflare'",
     )
@@ -724,7 +725,7 @@ async fn build_domain_cf_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<cl
 
     let token = data["api_token"].as_str()
         .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-    Ok(cloudflare_api::Client::new(token))
+    Ok(cloudflare_api::compat::SimpleClient::new(token))
 }
 
 // ── Component ─────────────────────────────────────────────────────────

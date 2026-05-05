@@ -87,7 +87,7 @@ async fn test_credential(credential_id: Uuid) -> Result<String, ServerFnError> {
             let token = data_json["api_token"]
                 .as_str()
                 .ok_or_else(|| ServerFnError::new("missing api_token in credential"))?;
-            let client = cloudflare_api::Client::new(token);
+            let client = cloudflare_api::compat::SimpleClient::new(token);
             let zones = client
                 .list_zones(None)
                 .await

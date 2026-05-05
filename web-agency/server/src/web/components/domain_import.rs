@@ -106,7 +106,7 @@ async fn discover_domains(credential_id: Uuid, org_id: Uuid) -> Result<Vec<Disco
         "cloudflare" => {
             let token = data["api_token"].as_str()
                 .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-            let client = cloudflare_api::Client::new(token);
+            let client = cloudflare_api::compat::SimpleClient::new(token);
 
             let zones = client.list_zones(None).await
                 .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
@@ -183,7 +183,7 @@ async fn import_domains(
     if registrar_type == "cloudflare" {
         let token = data["api_token"].as_str()
             .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-        let client = cloudflare_api::Client::new(token);
+        let client = cloudflare_api::compat::SimpleClient::new(token);
         let zones = client.list_zones(None).await
             .map_err(|e| ServerFnError::new(format!("Cloudflare API error: {e}")))?;
         for zone in zones {
