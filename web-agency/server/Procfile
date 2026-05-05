@@ -1,0 +1,2 @@
+server: RUST_LOG=debug DEV_ONLY_NO_AUTH=1 dx serve | cat
+tailwind: npm run tailwind
