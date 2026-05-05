@@ -77,7 +77,11 @@ pub fn CredentialList() -> Element {
                             }
                         }
                         for row in rows {
-                            tr {
+                            tr { class: "cursor-pointer hover:bg-surface-2",
+                                onclick: {
+                                    let id = row.id.to_string();
+                                    move |_| { navigator().push(crate::web::app::Route::CredentialEdit { id: id.clone() }); }
+                                },
                                 Td { "{row.name}" }
                                 Td {
                                     span { class: "badge badge-info", "{row.credential_type}" }

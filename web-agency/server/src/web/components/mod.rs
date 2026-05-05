@@ -1,6 +1,7 @@
 pub mod billing_log;
 pub mod contact_form;
 pub mod contact_list;
+pub mod credential_edit;
 pub mod credential_form;
 pub mod credential_list;
 pub mod dashboard;
