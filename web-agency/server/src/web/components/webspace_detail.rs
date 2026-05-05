@@ -484,14 +484,22 @@ pub fn WebspaceDetail(id: String) -> Element {
             PagesDeploySection { webspace_id: data.id }
         }
 
-        // Git repo connection (only for deployed CF Pages projects)
+        // Source info (only for deployed CF Pages projects)
         if is_pages && has_project {
-            SectionHeading { class: "mt-6", "Git Repository" }
-            GitRepoSection {
-                webspace_id: data.id,
-                git_source: data.git_source.clone(),
-                build_config: data.build_config.clone(),
-                pages_subdomain: data.pages_subdomain.clone(),
+            SectionHeading { class: "mt-6", "Deployment Source" }
+            if data.git_source.is_some() {
+                // Git-connected project
+                GitSourceDisplay {
+                    git_source: data.git_source.clone().unwrap(),
+                    build_config: data.build_config.clone(),
+                    pages_subdomain: data.pages_subdomain.clone(),
+                }
+            } else {
+                // Direct upload project
+                DirectUploadDisplay {
+                    project_name: data.cloudflare_pages_project.clone().unwrap_or_default(),
+                    pages_subdomain: data.pages_subdomain.clone(),
+                }
             }
         }
 
@@ -698,91 +706,239 @@ fn GitRepoSection(
     }
 }
 
-/// Deploy a CF Pages project for this webspace.
+/// Deploy a CF Pages project — user chooses Git or Direct Upload (cannot be changed later).
 #[component]
 fn PagesDeploySection(webspace_id: Uuid) -> Element {
     let creds = use_server_future(list_cf_creds_for_pages)?;
-    let cred_list = match &*creds.read() {
-        Some(Ok(c)) => c.clone(),
-        _ => vec![],
-    };
+    let cred_list = match &*creds.read() { Some(Ok(c)) => c.clone(), _ => vec![] };
 
     let mut cred_id = use_signal(|| cred_list.first().map(|c| c.id.to_string()).unwrap_or_default());
+    let mut mode = use_signal(|| "direct".to_string()); // "direct" or "git"
+    // Git fields
+    let mut git_provider = use_signal(|| "github".to_string());
+    let mut git_owner = use_signal(String::new);
+    let mut git_repo = use_signal(String::new);
+    let mut git_branch = use_signal(|| "main".to_string());
+    let mut build_cmd = use_signal(String::new);
+    let mut dest_dir = use_signal(String::new);
+    let mut root_dir = use_signal(String::new);
+
     let mut deploying = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut result = use_signal(|| None::<PagesDeployResult>);
 
     if let Some(res) = &*result.read() {
         return rsx! {
-            Card {
-                div { class: "p-6",
-                    div { class: "flex items-center gap-2 mb-2",
-                        Badge { variant: BadgeVariant::Success, "Deployed" }
-                        span { class: "font-mono text-sm", "{res.project_name}" }
-                    }
-                    if let Some(ref sub) = res.subdomain {
-                        div { class: "text-sm text-fg-muted",
-                            "Preview URL: "
-                            span { class: "font-mono", "https://{sub}" }
-                        }
-                    }
-                    div { class: "mt-2 text-sm text-fg-muted", "Reload the page to manage domain bindings." }
+            Card { div { class: "p-6",
+                div { class: "flex items-center gap-2 mb-2",
+                    Badge { variant: BadgeVariant::Success, "Deployed" }
+                    span { class: "font-mono text-sm", "{res.project_name}" }
                 }
-            }
+                if let Some(ref sub) = res.subdomain {
+                    div { class: "text-sm text-fg-muted", "Preview: " span { class: "font-mono", "https://{sub}" } }
+                }
+                div { class: "mt-2 text-sm text-fg-muted", "Reload the page to see full project details." }
+            }}
         };
     }
 
+    if cred_list.is_empty() {
+        return rsx! {
+            Card { div { class: "p-6 text-fg-muted",
+                "No Cloudflare credentials. "
+                Link { to: crate::web::app::Route::CredentialForm {}, class: "text-brand underline", "Add one" }
+                " first."
+            }}
+        };
+    }
+
+    let is_git = *mode.read() == "git";
+
     rsx! {
-        Card {
-            div { class: "p-6",
-                if cred_list.is_empty() {
-                    p { class: "text-fg-muted",
-                        "No Cloudflare credentials. "
-                        Link { to: crate::web::app::Route::CredentialForm {}, class: "text-brand underline", "Add one" }
-                        " first."
-                    }
-                } else {
-                    div { class: "flex items-end gap-3",
-                        FormField { label: "Cloudflare Credential",
-                            select {
-                                class: "input",
-                                value: "{cred_id}",
-                                oninput: move |evt| cred_id.set(evt.value()),
-                                for c in &cred_list {
-                                    option { value: "{c.id}", "{c.name}" }
-                                }
-                            }
-                        }
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            disabled: *deploying.read(),
-                            onclick: {
-                                let wid = webspace_id;
-                                let cid_str = cred_id.read().clone();
-                                move |_| {
-                                    let cid_str = cid_str.clone();
-                                    deploying.set(true);
-                                    error.set(None);
-                                    spawn(async move {
-                                        if let Ok(cid) = uuid::Uuid::parse_str(&cid_str) {
-                                            match deploy_pages_project(wid, cid).await {
-                                                Ok(r) => result.set(Some(r)),
-                                                Err(e) => error.set(Some(format!("{e}"))),
-                                            }
-                                        }
-                                        deploying.set(false);
-                                    });
-                                }
-                            },
-                            if *deploying.read() { "Creating project..." } else { "Create Pages Project" }
-                        }
+        Card { div { class: "p-6 space-y-4",
+            p { class: "text-sm text-fg-muted",
+                "Choose the deployment source. " span { class: "font-semibold text-fg", "This cannot be changed after creation." }
+            }
+
+            div { class: "grid grid-cols-1 md:grid-cols-2 gap-4",
+                FormField { label: "Cloudflare Credential",
+                    select { class: "input", value: "{cred_id}", oninput: move |evt| cred_id.set(evt.value()),
+                        for c in &cred_list { option { value: "{c.id}", "{c.name}" } }
                     }
                 }
-                if let Some(err) = &*error.read() {
-                    div { class: "mt-3 text-danger text-sm", "{err}" }
+                FormField { label: "Deployment Source",
+                    select { class: "input", value: "{mode}", oninput: move |evt| mode.set(evt.value()),
+                        option { value: "direct", "Direct Upload (Wrangler CLI)" }
+                        option { value: "git", "Git Repository (GitHub / GitLab)" }
+                    }
                 }
             }
-        }
+
+            if is_git {
+                p { class: "text-sm text-fg-muted",
+                    "The GitHub/GitLab integration must be "
+                    a { href: "https://dash.cloudflare.com/?to=/:account/pages", target: "_blank", class: "text-brand underline", "authorized in Cloudflare" }
+                    " first."
+                }
+                div { class: "grid grid-cols-1 md:grid-cols-2 gap-4",
+                    FormField { label: "Provider",
+                        select { class: "input", value: "{git_provider}", oninput: move |evt| git_provider.set(evt.value()),
+                            option { value: "github", "GitHub" } option { value: "gitlab", "GitLab" }
+                        }
+                    }
+                    FormField { label: "Branch",
+                        input { class: "input", r#type: "text", value: "{git_branch}", placeholder: "main",
+                            oninput: move |evt| git_branch.set(evt.value()) }
+                    }
+                }
+                div { class: "grid grid-cols-1 md:grid-cols-2 gap-4",
+                    FormField { label: "Owner",
+                        input { class: "input", r#type: "text", required: true, placeholder: "my-org",
+                            value: "{git_owner}", oninput: move |evt| git_owner.set(evt.value()) }
+                    }
+                    FormField { label: "Repository",
+                        input { class: "input", r#type: "text", required: true, placeholder: "my-site",
+                            value: "{git_repo}", oninput: move |evt| git_repo.set(evt.value()) }
+                    }
+                }
+                SectionHeading { "Build Settings (optional)" }
+                div { class: "grid grid-cols-1 md:grid-cols-3 gap-4",
+                    FormField { label: "Build Command",
+                        input { class: "input font-mono text-sm", r#type: "text", placeholder: "npm run build",
+                            value: "{build_cmd}", oninput: move |evt| build_cmd.set(evt.value()) }
+                    }
+                    FormField { label: "Output Directory",
+                        input { class: "input font-mono text-sm", r#type: "text", placeholder: "dist",
+                            value: "{dest_dir}", oninput: move |evt| dest_dir.set(evt.value()) }
+                    }
+                    FormField { label: "Root Directory",
+                        input { class: "input font-mono text-sm", r#type: "text", placeholder: "/",
+                            value: "{root_dir}", oninput: move |evt| root_dir.set(evt.value()) }
+                    }
+                }
+            }
+
+            if let Some(err) = &*error.read() {
+                div { class: "text-danger text-sm", "{err}" }
+            }
+
+            Button { variant: ButtonVariant::Primary,
+                disabled: *deploying.read() || (is_git && (git_owner.read().is_empty() || git_repo.read().is_empty())),
+                onclick: {
+                    let wid = webspace_id;
+                    let cid_str = cred_id.read().clone();
+                    let is_git = is_git;
+                    let gp = git_provider.read().clone();
+                    let go = git_owner.read().clone();
+                    let gr = git_repo.read().clone();
+                    let gb = git_branch.read().clone();
+                    let bc = build_cmd.read().clone();
+                    let dd = dest_dir.read().clone();
+                    let rd = root_dir.read().clone();
+                    move |_| {
+                        let cid_str = cid_str.clone();
+                        let gp = gp.clone(); let go = go.clone(); let gr = gr.clone();
+                        let gb = gb.clone(); let bc = bc.clone(); let dd = dd.clone(); let rd = rd.clone();
+                        deploying.set(true); error.set(None);
+                        spawn(async move {
+                            if let Ok(cid) = uuid::Uuid::parse_str(&cid_str) {
+                                // Step 1: create project
+                                match deploy_pages_project(wid, cid).await {
+                                    Ok(r) => {
+                                        // Step 2: if git, connect repo
+                                        if is_git {
+                                            if let Err(e) = connect_git_repo(wid, gp, go, gr, gb, bc, dd, rd).await {
+                                                error.set(Some(format!("Project created but git connection failed: {e}")));
+                                                result.set(Some(r));
+                                                deploying.set(false);
+                                                return;
+                                            }
+                                        }
+                                        result.set(Some(r));
+                                    }
+                                    Err(e) => error.set(Some(format!("{e}"))),
+                                }
+                            }
+                            deploying.set(false);
+                        });
+                    }
+                },
+                if *deploying.read() { "Creating..." } else if is_git { "Create with Git" } else { "Create with Direct Upload" }
+            }
+        }}
+    }
+}
+
+/// Display for a git-connected Pages project.
+#[component]
+fn GitSourceDisplay(git_source: GitRepoInfo, build_config: Option<BuildConfigInfo>, pages_subdomain: Option<String>) -> Element {
+    let repo_url = match git_source.provider.as_str() {
+        "github" => format!("https://github.com/{}/{}", git_source.owner, git_source.repo),
+        "gitlab" => format!("https://gitlab.com/{}/{}", git_source.owner, git_source.repo),
+        _ => format!("{}/{}", git_source.owner, git_source.repo),
+    };
+
+    rsx! {
+        Card { div { class: "p-6 space-y-3",
+            div { class: "flex items-center gap-2",
+                Badge { variant: BadgeVariant::Info, "Git" }
+                span { class: "font-mono text-sm", "{git_source.provider}" }
+            }
+            div { class: "flex items-center gap-2",
+                span { class: "text-sm text-fg-muted", "Repository:" }
+                a { href: "{repo_url}", target: "_blank", class: "font-mono text-sm text-brand underline", "{git_source.owner}/{git_source.repo}" }
+            }
+            div { class: "flex items-center gap-2",
+                span { class: "text-sm text-fg-muted", "Branch:" }
+                span { class: "font-mono text-sm", "{git_source.production_branch}" }
+            }
+            if let Some(bc) = &build_config {
+                if bc.build_command.is_some() || bc.destination_dir.is_some() {
+                    div { class: "border-t border-line-soft pt-3 mt-3",
+                        div { class: "text-sm text-fg-muted mb-1", "Build Settings" }
+                        if let Some(ref cmd) = bc.build_command {
+                            div { span { class: "text-sm text-fg-muted", "Command: " } span { class: "font-mono text-sm bg-surface-2 px-2 py-0.5 rounded", "{cmd}" } }
+                        }
+                        if let Some(ref dir) = bc.destination_dir {
+                            div { span { class: "text-sm text-fg-muted", "Output: " } span { class: "font-mono text-sm", "{dir}" } }
+                        }
+                        if let Some(ref root) = bc.root_dir {
+                            div { span { class: "text-sm text-fg-muted", "Root: " } span { class: "font-mono text-sm", "{root}" } }
+                        }
+                    }
+                }
+            }
+            if let Some(ref sub) = pages_subdomain {
+                div { span { class: "text-sm text-fg-muted", "Preview: " }
+                    a { href: "https://{sub}", target: "_blank", class: "font-mono text-sm text-brand underline", "https://{sub}" } }
+            }
+        }}
+    }
+}
+
+/// Display for a direct-upload Pages project.
+#[component]
+fn DirectUploadDisplay(project_name: String, pages_subdomain: Option<String>) -> Element {
+    rsx! {
+        Card { div { class: "p-6 space-y-3",
+            div { class: "flex items-center gap-2",
+                Badge { variant: BadgeVariant::Accent, "Direct Upload" }
+            }
+            div { class: "text-sm text-fg-muted mb-2", "Deploy using the Wrangler CLI:" }
+            div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded select-all",
+                "npx wrangler pages deploy ./dist --project-name={project_name}"
+            }
+            div { class: "text-sm text-fg-muted mt-2",
+                "Replace " code { class: "font-mono bg-surface-2 px-1 rounded", "./dist" }
+                " with your build output directory."
+            }
+            if let Some(ref sub) = pages_subdomain {
+                div { class: "mt-3",
+                    span { class: "text-sm text-fg-muted", "Preview: " }
+                    a { href: "https://{sub}", target: "_blank", class: "font-mono text-sm text-brand underline", "https://{sub}" }
+                }
+            }
+        }}
     }
 }
 
