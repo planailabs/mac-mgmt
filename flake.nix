@@ -75,6 +75,9 @@
             cargo-watch
             xz  # for nixpkgs archive generation
 
+            # web-app-agency
+            wrangler
+
             # For WASM
             wasm-pack
             wasm-bindgen-cli_0_2_114
