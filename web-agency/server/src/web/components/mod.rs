@@ -15,5 +15,6 @@ pub mod organization_list;
 pub mod token_list;
 pub mod ui;
 pub mod user_list;
+pub mod webspace_detail;
 pub mod webspace_form;
 pub mod webspace_list;

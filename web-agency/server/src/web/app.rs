@@ -16,6 +16,7 @@ use super::components::organization_form::OrganizationForm;
 use super::components::organization_list::OrganizationList;
 use super::components::token_list::TokenList;
 use super::components::user_list::UserList;
+use super::components::webspace_detail::WebspaceDetail;
 use super::components::webspace_form::WebspaceForm;
 use super::components::webspace_list::WebspaceList;
 
@@ -40,6 +41,8 @@ pub enum Route {
     WebspaceList {},
     #[route("/webspaces/new")]
     WebspaceForm {},
+    #[route("/webspaces/:id")]
+    WebspaceDetail { id: String },
     #[route("/contacts")]
     ContactList {},
     #[route("/contacts/new")]
