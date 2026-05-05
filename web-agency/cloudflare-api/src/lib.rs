@@ -110,6 +110,19 @@ impl Client {
         self.get("/accounts").await
     }
 
+    /// Resolve the account ID: if provided, use it; if empty, fetch the first
+    /// account from the API (works for user-level API tokens).
+    pub async fn resolve_account_id(&self, configured: &str) -> Result<String, Error> {
+        if !configured.is_empty() {
+            return Ok(configured.to_string());
+        }
+        let accounts = self.list_accounts().await?;
+        accounts
+            .first()
+            .map(|a| a.id.clone())
+            .ok_or_else(|| Error::Unexpected("no accounts accessible by this token".into()))
+    }
+
     // ── Zones ─────────────────────────────────────────────────────────
 
     /// List zones, optionally filtered by name.

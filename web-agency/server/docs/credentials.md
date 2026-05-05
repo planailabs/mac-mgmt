@@ -19,13 +19,13 @@ JSON format:
 }
 ```
 
+The `account_id` field is **optional**. If omitted, the server automatically fetches the account ID from the Cloudflare API using the token. This works for user-level API tokens that have access to a single account. For tokens with access to multiple accounts, specify the `account_id` explicitly.
+
 **Required API Token Permissions:**
 - Zone: Zone → Read (for listing/managing zones)
 - Zone: DNS → Edit (for DNS record management)
 - Account: Cloudflare Pages → Edit (for Pages project management)
-
-**Finding your Account ID:**
-Log into the Cloudflare dashboard → select any zone → the account ID is in the right sidebar under "API".
+- Account: Account Settings → Read (for auto-detecting account ID, if `account_id` is omitted)
 
 ### Spaceship
 

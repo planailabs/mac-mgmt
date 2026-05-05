@@ -628,13 +628,13 @@ async fn build_cf_pages_client(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<(cl
 
     let token = data["api_token"].as_str()
         .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-    let account_id = data["account_id"].as_str().unwrap_or("").to_string();
+    let configured_account_id = data["account_id"].as_str().unwrap_or("");
 
-    if account_id.is_empty() {
-        return Err(ServerFnError::new("account_id required in credential for Pages"));
-    }
+    let client = cloudflare_api::Client::new(token);
+    let account_id = client.resolve_account_id(configured_account_id).await
+        .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))?;
 
-    Ok((cloudflare_api::Client::new(token), account_id))
+    Ok((client, account_id))
 }
 
 /// Build a CF client from a domain's credential (no account_id needed).

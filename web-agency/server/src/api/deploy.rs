@@ -310,7 +310,11 @@ async fn get_cf_account_id(pool: &PgPool, cred_id: Uuid) -> Result<String, Strin
 
     let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| format!("decryption: {e}"))?;
     let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| format!("parse: {e}"))?;
-    Ok(data["account_id"].as_str().unwrap_or("").to_string())
+    let token = data["api_token"].as_str().ok_or("missing api_token")?;
+    let configured = data["account_id"].as_str().unwrap_or("");
+    let client = cloudflare_api::Client::new(token);
+    client.resolve_account_id(configured).await
+        .map_err(|e| format!("failed to resolve account ID: {e}"))
 }
 
 async fn run_wrangler_deploy(

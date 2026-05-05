@@ -81,9 +81,11 @@ async fn add_domain(
 
         let token = data["api_token"].as_str()
             .ok_or_else(|| ServerFnError::new("missing api_token"))?;
-        let account_id = data["account_id"].as_str().unwrap_or("");
+        let configured_account_id = data["account_id"].as_str().unwrap_or("");
 
         let client = cloudflare_api::Client::new(token);
+        let account_id = client.resolve_account_id(configured_account_id).await
+            .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))?;
 
         // Check if zone already exists
         let existing = client.list_zones(Some(&domain_name)).await
@@ -92,13 +94,11 @@ async fn add_domain(
         if let Some(zone) = existing.first() {
             zone_id = Some(zone.id.clone());
             tracing::info!("domain {domain_name} already exists as zone {}", zone.id);
-        } else if !account_id.is_empty() {
-            let zone = client.create_zone(&domain_name, account_id).await
+        } else {
+            let zone = client.create_zone(&domain_name, &account_id).await
                 .map_err(|e| ServerFnError::new(format!("CF zone creation failed: {e}")))?;
             zone_id = Some(zone.id);
             tracing::info!("created CF zone for {domain_name}");
-        } else {
-            return Err(ServerFnError::new("account_id required to create new zones"));
         }
     }
 

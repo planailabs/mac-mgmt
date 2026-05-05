@@ -157,9 +157,6 @@ async fn deploy_to_cloudflare(domain_id: Uuid, credential_id: Uuid) -> Result<De
     let zone = if let Some(z) = existing.into_iter().find(|z| z.name == domain_name) {
         z
     } else {
-        if account_id.is_empty() {
-            return Err(ServerFnError::new("account_id required to create new zones"));
-        }
         client.create_zone(&domain_name, &account_id).await
             .map_err(|e| ServerFnError::new(format!("zone creation failed: {e}")))?
     };
@@ -435,7 +432,11 @@ async fn get_cf_account_id(pool: &sqlx::PgPool, cred_id: Uuid) -> Result<String,
         .bind(cred_id).fetch_one(pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
     let decrypted = crate::crypto::decrypt(&encrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
     let data: serde_json::Value = serde_json::from_slice(&decrypted).map_err(|e| ServerFnError::new(format!("{e}")))?;
-    Ok(data["account_id"].as_str().unwrap_or("").to_string())
+    let token = data["api_token"].as_str().ok_or_else(|| ServerFnError::new("missing api_token"))?;
+    let configured = data["account_id"].as_str().unwrap_or("");
+    let client = cloudflare_api::Client::new(token);
+    client.resolve_account_id(configured).await
+        .map_err(|e| ServerFnError::new(format!("failed to resolve account ID: {e}")))
 }
 
 #[cfg(feature = "server")]
