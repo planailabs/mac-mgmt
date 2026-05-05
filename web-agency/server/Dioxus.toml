@@ -1,0 +1,5 @@
+[application]
+name = "web-agency-server"
+
+[web.app]
+title = "web-agency"
