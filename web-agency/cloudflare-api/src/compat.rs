@@ -172,8 +172,31 @@ impl SimpleClient {
 
     pub async fn resolve_account_id(&self, configured: &str) -> Result<String, Error> {
         if !configured.is_empty() { return Ok(configured.to_string()); }
-        let accts: Vec<Account> = self.list_accounts().await?;
-        accts.first().map(|a| a.id.clone()).ok_or_else(|| Error::Unexpected("no accounts".into()))
+
+        // Try GET /accounts first (works for account-scoped tokens)
+        if let Ok(accts) = self.list_accounts().await {
+            if let Some(a) = accts.first() {
+                tracing::debug!(account_id = %a.id, source = "accounts_api", "resolved account ID");
+                return Ok(a.id.clone());
+            }
+        }
+
+        // Fallback: get account_id from the first zone (works for zone-scoped tokens)
+        tracing::debug!("GET /accounts returned no results, trying zone fallback");
+        if let Ok(zones) = self.list_zones(None).await {
+            if let Some(z) = zones.first() {
+                if let Some(ref acct) = z.account {
+                    if let Some(id) = acct.get("id").and_then(|v| v.as_str()) {
+                        if !id.is_empty() {
+                            tracing::debug!(account_id = %id, source = "zone_fallback", zone = %z.name, "resolved account ID from zone");
+                            return Ok(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(Error::Unexpected("could not resolve account ID — set account_id in the credential, or ensure the token has Account:Read permission".into()))
     }
 
     pub async fn list_zones(&self, name: Option<&str>) -> Result<Vec<Zone>, Error> {
