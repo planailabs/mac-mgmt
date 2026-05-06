@@ -33,6 +33,10 @@ CF_YAML = os.path.join(WEB_AGENCY_DIR, "openapi-cloudflare.yaml")
 CF_TRIMMED = os.path.join(WEB_AGENCY_DIR, "cloudflare-api", "openapi-trimmed.json")
 CF_OUTPUT = os.path.join(WEB_AGENCY_DIR, "cloudflare-api")
 
+SS_JSON = os.path.join(WEB_AGENCY_DIR, "openapi-spaceship.json")
+SS_TRIMMED = os.path.join(WEB_AGENCY_DIR, "spaceship-api", "openapi-trimmed.json")
+SS_OUTPUT = os.path.join(WEB_AGENCY_DIR, "spaceship-api")
+
 # Paths we need from the Cloudflare API
 CF_KEEP_PATHS = [
     "/accounts",
@@ -278,87 +282,84 @@ def trim_cloudflare():
     return trimmed
 
 
-def generate_cloudflare():
-    """Generate the Cloudflare API crate using cargo-progenitor."""
+def generate_crate(spec_path, output_dir, crate_name, extra_deps=None, post_gen_fixups=None):
+    """Generate an API crate using cargo-progenitor, preserving hand-maintained files.
+
+    Args:
+        spec_path: path to the (trimmed) OpenAPI JSON spec
+        output_dir: target crate directory
+        crate_name: Cargo package name
+        extra_deps: dict of {cargo_line: package_name} for deps needed by compat.rs
+        post_gen_fixups: callable(code) -> code applied to generated lib.rs before swap
+    """
     progenitor = os.path.expanduser("~/.cargo/bin/cargo-progenitor")
     if not os.path.exists(progenitor):
         print("cargo-progenitor not found. Install: cargo install cargo-progenitor", file=sys.stderr)
         sys.exit(1)
 
-    # Generate to temp dir first
-    tmp_output = CF_OUTPUT + "-gen"
+    tmp_output = output_dir + "-gen"
     if os.path.exists(tmp_output):
         shutil.rmtree(tmp_output)
 
-    print("Generating Cloudflare API crate...")
+    print(f"Generating {crate_name} crate...")
     result = subprocess.run(
         [progenitor, "progenitor",
-         "-i", CF_TRIMMED,
+         "-i", spec_path,
          "-o", tmp_output,
-         "-n", "cloudflare-api",
+         "-n", crate_name,
          "-v", "0.1.0"],
         capture_output=True, text=True,
     )
-
     if result.returncode != 0:
         print(f"Generation failed: {result.stderr}", file=sys.stderr)
         sys.exit(1)
-
     print(f"  Generated to {tmp_output}")
 
-    # Apply post-generation fixes
-    lib_rs = os.path.join(tmp_output, "src", "lib.rs")
-    with open(lib_rs) as f:
-        code = f.read()
+    # Apply post-generation fixups to lib.rs
+    if post_gen_fixups:
+        lib_rs = os.path.join(tmp_output, "src", "lib.rs")
+        with open(lib_rs) as f:
+            code = f.read()
+        code = post_gen_fixups(code)
+        with open(lib_rs, "w") as f:
+            f.write(code)
 
-    # Fix: DnsRecordsForAZoneDeleteDnsRecordResponseResultInner needs PartialEq
-    code = code.replace(
-        '#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]\n    pub struct DnsRecordsForAZoneDeleteDnsRecordResponseResultInner',
-        '#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]\n    pub struct DnsRecordsForAZoneDeleteDnsRecordResponseResultInner',
-    )
-
-    with open(lib_rs, "w") as f:
-        f.write(code)
-
-    # Swap old crate with new
-    old_backup = CF_OUTPUT + "-old"
+    # Swap old crate with new, preserving hand-maintained files
+    old_backup = output_dir + "-old"
     if os.path.exists(old_backup):
         shutil.rmtree(old_backup)
 
-    if os.path.exists(CF_OUTPUT):
-        # Preserve hand-maintained files
-        preserved = {}
+    preserved = {}
+    if os.path.exists(output_dir):
         for fname in ["openapi-trimmed.json", "src/compat.rs"]:
-            fpath = os.path.join(CF_OUTPUT, fname)
+            fpath = os.path.join(output_dir, fname)
             if os.path.exists(fpath):
                 with open(fpath, "rb") as f:
                     preserved[fname] = f.read()
-        tests_dir = os.path.join(CF_OUTPUT, "tests")
+        tests_dir = os.path.join(output_dir, "tests")
         if os.path.exists(tests_dir):
             preserved["tests"] = tests_dir
+        shutil.move(output_dir, old_backup)
 
-        shutil.move(CF_OUTPUT, old_backup)
-
-    shutil.move(tmp_output, CF_OUTPUT)
+    shutil.move(tmp_output, output_dir)
 
     # Restore preserved files
     for fname, data in preserved.items():
         if fname == "tests":
-            shutil.copytree(data, os.path.join(CF_OUTPUT, "tests"))
+            shutil.copytree(data, os.path.join(output_dir, "tests"))
         else:
-            fpath = os.path.join(CF_OUTPUT, fname)
+            fpath = os.path.join(output_dir, fname)
             os.makedirs(os.path.dirname(fpath), exist_ok=True)
             with open(fpath, "wb") as f:
                 f.write(data)
 
-    # Inject `pub mod compat;` into lib.rs if compat.rs exists
-    compat_path = os.path.join(CF_OUTPUT, "src", "compat.rs")
+    # Inject `pub mod compat;` into lib.rs if compat.rs was preserved
+    compat_path = os.path.join(output_dir, "src", "compat.rs")
     if os.path.exists(compat_path):
-        lib_rs = os.path.join(CF_OUTPUT, "src", "lib.rs")
+        lib_rs = os.path.join(output_dir, "src", "lib.rs")
         with open(lib_rs) as f:
             code = f.read()
         if "pub mod compat;" not in code:
-            # Insert after the pub use progenitor_client line
             code = code.replace(
                 "pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};",
                 "pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};\n\npub mod compat;",
@@ -367,27 +368,73 @@ def generate_cloudflare():
                 f.write(code)
 
     # Merge extra deps needed by compat.rs into Cargo.toml
-    cargo_toml = os.path.join(CF_OUTPUT, "Cargo.toml")
-    extra_deps = {
-        'thiserror = "2"': "thiserror",
-        'tracing = "0.1"': "tracing",
-    }
-    with open(cargo_toml) as f:
-        cargo = f.read()
-    for line, pkg in extra_deps.items():
-        if pkg not in cargo:
-            cargo = cargo.rstrip() + "\n" + line + "\n"
-    with open(cargo_toml, "w") as f:
-        f.write(cargo)
+    if extra_deps:
+        cargo_toml = os.path.join(output_dir, "Cargo.toml")
+        with open(cargo_toml) as f:
+            cargo = f.read()
+        for line, pkg in extra_deps.items():
+            if pkg not in cargo:
+                cargo = cargo.rstrip() + "\n" + line + "\n"
+        with open(cargo_toml, "w") as f:
+            f.write(cargo)
 
     # Clean up
     if os.path.exists(old_backup):
         shutil.rmtree(old_backup)
 
-    print(f"  Crate ready at {CF_OUTPUT}")
+    print(f"  Crate ready at {output_dir}")
+
+
+def trim_spaceship():
+    """Trim the Spaceship OpenAPI spec (light touch — spec is small)."""
+    print("Loading Spaceship OpenAPI JSON...")
+    with open(SS_JSON) as f:
+        spec = json.load(f)
+
+    print(f"  Paths: {len(spec.get('paths', {}))}")
+    print(f"  Schemas: {len(spec.get('components', {}).get('schemas', {}))}")
+
+    # Apply generic fixes
+    print("  Fixing enum bools...")
+    fix_enum_bools(spec)
+    print("  Simplifying anyOf patterns...")
+    simplify_anyof(spec)
+
+    os.makedirs(os.path.dirname(SS_TRIMMED), exist_ok=True)
+    with open(SS_TRIMMED, "w") as f:
+        json.dump(spec, f, indent=2)
+    print(f"  Written to {SS_TRIMMED}")
+    return spec
+
+
+def cf_post_gen_fixups(code):
+    """Post-generation fixups for the Cloudflare crate."""
+    code = code.replace(
+        '#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]\n    pub struct DnsRecordsForAZoneDeleteDnsRecordResponseResultInner',
+        '#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]\n    pub struct DnsRecordsForAZoneDeleteDnsRecordResponseResultInner',
+    )
+    return code
+
+
+CF_EXTRA_DEPS = {
+    'thiserror = "2"': "thiserror",
+    'tracing = "0.1"': "tracing",
+}
+
+SS_EXTRA_DEPS = {
+    'thiserror = "2"': "thiserror",
+    'tracing = "0.1"': "tracing",
+    'tokio = { version = "1", features = ["time"] }': "tokio",
+}
 
 
 if __name__ == "__main__":
     trim_cloudflare()
-    generate_cloudflare()
-    print("\nDone! Run 'cargo check -p cloudflare-api' to verify.")
+    generate_crate(CF_TRIMMED, CF_OUTPUT, "cloudflare-api",
+                   extra_deps=CF_EXTRA_DEPS, post_gen_fixups=cf_post_gen_fixups)
+
+    trim_spaceship()
+    generate_crate(SS_TRIMMED, SS_OUTPUT, "spaceship-api",
+                   extra_deps=SS_EXTRA_DEPS)
+
+    print("\nDone! Run 'cargo check -p cloudflare-api -p spaceship-api' to verify.")

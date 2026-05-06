@@ -8954,7 +8954,7 @@ pub mod types {
     ///      "examples": [
     ///        "_8443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -9016,7 +9016,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443._https.www.example.com"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -9116,7 +9116,7 @@ pub mod types {
     ///      "examples": [
     ///        "_8443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -9178,7 +9178,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443._https.www.example.com"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -9263,7 +9263,7 @@ pub mod types {
     ///  "examples": [
     ///    "_8443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -9278,31 +9278,74 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct HttpsResourceRecordCreateOrUpdateItemPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<HttpsResourceRecordCreateOrUpdateItemPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum HttpsResourceRecordCreateOrUpdateItemPort {
+        String(HttpsResourceRecordCreateOrUpdateItemPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for HttpsResourceRecordCreateOrUpdateItemPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for HttpsResourceRecordCreateOrUpdateItemPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`HttpsResourceRecordCreateOrUpdateItemPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for HttpsResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for HttpsResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for HttpsResourceRecordCreateOrUpdateItemPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<HttpsResourceRecordCreateOrUpdateItemPortString>
+        for HttpsResourceRecordCreateOrUpdateItemPort
+    {
+        fn from(value: HttpsResourceRecordCreateOrUpdateItemPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for HttpsResourceRecordCreateOrUpdateItemPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`HttpsResourceRecordCreateOrUpdateItemPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -9327,12 +9370,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum HttpsResourceRecordCreateOrUpdateItemPortSubtype0 {
+    pub enum HttpsResourceRecordCreateOrUpdateItemPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for HttpsResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::fmt::Display for HttpsResourceRecordCreateOrUpdateItemPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -9340,7 +9383,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for HttpsResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::str::FromStr for HttpsResourceRecordCreateOrUpdateItemPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -9350,7 +9393,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordCreateOrUpdateItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
@@ -9358,7 +9401,7 @@ pub mod types {
     }
 
     impl ::std::convert::TryFrom<&::std::string::String>
-        for HttpsResourceRecordCreateOrUpdateItemPortSubtype0
+        for HttpsResourceRecordCreateOrUpdateItemPortString
     {
         type Error = self::error::ConversionError;
         fn try_from(
@@ -9369,7 +9412,7 @@ pub mod types {
     }
 
     impl ::std::convert::TryFrom<::std::string::String>
-        for HttpsResourceRecordCreateOrUpdateItemPortSubtype0
+        for HttpsResourceRecordCreateOrUpdateItemPortString
     {
         type Error = self::error::ConversionError;
         fn try_from(
@@ -9602,7 +9645,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443._https.www.example.com"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -9836,7 +9879,7 @@ pub mod types {
     ///      "examples": [
     ///        "_8443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -9898,7 +9941,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443._https.www.example.com"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -9978,7 +10021,7 @@ pub mod types {
     ///  "examples": [
     ///    "_8443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -9993,31 +10036,74 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct HttpsResourceRecordDeleteItemPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<HttpsResourceRecordDeleteItemPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum HttpsResourceRecordDeleteItemPort {
+        String(HttpsResourceRecordDeleteItemPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for HttpsResourceRecordDeleteItemPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for HttpsResourceRecordDeleteItemPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`HttpsResourceRecordDeleteItemPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for HttpsResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for HttpsResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for HttpsResourceRecordDeleteItemPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<HttpsResourceRecordDeleteItemPortString>
+        for HttpsResourceRecordDeleteItemPort
+    {
+        fn from(value: HttpsResourceRecordDeleteItemPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for HttpsResourceRecordDeleteItemPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`HttpsResourceRecordDeleteItemPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -10042,12 +10128,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum HttpsResourceRecordDeleteItemPortSubtype0 {
+    pub enum HttpsResourceRecordDeleteItemPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for HttpsResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::fmt::Display for HttpsResourceRecordDeleteItemPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -10055,7 +10141,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for HttpsResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::str::FromStr for HttpsResourceRecordDeleteItemPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -10065,14 +10151,14 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
         }
     }
 
-    impl ::std::convert::TryFrom<&::std::string::String> for HttpsResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&::std::string::String> for HttpsResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -10081,7 +10167,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<::std::string::String> for HttpsResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<::std::string::String> for HttpsResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -10303,7 +10389,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443._https.www.example.com"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -10523,7 +10609,7 @@ pub mod types {
     ///  "examples": [
     ///    "_8443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -10538,31 +10624,72 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct HttpsResourceRecordPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<HttpsResourceRecordPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum HttpsResourceRecordPort {
+        String(HttpsResourceRecordPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for HttpsResourceRecordPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for HttpsResourceRecordPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`HttpsResourceRecordPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for HttpsResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for HttpsResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for HttpsResourceRecordPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<HttpsResourceRecordPortString> for HttpsResourceRecordPort {
+        fn from(value: HttpsResourceRecordPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for HttpsResourceRecordPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`HttpsResourceRecordPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -10587,12 +10714,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum HttpsResourceRecordPortSubtype0 {
+    pub enum HttpsResourceRecordPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for HttpsResourceRecordPortSubtype0 {
+    impl ::std::fmt::Display for HttpsResourceRecordPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -10600,7 +10727,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for HttpsResourceRecordPortSubtype0 {
+    impl ::std::str::FromStr for HttpsResourceRecordPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -10610,14 +10737,14 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for HttpsResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
         }
     }
 
-    impl ::std::convert::TryFrom<&::std::string::String> for HttpsResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<&::std::string::String> for HttpsResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -10626,7 +10753,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<::std::string::String> for HttpsResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<::std::string::String> for HttpsResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -10848,7 +10975,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443._https.www.example.com"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -16402,7 +16529,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -16462,7 +16589,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443._https.www.example.com"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -16561,7 +16688,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -16621,7 +16748,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443._https.www.example.com"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -16705,7 +16832,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -16720,31 +16847,74 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct SvcbResourceRecordCreateOrUpdateItemPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<SvcbResourceRecordCreateOrUpdateItemPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum SvcbResourceRecordCreateOrUpdateItemPort {
+        String(SvcbResourceRecordCreateOrUpdateItemPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for SvcbResourceRecordCreateOrUpdateItemPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for SvcbResourceRecordCreateOrUpdateItemPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`SvcbResourceRecordCreateOrUpdateItemPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for SvcbResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for SvcbResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for SvcbResourceRecordCreateOrUpdateItemPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<SvcbResourceRecordCreateOrUpdateItemPortString>
+        for SvcbResourceRecordCreateOrUpdateItemPort
+    {
+        fn from(value: SvcbResourceRecordCreateOrUpdateItemPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for SvcbResourceRecordCreateOrUpdateItemPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`SvcbResourceRecordCreateOrUpdateItemPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -16769,12 +16939,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum SvcbResourceRecordCreateOrUpdateItemPortSubtype0 {
+    pub enum SvcbResourceRecordCreateOrUpdateItemPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for SvcbResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::fmt::Display for SvcbResourceRecordCreateOrUpdateItemPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -16782,7 +16952,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for SvcbResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::str::FromStr for SvcbResourceRecordCreateOrUpdateItemPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -16792,7 +16962,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordCreateOrUpdateItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
@@ -16800,7 +16970,7 @@ pub mod types {
     }
 
     impl ::std::convert::TryFrom<&::std::string::String>
-        for SvcbResourceRecordCreateOrUpdateItemPortSubtype0
+        for SvcbResourceRecordCreateOrUpdateItemPortString
     {
         type Error = self::error::ConversionError;
         fn try_from(
@@ -16811,7 +16981,7 @@ pub mod types {
     }
 
     impl ::std::convert::TryFrom<::std::string::String>
-        for SvcbResourceRecordCreateOrUpdateItemPortSubtype0
+        for SvcbResourceRecordCreateOrUpdateItemPortString
     {
         type Error = self::error::ConversionError;
         fn try_from(
@@ -17046,7 +17216,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443._https.www.example.com"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -17280,7 +17450,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -17340,7 +17510,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443._https.www.example.com"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -17419,7 +17589,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -17434,31 +17604,74 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct SvcbResourceRecordDeleteItemPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<SvcbResourceRecordDeleteItemPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum SvcbResourceRecordDeleteItemPort {
+        String(SvcbResourceRecordDeleteItemPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for SvcbResourceRecordDeleteItemPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for SvcbResourceRecordDeleteItemPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`SvcbResourceRecordDeleteItemPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for SvcbResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for SvcbResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for SvcbResourceRecordDeleteItemPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<SvcbResourceRecordDeleteItemPortString>
+        for SvcbResourceRecordDeleteItemPort
+    {
+        fn from(value: SvcbResourceRecordDeleteItemPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for SvcbResourceRecordDeleteItemPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`SvcbResourceRecordDeleteItemPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -17483,12 +17696,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum SvcbResourceRecordDeleteItemPortSubtype0 {
+    pub enum SvcbResourceRecordDeleteItemPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for SvcbResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::fmt::Display for SvcbResourceRecordDeleteItemPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -17496,7 +17709,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for SvcbResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::str::FromStr for SvcbResourceRecordDeleteItemPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -17506,14 +17719,14 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
         }
     }
 
-    impl ::std::convert::TryFrom<&::std::string::String> for SvcbResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&::std::string::String> for SvcbResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -17522,7 +17735,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<::std::string::String> for SvcbResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<::std::string::String> for SvcbResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -17750,7 +17963,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443._https.www.example.com"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -17970,7 +18183,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -17985,31 +18198,72 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct SvcbResourceRecordPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<SvcbResourceRecordPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum SvcbResourceRecordPort {
+        String(SvcbResourceRecordPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for SvcbResourceRecordPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for SvcbResourceRecordPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`SvcbResourceRecordPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for SvcbResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for SvcbResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for SvcbResourceRecordPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<SvcbResourceRecordPortString> for SvcbResourceRecordPort {
+        fn from(value: SvcbResourceRecordPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for SvcbResourceRecordPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`SvcbResourceRecordPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -18034,12 +18288,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum SvcbResourceRecordPortSubtype0 {
+    pub enum SvcbResourceRecordPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for SvcbResourceRecordPortSubtype0 {
+    impl ::std::fmt::Display for SvcbResourceRecordPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -18047,7 +18301,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for SvcbResourceRecordPortSubtype0 {
+    impl ::std::str::FromStr for SvcbResourceRecordPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -18057,14 +18311,14 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for SvcbResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
         }
     }
 
-    impl ::std::convert::TryFrom<&::std::string::String> for SvcbResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<&::std::string::String> for SvcbResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -18073,7 +18327,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<::std::string::String> for SvcbResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<::std::string::String> for SvcbResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -18301,7 +18555,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443._https.www.example.com"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -18553,7 +18807,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -18785,7 +19039,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -18982,7 +19236,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -18997,31 +19251,74 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct TlsaResourceRecordCreateOrUpdateItemPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<TlsaResourceRecordCreateOrUpdateItemPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum TlsaResourceRecordCreateOrUpdateItemPort {
+        String(TlsaResourceRecordCreateOrUpdateItemPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for TlsaResourceRecordCreateOrUpdateItemPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for TlsaResourceRecordCreateOrUpdateItemPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`TlsaResourceRecordCreateOrUpdateItemPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for TlsaResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for TlsaResourceRecordCreateOrUpdateItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for TlsaResourceRecordCreateOrUpdateItemPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<TlsaResourceRecordCreateOrUpdateItemPortString>
+        for TlsaResourceRecordCreateOrUpdateItemPort
+    {
+        fn from(value: TlsaResourceRecordCreateOrUpdateItemPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for TlsaResourceRecordCreateOrUpdateItemPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`TlsaResourceRecordCreateOrUpdateItemPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -19046,12 +19343,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum TlsaResourceRecordCreateOrUpdateItemPortSubtype0 {
+    pub enum TlsaResourceRecordCreateOrUpdateItemPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for TlsaResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::fmt::Display for TlsaResourceRecordCreateOrUpdateItemPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -19059,7 +19356,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for TlsaResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::str::FromStr for TlsaResourceRecordCreateOrUpdateItemPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -19069,7 +19366,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordCreateOrUpdateItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordCreateOrUpdateItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
@@ -19077,7 +19374,7 @@ pub mod types {
     }
 
     impl ::std::convert::TryFrom<&::std::string::String>
-        for TlsaResourceRecordCreateOrUpdateItemPortSubtype0
+        for TlsaResourceRecordCreateOrUpdateItemPortString
     {
         type Error = self::error::ConversionError;
         fn try_from(
@@ -19088,7 +19385,7 @@ pub mod types {
     }
 
     impl ::std::convert::TryFrom<::std::string::String>
-        for TlsaResourceRecordCreateOrUpdateItemPortSubtype0
+        for TlsaResourceRecordCreateOrUpdateItemPortString
     {
         type Error = self::error::ConversionError;
         fn try_from(
@@ -19323,7 +19620,7 @@ pub mod types {
     ///      "examples": [
     ///        "_443"
     ///      ],
-    ///      "anyOf": [
+    ///      "oneOf": [
     ///        {
     ///          "type": "string",
     ///          "enum": [
@@ -19513,7 +19810,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -19528,31 +19825,74 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct TlsaResourceRecordDeleteItemPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<TlsaResourceRecordDeleteItemPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum TlsaResourceRecordDeleteItemPort {
+        String(TlsaResourceRecordDeleteItemPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for TlsaResourceRecordDeleteItemPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for TlsaResourceRecordDeleteItemPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`TlsaResourceRecordDeleteItemPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for TlsaResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for TlsaResourceRecordDeleteItemPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for TlsaResourceRecordDeleteItemPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<TlsaResourceRecordDeleteItemPortString>
+        for TlsaResourceRecordDeleteItemPort
+    {
+        fn from(value: TlsaResourceRecordDeleteItemPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for TlsaResourceRecordDeleteItemPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`TlsaResourceRecordDeleteItemPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -19577,12 +19917,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum TlsaResourceRecordDeleteItemPortSubtype0 {
+    pub enum TlsaResourceRecordDeleteItemPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for TlsaResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::fmt::Display for TlsaResourceRecordDeleteItemPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -19590,7 +19930,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for TlsaResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::str::FromStr for TlsaResourceRecordDeleteItemPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -19600,14 +19940,14 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
         }
     }
 
-    impl ::std::convert::TryFrom<&::std::string::String> for TlsaResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<&::std::string::String> for TlsaResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -19616,7 +19956,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<::std::string::String> for TlsaResourceRecordDeleteItemPortSubtype0 {
+    impl ::std::convert::TryFrom<::std::string::String> for TlsaResourceRecordDeleteItemPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
@@ -19806,7 +20146,7 @@ pub mod types {
     ///  "examples": [
     ///    "_443"
     ///  ],
-    ///  "anyOf": [
+    ///  "oneOf": [
     ///    {
     ///      "type": "string",
     ///      "enum": [
@@ -19821,31 +20161,72 @@ pub mod types {
     /// ```
     /// </details>
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
-    pub struct TlsaResourceRecordPort {
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_0: ::std::option::Option<TlsaResourceRecordPortSubtype0>,
-        #[serde(
-            flatten,
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
-        pub subtype_1: ::std::option::Option<UnderscoredPort>,
+    #[serde(untagged)]
+    pub enum TlsaResourceRecordPort {
+        String(TlsaResourceRecordPortString),
+        UnderscoredPort(UnderscoredPort),
     }
 
-    impl ::std::default::Default for TlsaResourceRecordPort {
-        fn default() -> Self {
-            Self {
-                subtype_0: Default::default(),
-                subtype_1: Default::default(),
+    impl ::std::str::FromStr for TlsaResourceRecordPort {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if let Ok(v) = value.parse() {
+                Ok(Self::String(v))
+            } else if let Ok(v) = value.parse() {
+                Ok(Self::UnderscoredPort(v))
+            } else {
+                Err("string conversion failed for all variants".into())
             }
         }
     }
 
-    ///`TlsaResourceRecordPortSubtype0`
+    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<&::std::string::String> for TlsaResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::convert::TryFrom<::std::string::String> for TlsaResourceRecordPort {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+
+    impl ::std::fmt::Display for TlsaResourceRecordPort {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match self {
+                Self::String(x) => x.fmt(f),
+                Self::UnderscoredPort(x) => x.fmt(f),
+            }
+        }
+    }
+
+    impl ::std::convert::From<TlsaResourceRecordPortString> for TlsaResourceRecordPort {
+        fn from(value: TlsaResourceRecordPortString) -> Self {
+            Self::String(value)
+        }
+    }
+
+    impl ::std::convert::From<UnderscoredPort> for TlsaResourceRecordPort {
+        fn from(value: UnderscoredPort) -> Self {
+            Self::UnderscoredPort(value)
+        }
+    }
+
+    ///`TlsaResourceRecordPortString`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -19870,12 +20251,12 @@ pub mod types {
         PartialEq,
         PartialOrd,
     )]
-    pub enum TlsaResourceRecordPortSubtype0 {
+    pub enum TlsaResourceRecordPortString {
         #[serde(rename = "*")]
         X,
     }
 
-    impl ::std::fmt::Display for TlsaResourceRecordPortSubtype0 {
+    impl ::std::fmt::Display for TlsaResourceRecordPortString {
         fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
             match *self {
                 Self::X => f.write_str("*"),
@@ -19883,7 +20264,7 @@ pub mod types {
         }
     }
 
-    impl ::std::str::FromStr for TlsaResourceRecordPortSubtype0 {
+    impl ::std::str::FromStr for TlsaResourceRecordPortString {
         type Err = self::error::ConversionError;
         fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
@@ -19893,14 +20274,14 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<&str> for TlsaResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
         }
     }
 
-    impl ::std::convert::TryFrom<&::std::string::String> for TlsaResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<&::std::string::String> for TlsaResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: &::std::string::String,
@@ -19909,7 +20290,7 @@ pub mod types {
         }
     }
 
-    impl ::std::convert::TryFrom<::std::string::String> for TlsaResourceRecordPortSubtype0 {
+    impl ::std::convert::TryFrom<::std::string::String> for TlsaResourceRecordPortString {
         type Error = self::error::ConversionError;
         fn try_from(
             value: ::std::string::String,
