@@ -197,6 +197,7 @@ pub fn CredentialEdit(id: String) -> Element {
                         placeholder: match cred.credential_type.as_str() {
                             "cloudflare" => r#"{"api_token": "...", "account_id": "..."}"#,
                             "spaceship" => r#"{"api_key": "...", "api_secret": "..."}"#,
+                            "mac-mgmt" => r#"{"server_url": "...", "token": "..."}"#,
                             _ => "{}",
                         },
                         value: "{new_data}", oninput: move |evt| new_data.set(evt.value()) }

@@ -83,6 +83,78 @@ fn authenticate(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
 struct RouteEntry {
     host: String,
     upstream: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relay: Option<RelayInfo>,
+}
+
+#[derive(Serialize)]
+struct RelayInfo {
+    /// Full relay URL to proxy to (e.g. https://abc123-ollama.relay.plan.ai)
+    url: String,
+    /// Minted proxy token for authenticating with the relay
+    proxy_token: String,
+}
+
+/// In-memory cache for minted proxy tokens, keyed by credential ID.
+static PROXY_TOKEN_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<uuid::Uuid, (String, chrono::DateTime<chrono::Utc>)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Get or mint a proxy token for the given mac-mgmt credential.
+async fn get_or_mint_proxy_token(
+    pool: &PgPool,
+    cred_id: uuid::Uuid,
+) -> Result<String, String> {
+    // Check cache
+    {
+        let cache = PROXY_TOKEN_CACHE.lock().unwrap();
+        if let Some((token, expires_at)) = cache.get(&cred_id) {
+            if *expires_at > chrono::Utc::now() + chrono::Duration::minutes(5) {
+                return Ok(token.clone());
+            }
+        }
+    }
+
+    // Mint a new token
+    let (server_url, admin_token) = crate::credentials::mac_mgmt_credential(pool, cred_id)
+        .await
+        .map_err(|e| format!("credential error: {e}"))?;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/proxy-token", server_url.trim_end_matches('/')))
+        .bearer_auth(&admin_token)
+        .json(&serde_json::json!({
+            "label": "web-agency-relay",
+            "scopes": ["tcp:*"],
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("mint request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("mint failed ({status}): {body}"));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse mint response: {e}"))?;
+    let token = body["token"]
+        .as_str()
+        .ok_or("no token in mint response")?
+        .to_string();
+
+    // Cache for 6 hours (the default proxy token lifetime)
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(6);
+    {
+        let mut cache = PROXY_TOKEN_CACHE.lock().unwrap();
+        cache.insert(cred_id, (token.clone(), expires_at));
+    }
+
+    Ok(token)
 }
 
 async fn get_routes(
@@ -97,6 +169,7 @@ async fn get_routes(
     let mut routes = vec![RouteEntry {
         host: proxy_cfg.agency_domain.clone(),
         upstream: proxy_cfg.agency_upstream.clone(),
+        relay: None,
     }];
 
     // Local webspace routes: domain → 127.0.0.1:local_port
@@ -120,10 +193,69 @@ async fn get_routes(
         routes.push(RouteEntry {
             host,
             upstream: format!("127.0.0.1:{port}"),
+            relay: None,
+        });
+    }
+
+    // Relay webspace routes: domain → relay URL with proxy token
+    let relay_rows = sqlx::query_as::<_, (String, Option<String>, String, uuid::Uuid)>(
+        "SELECT d.name, s.name, w.relay_url, w.relay_credential_id \
+         FROM webspace_domains wd \
+         JOIN webspaces w ON w.id = wd.webspace_id \
+         JOIN domains d ON d.id = wd.domain_id \
+         LEFT JOIN subdomains s ON s.id = wd.subdomain_id \
+         WHERE w.hosting_type = 'relay' AND w.relay_url IS NOT NULL AND w.relay_credential_id IS NOT NULL",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    for (domain, subdomain, relay_url, cred_id) in relay_rows {
+        let host = match subdomain.as_deref() {
+            Some(sub) if sub != "@" => format!("{sub}.{domain}"),
+            _ => domain,
+        };
+
+        // Parse relay URL to get the upstream host:port.
+        // URL is like https://instance-tunnel.relay.example.com
+        let upstream = parse_relay_upstream(&relay_url).ok_or_else(|| {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("bad relay URL: {relay_url}"))
+        })?;
+
+        let proxy_token = match get_or_mint_proxy_token(&state.pool, cred_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(host = %host, "failed to mint proxy token: {e}");
+                continue;
+            }
+        };
+
+        routes.push(RouteEntry {
+            host,
+            upstream,
+            relay: Some(RelayInfo {
+                url: relay_url,
+                proxy_token,
+            }),
         });
     }
 
     Ok(Json(routes))
+}
+
+/// Parse a relay URL like `https://host:port/...` into `host:port`.
+fn parse_relay_upstream(url: &str) -> Option<String> {
+    let without_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host_port = without_scheme.split('/').next()?;
+    if host_port.contains(':') {
+        Some(host_port.to_string())
+    } else if url.starts_with("https://") {
+        Some(format!("{host_port}:443"))
+    } else {
+        Some(format!("{host_port}:80"))
+    }
 }
 
 // ── Certs ─────────────────────────────────────────────────────────────

@@ -75,6 +75,23 @@ pub async fn cf_client_with_account(
     Ok((client, account_id))
 }
 
+/// Fetch the server URL and token from a mac-mgmt credential.
+pub async fn mac_mgmt_credential(
+    pool: &PgPool,
+    cred_id: Uuid,
+) -> anyhow::Result<(String, String)> {
+    let data = credential_json(pool, cred_id, "mac-mgmt").await?;
+    let server_url = data["server_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing server_url"))?
+        .to_string();
+    let token = data["token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing token"))?
+        .to_string();
+    Ok((server_url, token))
+}
+
 /// Build a Spaceship API client from a stored credential.
 pub async fn spaceship_client(
     pool: &PgPool,

@@ -7,11 +7,19 @@ use std::time::Duration;
 
 use crate::cert_store::{CertEntry, CertKey, CertStore};
 use crate::config::ProxyConfig;
+use crate::proxy::Route;
 
 #[derive(Debug, Deserialize)]
 struct RouteEntry {
     host: String,
     upstream: String,
+    relay: Option<RelayInfoEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RelayInfoEntry {
+    url: String,
+    proxy_token: String,
 }
 
 fn build_client(token: &str) -> reqwest::Client {
@@ -33,7 +41,7 @@ fn build_client(token: &str) -> reqwest::Client {
 async fn reload_routes(
     client: &reqwest::Client,
     server_url: &str,
-    routes: &ArcSwap<HashMap<String, SocketAddr>>,
+    routes: &ArcSwap<HashMap<String, Route>>,
 ) {
     match client
         .get(format!("{server_url}/api/internal/routes"))
@@ -44,9 +52,33 @@ async fn reload_routes(
             Ok(entries) => {
                 let mut map = HashMap::new();
                 for entry in entries {
-                    if let Ok(addr) = entry.upstream.parse::<SocketAddr>() {
-                        map.insert(entry.host, addr);
-                    }
+                    let Ok(addr) = entry.upstream.parse::<SocketAddr>() else {
+                        tracing::warn!(host = %entry.host, upstream = %entry.upstream, "bad upstream addr");
+                        continue;
+                    };
+                    let route = if let Some(relay) = entry.relay {
+                        // Parse the relay URL to extract host for TLS SNI
+                        let relay_host = relay
+                            .url
+                            .strip_prefix("https://")
+                            .or_else(|| relay.url.strip_prefix("http://"))
+                            .and_then(|s| s.split('/').next())
+                            .and_then(|s| s.split(':').next())
+                            .unwrap_or("")
+                            .to_string();
+                        let tls = relay.url.starts_with("https://");
+                        Route::Relay {
+                            addr,
+                            url: relay.url,
+                            sni: relay_host.clone(),
+                            relay_host,
+                            tls,
+                            proxy_token: relay.proxy_token,
+                        }
+                    } else {
+                        Route::Direct(addr)
+                    };
+                    map.insert(entry.host, route);
                 }
                 tracing::info!(count = map.len(), "loaded routes");
                 routes.store(Arc::new(map));
@@ -92,7 +124,7 @@ async fn reload_certs(
 async fn trigger_missing_certs(
     client: &reqwest::Client,
     server_url: &str,
-    routes: &ArcSwap<HashMap<String, SocketAddr>>,
+    routes: &ArcSwap<HashMap<String, Route>>,
     cert_store: &CertStore,
 ) {
     let route_hosts: Vec<String> = routes.load().keys().cloned().collect();
@@ -113,7 +145,7 @@ async fn trigger_missing_certs(
 /// Do the initial load (blocking before Pingora starts accepting).
 pub async fn initial_load(
     cfg: &ProxyConfig,
-    routes: &ArcSwap<HashMap<String, SocketAddr>>,
+    routes: &ArcSwap<HashMap<String, Route>>,
     cert_store: &CertStore,
 ) {
     let token = cfg.internal_token();
@@ -126,7 +158,7 @@ pub async fn initial_load(
 /// Build a Pingora background service that listens to SSE events and reloads.
 pub fn build_service(
     cfg: ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, SocketAddr>>>,
+    routes: Arc<ArcSwap<HashMap<String, Route>>>,
     cert_store: Arc<CertStore>,
 ) -> pingora::services::background::GenBackgroundService<SyncTask> {
     pingora::services::background::background_service(
@@ -141,7 +173,7 @@ pub fn build_service(
 
 pub struct SyncTask {
     cfg: ProxyConfig,
-    routes: Arc<ArcSwap<HashMap<String, SocketAddr>>>,
+    routes: Arc<ArcSwap<HashMap<String, Route>>>,
     cert_store: Arc<CertStore>,
 }
 

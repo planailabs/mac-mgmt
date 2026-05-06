@@ -166,12 +166,14 @@ pub fn CredentialForm() -> Element {
                         match val.as_str() {
                             "cloudflare" => data_json.set(r#"{"api_token": "", "account_id": ""}"#.to_string()),
                             "spaceship" => data_json.set(r#"{"api_key": "", "api_secret": ""}"#.to_string()),
+                            "mac-mgmt" => data_json.set(r#"{"server_url": "", "token": ""}"#.to_string()),
                             _ => {}
                         }
                         credential_type.set(val);
                     },
                     option { value: "cloudflare", "Cloudflare" }
                     option { value: "spaceship", "Spaceship" }
+                    option { value: "mac-mgmt", "mac-mgmt (Relay)" }
                 }
             }
 
