@@ -15,6 +15,7 @@ struct WebspaceData {
     cloudflare_credential_id: Option<Uuid>,
     runtime: Option<String>,
     local_status: Option<String>,
+    relay_url: Option<String>,
     organization_id: Uuid,
     organization_name: String,
     /// Whether the current user can manage tokens for this webspace's org.
@@ -102,16 +103,16 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
     let user = crate::web::user::current_user().await?;
     let pool = crate::server_pool()?;
 
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, Option<String>, Option<String>, Uuid, Option<String>)>(
         "SELECT w.id, w.name, w.hosting_type, w.cloudflare_pages_project, w.cloudflare_credential_id, \
-         w.runtime, w.local_status, w.organization_id \
+         w.runtime, w.local_status, w.organization_id, w.relay_url \
          FROM webspaces w WHERE w.id = $1",
     )
     .bind(webspace_id).fetch_optional(&pool).await
     .map_err(|e| ServerFnError::new(e.to_string()))?
     .ok_or_else(|| ServerFnError::new("webspace not found"))?;
 
-    let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id) = row;
+    let (id, name, hosting_type, cf_project, cf_cred_id, runtime, local_status, org_id, relay_url) = row;
 
     use crate::web::user::WebUserExt;
     user.require_org_read(&org_id)?;
@@ -196,7 +197,7 @@ async fn get_webspace(webspace_id: Uuid) -> Result<WebspaceData, ServerFnError> 
 
     Ok(WebspaceData {
         id, name, hosting_type, cloudflare_pages_project: cf_project,
-        cloudflare_credential_id: cf_cred_id, runtime, local_status,
+        cloudflare_credential_id: cf_cred_id, runtime, local_status, relay_url,
         organization_id: org_id, organization_name: org_name,
         is_org_admin: user.is_org_admin(&org_id),
         bindings,
@@ -837,6 +838,8 @@ pub fn WebspaceDetail(id: String) -> Element {
                     match data.hosting_type.as_str() {
                         "cloudflare_pages" => rsx! { Badge { variant: BadgeVariant::Info, "Cloudflare Pages" } },
                         "local" => rsx! { Badge { "Local" } },
+                        "relay" => rsx! { Badge { variant: BadgeVariant::Accent, "Relay Tunnel" } },
+                        "tunnel" => rsx! { Badge { variant: BadgeVariant::Accent, "Tunnel" } },
                         _ => rsx! { span { "{data.hosting_type}" } },
                     }
                 }
@@ -847,6 +850,15 @@ pub fn WebspaceDetail(id: String) -> Element {
                             span { class: "font-mono text-sm", "{proj}" }
                         } else {
                             span { class: "text-fg-muted", "Not deployed" }
+                        }
+                    }
+                } else if data.hosting_type == "relay" || data.hosting_type == "tunnel" {
+                    div {
+                        div { class: "text-sm text-fg-muted", "Upstream URL" }
+                        if let Some(ref url) = data.relay_url {
+                            span { class: "font-mono text-sm break-all", "{url}" }
+                        } else {
+                            span { class: "text-fg-muted", "-" }
                         }
                     }
                 } else {

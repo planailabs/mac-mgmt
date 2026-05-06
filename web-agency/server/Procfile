@@ -1,2 +1,3 @@
 server: RUST_LOG=debug DEV_ONLY_NO_AUTH=1 dx serve | cat
+proxy: RUST_LOG=debug cd ../proxy && cargo run
 tailwind: npm run tailwind
