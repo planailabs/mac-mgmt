@@ -49,6 +49,8 @@ in
     description = "Mac management server (skill importer only)";
   };
 
+  web-agency-server = prev.callPackage ./web-agency/server/package.nix { inherit gitSha; };
+
   mac-mgmt-relay = prev.callPackage ./relay/package.nix { };
   mac-mgmt-runner = prev.callPackage ./runner/package.nix { inherit gitSha; };
   mac-mgmt-relay-ssh = prev.callPackage ./relay-ssh/package.nix { };

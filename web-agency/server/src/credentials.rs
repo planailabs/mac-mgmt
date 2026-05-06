@@ -38,6 +38,8 @@ pub async fn cf_client(
 }
 
 /// Build a Cloudflare API client and resolve the account ID.
+/// If the credential has no account_id stored, resolves it via the API
+/// and backfills it into the encrypted credential data so future calls are instant.
 pub async fn cf_client_with_account(
     pool: &PgPool,
     cred_id: Uuid,
@@ -49,6 +51,27 @@ pub async fn cf_client_with_account(
     let configured = data["account_id"].as_str().unwrap_or("");
     let client = cloudflare_api::compat::SimpleClient::new(token);
     let account_id = client.resolve_account_id(configured).await?;
+
+    // Backfill account_id if it was empty
+    if configured.is_empty() && !account_id.is_empty() {
+        let mut updated = data.clone();
+        updated["account_id"] = serde_json::Value::String(account_id.clone());
+        if let Ok(encrypted) = crate::crypto::encrypt(
+            serde_json::to_vec(&updated)
+                .unwrap_or_default()
+                .as_slice(),
+        ) {
+            let _ = sqlx::query(
+                "UPDATE credentials SET encrypted_data = $1, updated_at = now() WHERE id = $2",
+            )
+            .bind(&encrypted)
+            .bind(cred_id)
+            .execute(pool)
+            .await;
+            tracing::info!(cred_id = %cred_id, account_id = %account_id, "backfilled account_id into credential");
+        }
+    }
+
     Ok((client, account_id))
 }
 
