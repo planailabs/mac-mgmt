@@ -239,11 +239,24 @@ pub fn ConfigEditor(cluster_id: String, read_only: bool) -> Element {
     use_context_provider(|| EditorBaseline(baseline_signal));
 
     if !*initialized.read() {
-        if let Some(Ok(Some(cfg))) = &*config.read() {
-            let pretty = serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default();
-            editor_text.set(pretty.clone());
-            saved_text.set(pretty);
-            initialized.set(true);
+        match &*config.read() {
+            Some(Ok(Some(cfg))) => {
+                let pretty =
+                    serde_json::to_string_pretty(&cfg.config_json).unwrap_or_default();
+                editor_text.set(pretty.clone());
+                saved_text.set(pretty);
+                initialized.set(true);
+            }
+            Some(Ok(None)) => {
+                // No config yet — initialize with empty object so the editor
+                // is usable and the save bar appears once the user edits.
+                let empty = serde_json::to_string_pretty(&serde_json::json!({}))
+                    .unwrap_or_default();
+                editor_text.set(empty.clone());
+                saved_text.set(empty);
+                initialized.set(true);
+            }
+            _ => {} // still loading or error
         }
     }
 
