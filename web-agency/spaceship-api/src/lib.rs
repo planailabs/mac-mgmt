@@ -2486,7 +2486,9 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "flag": {
-    ///      "description": "0   - no flags are set;\n128 - indicates that the âcritical bitâ is set, and that CAs should halt and not issue a certificate if they donât recognize the contents of the tag field",
+    ///      "description": "0   - no flags are set;\n128 - indicates that the
+    /// “critical bit” is set, and that CAs should halt and not issue a
+    /// certificate if they don’t recognize the contents of the tag field",
     ///      "type": "number",
     ///      "enum": [
     ///        0.0,
@@ -2522,9 +2524,9 @@ pub mod types {
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
     pub struct CaaResourceRecord {
         ///0   - no flags are set;
-        ///128 - indicates that the âcritical bitâ is set, and that CAs
-        /// should halt and not issue a certificate if they donât recognize
-        /// the contents of the tag field
+        ///128 - indicates that the “critical bit” is set, and that CAs should
+        /// halt and not issue a certificate if they don’t recognize the
+        /// contents of the tag field
         pub flag: CaaResourceRecordFlag,
         pub group: ResourceRecordsGroup,
         ///Name of resource record excluding domain name part. '@' can be used
@@ -2569,7 +2571,9 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "flag": {
-    ///      "description": "0   - no flags are set;\n128 - indicates that the âcritical bitâ is set, and that CAs should halt and not issue a certificate if they donât recognize the contents of the tag field",
+    ///      "description": "0   - no flags are set;\n128 - indicates that the
+    /// “critical bit” is set, and that CAs should halt and not issue a
+    /// certificate if they don’t recognize the contents of the tag field",
     ///      "type": "number",
     ///      "enum": [
     ///        0.0,
@@ -2605,9 +2609,9 @@ pub mod types {
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
     pub struct CaaResourceRecordCreateOrUpdateItem {
         ///0   - no flags are set;
-        ///128 - indicates that the âcritical bitâ is set, and that CAs
-        /// should halt and not issue a certificate if they donât recognize
-        /// the contents of the tag field
+        ///128 - indicates that the “critical bit” is set, and that CAs should
+        /// halt and not issue a certificate if they don’t recognize the
+        /// contents of the tag field
         pub flag: CaaResourceRecordCreateOrUpdateItemFlag,
         ///Name of resource record excluding domain name part. '@' can be used
         /// as an apex domain
@@ -2628,15 +2632,17 @@ pub mod types {
     }
 
     ///0   - no flags are set;
-    ///128 - indicates that the âcritical bitâ is set, and that CAs should
-    /// halt and not issue a certificate if they donât recognize the contents
-    /// of the tag field
+    ///128 - indicates that the “critical bit” is set, and that CAs should halt
+    /// and not issue a certificate if they don’t recognize the contents of the
+    /// tag field
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "0   - no flags are set;\n128 - indicates that the âcritical bitâ is set, and that CAs should halt and not issue a certificate if they donât recognize the contents of the tag field",
+    ///  "description": "0   - no flags are set;\n128 - indicates that the
+    /// “critical bit” is set, and that CAs should halt and not issue a
+    /// certificate if they don’t recognize the contents of the tag field",
     ///  "type": "number",
     ///  "enum": [
     ///    0.0,
@@ -2866,7 +2872,9 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "flag": {
-    ///      "description": "0   - no flags are set;\n128 - indicates that the âcritical bitâ is set, and that CAs should halt and not issue a certificate if they donât recognize the contents of the tag field",
+    ///      "description": "0   - no flags are set;\n128 - indicates that the
+    /// “critical bit” is set, and that CAs should halt and not issue a
+    /// certificate if they don’t recognize the contents of the tag field",
     ///      "type": "number",
     ///      "enum": [
     ///        0.0,
@@ -2902,9 +2910,9 @@ pub mod types {
     #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug)]
     pub struct CaaResourceRecordDeleteItem {
         ///0   - no flags are set;
-        ///128 - indicates that the âcritical bitâ is set, and that CAs
-        /// should halt and not issue a certificate if they donât recognize
-        /// the contents of the tag field
+        ///128 - indicates that the “critical bit” is set, and that CAs should
+        /// halt and not issue a certificate if they don’t recognize the
+        /// contents of the tag field
         pub flag: CaaResourceRecordDeleteItemFlag,
         ///Name of resource record excluding domain name part. '@' can be used
         /// as an apex domain
@@ -2920,15 +2928,17 @@ pub mod types {
     }
 
     ///0   - no flags are set;
-    ///128 - indicates that the âcritical bitâ is set, and that CAs should
-    /// halt and not issue a certificate if they donât recognize the contents
-    /// of the tag field
+    ///128 - indicates that the “critical bit” is set, and that CAs should halt
+    /// and not issue a certificate if they don’t recognize the contents of the
+    /// tag field
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "0   - no flags are set;\n128 - indicates that the âcritical bitâ is set, and that CAs should halt and not issue a certificate if they donât recognize the contents of the tag field",
+    ///  "description": "0   - no flags are set;\n128 - indicates that the
+    /// “critical bit” is set, and that CAs should halt and not issue a
+    /// certificate if they don’t recognize the contents of the tag field",
     ///  "type": "number",
     ///  "enum": [
     ///    0.0,
@@ -3135,15 +3145,17 @@ pub mod types {
     }
 
     ///0   - no flags are set;
-    ///128 - indicates that the âcritical bitâ is set, and that CAs should
-    /// halt and not issue a certificate if they donât recognize the contents
-    /// of the tag field
+    ///128 - indicates that the “critical bit” is set, and that CAs should halt
+    /// and not issue a certificate if they don’t recognize the contents of the
+    /// tag field
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "0   - no flags are set;\n128 - indicates that the âcritical bitâ is set, and that CAs should halt and not issue a certificate if they donât recognize the contents of the tag field",
+    ///  "description": "0   - no flags are set;\n128 - indicates that the
+    /// “critical bit” is set, and that CAs should halt and not issue a
+    /// certificate if they don’t recognize the contents of the tag field",
     ///  "type": "number",
     ///  "enum": [
     ///    0.0,
@@ -5509,7 +5521,7 @@ pub mod types {
     ///    "autoRenew": {
     ///      "description": "Specifies whether automatic renewal will be enabled
     /// for the domain after the registration. After that, if autoRenew is set
-    /// to true, the domain will be automatically renewed using the accountâs
+    /// to true, the domain will be automatically renewed using the account’s
     /// default payment method upon each expiration",
     ///      "examples": [
     ///        false
@@ -5518,12 +5530,12 @@ pub mod types {
     ///    },
     ///    "contacts": {
     ///      "description": "Domain contacts are specified using contact IDs.
-    /// These contact IDs can be obtained from the âGet domain infoâ
-    /// endpoint (/domains) for an existing domain, or by creating new contacts
-    /// through the âSave contact detailsâ endpoint (/contacts). Each
-    /// contact ID corresponds to a specific contact person and includes their
-    /// details (such as name, address, and email). These contacts will be
-    /// associated with the domain during registration.",
+    /// These contact IDs can be obtained from the “Get domain info” endpoint
+    /// (/domains) for an existing domain, or by creating new contacts through
+    /// the “Save contact details” endpoint (/contacts). Each contact ID
+    /// corresponds to a specific contact person and includes their details
+    /// (such as name, address, and email). These contacts will be associated
+    /// with the domain during registration.",
     ///      "examples": [
     ///        {
     ///          "admin": "1ZdMXpapqp9sle5dl8BlppTJXAzf6",
@@ -5562,17 +5574,17 @@ pub mod types {
     pub struct DomainCreateRequest {
         ///Specifies whether automatic renewal will be enabled for the domain
         /// after the registration. After that, if autoRenew is set to true, the
-        /// domain will be automatically renewed using the accountâs default
+        /// domain will be automatically renewed using the account’s default
         /// payment method upon each expiration
         #[serde(rename = "autoRenew")]
         pub auto_renew: bool,
         ///Domain contacts are specified using contact IDs. These contact IDs
-        /// can be obtained from the âGet domain infoâ endpoint (/domains)
-        /// for an existing domain, or by creating new contacts through the
-        /// âSave contact detailsâ endpoint (/contacts). Each contact ID
-        /// corresponds to a specific contact person and includes their details
-        /// (such as name, address, and email). These contacts will be
-        /// associated with the domain during registration.
+        /// can be obtained from the “Get domain info” endpoint (/domains) for
+        /// an existing domain, or by creating new contacts through the “Save
+        /// contact details” endpoint (/contacts). Each contact ID corresponds
+        /// to a specific contact person and includes their details (such as
+        /// name, address, and email). These contacts will be associated with
+        /// the domain during registration.
         pub contacts: DomainContacts,
         #[serde(rename = "privacyProtection")]
         pub privacy_protection: DomainPrivacyOptions,
@@ -6860,7 +6872,7 @@ pub mod types {
     ///      "description": "Specifies whether automatic renewal will be enabled
     /// for the domain after the transfer is completed. After that, if autoRenew
     /// is set to true, the domain will be automatically renewed using the
-    /// accountâs default payment method upon each expiration",
+    /// account’s default payment method upon each expiration",
     ///      "examples": [
     ///        false
     ///      ],
@@ -6868,12 +6880,12 @@ pub mod types {
     ///    },
     ///    "contacts": {
     ///      "description": "Domain contacts are specified using contact IDs.
-    /// These contact IDs can be obtained from the âGet domain infoâ
-    /// endpoint (/domains) for an existing domain, or by creating new contacts
-    /// through the âSave contact detailsâ endpoint (/contacts). Each
-    /// contact ID corresponds to a specific contact person and includes their
-    /// details (such as name, address, and email). These contacts will be
-    /// associated with the domain after transfer.",
+    /// These contact IDs can be obtained from the “Get domain info” endpoint
+    /// (/domains) for an existing domain, or by creating new contacts through
+    /// the “Save contact details” endpoint (/contacts). Each contact ID
+    /// corresponds to a specific contact person and includes their details
+    /// (such as name, address, and email). These contacts will be associated
+    /// with the domain after transfer.",
     ///      "examples": [
     ///        {
     ///          "admin": "1ZdMXpapqp9sle5dl8BlppTJXAzf6",
@@ -6911,17 +6923,17 @@ pub mod types {
         pub auth_code: ::std::option::Option<AuthCode>,
         ///Specifies whether automatic renewal will be enabled for the domain
         /// after the transfer is completed. After that, if autoRenew is set to
-        /// true, the domain will be automatically renewed using the accountâs
+        /// true, the domain will be automatically renewed using the account’s
         /// default payment method upon each expiration
         #[serde(rename = "autoRenew")]
         pub auto_renew: bool,
         ///Domain contacts are specified using contact IDs. These contact IDs
-        /// can be obtained from the âGet domain infoâ endpoint (/domains)
-        /// for an existing domain, or by creating new contacts through the
-        /// âSave contact detailsâ endpoint (/contacts). Each contact ID
-        /// corresponds to a specific contact person and includes their details
-        /// (such as name, address, and email). These contacts will be
-        /// associated with the domain after transfer.
+        /// can be obtained from the “Get domain info” endpoint (/domains) for
+        /// an existing domain, or by creating new contacts through the “Save
+        /// contact details” endpoint (/contacts). Each contact ID corresponds
+        /// to a specific contact person and includes their details (such as
+        /// name, address, and email). These contacts will be associated with
+        /// the domain after transfer.
         pub contacts: DomainContacts,
         #[serde(rename = "privacyProtection")]
         pub privacy_protection: DomainPrivacyOptions,
@@ -22454,7 +22466,7 @@ impl Client {
     ///
     /// > Validation rules for some parameters (such as `stateProvince` and
     /// > `postalCode`) depend on the selected country. These fields may be
-    /// > required based on the countryâs validation logic
+    /// > required based on the country’s validation logic
     ///
     ///### Required Permissions
     ///

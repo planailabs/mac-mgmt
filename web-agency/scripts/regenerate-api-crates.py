@@ -64,6 +64,26 @@ def download_cloudflare_spec():
     print(f"  Written to {CF_YAML} ({len(resp.content)} bytes)")
 
 
+def fix_double_encoded_utf8(obj):
+    """Fix double-encoded UTF-8 in JSON strings.
+
+    The Redoc page stores the spec with mojibake: UTF-8 bytes of characters
+    like smart quotes are stored as individual latin-1 codepoints in JSON
+    unicode escapes (e.g. \\u00e2\\u0080\\u009c instead of \\u201c).
+    This re-encodes each string as latin-1 and decodes as UTF-8 to fix them.
+    """
+    if isinstance(obj, str):
+        try:
+            return obj.encode("latin-1").decode("utf-8")
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            return obj
+    elif isinstance(obj, dict):
+        return {k: fix_double_encoded_utf8(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [fix_double_encoded_utf8(v) for v in obj]
+    return obj
+
+
 def download_spaceship_spec():
     """Download the Spaceship OpenAPI spec by extracting it from their Redoc docs page."""
     print(f"Downloading Spaceship spec from {SS_DOCS_URL}...")
@@ -74,9 +94,9 @@ def download_spaceship_spec():
         print("Could not find __redoc_state in Spaceship docs page", file=sys.stderr)
         sys.exit(1)
     state = json.loads(m.group(1))
-    spec = state["spec"]["data"]
+    spec = fix_double_encoded_utf8(state["spec"]["data"])
     with open(SS_JSON, "w") as f:
-        json.dump(spec, f, indent=2)
+        json.dump(spec, f, indent=2, ensure_ascii=False)
     print(f"  Written to {SS_JSON} (paths: {len(spec.get('paths', {}))})")
 
 
