@@ -28,8 +28,8 @@ in
           proxy = {
             agency_domain = "agency.example.com";
             agency_upstream = "127.0.0.1:7380";
-            http_addr = "0.0.0.0:80";
-            https_addr = "0.0.0.0:443";
+            http_addr = "[::]:80";
+            https_addr = "[::]:443";
             internal_token_path = "/var/lib/web-agency-server/internal.token";
             server_url = "http://127.0.0.1:7380";
           };

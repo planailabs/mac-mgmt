@@ -1,3 +1,3 @@
 server: RUST_LOG=debug DEV_ONLY_NO_AUTH=1 dx serve | cat
-proxy: RUST_LOG=debug cd ../proxy && cargo watch -- cargo run
+proxy: CONFIG_PATH=$PWD/config.toml RUST_LOG=debug cd ../proxy && cargo watch -- cargo run
 tailwind: npm run tailwind

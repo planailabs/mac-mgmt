@@ -36,10 +36,10 @@ fn default_agency_upstream() -> String {
     "127.0.0.1:7380".to_string()
 }
 fn default_http_addr() -> String {
-    "0.0.0.0:80".to_string()
+    "[::]:80".to_string()
 }
 fn default_https_addr() -> String {
-    "0.0.0.0:443".to_string()
+    "[::]:443".to_string()
 }
 fn default_internal_token_path() -> String {
     "/var/lib/web-agency/internal.token".to_string()
