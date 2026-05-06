@@ -1,7 +1,6 @@
 use arc_swap::ArcSwap;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,12 +51,7 @@ async fn reload_routes(
             Ok(entries) => {
                 let mut map = HashMap::new();
                 for entry in entries {
-                    let Ok(addr) = entry.upstream.parse::<SocketAddr>() else {
-                        tracing::warn!(host = %entry.host, upstream = %entry.upstream, "bad upstream addr");
-                        continue;
-                    };
                     let route = if let Some(relay) = entry.relay {
-                        // Parse the relay URL to extract host for TLS SNI
                         let relay_host = relay
                             .url
                             .strip_prefix("https://")
@@ -68,7 +62,7 @@ async fn reload_routes(
                             .to_string();
                         let tls = relay.url.starts_with("https://");
                         Route::Relay {
-                            addr,
+                            upstream: entry.upstream,
                             url: relay.url,
                             sni: relay_host.clone(),
                             relay_host,
@@ -76,7 +70,7 @@ async fn reload_routes(
                             proxy_token: relay.proxy_token,
                         }
                     } else {
-                        Route::Direct(addr)
+                        Route::Direct(entry.upstream)
                     };
                     map.insert(entry.host, route);
                 }

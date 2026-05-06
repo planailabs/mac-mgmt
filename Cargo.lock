@@ -15928,6 +15928,7 @@ dependencies = [
  "pingora",
  "rcgen",
  "reqwest 0.13.2",
+ "rustls 0.23.38",
  "serde",
  "serde_json",
  "tokio",

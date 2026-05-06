@@ -2,17 +2,17 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingora::prelude::*;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// A route target — either direct (local) or relay (via mac-mgmt relay).
 #[derive(Debug, Clone)]
 pub enum Route {
     /// Direct TCP upstream (local webspace, agency server).
-    Direct(SocketAddr),
+    Direct(String),
     /// Relay tunnel — proxy via HTTPS to relay server with token auth.
     Relay {
-        addr: SocketAddr,
+        /// host:port to connect to
+        upstream: String,
         /// Full relay URL (e.g. https://abc123-ollama.relay.plan.ai)
         url: String,
         /// Relay hostname for the Host header
@@ -60,11 +60,11 @@ impl ProxyHttp for WebAgencyProxy {
 
         let routes = self.routes.load();
         match routes.get(&host) {
-            Some(Route::Direct(addr)) => {
-                Ok(Box::new(HttpPeer::new(*addr, false, String::new())))
+            Some(Route::Direct(upstream)) => {
+                Ok(Box::new(HttpPeer::new(upstream.as_str(), false, String::new())))
             }
             Some(Route::Relay {
-                addr,
+                upstream,
                 url,
                 relay_host,
                 tls,
@@ -91,11 +91,7 @@ impl ProxyHttp for WebAgencyProxy {
                     path_prefix,
                 });
 
-                let mut peer = HttpPeer::new(*addr, *tls, sni.clone());
-                // Override SNI for TLS connections
-                if *tls {
-                    peer.sni = sni.clone();
-                }
+                let peer = HttpPeer::new(upstream.as_str(), *tls, sni.clone());
                 Ok(Box::new(peer))
             }
             None => {
