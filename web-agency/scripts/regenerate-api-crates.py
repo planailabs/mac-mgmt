@@ -1,38 +1,35 @@
 #!/usr/bin/env nix-shell
-#!nix-shell -i python3 -p python3 yq-go
+#!nix-shell -i python3 -p python3 python3Packages.requests yq-go
 """
-Trim the OpenAPI specs and regenerate the API client crates using cargo-progenitor.
+Download, trim, and regenerate the API client crates using cargo-progenitor.
 
 Usage:
     ./web-agency/scripts/regenerate-api-crates.py
 
 Requires:
     - cargo-progenitor: cargo install cargo-progenitor
-
-Input:
-    - web-agency/openapi-cloudflare.yaml (full Cloudflare spec)
-    - web-agency/openapi-spaceship.json (full Spaceship spec)
-
-Output:
-    - web-agency/cloudflare-api/ (regenerated crate)
-    - web-agency/spaceship-api/ (regenerated crate) [if spec issues resolved]
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import shutil
 import tempfile
 
+import requests
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_AGENCY_DIR = os.path.dirname(SCRIPT_DIR)
 ROOT_DIR = os.path.dirname(WEB_AGENCY_DIR)
 
+CF_SPEC_URL = "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.yaml"
 CF_YAML = os.path.join(WEB_AGENCY_DIR, "openapi-cloudflare.yaml")
 CF_TRIMMED = os.path.join(WEB_AGENCY_DIR, "cloudflare-api", "openapi-trimmed.json")
 CF_OUTPUT = os.path.join(WEB_AGENCY_DIR, "cloudflare-api")
 
+SS_DOCS_URL = "https://docs.spaceship.dev"
 SS_JSON = os.path.join(WEB_AGENCY_DIR, "openapi-spaceship.json")
 SS_TRIMMED = os.path.join(WEB_AGENCY_DIR, "spaceship-api", "openapi-trimmed.json")
 SS_OUTPUT = os.path.join(WEB_AGENCY_DIR, "spaceship-api")
@@ -55,6 +52,32 @@ CF_KEEP_PATHS = [
     "/accounts/{account_id}/registrar/registrations",
     "/accounts/{account_id}/registrar/registrations/{domain_name}",
 ]
+
+
+def download_cloudflare_spec():
+    """Download the Cloudflare OpenAPI spec from GitHub."""
+    print(f"Downloading Cloudflare spec from {CF_SPEC_URL}...")
+    resp = requests.get(CF_SPEC_URL, timeout=120)
+    resp.raise_for_status()
+    with open(CF_YAML, "wb") as f:
+        f.write(resp.content)
+    print(f"  Written to {CF_YAML} ({len(resp.content)} bytes)")
+
+
+def download_spaceship_spec():
+    """Download the Spaceship OpenAPI spec by extracting it from their Redoc docs page."""
+    print(f"Downloading Spaceship spec from {SS_DOCS_URL}...")
+    resp = requests.get(SS_DOCS_URL, timeout=60)
+    resp.raise_for_status()
+    m = re.search(r'__redoc_state\s*=\s*(.*?)\s*;\s*\n', resp.text, re.DOTALL)
+    if not m:
+        print("Could not find __redoc_state in Spaceship docs page", file=sys.stderr)
+        sys.exit(1)
+    state = json.loads(m.group(1))
+    spec = state["spec"]["data"]
+    with open(SS_JSON, "w") as f:
+        json.dump(spec, f, indent=2)
+    print(f"  Written to {SS_JSON} (paths: {len(spec.get('paths', {}))})")
 
 
 def yaml_to_json(yaml_path):
@@ -429,6 +452,9 @@ SS_EXTRA_DEPS = {
 
 
 if __name__ == "__main__":
+    download_cloudflare_spec()
+    download_spaceship_spec()
+
     trim_cloudflare()
     generate_crate(CF_TRIMMED, CF_OUTPUT, "cloudflare-api",
                    extra_deps=CF_EXTRA_DEPS, post_gen_fixups=cf_post_gen_fixups)

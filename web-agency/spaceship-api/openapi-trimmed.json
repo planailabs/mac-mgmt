@@ -326,7 +326,7 @@
       "put": {
         "operationId": "saveDetails",
         "summary": "Save contact details",
-        "description": "Save details for the contact and return the generated contact ID.\n\n> Validation rules for some parameters (such as `stateProvince` and `postalCode`) depend on the selected country. These fields may be required based on the country\u2019s validation logic\n\n### Required Permissions \n\n - <a href=\"#scopes/contacts:write\">contacts:write</a>\n\n### Rate Limits \n\n * The limit for saving contact details is 300 requests per user, within 300 seconds.",
+        "description": "Save details for the contact and return the generated contact ID.\n\n> Validation rules for some parameters (such as `stateProvince` and `postalCode`) depend on the selected country. These fields may be required based on the country\u00e2\u0080\u0099s validation logic\n\n### Required Permissions \n\n - <a href=\"#scopes/contacts:write\">contacts:write</a>\n\n### Rate Limits \n\n * The limit for saving contact details is 300 requests per user, within 300 seconds.",
         "parameters": [],
         "responses": {
           "200": {
@@ -10742,7 +10742,7 @@
               0,
               128
             ],
-            "description": "0   - no flags are set;\n128 - indicates that the \u201ccritical bit\u201d is set, and that CAs should halt and not issue a certificate if they don\u2019t recognize the contents of the tag field"
+            "description": "0   - no flags are set;\n128 - indicates that the \u00e2\u0080\u009ccritical bit\u00e2\u0080\u009d is set, and that CAs should halt and not issue a certificate if they don\u00e2\u0080\u0099t recognize the contents of the tag field"
           },
           "tag": {
             "allOf": [
@@ -10787,7 +10787,7 @@
               0,
               128
             ],
-            "description": "0   - no flags are set;\n128 - indicates that the \u201ccritical bit\u201d is set, and that CAs should halt and not issue a certificate if they don\u2019t recognize the contents of the tag field"
+            "description": "0   - no flags are set;\n128 - indicates that the \u00e2\u0080\u009ccritical bit\u00e2\u0080\u009d is set, and that CAs should halt and not issue a certificate if they don\u00e2\u0080\u0099t recognize the contents of the tag field"
           },
           "tag": {
             "allOf": [
@@ -10832,7 +10832,7 @@
               0,
               128
             ],
-            "description": "0   - no flags are set;\n128 - indicates that the \u201ccritical bit\u201d is set, and that CAs should halt and not issue a certificate if they don\u2019t recognize the contents of the tag field"
+            "description": "0   - no flags are set;\n128 - indicates that the \u00e2\u0080\u009ccritical bit\u00e2\u0080\u009d is set, and that CAs should halt and not issue a certificate if they don\u00e2\u0080\u0099t recognize the contents of the tag field"
           },
           "tag": {
             "allOf": [
@@ -11260,7 +11260,7 @@
           "autoRenew": {
             "type": "boolean",
             "example": false,
-            "description": "Specifies whether automatic renewal will be enabled for the domain after the registration. After that, if autoRenew is set to true, the domain will be automatically renewed using the account\u2019s default payment method upon each expiration"
+            "description": "Specifies whether automatic renewal will be enabled for the domain after the registration. After that, if autoRenew is set to true, the domain will be automatically renewed using the account\u00e2\u0080\u0099s default payment method upon each expiration"
           },
           "years": {
             "type": "integer",
@@ -11288,7 +11288,7 @@
                 "1ZdMXpapqp9sle5dl8BlppTJXAzf8"
               ]
             },
-            "description": "Domain contacts are specified using contact IDs. These contact IDs can be obtained from the \u201cGet domain info\u201d endpoint (/domains) for an existing domain, or by creating new contacts through the \u201cSave contact details\u201d endpoint (/contacts). Each contact ID corresponds to a specific contact person and includes their details (such as name, address, and email). These contacts will be associated with the domain during registration."
+            "description": "Domain contacts are specified using contact IDs. These contact IDs can be obtained from the \u00e2\u0080\u009cGet domain info\u00e2\u0080\u009d endpoint (/domains) for an existing domain, or by creating new contacts through the \u00e2\u0080\u009cSave contact details\u00e2\u0080\u009d endpoint (/contacts). Each contact ID corresponds to a specific contact person and includes their details (such as name, address, and email). These contacts will be associated with the domain during registration."
           }
         }
       },
@@ -11635,7 +11635,7 @@
           "autoRenew": {
             "type": "boolean",
             "example": false,
-            "description": "Specifies whether automatic renewal will be enabled for the domain after the transfer is completed. After that, if autoRenew is set to true, the domain will be automatically renewed using the account\u2019s default payment method upon each expiration"
+            "description": "Specifies whether automatic renewal will be enabled for the domain after the transfer is completed. After that, if autoRenew is set to true, the domain will be automatically renewed using the account\u00e2\u0080\u0099s default payment method upon each expiration"
           },
           "privacyProtection": {
             "$ref": "#/components/schemas/DomainPrivacyOptions"
@@ -11655,7 +11655,7 @@
                 "1ZdMXpapqp9sle5dl8BlppTJXAzf8"
               ]
             },
-            "description": "Domain contacts are specified using contact IDs. These contact IDs can be obtained from the \u201cGet domain info\u201d endpoint (/domains) for an existing domain, or by creating new contacts through the \u201cSave contact details\u201d endpoint (/contacts). Each contact ID corresponds to a specific contact person and includes their details (such as name, address, and email). These contacts will be associated with the domain after transfer."
+            "description": "Domain contacts are specified using contact IDs. These contact IDs can be obtained from the \u00e2\u0080\u009cGet domain info\u00e2\u0080\u009d endpoint (/domains) for an existing domain, or by creating new contacts through the \u00e2\u0080\u009cSave contact details\u00e2\u0080\u009d endpoint (/contacts). Each contact ID corresponds to a specific contact person and includes their details (such as name, address, and email). These contacts will be associated with the domain after transfer."
           },
           "authCode": {
             "allOf": [
