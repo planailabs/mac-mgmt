@@ -47,7 +47,7 @@ in
   config = lib.mkIf cfg.enable {
     systemd.services.web-agency-proxy = {
       description = "web-agency reverse proxy (Pingora)";
-      after = [ "network.target" "web-agency.service" ];
+      after = [ "network.target" "web-agency-server.service" ];
       wants = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
 

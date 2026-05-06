@@ -60,7 +60,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    systemd.services.web-agency = {
+    systemd.services.web-agency-server = {
       description = "web-agency server";
       after = [ "network.target" "postgresql.service" ];
       wants = [ "network.target" ];
@@ -74,9 +74,15 @@ in
         RestartSec = 5;
 
         DynamicUser = true;
+        # Pin the primary group to the static shared group so:
+        #  - the unit name never collides with the "web-agency" group
+        #    that DynamicUser would otherwise auto-allocate, and
+        #  - StateDirectory (/var/lib/web-agency-server, mode 0750) is
+        #    group-readable by the proxy, which joins the same group via
+        #    SupplementaryGroups.
+        Group = "web-agency";
         StateDirectory = "web-agency-server";
         StateDirectoryMode = "0750";
-        SupplementaryGroups = [ "web-agency" ];
 
         # Hardening
         CapabilityBoundingSet = "";
