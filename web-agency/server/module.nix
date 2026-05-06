@@ -110,6 +110,23 @@ in
       proxy.internal_token_path = lib.mkDefault "/var/lib/web-agency-server/internal.token";
     };
 
+    # Pre-configure proxy from the server's settings so values aren't duplicated.
+    services.web-agency-proxy.settings.proxy = lib.mkIf (cfg.settings ? proxy) (
+      let
+        p = cfg.settings.proxy;
+        port = cfg.settings.web.port or 7380;
+      in
+      {
+        agency_domain = lib.mkIf (p ? agency_domain) (lib.mkDefault p.agency_domain);
+        agency_upstream = lib.mkDefault "127.0.0.1:${toString port}";
+        server_url = lib.mkDefault "http://127.0.0.1:${toString port}";
+        internal_token_path = lib.mkIf (p ? internal_token_path) (lib.mkDefault p.internal_token_path);
+        acme_email = lib.mkIf (p ? acme_email) (lib.mkDefault p.acme_email);
+        http_addr = lib.mkIf (p ? http_addr) (lib.mkDefault p.http_addr);
+        https_addr = lib.mkIf (p ? https_addr) (lib.mkDefault p.https_addr);
+      }
+    );
+
     services.postgresql = {
       enable = true;
 

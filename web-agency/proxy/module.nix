@@ -86,10 +86,11 @@ in
       };
     };
 
-    # Default: token lives in the server's state dir so both services can access it.
+    # Fallback defaults when the proxy is used standalone (without the server module).
     services.web-agency-proxy.settings.proxy = {
       internal_token_path = lib.mkDefault "/var/lib/web-agency-server/internal.token";
       server_url = lib.mkDefault "http://127.0.0.1:7380";
+      agency_upstream = lib.mkDefault "127.0.0.1:7380";
     };
 
     networking.firewall = lib.mkIf cfg.openFirewall {
