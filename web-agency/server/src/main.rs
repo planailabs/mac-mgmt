@@ -46,6 +46,23 @@ async fn init_server() -> sqlx::PgPool {
         .await
         .expect("failed to run migrations");
 
+    // Ensure the internal API token file exists (for proxy ↔ server auth).
+    if let Some(proxy_cfg) = &cfg.proxy {
+        let path = std::path::Path::new(&proxy_cfg.internal_token_path);
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            use rand::Rng;
+            let token_bytes: [u8; 32] = rand::rng().random();
+            let token = hex::encode(token_bytes);
+            match std::fs::write(path, &token) {
+                Ok(()) => tracing::info!(path = %path.display(), "generated internal API token"),
+                Err(e) => tracing::error!(path = %path.display(), "failed to write internal token: {e}"),
+            }
+        }
+    }
+
     // Mark any deployments left in-flight from a previous run as failed.
     api::deploy::recover_interrupted_deployments(&pool).await;
 
