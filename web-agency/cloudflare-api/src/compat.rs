@@ -50,6 +50,18 @@ pub struct Zone {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DnssecDetails {
+    pub status: Option<String>,
+    pub algorithm: Option<String>,
+    pub key_tag: Option<serde_json::Value>,
+    pub digest_type: Option<String>,
+    pub digest: Option<String>,
+    pub ds: Option<String>,
+    pub public_key: Option<String>,
+    pub flags: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DnsRecord {
     pub id: String, #[serde(rename = "type")] pub record_type: String,
     pub name: String, pub content: Option<String>,
@@ -220,6 +232,10 @@ impl SimpleClient {
 
     pub async fn delete_dns_record(&self, zone_id: &str, record_id: &str) -> Result<(), Error> {
         self.delete(&format!("/zones/{zone_id}/dns_records/{record_id}")).await
+    }
+
+    pub async fn get_dnssec(&self, zone_id: &str) -> Result<DnssecDetails, Error> {
+        self.get(&format!("/zones/{zone_id}/dnssec")).await
     }
 
     pub async fn set_dnssec(&self, zone_id: &str, status: &str) -> Result<serde_json::Value, Error> {

@@ -3,7 +3,6 @@ use progenitor_client::{encode_path, ClientHooks, OperationInfo, RequestBuilderE
 #[allow(unused_imports)]
 pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};
 
-/// Compatibility wrapper providing the simple interface used by web-agency-server.
 pub mod compat;
 /// Types used as operation parameters and responses.
 #[allow(clippy::all)]
@@ -683,14 +682,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_ARecord
+    ///`DnsRecordsARecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_ARecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -722,14 +719,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_AAAARecord
+    ///`DnsRecordsAaaaRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_AAAARecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -1142,14 +1137,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_CAARecord
+    ///`DnsRecordsCaaRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_CAARecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -1183,14 +1176,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_CERTRecord
+    ///`DnsRecordsCertRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_CERTRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -1224,14 +1215,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_CNAMERecord
+    ///`DnsRecordsCnameRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_CNAMERecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -1413,29 +1402,26 @@ pub mod types {
         }
     }
 
-    ///DNS record (simplified from complex union). Original schema:
-    /// dns-records_dns-record-patch
+    ///DNS record (simplified). Original: dns-records_dns-record-patch
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record (simplified from complex union). Original
-    /// schema: dns-records_dns-record-patch",
+    ///  "description": "DNS record (simplified). Original:
+    /// dns-records_dns-record-patch",
     ///  "type": "object",
     ///  "properties": {
     ///    "comment": {
     ///      "type": "string"
     ///    },
     ///    "content": {
-    ///      "description": "Record content/value",
     ///      "type": "string"
     ///    },
     ///    "created_on": {
     ///      "type": "string"
     ///    },
     ///    "data": {
-    ///      "description": "Structured data for complex record types",
     ///      "type": "object",
     ///      "additionalProperties": true
     ///    },
@@ -1446,11 +1432,9 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "name": {
-    ///      "description": "Record name",
     ///      "type": "string"
     ///    },
     ///    "priority": {
-    ///      "description": "Priority for MX/SRV",
     ///      "type": "number"
     ///    },
     ///    "proxiable": {
@@ -1466,11 +1450,9 @@ pub mod types {
     ///      }
     ///    },
     ///    "ttl": {
-    ///      "description": "TTL in seconds, 1=auto",
     ///      "type": "number"
     ///    },
     ///    "type": {
-    ///      "description": "Record type (A, AAAA, CNAME, etc.)",
     ///      "type": "string"
     ///    }
     ///  },
@@ -1482,22 +1464,18 @@ pub mod types {
     pub struct DnsRecordsDnsRecordPatch {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub comment: ::std::option::Option<::std::string::String>,
-        ///Record content/value
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub content: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub created_on: ::std::option::Option<::std::string::String>,
-        ///Structured data for complex record types
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub id: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub modified_on: ::std::option::Option<::std::string::String>,
-        ///Record name
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
-        ///Priority for MX/SRV
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub priority: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -1506,10 +1484,8 @@ pub mod types {
         pub proxied: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub tags: ::std::vec::Vec<::std::string::String>,
-        ///TTL in seconds, 1=auto
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub ttl: ::std::option::Option<f64>,
-        ///Record type (A, AAAA, CNAME, etc.)
         #[serde(
             rename = "type",
             default,
@@ -1538,29 +1514,26 @@ pub mod types {
         }
     }
 
-    ///DNS record (simplified from complex union). Original schema:
-    /// dns-records_dns-record-post
+    ///DNS record (simplified). Original: dns-records_dns-record-post
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record (simplified from complex union). Original
-    /// schema: dns-records_dns-record-post",
+    ///  "description": "DNS record (simplified). Original:
+    /// dns-records_dns-record-post",
     ///  "type": "object",
     ///  "properties": {
     ///    "comment": {
     ///      "type": "string"
     ///    },
     ///    "content": {
-    ///      "description": "Record content/value",
     ///      "type": "string"
     ///    },
     ///    "created_on": {
     ///      "type": "string"
     ///    },
     ///    "data": {
-    ///      "description": "Structured data for complex record types",
     ///      "type": "object",
     ///      "additionalProperties": true
     ///    },
@@ -1571,11 +1544,9 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "name": {
-    ///      "description": "Record name",
     ///      "type": "string"
     ///    },
     ///    "priority": {
-    ///      "description": "Priority for MX/SRV",
     ///      "type": "number"
     ///    },
     ///    "proxiable": {
@@ -1591,11 +1562,9 @@ pub mod types {
     ///      }
     ///    },
     ///    "ttl": {
-    ///      "description": "TTL in seconds, 1=auto",
     ///      "type": "number"
     ///    },
     ///    "type": {
-    ///      "description": "Record type (A, AAAA, CNAME, etc.)",
     ///      "type": "string"
     ///    }
     ///  },
@@ -1607,22 +1576,18 @@ pub mod types {
     pub struct DnsRecordsDnsRecordPost {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub comment: ::std::option::Option<::std::string::String>,
-        ///Record content/value
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub content: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub created_on: ::std::option::Option<::std::string::String>,
-        ///Structured data for complex record types
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub id: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub modified_on: ::std::option::Option<::std::string::String>,
-        ///Record name
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
-        ///Priority for MX/SRV
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub priority: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -1631,10 +1596,8 @@ pub mod types {
         pub proxied: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub tags: ::std::vec::Vec<::std::string::String>,
-        ///TTL in seconds, 1=auto
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub ttl: ::std::option::Option<f64>,
-        ///Record type (A, AAAA, CNAME, etc.)
         #[serde(
             rename = "type",
             default,
@@ -1663,29 +1626,26 @@ pub mod types {
         }
     }
 
-    ///DNS record (simplified from complex union). Original schema:
-    /// dns-records_dns-record-response
+    ///DNS record (simplified). Original: dns-records_dns-record-response
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record (simplified from complex union). Original
-    /// schema: dns-records_dns-record-response",
+    ///  "description": "DNS record (simplified). Original:
+    /// dns-records_dns-record-response",
     ///  "type": "object",
     ///  "properties": {
     ///    "comment": {
     ///      "type": "string"
     ///    },
     ///    "content": {
-    ///      "description": "Record content/value",
     ///      "type": "string"
     ///    },
     ///    "created_on": {
     ///      "type": "string"
     ///    },
     ///    "data": {
-    ///      "description": "Structured data for complex record types",
     ///      "type": "object",
     ///      "additionalProperties": true
     ///    },
@@ -1696,11 +1656,9 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "name": {
-    ///      "description": "Record name",
     ///      "type": "string"
     ///    },
     ///    "priority": {
-    ///      "description": "Priority for MX/SRV",
     ///      "type": "number"
     ///    },
     ///    "proxiable": {
@@ -1716,11 +1674,9 @@ pub mod types {
     ///      }
     ///    },
     ///    "ttl": {
-    ///      "description": "TTL in seconds, 1=auto",
     ///      "type": "number"
     ///    },
     ///    "type": {
-    ///      "description": "Record type (A, AAAA, CNAME, etc.)",
     ///      "type": "string"
     ///    }
     ///  },
@@ -1732,22 +1688,18 @@ pub mod types {
     pub struct DnsRecordsDnsRecordResponse {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub comment: ::std::option::Option<::std::string::String>,
-        ///Record content/value
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub content: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub created_on: ::std::option::Option<::std::string::String>,
-        ///Structured data for complex record types
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub id: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub modified_on: ::std::option::Option<::std::string::String>,
-        ///Record name
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
-        ///Priority for MX/SRV
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub priority: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -1756,10 +1708,8 @@ pub mod types {
         pub proxied: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub tags: ::std::vec::Vec<::std::string::String>,
-        ///TTL in seconds, 1=auto
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub ttl: ::std::option::Option<f64>,
-        ///Record type (A, AAAA, CNAME, etc.)
         #[serde(
             rename = "type",
             default,
@@ -1788,29 +1738,26 @@ pub mod types {
         }
     }
 
-    ///DNS record (simplified from complex union). Original schema:
-    /// dns-records_dns-record-shared-fields
+    ///DNS record (simplified). Original: dns-records_dns-record-shared-fields
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record (simplified from complex union). Original
-    /// schema: dns-records_dns-record-shared-fields",
+    ///  "description": "DNS record (simplified). Original:
+    /// dns-records_dns-record-shared-fields",
     ///  "type": "object",
     ///  "properties": {
     ///    "comment": {
     ///      "type": "string"
     ///    },
     ///    "content": {
-    ///      "description": "Record content/value",
     ///      "type": "string"
     ///    },
     ///    "created_on": {
     ///      "type": "string"
     ///    },
     ///    "data": {
-    ///      "description": "Structured data for complex record types",
     ///      "type": "object",
     ///      "additionalProperties": true
     ///    },
@@ -1821,11 +1768,9 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "name": {
-    ///      "description": "Record name",
     ///      "type": "string"
     ///    },
     ///    "priority": {
-    ///      "description": "Priority for MX/SRV",
     ///      "type": "number"
     ///    },
     ///    "proxiable": {
@@ -1841,11 +1786,9 @@ pub mod types {
     ///      }
     ///    },
     ///    "ttl": {
-    ///      "description": "TTL in seconds, 1=auto",
     ///      "type": "number"
     ///    },
     ///    "type": {
-    ///      "description": "Record type (A, AAAA, CNAME, etc.)",
     ///      "type": "string"
     ///    }
     ///  },
@@ -1857,22 +1800,18 @@ pub mod types {
     pub struct DnsRecordsDnsRecordSharedFields {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub comment: ::std::option::Option<::std::string::String>,
-        ///Record content/value
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub content: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub created_on: ::std::option::Option<::std::string::String>,
-        ///Structured data for complex record types
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub id: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub modified_on: ::std::option::Option<::std::string::String>,
-        ///Record name
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
-        ///Priority for MX/SRV
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub priority: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -1881,10 +1820,8 @@ pub mod types {
         pub proxied: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub tags: ::std::vec::Vec<::std::string::String>,
-        ///TTL in seconds, 1=auto
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub ttl: ::std::option::Option<f64>,
-        ///Record type (A, AAAA, CNAME, etc.)
         #[serde(
             rename = "type",
             default,
@@ -1913,29 +1850,26 @@ pub mod types {
         }
     }
 
-    ///DNS record (simplified from complex union). Original schema:
-    /// dns-records_dns-record-with-data
+    ///DNS record (simplified). Original: dns-records_dns-record-with-data
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record (simplified from complex union). Original
-    /// schema: dns-records_dns-record-with-data",
+    ///  "description": "DNS record (simplified). Original:
+    /// dns-records_dns-record-with-data",
     ///  "type": "object",
     ///  "properties": {
     ///    "comment": {
     ///      "type": "string"
     ///    },
     ///    "content": {
-    ///      "description": "Record content/value",
     ///      "type": "string"
     ///    },
     ///    "created_on": {
     ///      "type": "string"
     ///    },
     ///    "data": {
-    ///      "description": "Structured data for complex record types",
     ///      "type": "object",
     ///      "additionalProperties": true
     ///    },
@@ -1946,11 +1880,9 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "name": {
-    ///      "description": "Record name",
     ///      "type": "string"
     ///    },
     ///    "priority": {
-    ///      "description": "Priority for MX/SRV",
     ///      "type": "number"
     ///    },
     ///    "proxiable": {
@@ -1966,11 +1898,9 @@ pub mod types {
     ///      }
     ///    },
     ///    "ttl": {
-    ///      "description": "TTL in seconds, 1=auto",
     ///      "type": "number"
     ///    },
     ///    "type": {
-    ///      "description": "Record type (A, AAAA, CNAME, etc.)",
     ///      "type": "string"
     ///    }
     ///  },
@@ -1982,22 +1912,18 @@ pub mod types {
     pub struct DnsRecordsDnsRecordWithData {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub comment: ::std::option::Option<::std::string::String>,
-        ///Record content/value
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub content: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub created_on: ::std::option::Option<::std::string::String>,
-        ///Structured data for complex record types
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub id: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub modified_on: ::std::option::Option<::std::string::String>,
-        ///Record name
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
-        ///Priority for MX/SRV
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub priority: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -2006,10 +1932,8 @@ pub mod types {
         pub proxied: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub tags: ::std::vec::Vec<::std::string::String>,
-        ///TTL in seconds, 1=auto
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub ttl: ::std::option::Option<f64>,
-        ///Record type (A, AAAA, CNAME, etc.)
         #[serde(
             rename = "type",
             default,
@@ -2038,29 +1962,26 @@ pub mod types {
         }
     }
 
-    ///DNS record (simplified from complex union). Original schema:
-    /// dns-records_dns-record-without-data
+    ///DNS record (simplified). Original: dns-records_dns-record-without-data
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record (simplified from complex union). Original
-    /// schema: dns-records_dns-record-without-data",
+    ///  "description": "DNS record (simplified). Original:
+    /// dns-records_dns-record-without-data",
     ///  "type": "object",
     ///  "properties": {
     ///    "comment": {
     ///      "type": "string"
     ///    },
     ///    "content": {
-    ///      "description": "Record content/value",
     ///      "type": "string"
     ///    },
     ///    "created_on": {
     ///      "type": "string"
     ///    },
     ///    "data": {
-    ///      "description": "Structured data for complex record types",
     ///      "type": "object",
     ///      "additionalProperties": true
     ///    },
@@ -2071,11 +1992,9 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "name": {
-    ///      "description": "Record name",
     ///      "type": "string"
     ///    },
     ///    "priority": {
-    ///      "description": "Priority for MX/SRV",
     ///      "type": "number"
     ///    },
     ///    "proxiable": {
@@ -2091,11 +2010,9 @@ pub mod types {
     ///      }
     ///    },
     ///    "ttl": {
-    ///      "description": "TTL in seconds, 1=auto",
     ///      "type": "number"
     ///    },
     ///    "type": {
-    ///      "description": "Record type (A, AAAA, CNAME, etc.)",
     ///      "type": "string"
     ///    }
     ///  },
@@ -2107,22 +2024,18 @@ pub mod types {
     pub struct DnsRecordsDnsRecordWithoutData {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub comment: ::std::option::Option<::std::string::String>,
-        ///Record content/value
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub content: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub created_on: ::std::option::Option<::std::string::String>,
-        ///Structured data for complex record types
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub id: ::std::option::Option<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub modified_on: ::std::option::Option<::std::string::String>,
-        ///Record name
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
-        ///Priority for MX/SRV
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub priority: ::std::option::Option<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -2131,10 +2044,8 @@ pub mod types {
         pub proxied: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub tags: ::std::vec::Vec<::std::string::String>,
-        ///TTL in seconds, 1=auto
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub ttl: ::std::option::Option<f64>,
-        ///Record type (A, AAAA, CNAME, etc.)
         #[serde(
             rename = "type",
             default,
@@ -2316,14 +2227,12 @@ pub mod types {
         pub success: bool,
     }
 
-    ///DNS record type (simplified). Original: dns-records_DNSKEYRecord
+    ///`DnsRecordsDnskeyRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_DNSKEYRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -2357,14 +2266,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_DSRecord
+    ///`DnsRecordsDsRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_DSRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -2769,14 +2676,12 @@ pub mod types {
     )]
     #[serde(deny_unknown_fields)]
     pub enum DnsRecordsForAZoneUpdateDnsRecordResponse {}
-    ///DNS record type (simplified). Original: dns-records_HTTPSRecord
+    ///`DnsRecordsHttpsRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_HTTPSRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -2890,14 +2795,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_LOCRecord
+    ///`DnsRecordsLocRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_LOCRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -3164,14 +3067,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_MXRecord
+    ///`DnsRecordsMxRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_MXRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -3290,14 +3191,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_NAPTRRecord
+    ///`DnsRecordsNaptrRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_NAPTRRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -3331,14 +3230,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_NSRecord
+    ///`DnsRecordsNsRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_NSRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -3372,14 +3269,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_OPENPGPKEYRecord
+    ///`DnsRecordsOpenpgpkeyRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_OPENPGPKEYRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -3781,14 +3676,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_PTRRecord
+    ///`DnsRecordsPtrRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_PTRRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -3956,14 +3849,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_SMIMEARecord
+    ///`DnsRecordsSmimeaRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_SMIMEARecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -3997,14 +3888,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_SRVRecord
+    ///`DnsRecordsSrvRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_SRVRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -4038,14 +3927,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_SSHFPRecord
+    ///`DnsRecordsSshfpRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_SSHFPRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -4079,14 +3966,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_SVCBRecord
+    ///`DnsRecordsSvcbRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_SVCBRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -4263,14 +4148,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_TLSARecord
+    ///`DnsRecordsTlsaRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_TLSARecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -4368,14 +4251,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_TXTRecord
+    ///`DnsRecordsTxtRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_TXTRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}
@@ -4586,14 +4467,12 @@ pub mod types {
         }
     }
 
-    ///DNS record type (simplified). Original: dns-records_URIRecord
+    ///`DnsRecordsUriRecord`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "DNS record type (simplified). Original:
-    /// dns-records_URIRecord",
     ///  "type": "object",
     ///  "additionalProperties": true
     ///}

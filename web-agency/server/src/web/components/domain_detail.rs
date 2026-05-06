@@ -23,6 +23,11 @@ struct DomainData {
     organization_name: String,
     subdomains: Vec<SubdomainData>,
     can_set_nameservers: bool,
+    dnssec_ds: Option<String>,
+    dnssec_key_tag: Option<String>,
+    dnssec_algorithm: Option<String>,
+    dnssec_digest_type: Option<String>,
+    dnssec_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -78,14 +83,28 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
     let org_name = sqlx::query_scalar::<_, String>("SELECT name FROM organizations WHERE id = $1")
         .bind(org_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Fetch live zone info
+    // Fetch live zone info + DNSSEC details
     let mut cf_status = None;
     let mut cf_nameservers = Vec::new();
+    let mut dnssec_ds = None;
+    let mut dnssec_key_tag = None;
+    let mut dnssec_algorithm = None;
+    let mut dnssec_digest_type = None;
+    let mut dnssec_digest = None;
     if let (Some(zone_id), Some(cred_id)) = (&cloudflare_zone_id, cf_cred_id) {
         if let Ok(client) = build_cf_client(&pool, cred_id).await {
             if let Ok(zone) = client.get_zone(zone_id).await {
                 cf_status = Some(zone.status);
                 cf_nameservers = zone.name_servers.unwrap_or_default();
+            }
+            if let Ok(dnssec) = client.get_dnssec(zone_id).await {
+                if dnssec.status.as_deref() == Some("active") {
+                    dnssec_ds = dnssec.ds;
+                    dnssec_key_tag = dnssec.key_tag.map(|v| v.to_string());
+                    dnssec_algorithm = dnssec.algorithm;
+                    dnssec_digest_type = dnssec.digest_type;
+                    dnssec_digest = dnssec.digest;
+                }
             }
         }
     }
@@ -120,6 +139,7 @@ async fn get_domain(domain_id: Uuid) -> Result<DomainData, ServerFnError> {
         registered_at: registered_at.map(|d| d.format("%Y-%m-%d").to_string()),
         expires_at: expires_at.map(|d| d.format("%Y-%m-%d").to_string()),
         organization_name: org_name, subdomains, can_set_nameservers: can_set_ns,
+        dnssec_ds, dnssec_key_tag, dnssec_algorithm, dnssec_digest_type, dnssec_digest,
     })
 }
 
@@ -396,6 +416,72 @@ async fn delete_dns_record(domain_id: Uuid, record_id: Uuid) -> Result<(), Serve
     Ok(())
 }
 
+/// Sync DNS records from Cloudflare into local database.
+/// Fetches all records from the zone and upserts them locally.
+#[server]
+async fn sync_records_from_cloudflare(domain_id: Uuid) -> Result<String, ServerFnError> {
+    let user = crate::web::user::current_user().await?;
+    let pool = crate::server_pool()?;
+
+    let (domain_name, org_id) = sqlx::query_as::<_, (String, Uuid)>(
+        "SELECT name, organization_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    if !user.is_admin && !user.write_org_ids().contains(&org_id) {
+        return Err(ServerFnError::new("write access required"));
+    }
+
+    let (zone_id, cred_id) = match sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
+        "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
+    ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))? {
+        (Some(z), Some(c)) => (z, c),
+        _ => return Err(ServerFnError::new("domain not deployed to Cloudflare")),
+    };
+
+    let client = build_cf_client(&pool, cred_id).await?;
+    let cf_records = client.list_dns_records(&zone_id).await
+        .map_err(|e| ServerFnError::new(format!("CF API: {e}")))?;
+
+    // Delete existing local records for this domain and re-import from CF
+    sqlx::query("DELETE FROM dns_records WHERE domain_id = $1")
+        .bind(domain_id).execute(&pool).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let mut synced = 0usize;
+    for rec in &cf_records {
+        // Determine subdomain name from the record FQDN
+        let sub_name = if rec.name == domain_name {
+            "@".to_string()
+        } else if let Some(stripped) = rec.name.strip_suffix(&format!(".{domain_name}")) {
+            stripped.to_string()
+        } else {
+            rec.name.clone()
+        };
+
+        // Ensure subdomain entity exists
+        let sub_id = sqlx::query_scalar::<_, Uuid>(
+            "INSERT INTO subdomains (domain_id, name) VALUES ($1, $2) \
+             ON CONFLICT (domain_id, name) DO UPDATE SET updated_at = now() RETURNING id",
+        ).bind(domain_id).bind(&sub_name).fetch_one(&pool).await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let content = rec.content.as_deref().unwrap_or("");
+        let proxied = rec.proxied.unwrap_or(false);
+
+        sqlx::query(
+            "INSERT INTO dns_records (subdomain_id, domain_id, name, record_type, record_value, proxied, cloudflare_record_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(sub_id).bind(domain_id).bind(&sub_name)
+        .bind(&rec.record_type).bind(content).bind(proxied).bind(&rec.id)
+        .execute(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        synced += 1;
+    }
+
+    Ok(format!("Synced {synced} records from Cloudflare"))
+}
+
 #[server]
 async fn delete_domain(domain_id: Uuid) -> Result<(), ServerFnError> {
     let user = crate::web::user::current_user().await?;
@@ -507,8 +593,36 @@ pub fn DomainDetail(id: String) -> Element {
             CloudflareDeployForm { domain_id: data.id, domain_name: data.name.clone(), can_set_nameservers: data.can_set_nameservers }
         }
 
+        // DNSSEC DS record info
+        if let Some(ref ds) = data.dnssec_ds {
+            SectionHeading { class: "mt-6", "DNSSEC DS Record" }
+            Card {
+                div { class: "p-6 space-y-3",
+                    div { class: "text-sm text-fg-muted", "Configure this DS record at your registrar to enable DNSSEC validation:" }
+                    div { class: "font-mono text-sm bg-surface-2 px-4 py-2 rounded break-all", "{ds}" }
+                    div { class: "grid grid-cols-2 md:grid-cols-4 gap-4 mt-3",
+                        if let Some(ref kt) = data.dnssec_key_tag {
+                            div { div { class: "text-sm text-fg-muted", "Key Tag" } div { class: "font-mono text-sm", "{kt}" } }
+                        }
+                        if let Some(ref alg) = data.dnssec_algorithm {
+                            div { div { class: "text-sm text-fg-muted", "Algorithm" } div { class: "font-mono text-sm", "{alg}" } }
+                        }
+                        if let Some(ref dt) = data.dnssec_digest_type {
+                            div { div { class: "text-sm text-fg-muted", "Digest Type" } div { class: "font-mono text-sm", "{dt}" } }
+                        }
+                        if let Some(ref dig) = data.dnssec_digest {
+                            div { div { class: "text-sm text-fg-muted", "Digest" } div { class: "font-mono text-sm break-all", "{dig}" } }
+                        }
+                    }
+                }
+            }
+        }
+
         // Subdomains & DNS records
         SectionHeading { class: "mt-6", "Subdomains & DNS Records" }
+        if has_cf {
+            SyncFromCloudflareButton { domain_id: data.id }
+        }
         SubdomainsSection { domain_id: data.id, subdomains: data.subdomains.clone() }
 
         SectionHeading { class: "mt-6", "Danger Zone" }
@@ -809,6 +923,42 @@ fn SetNsButton(domain_id: Uuid, nameservers: Vec<String>) -> Element {
                 if *setting.read() { "Setting..." } else { "Set NS at Registrar" }
             }
             if let Some(m) = &*msg.read() { span { class: "text-sm text-fg-muted", "{m}" } }
+        }
+    }
+}
+
+#[component]
+fn SyncFromCloudflareButton(domain_id: Uuid) -> Element {
+    let mut syncing = use_signal(|| false);
+    let mut message = use_signal(|| None::<String>);
+
+    rsx! {
+        div { class: "mb-3 flex items-center gap-3",
+            Button {
+                variant: ButtonVariant::Secondary,
+                disabled: *syncing.read(),
+                onclick: {
+                    let did = domain_id;
+                    move |_| {
+                        syncing.set(true);
+                        message.set(None);
+                        spawn(async move {
+                            match sync_records_from_cloudflare(did).await {
+                                Ok(msg) => {
+                                    message.set(Some(msg));
+                                    navigator().replace(crate::web::app::Route::DomainDetail { id: did.to_string() });
+                                }
+                                Err(e) => message.set(Some(format!("{e}"))),
+                            }
+                            syncing.set(false);
+                        });
+                    }
+                },
+                if *syncing.read() { "Syncing..." } else { "Sync from Cloudflare" }
+            }
+            if let Some(msg) = &*message.read() {
+                span { class: "text-sm text-fg-muted", "{msg}" }
+            }
         }
     }
 }

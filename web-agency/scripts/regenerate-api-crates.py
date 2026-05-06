@@ -1,14 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env nix-shell
+#!nix-shell -i python3 -p python3 yq-go
 """
 Trim the OpenAPI specs and regenerate the API client crates using cargo-progenitor.
 
 Usage:
-    python3 web-agency/scripts/regenerate-api-crates.py
+    ./web-agency/scripts/regenerate-api-crates.py
 
 Requires:
     - cargo-progenitor: cargo install cargo-progenitor
-    - yq: for YAML to JSON conversion (nix-shell -p yq-go)
-    - python3 with json module (stdlib)
 
 Input:
     - web-agency/openapi-cloudflare.yaml (full Cloudflare spec)
@@ -327,9 +326,9 @@ def generate_cloudflare():
         shutil.rmtree(old_backup)
 
     if os.path.exists(CF_OUTPUT):
-        # Preserve openapi-trimmed.json and tests
+        # Preserve hand-maintained files
         preserved = {}
-        for fname in ["openapi-trimmed.json"]:
+        for fname in ["openapi-trimmed.json", "src/compat.rs"]:
             fpath = os.path.join(CF_OUTPUT, fname)
             if os.path.exists(fpath):
                 with open(fpath, "rb") as f:
@@ -347,8 +346,39 @@ def generate_cloudflare():
         if fname == "tests":
             shutil.copytree(data, os.path.join(CF_OUTPUT, "tests"))
         else:
-            with open(os.path.join(CF_OUTPUT, fname), "wb") as f:
+            fpath = os.path.join(CF_OUTPUT, fname)
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            with open(fpath, "wb") as f:
                 f.write(data)
+
+    # Inject `pub mod compat;` into lib.rs if compat.rs exists
+    compat_path = os.path.join(CF_OUTPUT, "src", "compat.rs")
+    if os.path.exists(compat_path):
+        lib_rs = os.path.join(CF_OUTPUT, "src", "lib.rs")
+        with open(lib_rs) as f:
+            code = f.read()
+        if "pub mod compat;" not in code:
+            # Insert after the pub use progenitor_client line
+            code = code.replace(
+                "pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};",
+                "pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};\n\npub mod compat;",
+            )
+            with open(lib_rs, "w") as f:
+                f.write(code)
+
+    # Merge extra deps needed by compat.rs into Cargo.toml
+    cargo_toml = os.path.join(CF_OUTPUT, "Cargo.toml")
+    extra_deps = {
+        'thiserror = "2"': "thiserror",
+        'tracing = "0.1"': "tracing",
+    }
+    with open(cargo_toml) as f:
+        cargo = f.read()
+    for line, pkg in extra_deps.items():
+        if pkg not in cargo:
+            cargo = cargo.rstrip() + "\n" + line + "\n"
+    with open(cargo_toml, "w") as f:
+        f.write(cargo)
 
     # Clean up
     if os.path.exists(old_backup):

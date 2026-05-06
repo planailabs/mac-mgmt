@@ -4736,6 +4736,357 @@
   },
   "components": {
     "schemas": {
+      "pages_domain_name": {
+        "description": "The domain name.",
+        "example": "this-is-my-domain-01.com",
+        "pattern": "^([a-zA-Z0-9][\\-a-zA-Z0-9]*\\.)+[\\-a-zA-Z0-9]{2,20}$",
+        "type": "string",
+        "x-auditable": true
+      },
+      "dns-records_identifier": {
+        "description": "Identifier.",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string",
+        "x-auditable": true
+      },
+      "iam_account_identifier": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
+          }
+        ],
+        "description": "Account identifier tag.",
+        "title": "Account Identifier"
+      },
+      "dns-records_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/dns-records_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/dns-records_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              false
+            ],
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "registrar-api_identifier": {
+        "description": "Identifier",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "readOnly": true,
+        "type": "string"
+      },
+      "dns-records_dns-record-patch": {
+        "type": "object",
+        "description": "DNS record (simplified). Original: dns-records_dns-record-patch",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "ttl": {
+            "type": "number"
+          },
+          "proxied": {
+            "type": "boolean"
+          },
+          "proxiable": {
+            "type": "boolean"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "priority": {
+            "type": "number"
+          },
+          "created_on": {
+            "type": "string"
+          },
+          "modified_on": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "registrar-api_registration-response-collection": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "items": {
+                  "$ref": "#/components/schemas/registrar-api_registration"
+                },
+                "type": "array"
+              },
+              "result_info": {
+                "$ref": "#/components/schemas/registrar-api_cursor_result_info"
+              }
+            },
+            "required": [
+              "result",
+              "result_info"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "iam_response_collection_accounts": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_api-response-collection"
+          },
+          {
+            "properties": {
+              "result": {
+                "items": {
+                  "$ref": "#/components/schemas/iam_account"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "title": "Response with a list of accounts"
+      },
+      "cache_api-response-single-id": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/cache_messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/cache_messages"
+          },
+          "result": {
+            "$ref": "#/components/schemas/cache_result"
+          },
+          "success": {
+            "description": "Indicates the API call's success or failure.",
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "pages_project": {
+        "properties": {
+          "build_config": {
+            "$ref": "#/components/schemas/pages_build_config"
+          },
+          "canonical_deployment": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/pages_deployment"
+              },
+              {
+                "description": "Most recent production deployment of the project.",
+                "nullable": true,
+                "readOnly": true,
+                "type": "object"
+              }
+            ]
+          },
+          "created_on": {
+            "description": "When the project was created.",
+            "example": "2017-01-01T00:00:00Z",
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "deployment_configs": {
+            "description": "Configs for deployments in a project.",
+            "properties": {
+              "preview": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/pages_deployment_config_values"
+                  }
+                ],
+                "description": "Configs for preview deploys."
+              },
+              "production": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/pages_deployment_config_values"
+                  }
+                ],
+                "description": "Configs for production deploys."
+              }
+            },
+            "required": [
+              "production",
+              "preview"
+            ],
+            "type": "object"
+          },
+          "domains": {
+            "description": "A list of associated custom domains for the project.",
+            "example": [
+              "customdomain.com",
+              "customdomain.org"
+            ],
+            "items": {
+              "type": "string",
+              "x-auditable": true
+            },
+            "readOnly": true,
+            "type": "array"
+          },
+          "framework": {
+            "description": "Framework the project is using.",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "framework_version": {
+            "description": "Version of the framework the project is using.",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "id": {
+            "description": "ID of the project.",
+            "example": "7b162ea7-7367-4d67-bcde-1160995d5",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "latest_deployment": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/pages_deployment"
+              },
+              {
+                "description": "Most recent deployment of the project.",
+                "nullable": true,
+                "readOnly": true,
+                "type": "object"
+              }
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/pages_project_name"
+          },
+          "preview_script_name": {
+            "description": "Name of the preview script.",
+            "example": "pages-worker--1234567-preview",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "production_branch": {
+            "description": "Production branch of the project. Used to identify production deployments.",
+            "example": "main",
+            "type": "string",
+            "x-auditable": true
+          },
+          "production_script_name": {
+            "description": "Name of the production script.",
+            "example": "pages-worker--1234567-production",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "source": {
+            "$ref": "#/components/schemas/pages_source"
+          },
+          "subdomain": {
+            "description": "The Cloudflare subdomain associated with the project.",
+            "example": "helloworld.pages.dev",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "uses_functions": {
+            "description": "Whether the project uses functions.",
+            "nullable": true,
+            "readOnly": true,
+            "type": "boolean",
+            "x-auditable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "deployment_configs",
+          "latest_deployment",
+          "canonical_deployment",
+          "created_on",
+          "production_branch",
+          "production_script_name",
+          "preview_script_name",
+          "uses_functions",
+          "framework",
+          "framework_version"
+        ],
+        "type": "object"
+      },
       "pages_deployment_config_values_request": {
         "properties": {
           "ai_bindings": {
@@ -5161,54 +5512,250 @@
         },
         "type": "object"
       },
-      "dns-records_proxied": {
-        "default": false,
-        "description": "Whether the record is receiving the performance and security benefits of Cloudflare.",
-        "example": true,
-        "type": "boolean",
-        "x-auditable": true
-      },
-      "iam_response_collection_accounts": {
+      "registrar-api_domain_check_response": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/iam_api-response-collection"
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
           },
           {
             "properties": {
               "result": {
-                "items": {
-                  "$ref": "#/components/schemas/iam_account"
+                "description": "Contains the availability check results.",
+                "properties": {
+                  "domains": {
+                    "description": "Array of domain availability results. Domains on unsupported\nextensions are included with `registrable: false` and a `reason`\nfield. Malformed domain names may be omitted.\n",
+                    "items": {
+                      "$ref": "#/components/schemas/registrar-api_domain_check_result"
+                    },
+                    "type": "array"
+                  }
                 },
-                "type": "array"
+                "required": [
+                  "domains"
+                ],
+                "type": "object"
               }
             },
+            "required": [
+              "result"
+            ],
             "type": "object"
-          }
-        ],
-        "title": "Response with a list of accounts"
-      },
-      "iam_components-schemas-account": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/iam_account"
           }
         ]
       },
-      "iam_response_single_account": {
+      "iam_create-account": {
+        "properties": {
+          "name": {
+            "description": "Account name",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/iam_account-type"
+          },
+          "unit": {
+            "description": "information related to the tenant unit, and optionally, an id of the unit to create the account on. see https://developers.cloudflare.com/tenant/how-to/manage-accounts/",
+            "properties": {
+              "id": {
+                "description": "Tenant unit ID",
+                "example": "f267e341f3dd4697bd3b9f71dd96247f",
+                "type": "string",
+                "x-auditable": true,
+                "x-stainless-terraform-configurability": "computed_optional"
+              }
+            },
+            "type": "object",
+            "x-stainless-terraform-configurability": "computed_optional"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "Create account",
+        "type": "object"
+      },
+      "zones_name": {
+        "description": "The domain name. Per [RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035#section-2.3.4) the overall zone name can be up to 253 characters, with each segment (\"label\") not exceeding 63 characters.",
+        "example": "example.com",
+        "maxLength": 253,
+        "pattern": "^([a-zA-Z0-9][\\-a-zA-Z0-9]*\\.)+[\\-a-zA-Z0-9]{2,20}$",
+        "type": "string"
+      },
+      "dns-records_dns-record-post": {
+        "type": "object",
+        "description": "DNS record (simplified). Original: dns-records_dns-record-post",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "ttl": {
+            "type": "number"
+          },
+          "proxied": {
+            "type": "boolean"
+          },
+          "proxiable": {
+            "type": "boolean"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "priority": {
+            "type": "number"
+          },
+          "created_on": {
+            "type": "string"
+          },
+          "modified_on": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "pages_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/pages_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/pages_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              false
+            ],
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "dns-records_page": {
+        "default": 1,
+        "description": "Page number of paginated results.",
+        "minimum": 1,
+        "type": "number"
+      },
+      "registrar-api_domain_check_request": {
+        "description": "Request body for checking domain availability.",
+        "properties": {
+          "domains": {
+            "description": "List of fully qualified domain names (FQDNs) to check for availability. Each domain must include the extension.\n- Minimum: 1 domain\n- Maximum: 20 domains per request\n- Domains on unsupported extensions are returned with `registrable: false` and a `reason` field\n- Malformed domain names (e.g., missing extension) may be omitted from the response\n",
+            "example": [
+              "example.com",
+              "example.net"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "domains"
+        ],
+        "type": "object"
+      },
+      "registrar-api_workflow-status-response-single": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/iam_api-response-single"
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
           },
           {
             "properties": {
               "result": {
-                "$ref": "#/components/schemas/iam_account"
+                "$ref": "#/components/schemas/registrar-api_workflow_status"
               }
             },
             "type": "object"
           }
+        ]
+      },
+      "zones_type": {
+        "default": "full",
+        "description": "A full zone implies that DNS is hosted with Cloudflare. A partial zone is\ntypically a partner-hosted zone or a CNAME setup.\n",
+        "enum": [
+          "full",
+          "partial",
+          "secondary",
+          "internal"
         ],
-        "title": "Response with a single account"
+        "example": "full",
+        "type": "string"
+      },
+      "pages_api-response-common": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/pages_messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/pages_messages"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              true
+            ],
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages"
+        ],
+        "type": "object"
       },
       "pages_project_name": {
         "description": "Name of the project.",
@@ -5217,21 +5764,82 @@
         "type": "string",
         "x-auditable": true
       },
-      "dnssec_delete_dnssec_response_single": {
+      "dns-records_search": {
+        "description": "Allows searching in multiple properties of a DNS record simultaneously. This parameter is intended for human users, not automation. Its exact behavior is intentionally left unspecified and is subject to change in the future. This parameter works independently of the `match` setting. For automated searches, please use the other available parameters.\n",
+        "example": "www.cloudflare.com",
+        "type": "string"
+      },
+      "iam_components-schemas-account": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/dnssec_api-response-single"
-          },
-          {
-            "properties": {
-              "result": {
-                "example": "",
-                "type": "string"
-              }
-            },
-            "type": "object"
+            "$ref": "#/components/schemas/iam_account"
           }
         ]
+      },
+      "zones_identifier": {
+        "description": "Identifier",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string"
+      },
+      "zones_paused": {
+        "default": false,
+        "description": "Indicates whether the zone is only using Cloudflare DNS services. A\ntrue value means the zone will not receive security or performance\nbenefits.\n",
+        "type": "boolean"
+      },
+      "dnssec_dnssec_presigned": {
+        "description": "If true, allows Cloudflare to transfer in a DNSSEC-signed zone\nincluding signatures from an external provider, without requiring\nCloudflare to sign any records on the fly.\n\nNote that this feature has some limitations.\nSee [Cloudflare as Secondary](https://developers.cloudflare.com/dns/zone-setups/zone-transfers/cloudflare-as-secondary/setup/#dnssec) for details.",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true
+      },
+      "registrar-api_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/registrar-api_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minItems": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/registrar-api_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "success": {
+            "description": "Whether the API call was successful",
+            "enum": [
+              false
+            ],
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
       },
       "registrar-api_registration_create_request": {
         "properties": {
@@ -5267,303 +5875,6 @@
         },
         "required": [
           "domain_name"
-        ],
-        "type": "object"
-      },
-      "registrar-api_registration-response-collection": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "items": {
-                  "$ref": "#/components/schemas/registrar-api_registration"
-                },
-                "type": "array"
-              },
-              "result_info": {
-                "$ref": "#/components/schemas/registrar-api_cursor_result_info"
-              }
-            },
-            "required": [
-              "result",
-              "result_info"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "zones_api-response-single-id": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/zones_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "nullable": true,
-                "properties": {
-                  "id": {
-                    "$ref": "#/components/schemas/zones_identifier"
-                  }
-                },
-                "required": [
-                  "id"
-                ],
-                "type": "object"
-              }
-            }
-          }
-        ],
-        "type": "object"
-      },
-      "iam_api-response-single-id": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/iam_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "nullable": true,
-                "properties": {
-                  "id": {
-                    "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
-                  }
-                },
-                "required": [
-                  "id"
-                ],
-                "type": "object"
-              }
-            }
-          }
-        ],
-        "type": "object"
-      },
-      "dns-records_type": {
-        "description": "Record type.",
-        "enum": [
-          "A",
-          "AAAA",
-          "CAA",
-          "CERT",
-          "CNAME",
-          "DNSKEY",
-          "DS",
-          "HTTPS",
-          "LOC",
-          "MX",
-          "NAPTR",
-          "NS",
-          "OPENPGPKEY",
-          "PTR",
-          "SMIMEA",
-          "SRV",
-          "SSHFP",
-          "SVCB",
-          "TLSA",
-          "TXT",
-          "URI"
-        ],
-        "example": "A",
-        "type": "string",
-        "x-auditable": true
-      },
-      "dns-records_dns_response_single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/dns-records_api-response-single"
-          },
-          {
-            "properties": {
-              "result": {
-                "$ref": "#/components/schemas/dns-records_dns-record-response"
-              }
-            },
-            "type": "object"
-          }
-        ],
-        "type": "object"
-      },
-      "registrar-api_domain_name": {
-        "description": "Fully qualified domain name (FQDN) including the extension\n(e.g., `example.com`, `mybrand.app`). The domain name uniquely\nidentifies a registration \u2014 the same domain cannot be registered\ntwice, making it a natural idempotency key for registration requests.\n",
-        "example": "example.com",
-        "type": "string",
-        "x-auditable": true
-      },
-      "pages_api-response-collection": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/pages_api-response-common"
-          },
-          {
-            "properties": {
-              "result_info": {
-                "properties": {
-                  "count": {
-                    "description": "Total number of results for the requested service.",
-                    "example": 1,
-                    "type": "number"
-                  },
-                  "page": {
-                    "description": "Current page within paginated list of results.",
-                    "example": 1,
-                    "type": "number"
-                  },
-                  "per_page": {
-                    "description": "Number of results per page of results.",
-                    "example": 20,
-                    "type": "number"
-                  },
-                  "total_count": {
-                    "description": "Total results available without any search parameters.",
-                    "example": 2000,
-                    "type": "number"
-                  },
-                  "total_pages": {
-                    "description": "The number of total pages in the entire result set.",
-                    "example": 100,
-                    "type": "number"
-                  }
-                },
-                "type": "object"
-              }
-            },
-            "type": "object"
-          }
-        ],
-        "type": "object"
-      },
-      "iam_account_identifier": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
-          }
-        ],
-        "description": "Account identifier tag.",
-        "title": "Account Identifier"
-      },
-      "dnssec_dnssec_presigned": {
-        "description": "If true, allows Cloudflare to transfer in a DNSSEC-signed zone\nincluding signatures from an external provider, without requiring\nCloudflare to sign any records on the fly.\n\nNote that this feature has some limitations.\nSee [Cloudflare as Secondary](https://developers.cloudflare.com/dns/zone-setups/zone-transfers/cloudflare-as-secondary/setup/#dnssec) for details.",
-        "example": true,
-        "type": "boolean",
-        "x-auditable": true
-      },
-      "dns-records_dns_response_collection": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/dns-records_api-response-collection"
-          },
-          {
-            "properties": {
-              "result": {
-                "items": {
-                  "$ref": "#/components/schemas/dns-records_dns-record-response"
-                },
-                "type": "array"
-              }
-            },
-            "type": "object"
-          }
-        ],
-        "type": "object"
-      },
-      "cache_schemas_patch": {
-        "description": "Update enablement of Automatic SSL/TLS.",
-        "properties": {
-          "value": {
-            "$ref": "#/components/schemas/cache_schemas_value"
-          }
-        },
-        "required": [
-          "value"
-        ],
-        "type": "object"
-      },
-      "cache_identifier": {
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "type": "string"
-      },
-      "registrar-api_domain_check_response": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "description": "Contains the availability check results.",
-                "properties": {
-                  "domains": {
-                    "description": "Array of domain availability results. Domains on unsupported\nextensions are included with `registrable: false` and a `reason`\nfield. Malformed domain names may be omitted.\n",
-                    "items": {
-                      "$ref": "#/components/schemas/registrar-api_domain_check_result"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "domains"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "result"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "iam_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/iam_schemas-messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/iam_schemas-messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "enum": [
-              null
-            ],
-            "nullable": true,
-            "type": "object"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              false
-            ],
-            "example": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
         ],
         "type": "object"
       },
@@ -5693,172 +6004,98 @@
         ],
         "type": "object"
       },
-      "zones_vanity_name_servers": {
-        "default": [],
-        "description": "An array of domains used for custom name servers. This is only\navailable for Business and Enterprise plans.",
-        "example": [
-          "ns1.example.com",
-          "ns2.example.com"
+      "dns-records_match": {
+        "default": "all",
+        "description": "Whether to match all search requirements or at least one (any). If set to `all`, acts like a logical AND between filters. If set to `any`, acts like a logical OR instead. Note that the interaction between tag filters is controlled by the `tag-match` parameter instead.\n",
+        "enum": [
+          "any",
+          "all"
         ],
-        "items": {
-          "format": "hostname",
-          "maxLength": 253,
-          "type": "string"
-        },
-        "type": "array"
+        "example": "any",
+        "type": "string"
       },
-      "cache_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/cache_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
+      "iam_response_single_account": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_api-response-single"
           },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/cache_messages"
+          {
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/iam_account"
               }
-            ],
-            "example": []
-          },
-          "result": {
-            "$ref": "#/components/schemas/cache_result"
-          },
-          "success": {
-            "description": "Indicates the API call's success or failure.",
-            "example": false,
-            "type": "boolean"
+            },
+            "type": "object"
           }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
+        ],
+        "title": "Response with a single account"
+      },
+      "iam_api-response-single-id": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "nullable": true,
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          }
         ],
         "type": "object"
       },
-      "dns-records_direction": {
-        "default": "asc",
-        "description": "Direction to order DNS records in.",
-        "enum": [
-          "asc",
-          "desc"
+      "zones_api-response-single-id": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/zones_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "nullable": true,
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/zones_identifier"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          }
         ],
-        "type": "string"
+        "type": "object"
       },
-      "dnssec_identifier": {
+      "pages_identifier": {
         "description": "Identifier.",
         "example": "023e105f4ecef8ad9ca31a8372d0c353",
         "maxLength": 32,
         "type": "string",
         "x-auditable": true
       },
-      "dnssec_dnssec_response_single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/dnssec_api-response-single"
-          },
-          {
-            "properties": {
-              "result": {
-                "$ref": "#/components/schemas/dnssec_dnssec"
-              }
-            },
-            "type": "object"
-          }
-        ]
-      },
-      "registrar-api_domain_check_request": {
-        "description": "Request body for checking domain availability.",
+      "registrar-api_registration_update_request": {
+        "description": "Request to update an existing domain registration.\n\nThis endpoint currently supports updating `auto_renew` only.\n",
+        "minProperties": 1,
         "properties": {
-          "domains": {
-            "description": "List of fully qualified domain names (FQDNs) to check for availability. Each domain must include the extension.\n- Minimum: 1 domain\n- Maximum: 20 domains per request\n- Domains on unsupported extensions are returned with `registrable: false` and a `reason` field\n- Malformed domain names (e.g., missing extension) may be omitted from the response\n",
-            "example": [
-              "example.com",
-              "example.net"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 20,
-            "minItems": 1,
-            "type": "array"
-          }
-        },
-        "required": [
-          "domains"
-        ],
-        "type": "object"
-      },
-      "zones_paused": {
-        "default": false,
-        "description": "Indicates whether the zone is only using Cloudflare DNS services. A\ntrue value means the zone will not receive security or performance\nbenefits.\n",
-        "type": "boolean"
-      },
-      "zones_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/zones_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/zones_messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "nullable": true,
-            "type": "object"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "example": false,
+          "auto_renew": {
+            "description": "Enable or disable automatic renewal.\nSetting this field to `true` authorizes Cloudflare to charge the\naccount's default payment method up to 30 days before domain expiry\nto renew the domain automatically. Renewal pricing may change over\ntime based on registry pricing.\n",
+            "example": true,
             "type": "boolean"
           }
         },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
         "type": "object"
-      },
-      "dns-records_order": {
-        "default": "type",
-        "description": "Field to order DNS records by.",
-        "enum": [
-          "type",
-          "name",
-          "content",
-          "ttl",
-          "proxied"
-        ],
-        "type": "string"
       },
       "dnssec_api-response-common-failure": {
         "properties": {
@@ -5907,660 +6144,6 @@
           "result"
         ],
         "type": "object"
-      },
-      "dns-records_per_page": {
-        "default": 100,
-        "description": "Number of DNS records per page.",
-        "example": 5,
-        "maximum": 5000000,
-        "minimum": 1,
-        "type": "number"
-      },
-      "registrar-api_identifier": {
-        "description": "Identifier",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "readOnly": true,
-        "type": "string"
-      },
-      "dns-records_identifier": {
-        "description": "Identifier.",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "type": "string",
-        "x-auditable": true
-      },
-      "dns-records_page": {
-        "default": 1,
-        "description": "Page number of paginated results.",
-        "minimum": 1,
-        "type": "number"
-      },
-      "zones_identifier": {
-        "description": "Identifier",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "type": "string"
-      },
-      "dns-records_search": {
-        "description": "Allows searching in multiple properties of a DNS record simultaneously. This parameter is intended for human users, not automation. Its exact behavior is intentionally left unspecified and is subject to change in the future. This parameter works independently of the `match` setting. For automated searches, please use the other available parameters.\n",
-        "example": "www.cloudflare.com",
-        "type": "string"
-      },
-      "registrar-api_workflow-status-response-single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "$ref": "#/components/schemas/registrar-api_workflow_status"
-              }
-            },
-            "type": "object"
-          }
-        ]
-      },
-      "pages_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/pages_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/pages_messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "enum": [
-              null
-            ],
-            "nullable": true,
-            "type": "object"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              false
-            ],
-            "example": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
-        "type": "object"
-      },
-      "pages_domain_name": {
-        "description": "The domain name.",
-        "example": "this-is-my-domain-01.com",
-        "pattern": "^([a-zA-Z0-9][\\-a-zA-Z0-9]*\\.)+[\\-a-zA-Z0-9]{2,20}$",
-        "type": "string",
-        "x-auditable": true
-      },
-      "dns-records_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/dns-records_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minLength": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/dns-records_messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "enum": [
-              null
-            ],
-            "nullable": true,
-            "type": "object"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              false
-            ],
-            "example": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
-        "type": "object"
-      },
-      "registrar-api_registration-response-single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/registrar-api_api-response-common"
-          },
-          {
-            "properties": {
-              "result": {
-                "$ref": "#/components/schemas/registrar-api_registration"
-              }
-            },
-            "type": "object"
-          }
-        ]
-      },
-      "registrar-api_registration_update_request": {
-        "description": "Request to update an existing domain registration.\n\nThis endpoint currently supports updating `auto_renew` only.\n",
-        "minProperties": 1,
-        "properties": {
-          "auto_renew": {
-            "description": "Enable or disable automatic renewal.\nSetting this field to `true` authorizes Cloudflare to charge the\naccount's default payment method up to 30 days before domain expiry\nto renew the domain automatically. Renewal pricing may change over\ntime based on registry pricing.\n",
-            "example": true,
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "dns-records_match": {
-        "default": "all",
-        "description": "Whether to match all search requirements or at least one (any). If set to `all`, acts like a logical AND between filters. If set to `any`, acts like a logical OR instead. Note that the interaction between tag filters is controlled by the `tag-match` parameter instead.\n",
-        "enum": [
-          "any",
-          "all"
-        ],
-        "example": "any",
-        "type": "string"
-      },
-      "dns-records_tag_match": {
-        "default": "all",
-        "description": "Whether to match all tag search requirements or at least one (any). If set to `all`, acts like a logical AND between tag filters. If set to `any`, acts like a logical OR instead. Note that the regular `match` parameter is still used to combine the resulting condition with other filters that aren't related to tags.\n",
-        "enum": [
-          "any",
-          "all"
-        ],
-        "example": "any",
-        "type": "string"
-      },
-      "dns-records_dns-record-patch": {
-        "type": "object",
-        "description": "DNS record (simplified from complex union). Original schema: dns-records_dns-record-patch",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "description": "Record type (A, AAAA, CNAME, etc.)"
-          },
-          "name": {
-            "type": "string",
-            "description": "Record name"
-          },
-          "content": {
-            "type": "string",
-            "description": "Record content/value"
-          },
-          "ttl": {
-            "type": "number",
-            "description": "TTL in seconds, 1=auto"
-          },
-          "proxied": {
-            "type": "boolean"
-          },
-          "proxiable": {
-            "type": "boolean"
-          },
-          "comment": {
-            "type": "string"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Structured data for complex record types"
-          },
-          "priority": {
-            "type": "number",
-            "description": "Priority for MX/SRV"
-          },
-          "created_on": {
-            "type": "string"
-          },
-          "modified_on": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": true
-      },
-      "zones_api-response-common": {
-        "properties": {
-          "errors": {
-            "$ref": "#/components/schemas/zones_messages"
-          },
-          "messages": {
-            "$ref": "#/components/schemas/zones_messages"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "example": true,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages"
-        ],
-        "type": "object"
-      },
-      "zones_result_info": {
-        "properties": {
-          "count": {
-            "description": "Total number of results for the requested service.",
-            "example": 1,
-            "type": "number"
-          },
-          "page": {
-            "description": "Current page within paginated list of results.",
-            "example": 1,
-            "type": "number"
-          },
-          "per_page": {
-            "description": "Number of results per page of results.",
-            "example": 20,
-            "type": "number"
-          },
-          "total_count": {
-            "description": "Total results available without any search parameters.",
-            "example": 2000,
-            "type": "number"
-          },
-          "total_pages": {
-            "description": "Total number of pages",
-            "example": 100,
-            "type": "number"
-          }
-        },
-        "type": "object"
-      },
-      "registrar-api_api-response-common-failure": {
-        "properties": {
-          "errors": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/registrar-api_messages"
-              }
-            ],
-            "example": [
-              {
-                "code": 7003,
-                "message": "No route for the URI"
-              }
-            ],
-            "minItems": 1
-          },
-          "messages": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/registrar-api_messages"
-              }
-            ],
-            "example": []
-          },
-          "result": {
-            "enum": [
-              null
-            ],
-            "nullable": true,
-            "type": "object"
-          },
-          "success": {
-            "description": "Whether the API call was successful",
-            "enum": [
-              false
-            ],
-            "example": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
-        ],
-        "type": "object"
-      },
-      "pages_identifier": {
-        "description": "Identifier.",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "type": "string",
-        "x-auditable": true
-      },
-      "pages_project": {
-        "properties": {
-          "build_config": {
-            "$ref": "#/components/schemas/pages_build_config"
-          },
-          "canonical_deployment": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/pages_deployment"
-              },
-              {
-                "description": "Most recent production deployment of the project.",
-                "nullable": true,
-                "readOnly": true,
-                "type": "object"
-              }
-            ]
-          },
-          "created_on": {
-            "description": "When the project was created.",
-            "example": "2017-01-01T00:00:00Z",
-            "format": "date-time",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "deployment_configs": {
-            "description": "Configs for deployments in a project.",
-            "properties": {
-              "preview": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/pages_deployment_config_values"
-                  }
-                ],
-                "description": "Configs for preview deploys."
-              },
-              "production": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/pages_deployment_config_values"
-                  }
-                ],
-                "description": "Configs for production deploys."
-              }
-            },
-            "required": [
-              "production",
-              "preview"
-            ],
-            "type": "object"
-          },
-          "domains": {
-            "description": "A list of associated custom domains for the project.",
-            "example": [
-              "customdomain.com",
-              "customdomain.org"
-            ],
-            "items": {
-              "type": "string",
-              "x-auditable": true
-            },
-            "readOnly": true,
-            "type": "array"
-          },
-          "framework": {
-            "description": "Framework the project is using.",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "framework_version": {
-            "description": "Version of the framework the project is using.",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "id": {
-            "description": "ID of the project.",
-            "example": "7b162ea7-7367-4d67-bcde-1160995d5",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "latest_deployment": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/pages_deployment"
-              },
-              {
-                "description": "Most recent deployment of the project.",
-                "nullable": true,
-                "readOnly": true,
-                "type": "object"
-              }
-            ]
-          },
-          "name": {
-            "$ref": "#/components/schemas/pages_project_name"
-          },
-          "preview_script_name": {
-            "description": "Name of the preview script.",
-            "example": "pages-worker--1234567-preview",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "production_branch": {
-            "description": "Production branch of the project. Used to identify production deployments.",
-            "example": "main",
-            "type": "string",
-            "x-auditable": true
-          },
-          "production_script_name": {
-            "description": "Name of the production script.",
-            "example": "pages-worker--1234567-production",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "source": {
-            "$ref": "#/components/schemas/pages_source"
-          },
-          "subdomain": {
-            "description": "The Cloudflare subdomain associated with the project.",
-            "example": "helloworld.pages.dev",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "uses_functions": {
-            "description": "Whether the project uses functions.",
-            "nullable": true,
-            "readOnly": true,
-            "type": "boolean",
-            "x-auditable": true
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "deployment_configs",
-          "latest_deployment",
-          "canonical_deployment",
-          "created_on",
-          "production_branch",
-          "production_script_name",
-          "preview_script_name",
-          "uses_functions",
-          "framework",
-          "framework_version"
-        ],
-        "type": "object"
-      },
-      "iam_create-account": {
-        "properties": {
-          "name": {
-            "description": "Account name",
-            "type": "string"
-          },
-          "type": {
-            "$ref": "#/components/schemas/iam_account-type"
-          },
-          "unit": {
-            "description": "information related to the tenant unit, and optionally, an id of the unit to create the account on. see https://developers.cloudflare.com/tenant/how-to/manage-accounts/",
-            "properties": {
-              "id": {
-                "description": "Tenant unit ID",
-                "example": "f267e341f3dd4697bd3b9f71dd96247f",
-                "type": "string",
-                "x-auditable": true,
-                "x-stainless-terraform-configurability": "computed_optional"
-              }
-            },
-            "type": "object",
-            "x-stainless-terraform-configurability": "computed_optional"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "Create account",
-        "type": "object"
-      },
-      "pages_api-response-common": {
-        "properties": {
-          "errors": {
-            "$ref": "#/components/schemas/pages_messages"
-          },
-          "messages": {
-            "$ref": "#/components/schemas/pages_messages"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              true
-            ],
-            "example": true,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages"
-        ],
-        "type": "object"
-      },
-      "dns-records_dns-record-post": {
-        "type": "object",
-        "description": "DNS record (simplified from complex union). Original schema: dns-records_dns-record-post",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "description": "Record type (A, AAAA, CNAME, etc.)"
-          },
-          "name": {
-            "type": "string",
-            "description": "Record name"
-          },
-          "content": {
-            "type": "string",
-            "description": "Record content/value"
-          },
-          "ttl": {
-            "type": "number",
-            "description": "TTL in seconds, 1=auto"
-          },
-          "proxied": {
-            "type": "boolean"
-          },
-          "proxiable": {
-            "type": "boolean"
-          },
-          "comment": {
-            "type": "string"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Structured data for complex record types"
-          },
-          "priority": {
-            "type": "number",
-            "description": "Priority for MX/SRV"
-          },
-          "created_on": {
-            "type": "string"
-          },
-          "modified_on": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": true
-      },
-      "dnssec_dnssec_multi_signer": {
-        "description": "If true, multi-signer DNSSEC is enabled on the zone, allowing multiple\nproviders to serve a DNSSEC-signed zone at the same time.\nThis is required for DNSKEY records (except those automatically\ngenerated by Cloudflare) to be added to the zone.\n\nSee [Multi-signer DNSSEC](https://developers.cloudflare.com/dns/dnssec/multi-signer-dnssec/) for details.",
-        "example": false,
-        "type": "boolean",
-        "x-auditable": true
-      },
-      "dnssec_dnssec_use_nsec3": {
-        "description": "If true, enables the use of NSEC3 together with DNSSEC on the zone.\nCombined with setting dnssec_presigned to true, this enables the use of\nNSEC3 records when transferring in from an external provider.\nIf dnssec_presigned is instead set to false (default), NSEC3 records will be\ngenerated and signed at request time.\n\nSee [DNSSEC with NSEC3](https://developers.cloudflare.com/dns/dnssec/enable-nsec3/) for details.",
-        "example": false,
-        "type": "boolean",
-        "x-auditable": true
-      },
-      "zones_type": {
-        "default": "full",
-        "description": "A full zone implies that DNS is hosted with Cloudflare. A partial zone is\ntypically a partner-hosted zone or a CNAME setup.\n",
-        "enum": [
-          "full",
-          "partial",
-          "secondary",
-          "internal"
-        ],
-        "example": "full",
-        "type": "string"
       },
       "zones_zone": {
         "properties": {
@@ -6865,27 +6448,72 @@
         ],
         "type": "object"
       },
-      "zones_name": {
-        "description": "The domain name. Per [RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035#section-2.3.4) the overall zone name can be up to 253 characters, with each segment (\"label\") not exceeding 63 characters.",
-        "example": "example.com",
-        "maxLength": 253,
-        "pattern": "^([a-zA-Z0-9][\\-a-zA-Z0-9]*\\.)+[\\-a-zA-Z0-9]{2,20}$",
-        "type": "string"
+      "dns-records_type": {
+        "description": "Record type.",
+        "enum": [
+          "A",
+          "AAAA",
+          "CAA",
+          "CERT",
+          "CNAME",
+          "DNSKEY",
+          "DS",
+          "HTTPS",
+          "LOC",
+          "MX",
+          "NAPTR",
+          "NS",
+          "OPENPGPKEY",
+          "PTR",
+          "SMIMEA",
+          "SRV",
+          "SSHFP",
+          "SVCB",
+          "TLSA",
+          "TXT",
+          "URI"
+        ],
+        "example": "A",
+        "type": "string",
+        "x-auditable": true
       },
-      "cache_api-response-single-id": {
+      "iam_api-response-common-failure": {
         "properties": {
           "errors": {
-            "$ref": "#/components/schemas/cache_messages"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/iam_schemas-messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
           },
           "messages": {
-            "$ref": "#/components/schemas/cache_messages"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/iam_schemas-messages"
+              }
+            ],
+            "example": []
           },
           "result": {
-            "$ref": "#/components/schemas/cache_result"
+            "enum": [
+              null
+            ],
+            "nullable": true,
+            "type": "object"
           },
           "success": {
-            "description": "Indicates the API call's success or failure.",
-            "example": true,
+            "description": "Whether the API call was successful.",
+            "enum": [
+              false
+            ],
+            "example": false,
             "type": "boolean"
           }
         },
@@ -6897,7 +6525,382 @@
         ],
         "type": "object"
       },
-      "dns-records_messages": {
+      "zones_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/zones_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/zones_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "nullable": true,
+            "type": "object"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "cache_schemas_patch": {
+        "description": "Update enablement of Automatic SSL/TLS.",
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/cache_schemas_value"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "dns-records_dns_response_single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/dns-records_api-response-single"
+          },
+          {
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/dns-records_dns-record-response"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "type": "object"
+      },
+      "registrar-api_domain_name": {
+        "description": "Fully qualified domain name (FQDN) including the extension\n(e.g., `example.com`, `mybrand.app`). The domain name uniquely\nidentifies a registration \u2014 the same domain cannot be registered\ntwice, making it a natural idempotency key for registration requests.\n",
+        "example": "example.com",
+        "type": "string",
+        "x-auditable": true
+      },
+      "dnssec_identifier": {
+        "description": "Identifier.",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string",
+        "x-auditable": true
+      },
+      "cache_api-response-common-failure": {
+        "properties": {
+          "errors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/cache_messages"
+              }
+            ],
+            "example": [
+              {
+                "code": 7003,
+                "message": "No route for the URI"
+              }
+            ],
+            "minLength": 1
+          },
+          "messages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/cache_messages"
+              }
+            ],
+            "example": []
+          },
+          "result": {
+            "$ref": "#/components/schemas/cache_result"
+          },
+          "success": {
+            "description": "Indicates the API call's success or failure.",
+            "example": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
+        ],
+        "type": "object"
+      },
+      "dns-records_tag_match": {
+        "default": "all",
+        "description": "Whether to match all tag search requirements or at least one (any). If set to `all`, acts like a logical AND between tag filters. If set to `any`, acts like a logical OR instead. Note that the regular `match` parameter is still used to combine the resulting condition with other filters that aren't related to tags.\n",
+        "enum": [
+          "any",
+          "all"
+        ],
+        "example": "any",
+        "type": "string"
+      },
+      "pages_api-response-collection": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/pages_api-response-common"
+          },
+          {
+            "properties": {
+              "result_info": {
+                "properties": {
+                  "count": {
+                    "description": "Total number of results for the requested service.",
+                    "example": 1,
+                    "type": "number"
+                  },
+                  "page": {
+                    "description": "Current page within paginated list of results.",
+                    "example": 1,
+                    "type": "number"
+                  },
+                  "per_page": {
+                    "description": "Number of results per page of results.",
+                    "example": 20,
+                    "type": "number"
+                  },
+                  "total_count": {
+                    "description": "Total results available without any search parameters.",
+                    "example": 2000,
+                    "type": "number"
+                  },
+                  "total_pages": {
+                    "description": "The number of total pages in the entire result set.",
+                    "example": 100,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "type": "object"
+      },
+      "registrar-api_registration-response-single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/registrar-api_api-response-common"
+          },
+          {
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/registrar-api_registration"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "zones_api-response-common": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/zones_messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/zones_messages"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages"
+        ],
+        "type": "object"
+      },
+      "dns-records_direction": {
+        "default": "asc",
+        "description": "Direction to order DNS records in.",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string"
+      },
+      "zones_vanity_name_servers": {
+        "default": [],
+        "description": "An array of domains used for custom name servers. This is only\navailable for Business and Enterprise plans.",
+        "example": [
+          "ns1.example.com",
+          "ns2.example.com"
+        ],
+        "items": {
+          "format": "hostname",
+          "maxLength": 253,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "dns-records_proxied": {
+        "default": false,
+        "description": "Whether the record is receiving the performance and security benefits of Cloudflare.",
+        "example": true,
+        "type": "boolean",
+        "x-auditable": true
+      },
+      "dnssec_dnssec_multi_signer": {
+        "description": "If true, multi-signer DNSSEC is enabled on the zone, allowing multiple\nproviders to serve a DNSSEC-signed zone at the same time.\nThis is required for DNSKEY records (except those automatically\ngenerated by Cloudflare) to be added to the zone.\n\nSee [Multi-signer DNSSEC](https://developers.cloudflare.com/dns/dnssec/multi-signer-dnssec/) for details.",
+        "example": false,
+        "type": "boolean",
+        "x-auditable": true
+      },
+      "dns-records_dns_response_collection": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/dns-records_api-response-collection"
+          },
+          {
+            "properties": {
+              "result": {
+                "items": {
+                  "$ref": "#/components/schemas/dns-records_dns-record-response"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "type": "object"
+      },
+      "dnssec_delete_dnssec_response_single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/dnssec_api-response-single"
+          },
+          {
+            "properties": {
+              "result": {
+                "example": "",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "dns-records_per_page": {
+        "default": 100,
+        "description": "Number of DNS records per page.",
+        "example": 5,
+        "maximum": 5000000,
+        "minimum": 1,
+        "type": "number"
+      },
+      "dnssec_dnssec_response_single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/dnssec_api-response-single"
+          },
+          {
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/dnssec_dnssec"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "dns-records_order": {
+        "default": "type",
+        "description": "Field to order DNS records by.",
+        "enum": [
+          "type",
+          "name",
+          "content",
+          "ttl",
+          "proxied"
+        ],
+        "type": "string"
+      },
+      "dnssec_dnssec_use_nsec3": {
+        "description": "If true, enables the use of NSEC3 together with DNSSEC on the zone.\nCombined with setting dnssec_presigned to true, this enables the use of\nNSEC3 records when transferring in from an external provider.\nIf dnssec_presigned is instead set to false (default), NSEC3 records will be\ngenerated and signed at request time.\n\nSee [DNSSEC with NSEC3](https://developers.cloudflare.com/dns/dnssec/enable-nsec3/) for details.",
+        "example": false,
+        "type": "boolean",
+        "x-auditable": true
+      },
+      "zones_result_info": {
+        "properties": {
+          "count": {
+            "description": "Total number of results for the requested service.",
+            "example": 1,
+            "type": "number"
+          },
+          "page": {
+            "description": "Current page within paginated list of results.",
+            "example": 1,
+            "type": "number"
+          },
+          "per_page": {
+            "description": "Number of results per page of results.",
+            "example": 20,
+            "type": "number"
+          },
+          "total_count": {
+            "description": "Total results available without any search parameters.",
+            "example": 2000,
+            "type": "number"
+          },
+          "total_pages": {
+            "description": "Total number of pages",
+            "example": 100,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "cache_identifier": {
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "type": "string"
+      },
+      "iam_api-response-collection": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_api-response-common"
+          },
+          {
+            "properties": {
+              "result_info": {
+                "$ref": "#/components/schemas/iam_result_info"
+              }
+            }
+          }
+        ],
+        "type": "object"
+      },
+      "registrar-api_messages": {
         "example": [],
         "items": {
           "properties": {
@@ -6905,19 +6908,8 @@
               "minimum": 1000,
               "type": "integer"
             },
-            "documentation_url": {
-              "type": "string"
-            },
             "message": {
               "type": "string"
-            },
-            "source": {
-              "properties": {
-                "pointer": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
             }
           },
           "required": [
@@ -6929,267 +6921,31 @@
         },
         "type": "array"
       },
-      "cache_schemas_value": {
-        "description": "Controls enablement of Automatic SSL/TLS.",
-        "enum": [
-          "auto",
-          "custom"
-        ],
-        "example": "auto",
-        "type": "string"
-      },
-      "dns-records_dns-record-response": {
-        "type": "object",
-        "description": "DNS record (simplified from complex union). Original schema: dns-records_dns-record-response",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "description": "Record type (A, AAAA, CNAME, etc.)"
-          },
-          "name": {
-            "type": "string",
-            "description": "Record name"
-          },
-          "content": {
-            "type": "string",
-            "description": "Record content/value"
-          },
-          "ttl": {
-            "type": "number",
-            "description": "TTL in seconds, 1=auto"
-          },
-          "proxied": {
-            "type": "boolean"
-          },
-          "proxiable": {
-            "type": "boolean"
-          },
-          "comment": {
-            "type": "string"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Structured data for complex record types"
-          },
-          "priority": {
-            "type": "number",
-            "description": "Priority for MX/SRV"
-          },
-          "created_on": {
-            "type": "string"
-          },
-          "modified_on": {
-            "type": "string"
-          }
+      "pages_secret_text_env_var": {
+        "description": "An encrypted environment variable.",
+        "example": {
+          "type": "secret_text",
+          "value": ""
         },
-        "additionalProperties": true
-      },
-      "pages_build_config": {
-        "description": "Configs for the project build process.",
+        "nullable": true,
         "properties": {
-          "build_caching": {
-            "description": "Enable build caching for the project.",
-            "example": true,
-            "nullable": true,
-            "type": "boolean",
-            "x-auditable": true
-          },
-          "build_command": {
-            "description": "Command used to build project.",
-            "example": "npm run build",
-            "nullable": true,
+          "type": {
+            "enum": [
+              "secret_text"
+            ],
             "type": "string",
             "x-auditable": true
           },
-          "destination_dir": {
-            "description": "Assets output directory of the build.",
-            "example": "build",
-            "nullable": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "root_dir": {
-            "description": "Directory to run the command.",
-            "example": "/",
-            "nullable": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "web_analytics_tag": {
-            "description": "The classifying tag for analytics.",
-            "example": "cee1c73f6e4743d0b5e6bb1a0bcaabcc",
-            "nullable": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "web_analytics_token": {
-            "description": "The auth token for analytics.",
-            "example": "021e1057c18547eca7b79f2516f06o7x",
-            "nullable": true,
+          "value": {
+            "description": "Secret value.",
             "type": "string",
             "x-sensitive": true
           }
         },
         "required": [
-          "web_analytics_tag",
-          "web_analytics_token"
+          "type",
+          "value"
         ],
-        "type": "object"
-      },
-      "cache_messages": {
-        "example": [],
-        "items": {
-          "properties": {
-            "code": {
-              "minimum": 1000,
-              "type": "integer"
-            },
-            "message": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "code",
-            "message"
-          ],
-          "type": "object",
-          "uniqueItems": true
-        },
-        "type": "array"
-      },
-      "iam_account": {
-        "properties": {
-          "created_on": {
-            "description": "Timestamp for the creation of the account",
-            "example": "2014-03-01T12:21:02.0000Z",
-            "format": "date-time",
-            "readOnly": true,
-            "type": "string",
-            "x-auditable": true
-          },
-          "id": {
-            "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
-          },
-          "managed_by": {
-            "description": "Parent container details",
-            "properties": {
-              "parent_org_id": {
-                "description": "ID of the parent Organization, if one exists",
-                "example": "4536bcfad5faccb111b47003c79917fa",
-                "maxLength": 32,
-                "readOnly": true,
-                "type": "string",
-                "x-auditable": true
-              },
-              "parent_org_name": {
-                "description": "Name of the parent Organization, if one exists",
-                "example": "Demo Parent Organization",
-                "readOnly": true,
-                "type": "string",
-                "x-auditable": true
-              }
-            },
-            "type": "object"
-          },
-          "name": {
-            "description": "Account name",
-            "example": "Demo Account",
-            "maxLength": 100,
-            "type": "string",
-            "x-auditable": true
-          },
-          "settings": {
-            "description": "Account settings",
-            "properties": {
-              "abuse_contact_email": {
-                "description": "Sets an abuse contact email to notify for abuse reports.",
-                "type": "string",
-                "x-auditable": true
-              },
-              "enforce_twofactor": {
-                "default": false,
-                "description": "Indicates whether membership in this account requires that\nTwo-Factor Authentication is enabled",
-                "type": "boolean",
-                "x-auditable": true,
-                "x-stainless-terraform-configurability": "computed_optional"
-              }
-            },
-            "type": "object"
-          },
-          "type": {
-            "$ref": "#/components/schemas/iam_account-type"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "type"
-        ],
-        "type": "object"
-      },
-      "dnssec_api-response-single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/dnssec_api-response-common"
-          }
-        ],
-        "type": "object"
-      },
-      "dnssec_dnssec": {
-        "properties": {
-          "algorithm": {
-            "$ref": "#/components/schemas/dnssec_algorithm"
-          },
-          "digest": {
-            "$ref": "#/components/schemas/dnssec_digest"
-          },
-          "digest_algorithm": {
-            "$ref": "#/components/schemas/dnssec_digest_algorithm"
-          },
-          "digest_type": {
-            "$ref": "#/components/schemas/dnssec_digest_type"
-          },
-          "dnssec_multi_signer": {
-            "$ref": "#/components/schemas/dnssec_dnssec_multi_signer"
-          },
-          "dnssec_presigned": {
-            "$ref": "#/components/schemas/dnssec_dnssec_presigned"
-          },
-          "dnssec_use_nsec3": {
-            "$ref": "#/components/schemas/dnssec_dnssec_use_nsec3"
-          },
-          "ds": {
-            "$ref": "#/components/schemas/dnssec_ds"
-          },
-          "flags": {
-            "$ref": "#/components/schemas/dnssec_flags"
-          },
-          "key_tag": {
-            "$ref": "#/components/schemas/dnssec_key_tag"
-          },
-          "key_type": {
-            "$ref": "#/components/schemas/dnssec_key_type"
-          },
-          "modified_on": {
-            "$ref": "#/components/schemas/dnssec_modified_on"
-          },
-          "public_key": {
-            "$ref": "#/components/schemas/dnssec_public_key"
-          },
-          "status": {
-            "$ref": "#/components/schemas/dnssec_status"
-          }
-        },
         "type": "object"
       },
       "registrar-api_registration": {
@@ -7253,6 +7009,53 @@
           "privacy_mode",
           "locked"
         ],
+        "type": "object"
+      },
+      "dnssec_dnssec": {
+        "properties": {
+          "algorithm": {
+            "$ref": "#/components/schemas/dnssec_algorithm"
+          },
+          "digest": {
+            "$ref": "#/components/schemas/dnssec_digest"
+          },
+          "digest_algorithm": {
+            "$ref": "#/components/schemas/dnssec_digest_algorithm"
+          },
+          "digest_type": {
+            "$ref": "#/components/schemas/dnssec_digest_type"
+          },
+          "dnssec_multi_signer": {
+            "$ref": "#/components/schemas/dnssec_dnssec_multi_signer"
+          },
+          "dnssec_presigned": {
+            "$ref": "#/components/schemas/dnssec_dnssec_presigned"
+          },
+          "dnssec_use_nsec3": {
+            "$ref": "#/components/schemas/dnssec_dnssec_use_nsec3"
+          },
+          "ds": {
+            "$ref": "#/components/schemas/dnssec_ds"
+          },
+          "flags": {
+            "$ref": "#/components/schemas/dnssec_flags"
+          },
+          "key_tag": {
+            "$ref": "#/components/schemas/dnssec_key_tag"
+          },
+          "key_type": {
+            "$ref": "#/components/schemas/dnssec_key_type"
+          },
+          "modified_on": {
+            "$ref": "#/components/schemas/dnssec_modified_on"
+          },
+          "public_key": {
+            "$ref": "#/components/schemas/dnssec_public_key"
+          },
+          "status": {
+            "$ref": "#/components/schemas/dnssec_status"
+          }
+        },
         "type": "object"
       },
       "pages_source": {
@@ -7416,116 +7219,34 @@
         },
         "type": "array"
       },
-      "pages_secret_text_env_var": {
-        "description": "An encrypted environment variable.",
-        "example": {
-          "type": "secret_text",
-          "value": ""
-        },
-        "nullable": true,
-        "properties": {
-          "type": {
-            "enum": [
-              "secret_text"
-            ],
-            "type": "string",
-            "x-auditable": true
-          },
-          "value": {
-            "description": "Secret value.",
-            "type": "string",
-            "x-sensitive": true
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ],
-        "type": "object"
+      "iam_common_components-schemas-identifier": {
+        "description": "Identifier",
+        "example": "023e105f4ecef8ad9ca31a8372d0c353",
+        "maxLength": 32,
+        "minLength": 32,
+        "type": "string",
+        "x-auditable": true
       },
-      "iam_api-response-common": {
-        "properties": {
-          "errors": {
-            "$ref": "#/components/schemas/iam_schemas-messages"
+      "cache_messages": {
+        "example": [],
+        "items": {
+          "properties": {
+            "code": {
+              "minimum": 1000,
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
           },
-          "messages": {
-            "$ref": "#/components/schemas/iam_schemas-messages"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              true
-            ],
-            "example": true,
-            "type": "boolean"
-          }
+          "required": [
+            "code",
+            "message"
+          ],
+          "type": "object",
+          "uniqueItems": true
         },
-        "required": [
-          "success",
-          "errors",
-          "messages"
-        ],
-        "type": "object"
-      },
-      "dns-records_api-response-single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/dns-records_api-response-common"
-          }
-        ],
-        "type": "object"
-      },
-      "registrar-api_cursor_result_info": {
-        "description": "Cursor-based pagination metadata. Used by list endpoints that support\ncursor pagination. Pass the `cursor` value as a query parameter in the\nnext request to fetch the next page. An empty string indicates there\nare no more pages.\n",
-        "properties": {
-          "count": {
-            "description": "Number of items in the current result set.",
-            "example": 20,
-            "type": "integer"
-          },
-          "cursor": {
-            "description": "Opaque cursor for fetching the next page. Pass this value as the\n`cursor` query parameter in a subsequent request. An empty string\nindicates there are no more pages.\n",
-            "example": "eyJ0IjoiMjAyNS0wNi0xNVQxMjowMDowMC4wMDAwMDBaIiwibiI6ImJyYXZvLm5ldCJ9",
-            "type": "string"
-          },
-          "per_page": {
-            "description": "Maximum number of items per page.",
-            "example": 20,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "cursor",
-          "per_page",
-          "count"
-        ],
-        "type": "object"
-      },
-      "pages_plain_text_env_var": {
-        "description": "A plaintext environment variable.",
-        "example": {
-          "type": "plain_text",
-          "value": "hello world"
-        },
-        "nullable": true,
-        "properties": {
-          "type": {
-            "enum": [
-              "plain_text"
-            ],
-            "type": "string",
-            "x-auditable": true
-          },
-          "value": {
-            "description": "Environment variable value.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ],
-        "type": "object"
+        "type": "array"
       },
       "pages_deployment_config_values": {
         "properties": {
@@ -7927,6 +7648,143 @@
         ],
         "type": "object"
       },
+      "iam_api-response-common": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/iam_schemas-messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/iam_schemas-messages"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              true
+            ],
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages"
+        ],
+        "type": "object"
+      },
+      "dns-records_dns-record-with-data": {
+        "type": "object",
+        "description": "DNS record (simplified). Original: dns-records_dns-record-with-data",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "ttl": {
+            "type": "number"
+          },
+          "proxied": {
+            "type": "boolean"
+          },
+          "proxiable": {
+            "type": "boolean"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "priority": {
+            "type": "number"
+          },
+          "created_on": {
+            "type": "string"
+          },
+          "modified_on": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "dnssec_api-response-single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/dnssec_api-response-common"
+          }
+        ],
+        "type": "object"
+      },
+      "registrar-api_workflow_status": {
+        "description": "Status of an async registration workflow.",
+        "properties": {
+          "completed": {
+            "description": "Whether the workflow has reached a terminal state. `true` when\n`state` is `succeeded` or `failed`. `false` for `pending`,\n`in_progress`, `action_required`, and `blocked`.\n",
+            "example": false,
+            "type": "boolean"
+          },
+          "context": {
+            "additionalProperties": true,
+            "description": "Workflow-specific data for this workflow.\n\nThe workflow subject is identified by `context.domain_name` for\ndomain-centric workflows.\n",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/registrar-api_workflow_error"
+              }
+            ],
+            "nullable": true
+          },
+          "links": {
+            "$ref": "#/components/schemas/registrar-api_workflow_links"
+          },
+          "state": {
+            "description": "Workflow lifecycle state.\n- `pending`: Workflow has been created but not yet started processing.\n- `in_progress`: Actively processing. Continue polling `links.self`.\n  The workflow has an internal deadline and will not remain in this\n  state indefinitely.\n- `action_required`: Paused \u2014 requires action by the user (not the\n  system). See `context.action` for what is needed. An automated\n  polling loop must break on this state; it will not resolve on its\n  own without user intervention.\n- `blocked`: The workflow cannot make progress due to a third party\n  such as the domain extension's registry or a losing registrar.\n  No user action will help. Continue polling \u2014 the block may resolve\n  when the third party responds.\n- `succeeded`: Terminal. The operation completed successfully.\n  `completed` will be `true`. For registrations, `context.registration`\n  contains the resulting registration resource.\n- `failed`: Terminal. The operation failed. `completed` will be `true`.\n  See `error.code` and `error.message` for the reason. Do not\n  auto-retry without user review.\n",
+            "enum": [
+              "pending",
+              "in_progress",
+              "action_required",
+              "blocked",
+              "succeeded",
+              "failed"
+            ],
+            "example": "in_progress",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "completed",
+          "created_at",
+          "updated_at",
+          "links"
+        ],
+        "type": "object"
+      },
       "dns-records_api-response-collection": {
         "allOf": [
           {
@@ -8002,47 +7860,70 @@
         },
         "type": "array"
       },
-      "registrar-api_domain_check_result": {
-        "description": "Represents a single authoritative domain availability result returned by the Check endpoint. Check results reflect current registry status and should be used immediately before registration.",
+      "pages_plain_text_env_var": {
+        "description": "A plaintext environment variable.",
+        "example": {
+          "type": "plain_text",
+          "value": "hello world"
+        },
+        "nullable": true,
         "properties": {
-          "name": {
-            "description": "The fully qualified domain name (FQDN) in punycode format for internationalized domain names (IDNs).",
-            "example": "example.com",
-            "type": "string"
-          },
-          "pricing": {
-            "$ref": "#/components/schemas/registrar-api_pricing"
-          },
-          "reason": {
-            "description": "Present only when `registrable` is `false`. Explains why the domain cannot be registered via this API.\n- `extension_not_supported_via_api`: Cloudflare Registrar supports this extension in the dashboard but it is not yet available for programmatic registration via this API. The user can register via `https://dash.cloudflare.com/{account_id}/domains/registrations`.\n- `extension_not_supported`: This extension is not supported by Cloudflare Registrar at all.\n- `extension_disallows_registration`: The extension's registry has temporarily or permanently frozen new registrations. No registrar can register domains on this extension at this time.\n- `domain_premium`: The domain is premium priced. Premium registration is not currently supported by this API.\n- `domain_unavailable`: The domain is already registered, reserved, or otherwise not available on a supported extension.",
+          "type": {
             "enum": [
-              "extension_not_supported_via_api",
-              "extension_not_supported",
-              "extension_disallows_registration",
-              "domain_premium",
-              "domain_unavailable"
+              "plain_text"
             ],
-            "example": "domain_unavailable",
-            "type": "string"
+            "type": "string",
+            "x-auditable": true
           },
-          "registrable": {
-            "description": "Indicates whether this domain can be registered programmatically through this API based on a real-time registry check.\n- `true`: Domain is available for registration. The `pricing` object will be included.\n- `false`: Domain is not available. See the `reason` field for why. `tier` may still be present on some non-registrable results, such as premium domains.",
-            "example": true,
-            "type": "boolean"
-          },
-          "tier": {
-            "description": "The pricing tier for this domain. Always present when `registrable` is `true`; defaults to `standard` for most domains. May be absent when `registrable` is `false`.\n- `standard`: Standard registry pricing\n- `premium`: Premium domain with higher pricing set by the registry",
-            "enum": [
-              "standard",
-              "premium"
-            ],
-            "example": "standard",
+          "value": {
+            "description": "Environment variable value.",
             "type": "string"
           }
         },
         "required": [
-          "name",
-          "registrable"
+          "type",
+          "value"
+        ],
+        "type": "object"
+      },
+      "registrar-api_api-response-common": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/registrar-api_messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/registrar-api_messages"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "object"
+              },
+              {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "success": {
+            "description": "Whether the API call was successful",
+            "enum": [
+              true
+            ],
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages",
+          "result"
         ],
         "type": "object"
       },
@@ -8078,163 +7959,12 @@
         },
         "type": "array"
       },
-      "zones_messages": {
-        "example": [],
-        "items": {
-          "properties": {
-            "code": {
-              "minimum": 1000,
-              "type": "integer"
-            },
-            "message": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "code",
-            "message"
-          ],
-          "type": "object",
-          "uniqueItems": true
-        },
-        "type": "array"
-      },
-      "iam_account-type": {
-        "enum": [
-          "standard",
-          "enterprise"
-        ]
-      },
-      "dns-records_dns-record-without-data": {
-        "type": "object",
-        "description": "DNS record (simplified from complex union). Original schema: dns-records_dns-record-without-data",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "description": "Record type (A, AAAA, CNAME, etc.)"
-          },
-          "name": {
-            "type": "string",
-            "description": "Record name"
-          },
-          "content": {
-            "type": "string",
-            "description": "Record content/value"
-          },
-          "ttl": {
-            "type": "number",
-            "description": "TTL in seconds, 1=auto"
-          },
-          "proxied": {
-            "type": "boolean"
-          },
-          "proxiable": {
-            "type": "boolean"
-          },
-          "comment": {
-            "type": "string"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Structured data for complex record types"
-          },
-          "priority": {
-            "type": "number",
-            "description": "Priority for MX/SRV"
-          },
-          "created_on": {
-            "type": "string"
-          },
-          "modified_on": {
-            "type": "string"
+      "iam_api-response-single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/iam_api-response-common"
           }
-        },
-        "additionalProperties": true
-      },
-      "registrar-api_messages": {
-        "example": [],
-        "items": {
-          "properties": {
-            "code": {
-              "minimum": 1000,
-              "type": "integer"
-            },
-            "message": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "code",
-            "message"
-          ],
-          "type": "object",
-          "uniqueItems": true
-        },
-        "type": "array"
-      },
-      "cache_result": {
-        "properties": {
-          "editable": {
-            "description": "Whether this setting can be updated or not.",
-            "readOnly": true,
-            "type": "boolean"
-          },
-          "id": {
-            "example": "ssl_automatic_mode",
-            "readOnly": true,
-            "type": "string"
-          },
-          "modified_on": {
-            "description": "Last time this setting was modified.",
-            "example": "2014-01-01T05:20:00.12345Z",
-            "format": "date-time",
-            "readOnly": true,
-            "type": "string"
-          },
-          "next_scheduled_scan": {
-            "description": "Next time this zone will be scanned by the Automatic SSL/TLS.",
-            "example": "2014-01-01T05:20:00.12345Z",
-            "format": "date-time",
-            "nullable": true,
-            "readOnly": true,
-            "type": "string"
-          },
-          "value": {
-            "description": "Current setting of the automatic SSL/TLS.",
-            "enum": [
-              "auto",
-              "custom"
-            ],
-            "example": "auto",
-            "readOnly": true,
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "modified_on",
-          "value",
-          "editable"
         ],
-        "type": "object"
-      },
-      "registrar-api_registration_contacts": {
-        "description": "Contact data for the registration request.\n\nIf the `contacts` object is omitted entirely from the request, or if\n`contacts.registrant` is not provided, the system will use the account's\ndefault address book entry as the registrant contact. This default must be\npre-configured by the account owner at\n`https://dash.cloudflare.com/{account_id}/domains/registrations`, where\nthey can create or update the address book entry and accept the required\nagreement. No API exists for managing address book entries at this time.\n\nIf no default address book entry exists and no registrant contact is\nprovided, the registration request will fail with a validation error.\n",
-        "properties": {
-          "registrant": {
-            "$ref": "#/components/schemas/registrar-api_registration_contact"
-          }
-        },
         "type": "object"
       },
       "pages_deployment": {
@@ -8455,28 +8185,190 @@
         ],
         "type": "object"
       },
-      "dns-records_dns-record-with-data": {
+      "dns-records_api-response-single": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/dns-records_api-response-common"
+          }
+        ],
+        "type": "object"
+      },
+      "zones_messages": {
+        "example": [],
+        "items": {
+          "properties": {
+            "code": {
+              "minimum": 1000,
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "type": "object",
+          "uniqueItems": true
+        },
+        "type": "array"
+      },
+      "iam_account-type": {
+        "enum": [
+          "standard",
+          "enterprise"
+        ]
+      },
+      "cache_schemas_value": {
+        "description": "Controls enablement of Automatic SSL/TLS.",
+        "enum": [
+          "auto",
+          "custom"
+        ],
+        "example": "auto",
+        "type": "string"
+      },
+      "iam_account": {
+        "properties": {
+          "created_on": {
+            "description": "Timestamp for the creation of the account",
+            "example": "2014-03-01T12:21:02.0000Z",
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "id": {
+            "$ref": "#/components/schemas/iam_common_components-schemas-identifier"
+          },
+          "managed_by": {
+            "description": "Parent container details",
+            "properties": {
+              "parent_org_id": {
+                "description": "ID of the parent Organization, if one exists",
+                "example": "4536bcfad5faccb111b47003c79917fa",
+                "maxLength": 32,
+                "readOnly": true,
+                "type": "string",
+                "x-auditable": true
+              },
+              "parent_org_name": {
+                "description": "Name of the parent Organization, if one exists",
+                "example": "Demo Parent Organization",
+                "readOnly": true,
+                "type": "string",
+                "x-auditable": true
+              }
+            },
+            "type": "object"
+          },
+          "name": {
+            "description": "Account name",
+            "example": "Demo Account",
+            "maxLength": 100,
+            "type": "string",
+            "x-auditable": true
+          },
+          "settings": {
+            "description": "Account settings",
+            "properties": {
+              "abuse_contact_email": {
+                "description": "Sets an abuse contact email to notify for abuse reports.",
+                "type": "string",
+                "x-auditable": true
+              },
+              "enforce_twofactor": {
+                "default": false,
+                "description": "Indicates whether membership in this account requires that\nTwo-Factor Authentication is enabled",
+                "type": "boolean",
+                "x-auditable": true,
+                "x-stainless-terraform-configurability": "computed_optional"
+              }
+            },
+            "type": "object"
+          },
+          "type": {
+            "$ref": "#/components/schemas/iam_account-type"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "pages_build_config": {
+        "description": "Configs for the project build process.",
+        "properties": {
+          "build_caching": {
+            "description": "Enable build caching for the project.",
+            "example": true,
+            "nullable": true,
+            "type": "boolean",
+            "x-auditable": true
+          },
+          "build_command": {
+            "description": "Command used to build project.",
+            "example": "npm run build",
+            "nullable": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "destination_dir": {
+            "description": "Assets output directory of the build.",
+            "example": "build",
+            "nullable": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "root_dir": {
+            "description": "Directory to run the command.",
+            "example": "/",
+            "nullable": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "web_analytics_tag": {
+            "description": "The classifying tag for analytics.",
+            "example": "cee1c73f6e4743d0b5e6bb1a0bcaabcc",
+            "nullable": true,
+            "type": "string",
+            "x-auditable": true
+          },
+          "web_analytics_token": {
+            "description": "The auth token for analytics.",
+            "example": "021e1057c18547eca7b79f2516f06o7x",
+            "nullable": true,
+            "type": "string",
+            "x-sensitive": true
+          }
+        },
+        "required": [
+          "web_analytics_tag",
+          "web_analytics_token"
+        ],
+        "type": "object"
+      },
+      "dns-records_dns-record-without-data": {
         "type": "object",
-        "description": "DNS record (simplified from complex union). Original schema: dns-records_dns-record-with-data",
+        "description": "DNS record (simplified). Original: dns-records_dns-record-without-data",
         "properties": {
           "id": {
             "type": "string"
           },
           "type": {
-            "type": "string",
-            "description": "Record type (A, AAAA, CNAME, etc.)"
+            "type": "string"
           },
           "name": {
-            "type": "string",
-            "description": "Record name"
+            "type": "string"
           },
           "content": {
-            "type": "string",
-            "description": "Record content/value"
+            "type": "string"
           },
           "ttl": {
-            "type": "number",
-            "description": "TTL in seconds, 1=auto"
+            "type": "number"
           },
           "proxied": {
             "type": "boolean"
@@ -8495,12 +8387,10 @@
           },
           "data": {
             "type": "object",
-            "additionalProperties": true,
-            "description": "Structured data for complex record types"
+            "additionalProperties": true
           },
           "priority": {
-            "type": "number",
-            "description": "Priority for MX/SRV"
+            "type": "number"
           },
           "created_on": {
             "type": "string"
@@ -8511,204 +8401,327 @@
         },
         "additionalProperties": true
       },
-      "iam_api-response-collection": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/iam_api-response-common"
-          },
-          {
-            "properties": {
-              "result_info": {
-                "$ref": "#/components/schemas/iam_result_info"
-              }
-            }
+      "registrar-api_registration_contacts": {
+        "description": "Contact data for the registration request.\n\nIf the `contacts` object is omitted entirely from the request, or if\n`contacts.registrant` is not provided, the system will use the account's\ndefault address book entry as the registrant contact. This default must be\npre-configured by the account owner at\n`https://dash.cloudflare.com/{account_id}/domains/registrations`, where\nthey can create or update the address book entry and accept the required\nagreement. No API exists for managing address book entries at this time.\n\nIf no default address book entry exists and no registrant contact is\nprovided, the registration request will fail with a validation error.\n",
+        "properties": {
+          "registrant": {
+            "$ref": "#/components/schemas/registrar-api_registration_contact"
           }
+        },
+        "type": "object"
+      },
+      "registrar-api_cursor_result_info": {
+        "description": "Cursor-based pagination metadata. Used by list endpoints that support\ncursor pagination. Pass the `cursor` value as a query parameter in the\nnext request to fetch the next page. An empty string indicates there\nare no more pages.\n",
+        "properties": {
+          "count": {
+            "description": "Number of items in the current result set.",
+            "example": 20,
+            "type": "integer"
+          },
+          "cursor": {
+            "description": "Opaque cursor for fetching the next page. Pass this value as the\n`cursor` query parameter in a subsequent request. An empty string\nindicates there are no more pages.\n",
+            "example": "eyJ0IjoiMjAyNS0wNi0xNVQxMjowMDowMC4wMDAwMDBaIiwibiI6ImJyYXZvLm5ldCJ9",
+            "type": "string"
+          },
+          "per_page": {
+            "description": "Maximum number of items per page.",
+            "example": 20,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cursor",
+          "per_page",
+          "count"
         ],
         "type": "object"
       },
-      "registrar-api_workflow_status": {
-        "description": "Status of an async registration workflow.",
+      "dns-records_messages": {
+        "example": [],
+        "items": {
+          "properties": {
+            "code": {
+              "minimum": 1000,
+              "type": "integer"
+            },
+            "documentation_url": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "source": {
+              "properties": {
+                "pointer": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "type": "object",
+          "uniqueItems": true
+        },
+        "type": "array"
+      },
+      "cache_result": {
         "properties": {
-          "completed": {
-            "description": "Whether the workflow has reached a terminal state. `true` when\n`state` is `succeeded` or `failed`. `false` for `pending`,\n`in_progress`, `action_required`, and `blocked`.\n",
-            "example": false,
+          "editable": {
+            "description": "Whether this setting can be updated or not.",
+            "readOnly": true,
             "type": "boolean"
           },
-          "context": {
-            "additionalProperties": true,
-            "description": "Workflow-specific data for this workflow.\n\nThe workflow subject is identified by `context.domain_name` for\ndomain-centric workflows.\n",
-            "type": "object"
-          },
-          "created_at": {
-            "format": "date-time",
+          "id": {
+            "example": "ssl_automatic_mode",
+            "readOnly": true,
             "type": "string"
           },
-          "error": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/registrar-api_workflow_error"
-              }
-            ],
-            "nullable": true
+          "modified_on": {
+            "description": "Last time this setting was modified.",
+            "example": "2014-01-01T05:20:00.12345Z",
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
           },
-          "links": {
-            "$ref": "#/components/schemas/registrar-api_workflow_links"
+          "next_scheduled_scan": {
+            "description": "Next time this zone will be scanned by the Automatic SSL/TLS.",
+            "example": "2014-01-01T05:20:00.12345Z",
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
           },
-          "state": {
-            "description": "Workflow lifecycle state.\n- `pending`: Workflow has been created but not yet started processing.\n- `in_progress`: Actively processing. Continue polling `links.self`.\n  The workflow has an internal deadline and will not remain in this\n  state indefinitely.\n- `action_required`: Paused \u2014 requires action by the user (not the\n  system). See `context.action` for what is needed. An automated\n  polling loop must break on this state; it will not resolve on its\n  own without user intervention.\n- `blocked`: The workflow cannot make progress due to a third party\n  such as the domain extension's registry or a losing registrar.\n  No user action will help. Continue polling \u2014 the block may resolve\n  when the third party responds.\n- `succeeded`: Terminal. The operation completed successfully.\n  `completed` will be `true`. For registrations, `context.registration`\n  contains the resulting registration resource.\n- `failed`: Terminal. The operation failed. `completed` will be `true`.\n  See `error.code` and `error.message` for the reason. Do not\n  auto-retry without user review.\n",
+          "value": {
+            "description": "Current setting of the automatic SSL/TLS.",
             "enum": [
-              "pending",
-              "in_progress",
-              "action_required",
-              "blocked",
-              "succeeded",
-              "failed"
+              "auto",
+              "custom"
             ],
-            "example": "in_progress",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
+            "example": "auto",
+            "readOnly": true,
             "type": "string"
           }
         },
         "required": [
-          "state",
-          "completed",
-          "created_at",
-          "updated_at",
-          "links"
+          "id",
+          "modified_on",
+          "value",
+          "editable"
         ],
         "type": "object"
       },
-      "registrar-api_api-response-common": {
+      "registrar-api_domain_check_result": {
+        "description": "Represents a single authoritative domain availability result returned by the Check endpoint. Check results reflect current registry status and should be used immediately before registration.",
         "properties": {
-          "errors": {
-            "$ref": "#/components/schemas/registrar-api_messages"
+          "name": {
+            "description": "The fully qualified domain name (FQDN) in punycode format for internationalized domain names (IDNs).",
+            "example": "example.com",
+            "type": "string"
           },
-          "messages": {
-            "$ref": "#/components/schemas/registrar-api_messages"
+          "pricing": {
+            "$ref": "#/components/schemas/registrar-api_pricing"
           },
-          "result": {
-            "oneOf": [
-              {
-                "type": "object"
-              },
-              {
-                "items": {
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              {
-                "type": "string"
-              }
-            ]
-          },
-          "success": {
-            "description": "Whether the API call was successful",
+          "reason": {
+            "description": "Present only when `registrable` is `false`. Explains why the domain cannot be registered via this API.\n- `extension_not_supported_via_api`: Cloudflare Registrar supports this extension in the dashboard but it is not yet available for programmatic registration via this API. The user can register via `https://dash.cloudflare.com/{account_id}/domains/registrations`.\n- `extension_not_supported`: This extension is not supported by Cloudflare Registrar at all.\n- `extension_disallows_registration`: The extension's registry has temporarily or permanently frozen new registrations. No registrar can register domains on this extension at this time.\n- `domain_premium`: The domain is premium priced. Premium registration is not currently supported by this API.\n- `domain_unavailable`: The domain is already registered, reserved, or otherwise not available on a supported extension.",
             "enum": [
-              true
+              "extension_not_supported_via_api",
+              "extension_not_supported",
+              "extension_disallows_registration",
+              "domain_premium",
+              "domain_unavailable"
             ],
+            "example": "domain_unavailable",
+            "type": "string"
+          },
+          "registrable": {
+            "description": "Indicates whether this domain can be registered programmatically through this API based on a real-time registry check.\n- `true`: Domain is available for registration. The `pricing` object will be included.\n- `false`: Domain is not available. See the `reason` field for why. `tier` may still be present on some non-registrable results, such as premium domains.",
             "example": true,
             "type": "boolean"
+          },
+          "tier": {
+            "description": "The pricing tier for this domain. Always present when `registrable` is `true`; defaults to `standard` for most domains. May be absent when `registrable` is `false`.\n- `standard`: Standard registry pricing\n- `premium`: Premium domain with higher pricing set by the registry",
+            "enum": [
+              "standard",
+              "premium"
+            ],
+            "example": "standard",
+            "type": "string"
           }
         },
         "required": [
-          "success",
-          "errors",
-          "messages",
-          "result"
+          "name",
+          "registrable"
         ],
         "type": "object"
       },
-      "iam_common_components-schemas-identifier": {
-        "description": "Identifier",
-        "example": "023e105f4ecef8ad9ca31a8372d0c353",
-        "maxLength": 32,
-        "minLength": 32,
+      "dns-records_dns-record-response": {
+        "type": "object",
+        "description": "DNS record (simplified). Original: dns-records_dns-record-response",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "ttl": {
+            "type": "number"
+          },
+          "proxied": {
+            "type": "boolean"
+          },
+          "proxiable": {
+            "type": "boolean"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "priority": {
+            "type": "number"
+          },
+          "created_on": {
+            "type": "string"
+          },
+          "modified_on": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "registrar-api_workflow_links": {
+        "properties": {
+          "resource": {
+            "description": "URL to the domain resource.",
+            "example": "/accounts/{account_id}/registrar/registrations/example.com",
+            "type": "string"
+          },
+          "self": {
+            "description": "URL to this status resource.",
+            "example": "/accounts/{account_id}/registrar/registrations/example.com/registration-status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "self"
+        ],
+        "type": "object"
+      },
+      "registrar-api_registration_contact": {
+        "description": "Registrant contact data for the domain registration. This information\nis submitted to the domain registry and, depending on extension and\nprivacy settings, may appear in public WHOIS records.\n",
+        "properties": {
+          "email": {
+            "description": "Email address for the registrant. Used for domain-related\ncommunications from the registry, including ownership verification\nand renewal notices.\n",
+            "example": "ada@example.com",
+            "format": "email",
+            "type": "string"
+          },
+          "fax": {
+            "description": "Fax number in E.164 format (e.g., `+1.5555555555`). Optional.\nMost registrations do not require a fax number.\n",
+            "example": "+1.5555555555",
+            "type": "string"
+          },
+          "phone": {
+            "description": "Phone number in E.164 format: `+{country_code}.{number}` with no\nspaces or dashes. Examples: `+1.5555555555` (US), `+44.2071234567`\n(UK), `+81.312345678` (Japan).\n",
+            "example": "+1.5555555555",
+            "type": "string"
+          },
+          "postal_info": {
+            "$ref": "#/components/schemas/registrar-api_registration_contact_postal_info"
+          }
+        },
+        "required": [
+          "phone",
+          "email",
+          "postal_info"
+        ],
+        "type": "object"
+      },
+      "dns-records_ARecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_TXTRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_LOCRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_MXRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_PTRRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dnssec_key_type": {
+        "description": "Algorithm key type.",
+        "example": "ECDSAP256SHA256",
+        "nullable": true,
+        "readOnly": true,
         "type": "string",
         "x-auditable": true
       },
-      "iam_api-response-single": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/iam_api-response-common"
-          }
-        ],
-        "type": "object"
-      },
-      "dnssec_status": {
-        "description": "Status of DNSSEC, based on user-desired state and presence of necessary records.",
-        "enum": [
-          "active",
-          "pending",
-          "disabled",
-          "pending-disabled",
-          "error"
-        ],
-        "example": "active",
+      "dnssec_public_key": {
+        "description": "Public key for DS record.",
+        "example": "oXiGYrSTO+LSCJ3mohc8EP+CzF9KxBj8/ydXJ22pKuZP3VAC3/Md/k7xZfz470CoRyZJ6gV6vml07IC3d8xqhA==",
+        "nullable": true,
+        "readOnly": true,
+        "type": "string",
         "x-auditable": true
       },
-      "registrar-api_workflow_error": {
-        "description": "Error details when a workflow reaches the `failed` state. The specific\nerror codes and messages depend on the workflow type (registration,\nupdate, etc.) and the underlying registry response. These workflow\nerror codes are separate from immediate HTTP error `errors[].code`\nvalues returned by non-2xx responses. Surface\n`error.message` to the user for context.\n",
-        "properties": {
-          "code": {
-            "description": "Machine-readable error code identifying the failure reason.",
-            "example": "registry_rejected",
-            "type": "string"
+      "pages_env_vars": {
+        "additionalProperties": {
+          "discriminator": {
+            "mapping": {
+              "plain_text": "#/components/schemas/pages_plain_text_env_var",
+              "secret_text": "#/components/schemas/pages_secret_text_env_var"
+            },
+            "propertyName": "type"
           },
-          "message": {
-            "description": "Human-readable explanation of the failure. May include registry-specific details.",
-            "example": "Registry rejected the request.",
-            "type": "string"
-          }
+          "nullable": true,
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/pages_plain_text_env_var"
+            },
+            {
+              "$ref": "#/components/schemas/pages_secret_text_env_var"
+            }
+          ],
+          "type": "object"
         },
-        "required": [
-          "code",
-          "message"
-        ],
+        "description": "Environment variables used for builds and Pages Functions.",
+        "nullable": true,
         "type": "object"
       },
-      "registrar-api_pricing": {
-        "description": "Annual pricing information for a registrable domain. This object is only\npresent when `registrable` is `true`. All prices are per year and returned\nas strings to preserve decimal precision.\n\n`registration_cost` and `renewal_cost` are frequently the same value, but\nmay differ \u2014 especially for premium domains where registries set different\nrates for initial registration vs. renewal. For a multi-year registration\n(e.g., 4 years), the first year is charged at `registration_cost` and each\nsubsequent year at `renewal_cost`. Registry pricing may change over time;\nthe values returned here reflect the current registry rate. Premium pricing\nmay be surfaced by Search and Check, but premium registration is not currently\nsupported by this API.\n",
-        "properties": {
-          "currency": {
-            "description": "ISO-4217 currency code for the prices (e.g., \"USD\", \"EUR\", \"GBP\").",
-            "example": "USD",
-            "type": "string"
-          },
-          "registration_cost": {
-            "description": "The first-year cost to register this domain. For premium domains\n(`tier: premium`), this price is set by the registry and may be\nsignificantly higher than standard pricing. For multi-year\nregistrations, this cost applies to the first year only; subsequent\nyears are charged at `renewal_cost`.\n",
-            "example": "8.57",
-            "type": "string"
-          },
-          "renewal_cost": {
-            "description": "Per-year renewal cost for this domain. Applied to each year beyond\nthe first year of a multi-year registration, and to each annual\nauto-renewal thereafter. May differ from `registration_cost`,\nespecially for premium domains where initial registration often\ncosts more than renewals.\n",
-            "example": "8.57",
-            "type": "string"
-          }
-        },
-        "required": [
-          "currency",
-          "registration_cost",
-          "renewal_cost"
-        ],
-        "type": "object"
-      },
-      "dns-records_SVCBRecord": {
+      "dns-records_URIRecord": {
         "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_SVCBRecord",
         "additionalProperties": true
       },
-      "dns-records_NSRecord": {
+      "dns-records_CERTRecord": {
         "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_NSRecord",
-        "additionalProperties": true
-      },
-      "dns-records_TLSARecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_TLSARecord",
         "additionalProperties": true
       },
       "pages_stage": {
@@ -8769,140 +8782,13 @@
         ],
         "type": "object"
       },
-      "dns-records_SSHFPRecord": {
+      "dns-records_TLSARecord": {
         "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_SSHFPRecord",
         "additionalProperties": true
       },
-      "dns-records_PTRRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_PTRRecord",
-        "additionalProperties": true
-      },
-      "dns-records_URIRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_URIRecord",
-        "additionalProperties": true
-      },
-      "dnssec_public_key": {
-        "description": "Public key for DS record.",
-        "example": "oXiGYrSTO+LSCJ3mohc8EP+CzF9KxBj8/ydXJ22pKuZP3VAC3/Md/k7xZfz470CoRyZJ6gV6vml07IC3d8xqhA==",
-        "nullable": true,
-        "readOnly": true,
-        "type": "string",
-        "x-auditable": true
-      },
-      "dnssec_flags": {
-        "description": "Flag for DNSSEC record.",
-        "example": 257,
-        "nullable": true,
-        "readOnly": true,
-        "type": "number",
-        "x-auditable": true
-      },
-      "registrar-api_workflow_links": {
-        "properties": {
-          "resource": {
-            "description": "URL to the domain resource.",
-            "example": "/accounts/{account_id}/registrar/registrations/example.com",
-            "type": "string"
-          },
-          "self": {
-            "description": "URL to this status resource.",
-            "example": "/accounts/{account_id}/registrar/registrations/example.com/registration-status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "self"
-        ],
-        "type": "object"
-      },
-      "registrar-api_registration_contact": {
-        "description": "Registrant contact data for the domain registration. This information\nis submitted to the domain registry and, depending on extension and\nprivacy settings, may appear in public WHOIS records.\n",
-        "properties": {
-          "email": {
-            "description": "Email address for the registrant. Used for domain-related\ncommunications from the registry, including ownership verification\nand renewal notices.\n",
-            "example": "ada@example.com",
-            "format": "email",
-            "type": "string"
-          },
-          "fax": {
-            "description": "Fax number in E.164 format (e.g., `+1.5555555555`). Optional.\nMost registrations do not require a fax number.\n",
-            "example": "+1.5555555555",
-            "type": "string"
-          },
-          "phone": {
-            "description": "Phone number in E.164 format: `+{country_code}.{number}` with no\nspaces or dashes. Examples: `+1.5555555555` (US), `+44.2071234567`\n(UK), `+81.312345678` (Japan).\n",
-            "example": "+1.5555555555",
-            "type": "string"
-          },
-          "postal_info": {
-            "$ref": "#/components/schemas/registrar-api_registration_contact_postal_info"
-          }
-        },
-        "required": [
-          "phone",
-          "email",
-          "postal_info"
-        ],
-        "type": "object"
-      },
-      "dnssec_api-response-common": {
-        "properties": {
-          "errors": {
-            "$ref": "#/components/schemas/dnssec_messages"
-          },
-          "messages": {
-            "$ref": "#/components/schemas/dnssec_messages"
-          },
-          "success": {
-            "description": "Whether the API call was successful.",
-            "enum": [
-              true
-            ],
-            "example": true,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "errors",
-          "messages"
-        ],
-        "type": "object"
-      },
-      "dns-records_OPENPGPKEYRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_OPENPGPKEYRecord",
-        "additionalProperties": true
-      },
-      "dnssec_key_tag": {
-        "description": "Code for key tag.",
-        "example": 42,
-        "nullable": true,
-        "readOnly": true,
-        "type": "number",
-        "x-auditable": true
-      },
-      "dns-records_SRVRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_SRVRecord",
-        "additionalProperties": true
-      },
-      "dns-records_CERTRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_CERTRecord",
-        "additionalProperties": true
-      },
-      "dns-records_TXTRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_TXTRecord",
-        "additionalProperties": true
-      },
-      "dnssec_digest_algorithm": {
-        "description": "Type of digest algorithm.",
-        "example": "SHA256",
+      "dnssec_algorithm": {
+        "description": "Algorithm key code.",
+        "example": "13",
         "nullable": true,
         "readOnly": true,
         "type": "string",
@@ -8932,18 +8818,33 @@
         ],
         "type": "object"
       },
-      "dnssec_ds": {
-        "description": "Full DS record.",
-        "example": "example.com. 3600 IN DS 16953 13 2 48E939042E82C22542CB377B580DFDC52A361CEFDC72E7F9107E2B6BD9306A45",
+      "dns-records_SVCBRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_CAARecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_DNSKEYRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_CNAMERecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_NAPTRRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dnssec_key_tag": {
+        "description": "Code for key tag.",
+        "example": 42,
         "nullable": true,
         "readOnly": true,
-        "type": "string",
+        "type": "number",
         "x-auditable": true
-      },
-      "dns-records_LOCRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_LOCRecord",
-        "additionalProperties": true
       },
       "dnssec_digest_type": {
         "description": "Coded type for digest algorithm.",
@@ -8953,59 +8854,29 @@
         "type": "string",
         "x-auditable": true
       },
-      "dns-records_AAAARecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_AAAARecord",
-        "additionalProperties": true
-      },
       "dns-records_HTTPSRecord": {
         "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_HTTPSRecord",
         "additionalProperties": true
       },
-      "dns-records_DNSKEYRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_DNSKEYRecord",
-        "additionalProperties": true
-      },
-      "dns-records_ARecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_ARecord",
-        "additionalProperties": true
-      },
-      "dns-records_CNAMERecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_CNAMERecord",
-        "additionalProperties": true
-      },
-      "dns-records_SMIMEARecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_SMIMEARecord",
-        "additionalProperties": true
-      },
-      "pages_env_vars": {
-        "additionalProperties": {
-          "discriminator": {
-            "mapping": {
-              "plain_text": "#/components/schemas/pages_plain_text_env_var",
-              "secret_text": "#/components/schemas/pages_secret_text_env_var"
-            },
-            "propertyName": "type"
-          },
-          "nullable": true,
-          "oneOf": [
-            {
-              "$ref": "#/components/schemas/pages_plain_text_env_var"
-            },
-            {
-              "$ref": "#/components/schemas/pages_secret_text_env_var"
-            }
-          ],
-          "type": "object"
-        },
-        "description": "Environment variables used for builds and Pages Functions.",
+      "dnssec_ds": {
+        "description": "Full DS record.",
+        "example": "example.com. 3600 IN DS 16953 13 2 48E939042E82C22542CB377B580DFDC52A361CEFDC72E7F9107E2B6BD9306A45",
         "nullable": true,
-        "type": "object"
+        "readOnly": true,
+        "type": "string",
+        "x-auditable": true
+      },
+      "dns-records_OPENPGPKEYRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_NSRecord": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "dns-records_SRVRecord": {
+        "type": "object",
+        "additionalProperties": true
       },
       "dnssec_digest": {
         "description": "Digest hash.",
@@ -9015,36 +8886,48 @@
         "type": "string",
         "x-auditable": true
       },
-      "dnssec_algorithm": {
-        "description": "Algorithm key code.",
-        "example": "13",
+      "dnssec_digest_algorithm": {
+        "description": "Type of digest algorithm.",
+        "example": "SHA256",
         "nullable": true,
         "readOnly": true,
         "type": "string",
         "x-auditable": true
       },
-      "dns-records_CAARecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_CAARecord",
-        "additionalProperties": true
+      "dnssec_api-response-common": {
+        "properties": {
+          "errors": {
+            "$ref": "#/components/schemas/dnssec_messages"
+          },
+          "messages": {
+            "$ref": "#/components/schemas/dnssec_messages"
+          },
+          "success": {
+            "description": "Whether the API call was successful.",
+            "enum": [
+              true
+            ],
+            "example": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "errors",
+          "messages"
+        ],
+        "type": "object"
       },
       "dns-records_DSRecord": {
         "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_DSRecord",
         "additionalProperties": true
       },
-      "dnssec_modified_on": {
-        "description": "When DNSSEC was last modified.",
-        "example": "2014-01-01T05:20:00Z",
-        "format": "date-time",
-        "nullable": true,
-        "readOnly": true,
-        "type": "string",
-        "x-auditable": true
-      },
-      "dns-records_NAPTRRecord": {
+      "dns-records_AAAARecord": {
         "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_NAPTRRecord",
+        "additionalProperties": true
+      },
+      "dns-records_SSHFPRecord": {
+        "type": "object",
         "additionalProperties": true
       },
       "iam_result_info": {
@@ -9072,26 +8955,84 @@
         },
         "type": "object"
       },
-      "dnssec_key_type": {
-        "description": "Algorithm key type.",
-        "example": "ECDSAP256SHA256",
+      "dnssec_status": {
+        "description": "Status of DNSSEC, based on user-desired state and presence of necessary records.",
+        "enum": [
+          "active",
+          "pending",
+          "disabled",
+          "pending-disabled",
+          "error"
+        ],
+        "example": "active",
+        "x-auditable": true
+      },
+      "dnssec_flags": {
+        "description": "Flag for DNSSEC record.",
+        "example": 257,
+        "nullable": true,
+        "readOnly": true,
+        "type": "number",
+        "x-auditable": true
+      },
+      "dnssec_modified_on": {
+        "description": "When DNSSEC was last modified.",
+        "example": "2014-01-01T05:20:00Z",
+        "format": "date-time",
         "nullable": true,
         "readOnly": true,
         "type": "string",
         "x-auditable": true
       },
-      "dns-records_MXRecord": {
-        "type": "object",
-        "description": "DNS record type (simplified). Original: dns-records_MXRecord",
-        "additionalProperties": true
+      "registrar-api_pricing": {
+        "description": "Annual pricing information for a registrable domain. This object is only\npresent when `registrable` is `true`. All prices are per year and returned\nas strings to preserve decimal precision.\n\n`registration_cost` and `renewal_cost` are frequently the same value, but\nmay differ \u2014 especially for premium domains where registries set different\nrates for initial registration vs. renewal. For a multi-year registration\n(e.g., 4 years), the first year is charged at `registration_cost` and each\nsubsequent year at `renewal_cost`. Registry pricing may change over time;\nthe values returned here reflect the current registry rate. Premium pricing\nmay be surfaced by Search and Check, but premium registration is not currently\nsupported by this API.\n",
+        "properties": {
+          "currency": {
+            "description": "ISO-4217 currency code for the prices (e.g., \"USD\", \"EUR\", \"GBP\").",
+            "example": "USD",
+            "type": "string"
+          },
+          "registration_cost": {
+            "description": "The first-year cost to register this domain. For premium domains\n(`tier: premium`), this price is set by the registry and may be\nsignificantly higher than standard pricing. For multi-year\nregistrations, this cost applies to the first year only; subsequent\nyears are charged at `renewal_cost`.\n",
+            "example": "8.57",
+            "type": "string"
+          },
+          "renewal_cost": {
+            "description": "Per-year renewal cost for this domain. Applied to each year beyond\nthe first year of a multi-year registration, and to each annual\nauto-renewal thereafter. May differ from `registration_cost`,\nespecially for premium domains where initial registration often\ncosts more than renewals.\n",
+            "example": "8.57",
+            "type": "string"
+          }
+        },
+        "required": [
+          "currency",
+          "registration_cost",
+          "renewal_cost"
+        ],
+        "type": "object"
       },
-      "dns-records_priority": {
-        "description": "Required for MX and URI records; ignored for other record types (but may still be returned by the API). Records with lower priorities are preferred. This field is to be deprecated in favor of the priority field within the data map.",
-        "example": 10,
-        "maximum": 65535,
-        "minimum": 0,
-        "type": "number",
-        "x-auditable": true
+      "registrar-api_workflow_error": {
+        "description": "Error details when a workflow reaches the `failed` state. The specific\nerror codes and messages depend on the workflow type (registration,\nupdate, etc.) and the underlying registry response. These workflow\nerror codes are separate from immediate HTTP error `errors[].code`\nvalues returned by non-2xx responses. Surface\n`error.message` to the user for context.\n",
+        "properties": {
+          "code": {
+            "description": "Machine-readable error code identifying the failure reason.",
+            "example": "registry_rejected",
+            "type": "string"
+          },
+          "message": {
+            "description": "Human-readable explanation of the failure. May include registry-specific details.",
+            "example": "Registry rejected the request.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "dns-records_SMIMEARecord": {
+        "type": "object",
+        "additionalProperties": true
       },
       "registrar-api_registration_contact_postal_info": {
         "description": "Postal/mailing information for the registrant contact.",
@@ -9116,28 +9057,32 @@
         ],
         "type": "object"
       },
+      "dns-records_priority": {
+        "description": "Required for MX and URI records; ignored for other record types (but may still be returned by the API). Records with lower priorities are preferred. This field is to be deprecated in favor of the priority field within the data map.",
+        "example": 10,
+        "maximum": 65535,
+        "minimum": 0,
+        "type": "number",
+        "x-auditable": true
+      },
       "dns-records_dns-record-shared-fields": {
         "type": "object",
-        "description": "DNS record (simplified from complex union). Original schema: dns-records_dns-record-shared-fields",
+        "description": "DNS record (simplified). Original: dns-records_dns-record-shared-fields",
         "properties": {
           "id": {
             "type": "string"
           },
           "type": {
-            "type": "string",
-            "description": "Record type (A, AAAA, CNAME, etc.)"
+            "type": "string"
           },
           "name": {
-            "type": "string",
-            "description": "Record name"
+            "type": "string"
           },
           "content": {
-            "type": "string",
-            "description": "Record content/value"
+            "type": "string"
           },
           "ttl": {
-            "type": "number",
-            "description": "TTL in seconds, 1=auto"
+            "type": "number"
           },
           "proxied": {
             "type": "boolean"
@@ -9156,12 +9101,10 @@
           },
           "data": {
             "type": "object",
-            "additionalProperties": true,
-            "description": "Structured data for complex record types"
+            "additionalProperties": true
           },
           "priority": {
-            "type": "number",
-            "description": "Priority for MX/SRV"
+            "type": "number"
           },
           "created_on": {
             "type": "string"
@@ -9172,17 +9115,25 @@
         },
         "additionalProperties": true
       },
-      "dns-records_tags": {
-        "default": [],
-        "description": "Custom tags for the DNS record. This field has no effect on DNS responses.",
-        "items": {
-          "description": "Individual tag of the form name:value (the name must consist of only letters, numbers, underscores and hyphens)",
-          "example": "owner:dns-team",
-          "type": "string",
-          "x-auditable": true
+      "dns-records_settings": {
+        "description": "Settings for the DNS record.",
+        "properties": {
+          "ipv4_only": {
+            "default": false,
+            "description": "When enabled, only A records will be generated, and AAAA records will not be created. This setting is intended for exceptional cases. Note that this option only applies to proxied records and it has no effect on whether Cloudflare communicates with the origin using IPv4 or IPv6.",
+            "example": true,
+            "type": "boolean",
+            "x-auditable": true
+          },
+          "ipv6_only": {
+            "default": false,
+            "description": "When enabled, only AAAA records will be generated, and A records will not be created. This setting is intended for exceptional cases. Note that this option only applies to proxied records and it has no effect on whether Cloudflare communicates with the origin using IPv4 or IPv6.",
+            "example": true,
+            "type": "boolean",
+            "x-auditable": true
+          }
         },
-        "type": "array",
-        "x-stainless-collection-type": "set"
+        "type": "object"
       },
       "dns-records_name": {
         "description": "Complete DNS record name, including the zone name, in Punycode.",
@@ -9197,6 +9148,12 @@
         "description": "TTL in seconds. 1 means automatic.",
         "example": 3600,
         "default": 1
+      },
+      "dns-records_comment": {
+        "description": "Comments or notes about the DNS record. This field has no effect on DNS responses.",
+        "example": "Domain verification record",
+        "type": "string",
+        "x-auditable": true
       },
       "registrar-api_registration_contact_address": {
         "description": "Physical mailing address for the registrant contact.",
@@ -9236,52 +9193,17 @@
         ],
         "type": "object"
       },
-      "dns-records_settings": {
-        "description": "Settings for the DNS record.",
-        "properties": {
-          "ipv4_only": {
-            "default": false,
-            "description": "When enabled, only A records will be generated, and AAAA records will not be created. This setting is intended for exceptional cases. Note that this option only applies to proxied records and it has no effect on whether Cloudflare communicates with the origin using IPv4 or IPv6.",
-            "example": true,
-            "type": "boolean",
-            "x-auditable": true
-          },
-          "ipv6_only": {
-            "default": false,
-            "description": "When enabled, only AAAA records will be generated, and A records will not be created. This setting is intended for exceptional cases. Note that this option only applies to proxied records and it has no effect on whether Cloudflare communicates with the origin using IPv4 or IPv6.",
-            "example": true,
-            "type": "boolean",
-            "x-auditable": true
-          }
+      "dns-records_tags": {
+        "default": [],
+        "description": "Custom tags for the DNS record. This field has no effect on DNS responses.",
+        "items": {
+          "description": "Individual tag of the form name:value (the name must consist of only letters, numbers, underscores and hyphens)",
+          "example": "owner:dns-team",
+          "type": "string",
+          "x-auditable": true
         },
-        "type": "object"
-      },
-      "dns-records_comment": {
-        "description": "Comments or notes about the DNS record. This field has no effect on DNS responses.",
-        "example": "Domain verification record",
-        "type": "string",
-        "x-auditable": true
-      }
-    },
-    "securitySchemes": {
-      "api_email": {
-        "in": "header",
-        "name": "X-Auth-Email",
-        "type": "apiKey"
-      },
-      "api_key": {
-        "in": "header",
-        "name": "X-Auth-Key",
-        "type": "apiKey"
-      },
-      "api_token": {
-        "scheme": "bearer",
-        "type": "http"
-      },
-      "user_service_key": {
-        "in": "header",
-        "name": "X-Auth-User-Service-Key",
-        "type": "apiKey"
+        "type": "array",
+        "x-stainless-collection-type": "set"
       }
     },
     "parameters": {
@@ -9317,6 +9239,27 @@
           ],
           "type": "string"
         }
+      }
+    },
+    "securitySchemes": {
+      "api_email": {
+        "in": "header",
+        "name": "X-Auth-Email",
+        "type": "apiKey"
+      },
+      "api_key": {
+        "in": "header",
+        "name": "X-Auth-Key",
+        "type": "apiKey"
+      },
+      "api_token": {
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "user_service_key": {
+        "in": "header",
+        "name": "X-Auth-User-Service-Key",
+        "type": "apiKey"
       }
     }
   }

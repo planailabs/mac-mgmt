@@ -419,7 +419,14 @@ async fn bind_domain(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uu
         }
 
         // 2. Create CNAME record on the domain's Cloudflare zone
-        let cname_target = format!("{project_name}.pages.dev");
+        // Use the subdomain from the API (the preview URL) as the CNAME target
+        let cname_target = match client.get_pages_project(&account_id, &project_name).await {
+            Ok(project) => match project.subdomain {
+                Some(sub) => sub,
+                None => return Err(ServerFnError::new("Pages project has no subdomain")),
+            },
+            Err(e) => return Err(ServerFnError::new(format!("failed to fetch Pages project: {e}"))),
+        };
         let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
             "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
         ).bind(domain_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -542,12 +549,20 @@ async fn fix_cname(webspace_id: Uuid, domain_id: Uuid, subdomain_id: Option<Uuid
         "SELECT cloudflare_pages_project, cloudflare_credential_id FROM webspaces WHERE id = $1",
     ).bind(webspace_id).fetch_one(&pool).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let (project_name, _) = match ws {
+    let (project_name, cred_id) = match ws {
         (Some(p), Some(c)) => (p, c),
         _ => return Err(ServerFnError::new("webspace has no Pages project")),
     };
 
-    let cname_target = format!("{project_name}.pages.dev");
+    // Use the subdomain from the API (the preview URL) as the CNAME target
+    let (pages_client, account_id) = build_cf_pages_client(&pool, cred_id).await?;
+    let cname_target = match pages_client.get_pages_project(&account_id, &project_name).await {
+        Ok(project) => match project.subdomain {
+            Some(sub) => sub,
+            None => return Err(ServerFnError::new("Pages project has no subdomain")),
+        },
+        Err(e) => return Err(ServerFnError::new(format!("failed to fetch Pages project: {e}"))),
+    };
 
     let domain_cf = sqlx::query_as::<_, (Option<String>, Option<Uuid>)>(
         "SELECT cloudflare_zone_id, cloudflare_credential_id FROM domains WHERE id = $1",
