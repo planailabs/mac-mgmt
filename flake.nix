@@ -13,6 +13,7 @@
       overlays.default = import ./overlay.nix { gitSha = self.rev or self.dirtyRev or "unknown"; };
       nixosModules.default = import ./server/module.nix;
       nixosModules.web-agency = import ./web-agency/server/module.nix;
+      nixosModules.web-agency-proxy = import ./web-agency/proxy/module.nix;
       nixosModules.daemon = import ./daemon/module.nix;
       nixosModules.relay = import ./relay/module.nix;
       nixosModules.runner = import ./runner/module.nix;
@@ -39,7 +40,7 @@
           pkgs.libiconv
         ];
 
-        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh web-agency-server;
+        inherit (pkgs) mac-mgmt mac-mgmt-server mac-mgmt-server-mgmt mac-mgmt-server-skill-center mac-mgmt-server-skill-importer mac-mgmt-relay mac-mgmt-runner mac-mgmt-relay-ssh web-agency-server web-agency-proxy;
         relay-ssh = mac-mgmt-relay-ssh;
 
         # Standalone unpacked MacOSX SDK so cargo-zigbuild can satisfy
@@ -105,6 +106,7 @@
           runner = mac-mgmt-runner;
           relay-ssh = relay-ssh;
           web-agency = web-agency-server;
+          web-agency-proxy = web-agency-proxy;
           macosx-sdk = macosx-sdk;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux (
           let images = import ./docker.nix {

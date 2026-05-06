@@ -11,6 +11,9 @@ let
   configFile = settingsFormat.generate "config.toml" cfg.settings;
 in
 {
+  imports = [
+    ../proxy/module.nix
+  ];
   options.services.web-agency-server = {
     enable = lib.mkEnableOption "web-agency server";
 
@@ -72,6 +75,8 @@ in
 
         DynamicUser = true;
         StateDirectory = "web-agency-server";
+        StateDirectoryMode = "0750";
+        SupplementaryGroups = [ "web-agency" ];
 
         # Hardening
         CapabilityBoundingSet = "";
@@ -97,8 +102,12 @@ in
       };
     };
 
+    # Shared group so the proxy can read the server's internal token file.
+    users.groups.web-agency = { };
+
     services.web-agency-server.settings = {
       database.url = "postgres:///web-agency?host=/run/postgresql";
+      proxy.internal_token_path = lib.mkDefault "/var/lib/web-agency-server/internal.token";
     };
 
     services.postgresql = {
