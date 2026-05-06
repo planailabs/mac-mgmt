@@ -112,6 +112,9 @@ in
     users.groups.web-agency = { };
 
     services.web-agency-server.settings = {
+      # Peer auth: the server connects as its OS user (the dynamic user
+      # for the systemd.services.web-agency-server unit, named
+      # "web-agency-server"), so the postgres role must match.
       database.url = "postgres:///web-agency?host=/run/postgresql";
       proxy.internal_token_path = lib.mkDefault "/var/lib/web-agency-server/internal.token";
     };
@@ -137,7 +140,7 @@ in
       enable = true;
 
       ensureUsers = [{
-        name = "web-agency";
+        name = "web-agency-server";
         ensureClauses.superuser = true;
       }];
 
