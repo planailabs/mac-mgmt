@@ -79,6 +79,11 @@
             # web-agency (cargo-progenitor installed via: cargo install cargo-progenitor)
             wrangler
 
+            # web-agency-proxy (BoringSSL build via boring-sys)
+            cmake
+            clang
+            libclang.lib
+
             # For WASM
             wasm-pack
             wasm-bindgen-cli_0_2_114
@@ -87,6 +92,7 @@
           ] ++ darwinDeps;
 
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
+          LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
         };
 
         packages = {
