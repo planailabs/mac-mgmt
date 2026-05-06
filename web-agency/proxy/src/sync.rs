@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cert_store::CertEntry;
+use crate::cert_store::{CertEntry, CertKey, CertStore};
 use crate::config::ProxyConfig;
 
 #[derive(Debug, Deserialize)]
@@ -57,28 +57,34 @@ async fn reload_routes(
     }
 }
 
-/// Fetch certs from server and write to disk. Returns true if certs were updated.
+/// Fetch certs from server and update the cert store in memory.
 async fn reload_certs(
     client: &reqwest::Client,
     server_url: &str,
-    cert_files: &crate::cert_store::CertFiles,
-) -> bool {
+    cert_store: &CertStore,
+) {
     match client
         .get(format!("{server_url}/api/internal/certs"))
         .send()
         .await
     {
         Ok(resp) => match resp.json::<Vec<CertEntry>>().await {
-            Ok(entries) => cert_files.update_from_entries(&entries),
-            Err(e) => {
-                tracing::error!("failed to parse certs: {e}");
-                false
+            Ok(entries) => {
+                let mut map = HashMap::new();
+                for entry in entries {
+                    match CertKey::from_pem(&entry.chain_pem, &entry.key_pem) {
+                        Ok(ck) => {
+                            map.insert(entry.domain, Arc::new(ck));
+                        }
+                        Err(e) => tracing::error!(domain = %entry.domain, "bad cert PEM: {e}"),
+                    }
+                }
+                tracing::info!(count = map.len(), "loaded certs");
+                cert_store.replace_all(map);
             }
+            Err(e) => tracing::error!("failed to parse certs: {e}"),
         },
-        Err(e) => {
-            tracing::error!("failed to fetch certs: {e}");
-            false
-        }
+        Err(e) => tracing::error!("failed to fetch certs: {e}"),
     }
 }
 
@@ -87,16 +93,19 @@ async fn trigger_missing_certs(
     client: &reqwest::Client,
     server_url: &str,
     routes: &ArcSwap<HashMap<String, SocketAddr>>,
+    cert_store: &CertStore,
 ) {
     let route_hosts: Vec<String> = routes.load().keys().cloned().collect();
     for host in route_hosts {
-        tracing::info!(domain = %host, "requesting cert issuance");
-        if let Err(e) = client
-            .post(format!("{server_url}/api/internal/certs/{host}"))
-            .send()
-            .await
-        {
-            tracing::warn!(domain = %host, "cert issuance request failed: {e}");
+        if !cert_store.has_cert(&host) {
+            tracing::info!(domain = %host, "requesting cert issuance");
+            if let Err(e) = client
+                .post(format!("{server_url}/api/internal/certs/{host}"))
+                .send()
+                .await
+            {
+                tracing::warn!(domain = %host, "cert issuance request failed: {e}");
+            }
         }
     }
 }
@@ -105,26 +114,35 @@ async fn trigger_missing_certs(
 pub async fn initial_load(
     cfg: &ProxyConfig,
     routes: &ArcSwap<HashMap<String, SocketAddr>>,
-    cert_files: &crate::cert_store::CertFiles,
+    cert_store: &CertStore,
 ) {
     let token = cfg.internal_token();
     let client = build_client(&token);
     reload_routes(&client, &cfg.server_url, routes).await;
-    reload_certs(&client, &cfg.server_url, cert_files).await;
-    trigger_missing_certs(&client, &cfg.server_url, routes).await;
+    reload_certs(&client, &cfg.server_url, cert_store).await;
+    trigger_missing_certs(&client, &cfg.server_url, routes, cert_store).await;
 }
 
-/// Build a Pingora background service that listens to SSE events and reloads routes.
+/// Build a Pingora background service that listens to SSE events and reloads.
 pub fn build_service(
     cfg: ProxyConfig,
     routes: Arc<ArcSwap<HashMap<String, SocketAddr>>>,
+    cert_store: Arc<CertStore>,
 ) -> pingora::services::background::GenBackgroundService<SyncTask> {
-    pingora::services::background::background_service("sync", SyncTask { cfg, routes })
+    pingora::services::background::background_service(
+        "sync",
+        SyncTask {
+            cfg,
+            routes,
+            cert_store,
+        },
+    )
 }
 
 pub struct SyncTask {
     cfg: ProxyConfig,
     routes: Arc<ArcSwap<HashMap<String, SocketAddr>>>,
+    cert_store: Arc<CertStore>,
 }
 
 #[async_trait::async_trait]
@@ -135,7 +153,6 @@ impl pingora::services::background::BackgroundService for SyncTask {
         let server_url = &self.cfg.server_url;
 
         loop {
-            // Connect to SSE stream
             tracing::info!("connecting to SSE event stream");
             match client
                 .get(format!("{server_url}/api/internal/events"))
@@ -154,16 +171,15 @@ impl pingora::services::background::BackgroundService for SyncTask {
                                     Some(Ok(ev)) if ev.event == "reload" => {
                                         tracing::info!("received reload event");
                                         reload_routes(&client, server_url, &self.routes).await;
-                                        // Note: cert reload requires proxy restart since
-                                        // Pingora loads certs at startup. A future version
-                                        // using OpenSSL callbacks could hot-reload certs.
+                                        reload_certs(&client, server_url, &self.cert_store).await;
+                                        trigger_missing_certs(&client, server_url, &self.routes, &self.cert_store).await;
                                     }
-                                    Some(Ok(_)) => {} // keepalive or other events
+                                    Some(Ok(_)) => {}
                                     Some(Err(e)) => {
                                         tracing::warn!("SSE error: {e}");
                                         break;
                                     }
-                                    None => break, // stream ended
+                                    None => break,
                                 }
                             }
                             _ = shutdown.changed() => {
@@ -176,12 +192,10 @@ impl pingora::services::background::BackgroundService for SyncTask {
                 Err(e) => tracing::error!("failed to connect to SSE: {e}"),
             }
 
-            // Backoff before reconnecting
             tracing::info!("SSE disconnected, reconnecting in 5s");
             tokio::time::sleep(Duration::from_secs(5)).await;
-
-            // Full route reload on reconnect
             reload_routes(&client, server_url, &self.routes).await;
+            reload_certs(&client, server_url, &self.cert_store).await;
         }
     }
 }

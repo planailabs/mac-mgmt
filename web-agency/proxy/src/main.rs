@@ -20,26 +20,24 @@ fn main() {
         "starting web-agency-proxy"
     );
 
-    // Set up cert files directory
-    let state_dir = std::path::Path::new(&cfg.internal_token_path)
-        .parent()
-        .unwrap_or(std::path::Path::new("/var/lib/web-agency"));
-    let cert_files = cert_store::CertFiles::new(&state_dir.join("certs"));
-
-    // Generate self-signed fallback cert so TLS works immediately
-    cert_files.write_self_signed(&[&cfg.agency_domain]);
+    // Generate self-signed fallback cert
+    let fallback = self_signed::generate(&[&cfg.agency_domain])
+        .expect("failed to generate self-signed cert");
     tracing::info!("generated self-signed fallback cert");
 
-    // Initial load from server API (replaces self-signed if real certs exist)
+    // Build shared state
+    let cert_store = std::sync::Arc::new(cert_store::CertStore::new(fallback));
     let routes = std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
         std::collections::HashMap::new(),
     ));
+
+    // Initial load from server API
     {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        rt.block_on(sync::initial_load(cfg, &routes, &cert_files));
+        rt.block_on(sync::initial_load(cfg, &routes, &cert_store));
     }
 
     // Set up Pingora
@@ -47,11 +45,11 @@ fn main() {
     server.bootstrap();
 
     let conf = server.configuration.clone();
-    let proxy_svc = proxy::build_service(&conf, cfg, routes.clone(), &cert_files);
+    let proxy_svc = proxy::build_service(&conf, cfg, routes.clone(), cert_store.clone());
     server.add_service(proxy_svc);
 
     // Spawn SSE sync as a background service
-    let sync_svc = sync::build_service(cfg.clone(), routes);
+    let sync_svc = sync::build_service(cfg.clone(), routes, cert_store);
     server.add_service(sync_svc);
 
     server.run_forever();

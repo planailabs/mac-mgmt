@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pingora = { version = "0.8", features = ["proxy", "rustls"] }
+pingora = { version = "0.8", features = ["proxy", "boringssl"] }
 rcgen = "0.13"
-rustls = { workspace = true }
-rustls-pemfile = "2"
 arc-swap = "1"
 reqwest = { workspace = true, features = ["stream"] }
 eventsource-stream = "0.2"

@@ -52,28 +52,25 @@ fn extract_host(session: &Session) -> String {
     raw.split(':').next().unwrap_or(raw).to_lowercase()
 }
 
-/// Build the Pingora HTTP proxy service with TLS from cert files on disk.
+/// Build the Pingora HTTP proxy service with BoringSSL TLS and dynamic SNI.
 pub fn build_service(
     server_conf: &Arc<pingora::server::configuration::ServerConf>,
     cfg: &crate::config::ProxyConfig,
     routes: Arc<ArcSwap<HashMap<String, SocketAddr>>>,
-    cert_files: &crate::cert_store::CertFiles,
+    cert_store: Arc<crate::cert_store::CertStore>,
 ) -> pingora::services::listening::Service<pingora::proxy::HttpProxy<WebAgencyProxy>> {
     let proxy = WebAgencyProxy { routes };
 
     let mut svc = http_proxy_service(server_conf, proxy);
 
-    // HTTP listener (for redirect to HTTPS — handled in upstream_request_filter)
+    // HTTP listener (for redirect to HTTPS)
     svc.add_tcp(&cfg.http_addr);
 
-    // HTTPS listener with file-based cert
-    let cert_path = cert_files.cert_path();
-    let key_path = cert_files.key_path();
-    let mut tls_settings = pingora::listeners::tls::TlsSettings::intermediate(
-        cert_path.to_str().unwrap(),
-        key_path.to_str().unwrap(),
-    )
-    .expect("failed to create TLS settings");
+    // HTTPS listener with dynamic cert resolution via BoringSSL callbacks
+    let callback = crate::cert_store::CertStoreCallback(cert_store);
+    let mut tls_settings =
+        pingora::listeners::tls::TlsSettings::with_callbacks(Box::new(callback))
+            .expect("failed to create TLS settings");
     tls_settings.enable_h2();
     svc.add_tls_with_settings(&cfg.https_addr, None, tls_settings);
 
