@@ -5,6 +5,7 @@
   clang,
   libclang,
   perl,
+  git,
 }:
 
 rustPlatform.buildRustPackage {
@@ -20,6 +21,7 @@ rustPlatform.buildRustPackage {
     cmake   # boring-sys builds BoringSSL from source
     clang   # C/C++ compiler for BoringSSL
     perl    # BoringSSL build scripts need perl
+    git     # boring-sys runs `git init` to apply patches to vendored BoringSSL
   ];
 
   env.LIBCLANG_PATH = "${libclang.lib}/lib";
