@@ -62,6 +62,13 @@ in
         StateDirectory = "web-agency-proxy";
         SupplementaryGroups = [ "web-agency" ];
 
+        # The server's StateDirectory lives under /var/lib/private/<name>
+        # (DynamicUser bind-mount), which is mode 0700 root-owned and
+        # therefore invisible to other DynamicUser units. Bind-mount the
+        # symlinked path explicitly so the proxy can read the shared
+        # internal.token via its SupplementaryGroups membership.
+        BindReadOnlyPaths = [ "/var/lib/web-agency-server" ];
+
         # Needs to bind to ports 80/443
         AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
         CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
