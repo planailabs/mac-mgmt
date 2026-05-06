@@ -239,8 +239,26 @@ fn main() {
                 auth_layers
             };
 
-            let mut router = axum::Router::new()
+            // Web UI (Dioxus app + auth-gated routes). require_auth and the
+            // OIDC session layers attach only here; the deploy and internal
+            // routers do their own Bearer-token check and must NOT be
+            // wrapped, otherwise unauthenticated requests get redirected to
+            // /auth/login before their handler-level auth runs.
+            let mut web_router = axum::Router::new()
                 .serve_dioxus_application(ServeConfig::new(), web::app::App);
+
+            if let Some(auth_layers) = auth_layers {
+                web_router = web_router
+                    .route("/auth/login", axum::routing::get(plan_ai_auth::login_page))
+                    .route("/auth/logout", axum::routing::get(plan_ai_auth::logout_handler))
+                    .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
+                for layer in auth_layers {
+                    web_router = web_router.layer(layer);
+                }
+            } else if dev_no_auth {
+                web_router = web_router
+                    .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
+            }
 
             // Mount deploy API (uses its own Bearer token auth, not OIDC)
             let active_deploys = ACTIVE_DEPLOYS
@@ -250,31 +268,20 @@ fn main() {
                 pool: crate::server_pool().expect("pool for deploy API"),
                 active_deploys,
             });
-            router = router.merge(deploy_router);
 
             // Mount internal API (used by the reverse proxy)
-            {
+            let internal_router = {
                 let (reload_tx, _) = tokio::sync::broadcast::channel::<()>(16);
-                let internal_router =
-                    crate::api::internal::router(crate::api::internal::InternalState {
-                        pool: crate::server_pool().expect("pool for internal API"),
-                        reload_tx: Arc::new(reload_tx),
-                    });
-                router = router.merge(internal_router);
-            }
+                crate::api::internal::router(crate::api::internal::InternalState {
+                    pool: crate::server_pool().expect("pool for internal API"),
+                    reload_tx: Arc::new(reload_tx),
+                })
+            };
 
-            if let Some(auth_layers) = auth_layers {
-                router = router
-                    .route("/auth/login", axum::routing::get(plan_ai_auth::login_page))
-                    .route("/auth/logout", axum::routing::get(plan_ai_auth::logout_handler))
-                    .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
-                for layer in auth_layers {
-                    router = router.layer(layer);
-                }
-            } else if dev_no_auth {
-                router = router
-                    .layer(axum::middleware::from_fn(plan_ai_auth::require_auth));
-            }
+            let router = axum::Router::new()
+                .merge(deploy_router)
+                .merge(internal_router)
+                .merge(web_router);
 
             Ok(router)
         });
